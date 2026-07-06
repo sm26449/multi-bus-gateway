@@ -147,7 +147,19 @@ class _GuardedRedirect(urllib.request.HTTPRedirectHandler):
             if err:
                 raise urllib.error.HTTPError(
                     newurl, code, f"SSRF guard (redirect): {err}", headers, fp)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        # Never follow an HTTPS→HTTP downgrade — it would send the request (and
+        # any auth) in clear, and is a classic redirect-attack primitive.
+        if urlparse(req.full_url).scheme == 'https' and urlparse(newurl).scheme == 'http':
+            raise urllib.error.HTTPError(
+                newurl, code, "redirect refused: HTTPS→HTTP downgrade", headers, fp)
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        # On a cross-HOST hop, strip credential headers so a redirect can't
+        # replay Authorization / API tokens to a third party.
+        if new is not None and urlparse(req.full_url).hostname != urlparse(newurl).hostname:
+            for h in list(new.headers):
+                if h.lower() in ('authorization', 'proxy-authorization', 'cookie', 'x-api-key'):
+                    del new.headers[h]
+        return new
 
 
 def _origin(url: str) -> tuple:
@@ -331,9 +343,11 @@ class HttpClient:
             ssl_ctx.verify_mode = ssl.CERT_NONE
         if self.allow_nonlan:
             # Operator explicitly opted out of the LAN guard (e.g. a cloud API
-            # behind a CDN with many IPs / redirects) — plain fetch, no pinning.
+            # behind a CDN with many IPs / redirects) — no pinning, but redirects
+            # still refuse HTTPS→HTTP downgrade and strip auth on cross-host hops.
             opener = urllib.request.build_opener(
-                *( [urllib.request.HTTPSHandler(context=ssl_ctx)] if ssl_ctx else [] ))
+                *( [urllib.request.HTTPSHandler(context=ssl_ctx)] if ssl_ctx else [] ),
+                _GuardedRedirect(allow_nonlan=True))
         else:
             # Resolve+validate ONCE, then connect to that literal IP (not the
             # hostname) so a low-TTL DNS rebind can't swap the target between the

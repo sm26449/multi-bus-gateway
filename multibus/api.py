@@ -346,10 +346,17 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                                 "/api/auth/passkey", "/api/auth/passkeys")
 
     def _operator_may_write(path: str) -> bool:
-        if path.startswith(_OPERATOR_WRITE_PREFIXES):
-            return True
-        if path.startswith("/api/devices") and path.endswith(
-                ("/write", "/test", "/payload-sample")):
+        # Segment-anchored, not raw prefix/suffix: a prefix must end at a path
+        # boundary (so /api/bus-trace never matches /api/bus-trace-anything), and
+        # a device live-action must be exactly /api/devices/<id>/<action> (so a
+        # config sub-route or a device id literally named "write" can't slip
+        # through an endswith check).
+        for pfx in _OPERATOR_WRITE_PREFIXES:
+            if path == pfx or path.startswith(pfx + "/"):
+                return True
+        parts = path.split("/")   # ['', 'api', 'devices', '<id>', '<action>']
+        if (len(parts) == 5 and parts[1] == "api" and parts[2] == "devices"
+                and parts[3] and parts[4] in ("write", "test", "payload-sample")):
             return True
         return False
 
@@ -1001,13 +1008,19 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             raw['influxdb'] = payload['influxdb']
         return raw
 
-    def _device_entry(dev_cfg, client) -> Dict:
+    def _device_entry(dev_cfg, client, *, redact=False) -> Dict:
         entry = dev_cfg.summary()
         regs, _groups = config.load_device_registers(dev_cfg)
         entry['selected_registers'] = len(regs)
         entry['influxdb_device_tag'] = dev_cfg.influxdb_device_tag
         # full connection block for the device detail editor
         c = dev_cfg.connection
+        _url = dev_cfg.http.get('url', '') if dev_cfg.protocol == 'http' else ''
+        if redact and _url:
+            # a viewer must not see credentials embedded in the URL (userinfo or
+            # a token query param); the admin sees the real URL to edit it
+            from .redact import redact_url
+            _url = redact_url(_url)
         entry['connection'] = {
             'protocol': dev_cfg.protocol,
             'host': c.host, 'port': c.port, 'unit_id': c.unit_id,
@@ -1015,7 +1028,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             'retry_delay': c.retry_delay,
             'serial_port': c.serial_port, 'baudrate': c.baudrate,
             'parity': c.parity, 'stopbits': c.stopbits, 'bytesize': c.bytesize,
-            'url': dev_cfg.http.get('url', '') if dev_cfg.protocol == 'http' else '',
+            'url': _url,
             'verify_tls': dev_cfg.http.get('verify_tls', True),
         }
         if dev_cfg.protocol == 'mqtt':
@@ -1100,9 +1113,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         return entry
 
     @app.get("/api/devices")
-    def list_devices():
+    def list_devices(request: Request):
         """All southbound devices with live health (device #1 first)."""
-        return {"devices": [_device_entry(d, c) for d, c in registry]}
+        _redact = getattr(request.state, "role", None) == "viewer"
+        return {"devices": [_device_entry(d, c, redact=_redact) for d, c in registry]}
 
     def _sync_device_discovery():
         """Rebuild the MQTT discovery hooks from the current non-primary
@@ -1938,7 +1952,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         }
 
     @app.post("/api/config/ui-security")
-    async def update_ui_security(payload: Dict = Body(...)):
+    async def update_ui_security(request: Request, payload: Dict = Body(...)):
         """Update HTTPS + login config. Passwords are hashed on write; a blank
         password keeps the current one. HTTPS changes need a restart."""
         from . import auth as _auth
@@ -1989,13 +2003,28 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             raise HTTPException(status_code=422, detail={"errors": [
                 "set a new admin password before enabling login "
                 "(the default password cannot be used)"]})
+        # Enabling login for the first time: surface any passkeys enrolled while
+        # auth was off (the implicit-admin window) so the operator reviews them
+        # before they become live admin credentials — an unexpected one is an
+        # attacker who enrolled on the open LAN.
+        enabling = changes.get("auth_enabled") and not u.auth_enabled
         # all valid → commit atomically
         for k, v in changes.items():
             setattr(u, k, v)
         config.save_yaml_config()
         if auth_state is not None:
             auth_state.reload(config.ui)
-        return {"status": "ok", "restart_needed": restart_needed}
+        resp = {"status": "ok", "restart_needed": restart_needed}
+        if enabling:
+            _pk = getattr(getattr(app.state, "ctx", None), "passkey_store", None)
+            _enrolled = _pk.list() if _pk else []
+            if _enrolled:
+                resp["passkeys_to_review"] = _enrolled
+                audit_log.append(user=getattr(request.state, "user", "") or "-",
+                                 ip=request.client.host if request.client else "-",
+                                 action="login enabled",
+                                 status="ok", detail={"passkeys_present": len(_enrolled)})
+        return resp
 
     @app.get("/api/config/security")
     async def get_security_config(request: Request):

@@ -21,3 +21,26 @@ def test_http_client_stats_shape():
         assert k in s
     # no registers/pollers → health is idle-ok, never a false 'down'
     assert c.data_health()["status"] == "ok"
+
+
+# ── P1: allow_nonlan redirects refuse downgrade + strip auth cross-host ───────
+
+def test_guarded_redirect_refuses_downgrade_and_strips_auth():
+    import urllib.error
+    import urllib.request
+    from multibus.http_client import _GuardedRedirect
+    g = _GuardedRedirect(allow_nonlan=True)
+    req = urllib.request.Request("https://a.example.com/x",
+                                 headers={"Authorization": "Bearer secret",
+                                          "X-Api-Key": "k", "Accept": "application/json"})
+    # HTTPS→HTTP downgrade is refused
+    try:
+        g.redirect_request(req, None, 302, "Found", {}, "http://a.example.com/y")
+        assert False, "downgrade should raise"
+    except urllib.error.HTTPError as e:
+        assert "downgrade" in str(e)
+    # cross-host hop keeps working but drops credential headers
+    new = g.redirect_request(req, None, 302, "Found", {}, "https://evil.example.net/y")
+    hdrs = {k.lower() for k in new.headers}
+    assert "authorization" not in hdrs and "x-api-key" not in hdrs
+    assert "accept" in hdrs                                    # non-secret header kept
