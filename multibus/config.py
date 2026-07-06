@@ -392,16 +392,24 @@ class Config:
         if did == PRIMARY_DEVICE_ID:
             raise ValueError(f"'{PRIMARY_DEVICE_ID}' is the primary device — "
                              "edit it via the Modbus settings")
-        self._raw_devices = [d for d in self._raw_devices if d.get('id') != did]
-        self._raw_devices.append(raw)
-        self._build_devices()
-        built = self.get_device(did)
-        if built is None:
+        # Transactional: snapshot the raw list so a build/save failure restores
+        # the PREVIOUS state exactly, instead of leaving the old entry deleted
+        # (which a later unrelated save would then persist — the device would
+        # silently vanish from config.yaml).
+        _snapshot = [dict(d) for d in self._raw_devices]
+        try:
             self._raw_devices = [d for d in self._raw_devices if d.get('id') != did]
+            self._raw_devices.append(raw)
             self._build_devices()
-            raise ValueError(f"device {did!r} could not be built from the given data")
-        self.save_yaml_config()
-        return built
+            built = self.get_device(did)
+            if built is None:
+                raise ValueError(f"device {did!r} could not be built from the given data")
+            self.save_yaml_config()
+            return built
+        except Exception:
+            self._raw_devices = _snapshot
+            self._build_devices()
+            raise
 
     def set_http_output(self, device_id: str, enabled: bool) -> None:
         """Enable/disable the HTTP/JSON output sink for a device and persist.

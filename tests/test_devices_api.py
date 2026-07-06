@@ -631,3 +631,46 @@ def test_status_devices_carry_poll_rate(tmp_path):
     client = TestClient(app, raise_server_exceptions=False)
     dev = client.get("/api/status").json()["devices"][0]
     assert dev["poll_rate"] == 4.22
+
+
+# ── P1: upsert_raw_device is transactional (rollback on failed edit) ──────────
+
+def test_upsert_rollback_preserves_device_on_build_failure(tmp_path):
+    from multibus.config import Config
+    from tests.test_devices import write_config
+    cfg_path = write_config(tmp_path, extra_yaml="""
+devices:
+  - id: keepme
+    template: janitza_umg512_pro
+    enabled: false
+    connection: { protocol: tcp, host: 192.0.2.5 }
+""")
+    cfg = Config(str(cfg_path.config_path))
+    assert cfg.get_device("keepme") is not None
+    before = [d.get("id") for d in cfg._raw_devices]
+    # force a build failure mid-upsert; the raw list (and the device) must be
+    # restored to the pre-edit state, not left with the old entry deleted
+    import pytest
+    orig_build = cfg._build_devices
+    calls = {"n": 0}
+    def boom():
+        calls["n"] += 1
+        if calls["n"] == 1:                        # fail the FIRST build (the edit)
+            raise RuntimeError("simulated build failure")
+        return orig_build()
+    cfg._build_devices = boom
+    with pytest.raises(RuntimeError):
+        cfg.upsert_raw_device({"id": "keepme",
+                               "connection": {"protocol": "tcp", "host": "10.0.0.9"}})
+    cfg._build_devices = orig_build
+    assert cfg.get_device("keepme") is not None     # NOT deleted (rolled back)
+    assert [d.get("id") for d in cfg._raw_devices] == before
+
+
+@needs_tc
+def test_ui_security_validate_then_commit(tmp_path):
+    _cfg, client = make_app(tmp_path)
+    # enabling auth without a hashed password is rejected AND leaves auth off
+    r = client.post("/api/config/ui-security", json={"auth_enabled": True})
+    assert r.status_code == 422
+    assert client.get("/api/auth/status").json()["enabled"] is False   # not half-applied

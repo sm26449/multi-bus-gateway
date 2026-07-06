@@ -317,11 +317,19 @@ class GatewayApp:
             if client:
                 client.disconnect()
 
-        if self.mqtt_publisher:
-            self.mqtt_publisher.disconnect()
+        # Resolve the LIVE publishers from the API context: /api/config/apply
+        # can rebind them (a sink enabled after boot creates a new one), so the
+        # boot-time self.* references may be stale — closing those would leave
+        # the live InfluxDB publisher's replay buffer unflushed on shutdown.
+        _ctx = getattr(getattr(self.app, 'state', None), 'ctx', None)
+        mqtt_pub = getattr(_ctx, 'mqtt_publisher', None) or self.mqtt_publisher
+        influx_pub = getattr(_ctx, 'influxdb_publisher', None) or self.influxdb_publisher
 
-        if self.influxdb_publisher:
-            self.influxdb_publisher.close()
+        if mqtt_pub:
+            mqtt_pub.disconnect()
+
+        if influx_pub:
+            influx_pub.close()
 
         logger.info("Shutdown complete")
 

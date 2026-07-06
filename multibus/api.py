@@ -1310,12 +1310,16 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             if pw in ('', '******', None):
                 _conn['password'] = dev_cfg.mqtt_in.get('password', '')
             raw['connection'] = _conn
-        if client:
-            client.disconnect()
+        # Persist FIRST (upsert is transactional and rolls back on failure);
+        # only tear down the old client once the new config is committed, so a
+        # rejected edit leaves the running device untouched instead of
+        # disconnected-and-not-restarted.
         try:
             new_cfg = config.upsert_raw_device(raw)
         except ValueError as e:
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+        if client:
+            client.disconnect()
         _autoselect_template_registers(new_cfg)   # first-time template assignment
         _ensure_device_bucket(new_cfg)            # influx just enabled / bucket changed
         new_client = _start_device_client(new_cfg)
@@ -1939,42 +1943,55 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         password keeps the current one. HTTPS changes need a restart."""
         from . import auth as _auth
         u = config.ui
+        # VALIDATE-THEN-COMMIT: build the change set + run every check BEFORE
+        # touching the live config, so a rejected request leaves config.ui (and
+        # therefore auth_state) exactly as it was — no half-applied auth state
+        # persisted by a later unrelated save.
+        changes: Dict = {}
         restart_needed = False
-        if "tls_enabled" in payload:
-            new_tls = bool(payload["tls_enabled"])
-            if new_tls != u.tls_enabled:
-                restart_needed = True
-            u.tls_enabled = new_tls
-        if "tls_cert" in payload:
-            u.tls_cert = str(payload["tls_cert"]).strip(); restart_needed = restart_needed or u.tls_enabled
-        if "tls_key" in payload:
-            u.tls_key = str(payload["tls_key"]).strip()
-        if "auth_enabled" in payload:
-            u.auth_enabled = bool(payload["auth_enabled"])
-        if payload.get("auth_username"):
-            u.auth_username = str(payload["auth_username"]).strip()
-        if payload.get("auth_password"):
-            u.auth_password = _auth.hash_password(str(payload["auth_password"]))
-        if "viewer_username" in payload:
-            u.viewer_username = str(payload["viewer_username"]).strip()
-        if payload.get("viewer_password"):
-            u.viewer_password = _auth.hash_password(str(payload["viewer_password"]))
-        if "operator_username" in payload:
-            u.operator_username = str(payload["operator_username"]).strip()
-        if payload.get("operator_password"):
-            u.operator_password = _auth.hash_password(str(payload["operator_password"]))
-        if payload.get("lockout_threshold"):
-            u.lockout_threshold = int(payload["lockout_threshold"])
-        if payload.get("lockout_minutes"):
-            u.lockout_minutes = int(payload["lockout_minutes"])
-        # guard: enabling auth requires a real hashed admin password. The default
-        # is the plaintext "admin", and verify_password accepts legacy plaintext,
-        # so enabling login without setting a NEW password would silently leave
-        # admin/admin usable. Refuse unless the stored password is a PBKDF2 hash.
-        if u.auth_enabled and not _auth.is_hashed(u.auth_password):
+        try:
+            if "tls_enabled" in payload:
+                changes["tls_enabled"] = bool(payload["tls_enabled"])
+                restart_needed = restart_needed or (changes["tls_enabled"] != u.tls_enabled)
+            if "tls_cert" in payload:
+                changes["tls_cert"] = str(payload["tls_cert"]).strip()
+            if "tls_key" in payload:
+                changes["tls_key"] = str(payload["tls_key"]).strip()
+            if "auth_enabled" in payload:
+                changes["auth_enabled"] = bool(payload["auth_enabled"])
+            if payload.get("auth_username"):
+                changes["auth_username"] = str(payload["auth_username"]).strip()
+            if payload.get("auth_password"):
+                changes["auth_password"] = _auth.hash_password(str(payload["auth_password"]))
+            if "viewer_username" in payload:
+                changes["viewer_username"] = str(payload["viewer_username"]).strip()
+            if payload.get("viewer_password"):
+                changes["viewer_password"] = _auth.hash_password(str(payload["viewer_password"]))
+            if "operator_username" in payload:
+                changes["operator_username"] = str(payload["operator_username"]).strip()
+            if payload.get("operator_password"):
+                changes["operator_password"] = _auth.hash_password(str(payload["operator_password"]))
+            if payload.get("lockout_threshold"):
+                changes["lockout_threshold"] = int(payload["lockout_threshold"])
+            if payload.get("lockout_minutes"):
+                changes["lockout_minutes"] = int(payload["lockout_minutes"])
+        except (TypeError, ValueError) as e:
+            raise HTTPException(status_code=422, detail={"errors": [f"invalid value: {e}"]})
+        if changes.get("tls_cert") is not None:
+            restart_needed = restart_needed or changes.get("tls_enabled", u.tls_enabled)
+        # guard: enabling auth requires a real hashed admin password (the default
+        # plaintext "admin" is accepted by verify_password, so enabling login
+        # without a NEW password would leave admin/admin usable). Evaluate against
+        # the RESULTING state, not the live object.
+        _res_enabled = changes.get("auth_enabled", u.auth_enabled)
+        _res_pw = changes.get("auth_password", u.auth_password)
+        if _res_enabled and not _auth.is_hashed(_res_pw):
             raise HTTPException(status_code=422, detail={"errors": [
                 "set a new admin password before enabling login "
                 "(the default password cannot be used)"]})
+        # all valid → commit atomically
+        for k, v in changes.items():
+            setattr(u, k, v)
         config.save_yaml_config()
         if auth_state is not None:
             auth_state.reload(config.ui)
@@ -2086,6 +2103,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                         publish_mode=config.mqtt.publish_mode
                     )
                     ctx.mqtt_publisher = mqtt_publisher   # mirror for route modules
+                    alert_mgr.mqtt = mqtt_publisher       # else alerts publish to the dead ref
                     vmgr = getattr(app.state, "vmeter_manager", None)
                     if vmgr is not None:
                         vmgr.mqtt_publisher = mqtt_publisher
@@ -2441,7 +2459,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         _reload_from_disk(apply)
         event_log.add("warn", "snapshots", f"config rolled back to snapshot {sid}")
         logger.warning(f"config restored from snapshot {sid}: {summary}")
-        return {"status": "ok", "restored": sid, **summary}
+        # _reload_from_disk hot-applies the PRIMARY only; non-primary devices are
+        # reconstructed on the next restart, so tell the operator when one is
+        # needed (more than one device present) rather than leave it implicit.
+        restart_required = len(config.devices) > 1
+        return {"status": "ok", "restored": sid, "restart_required": restart_required,
+                **summary}
 
     # --- Auth (login / logout / status) ---
 
