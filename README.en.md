@@ -4,8 +4,8 @@
 
 [🇷🇴 Română](README.md) | 🇬🇧 **English**
 
-[![Release](https://img.shields.io/github/v/release/sm26449/janitza-monitor?sort=semver)](https://github.com/sm26449/janitza-monitor/releases)
-[![Container](https://img.shields.io/badge/container-ghcr.io-2496ED?logo=docker&logoColor=white)](https://github.com/sm26449/janitza-monitor/pkgs/container/janitza-monitor)
+[![Release](https://img.shields.io/github/v/release/sm26449/multi-bus-gateway?sort=semver)](https://github.com/sm26449/multi-bus-gateway/releases)
+[![Container](https://img.shields.io/badge/container-ghcr.io-2496ED?logo=docker&logoColor=white)](https://github.com/sm26449/multi-bus-gateway/pkgs/container/janitza-monitor)
 ![Modbus → MQTT](https://img.shields.io/badge/Modbus-MQTT-6f42c1)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-autodiscovery-41BDF5?logo=homeassistant&logoColor=white)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE)
@@ -148,8 +148,8 @@ and UI languages: drop a file in, no code, no rebuild.
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/sm26449/janitza-umg512-modbus-mqtt-ui.git
-cd janitza-umg512-modbus-mqtt-ui
+git clone https://github.com/sm26449/multi-bus-gateway.git
+cd multi-bus-gateway
 
 # 2. Configure environment
 cp .env.example .env
@@ -173,16 +173,16 @@ GitHub Container Registry on every release. Use it instead of building — in
 `docker-compose.yml` replace `build: .` with:
 
 ```yaml
-    image: ghcr.io/sm26449/janitza-monitor:latest
+    image: ghcr.io/sm26449/multi-bus-gateway:latest
 ```
 
 …or run it directly (ports: UI + the virtual-meter range + standard Modbus 502):
 
 ```bash
-docker run -d --name janitza-monitor --restart unless-stopped \
+docker run -d --name multi-bus-gateway --restart unless-stopped \
   -p 8080:8080 -p 1502-1512:1502-1512 -p 502:502 \
   --env-file .env -v "$PWD/config:/app/config" \
-  ghcr.io/sm26449/janitza-monitor:latest
+  ghcr.io/sm26449/multi-bus-gateway:latest
 ```
 
 > **Ports:** `8080` = Web UI · `1502-1512` = virtual meters (grow via
@@ -445,7 +445,7 @@ In UI, the "Skipped" status shows how many messages were not published (unchange
 ## Project Structure
 
 ```
-janitza-umg512-modbus-mqtt-ui/
+multi-bus-gateway/
 ├── config/                    # Configuration files
 │   ├── config.example.yaml
 │   └── selected_registers.example.json
@@ -510,11 +510,11 @@ For deployment in pv-stack with shared mosquitto and influxdb:
 
 ```bash
 # Copy files to templates
-cp -r janitza-umg512-modbus-mqtt-ui/* docker-setup/templates/janitza-monitor/
+cp -r multi-bus-gateway/* docker-setup/templates/multi-bus-gateway/
 
 # Deploy via docker-compose
-docker compose -f docker-compose.pv-stack.yml build janitza-monitor
-docker compose -f docker-compose.pv-stack.yml up -d janitza-monitor
+docker compose -f docker-compose.pv-stack.yml build multi-bus-gateway
+docker compose -f docker-compose.pv-stack.yml up -d multi-bus-gateway
 ```
 
 Environment variables are **unprefixed** (the app reads `MODBUS_HOST`, not
@@ -536,8 +536,8 @@ See `service.yaml` for the complete list of variables and dependencies.
 
 ```bash
 # Clone
-git clone https://github.com/sm26449/janitza-umg512-modbus-mqtt-ui.git
-cd janitza-umg512-modbus-mqtt-ui
+git clone https://github.com/sm26449/multi-bus-gateway.git
+cd multi-bus-gateway
 
 # Virtual environment
 python3 -m venv venv
@@ -595,7 +595,7 @@ is defense-in-depth — not a substitute for keeping 8080 off untrusted networks
 
 ## Contributing
 
-Found a bug or have a feature request? Please open an issue on [GitHub Issues](https://github.com/sm26449/janitza-umg512-modbus-mqtt-ui/issues).
+Found a bug or have a feature request? Please open an issue on [GitHub Issues](https://github.com/sm26449/multi-bus-gateway/issues).
 
 ## Authors
 

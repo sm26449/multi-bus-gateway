@@ -1,7 +1,7 @@
 services:
-  janitza-monitor:
+  multi-bus-gateway:
     build: .
-    container_name: janitza-monitor
+    container_name: multi-bus-gateway
     restart: unless-stopped
     ports:
       - "${UI_PORT}:${UI_PORT}"

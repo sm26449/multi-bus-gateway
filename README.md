@@ -13,8 +13,8 @@
 
 🇷🇴 **Română** | [🇬🇧 English](README.en.md)
 
-[![Release](https://img.shields.io/github/v/release/sm26449/janitza-monitor?sort=semver)](https://github.com/sm26449/janitza-monitor/releases)
-[![Container](https://img.shields.io/badge/container-ghcr.io-2496ED?logo=docker&logoColor=white)](https://github.com/sm26449/janitza-monitor/pkgs/container/janitza-monitor)
+[![Release](https://img.shields.io/github/v/release/sm26449/multi-bus-gateway?sort=semver)](https://github.com/sm26449/multi-bus-gateway/releases)
+[![Container](https://img.shields.io/badge/container-ghcr.io-2496ED?logo=docker&logoColor=white)](https://github.com/sm26449/multi-bus-gateway/pkgs/container/janitza-monitor)
 ![Modbus → MQTT](https://img.shields.io/badge/Modbus-MQTT-6f42c1)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-autodiscovery-41BDF5?logo=homeassistant&logoColor=white)
 [![Licenta: PolyForm Noncommercial](https://img.shields.io/badge/licen%C8%9B%C4%83-PolyForm%20Noncommercial-blue)](LICENSE)
@@ -161,8 +161,8 @@ fără rebuild.
 
 ```bash
 # 1. Cloneaza repository
-git clone https://github.com/sm26449/janitza-umg512-modbus-mqtt-ui.git
-cd janitza-umg512-modbus-mqtt-ui
+git clone https://github.com/sm26449/multi-bus-gateway.git
+cd multi-bus-gateway
 
 # 2. Configureaza environment
 cp .env.example .env
@@ -186,16 +186,16 @@ GitHub Container Registry la fiecare release. Folosește-o în loc să faci buil
 în `docker-compose.yml` înlocuiește `build: .` cu:
 
 ```yaml
-    image: ghcr.io/sm26449/janitza-monitor:latest
+    image: ghcr.io/sm26449/multi-bus-gateway:latest
 ```
 
 …sau rulează direct (porturi: UI + gama virtual-meter + Modbus standard 502):
 
 ```bash
-docker run -d --name janitza-monitor --restart unless-stopped \
+docker run -d --name multi-bus-gateway --restart unless-stopped \
   -p 8080:8080 -p 1502-1512:1502-1512 -p 502:502 \
   --env-file .env -v "$PWD/config:/app/config" \
-  ghcr.io/sm26449/janitza-monitor:latest
+  ghcr.io/sm26449/multi-bus-gateway:latest
 ```
 
 > **Porturi:** `8080` = Web UI · `1502-1512` = metere virtuale (extinde cu
@@ -458,7 +458,7 @@ In UI statusul "Skipped" arata cate mesaje nu au fost publicate (valori neschimb
 ## Structura Proiect
 
 ```
-janitza-umg512-modbus-mqtt-ui/
+multi-bus-gateway/
 ├── config/                    # Fisiere configurare
 │   ├── config.example.yaml
 │   └── selected_registers.example.json
@@ -523,11 +523,11 @@ Pentru deploy in stack-ul pv-stack cu mosquitto si influxdb partajate:
 
 ```bash
 # Copiaza fisierele in templates
-cp -r janitza-umg512-modbus-mqtt-ui/* docker-setup/templates/janitza-monitor/
+cp -r multi-bus-gateway/* docker-setup/templates/multi-bus-gateway/
 
 # Deploy prin docker-compose
-docker compose -f docker-compose.pv-stack.yml build janitza-monitor
-docker compose -f docker-compose.pv-stack.yml up -d janitza-monitor
+docker compose -f docker-compose.pv-stack.yml build multi-bus-gateway
+docker compose -f docker-compose.pv-stack.yml up -d multi-bus-gateway
 ```
 
 Variabilele de mediu sunt **fara prefix** (aplicatia citeste `MODBUS_HOST`, nu
@@ -549,8 +549,8 @@ Vezi `service.yaml` pentru lista completa de variabile si dependinte.
 
 ```bash
 # Cloneaza
-git clone https://github.com/sm26449/janitza-umg512-modbus-mqtt-ui.git
-cd janitza-umg512-modbus-mqtt-ui
+git clone https://github.com/sm26449/multi-bus-gateway.git
+cd multi-bus-gateway
 
 # Virtual environment
 python3 -m venv venv
@@ -609,7 +609,7 @@ in adancime — nu inlocuieste tinerea portului 8080 in afara retelelor nedemne 
 
 ## Contributing
 
-Found a bug or have a feature request? Please open an issue on [GitHub Issues](https://github.com/sm26449/janitza-umg512-modbus-mqtt-ui/issues).
+Found a bug or have a feature request? Please open an issue on [GitHub Issues](https://github.com/sm26449/multi-bus-gateway/issues).
 
 ## Authors
 

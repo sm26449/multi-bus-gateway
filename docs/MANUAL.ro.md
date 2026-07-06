@@ -1,4 +1,4 @@
-# Manual de utilizare — Monitor Janitza UMG 512-PRO
+# Manual de utilizare — Multi-Bus Gateway
 
 [🇬🇧 English](MANUAL.md) | 🇷🇴 **Română**
 
@@ -35,8 +35,8 @@ contoare virtuale vezi **[VIRTUAL-METER.ro.md](VIRTUAL-METER.ro.md)**.
 
 ```bash
 # 1) Get the code
-git clone https://github.com/sm26449/janitza-monitor.git
-cd janitza-monitor
+git clone https://github.com/sm26449/multi-bus-gateway.git
+cd multi-bus-gateway
 
 # 2) Create your environment file
 cp .env.example .env

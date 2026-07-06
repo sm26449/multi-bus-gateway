@@ -41,7 +41,7 @@ Every alert is the JSON object:
 
 ```json
 { "ts": 1751560000.0, "severity": "error", "source": "fronius-solar",
-  "message": "device down", "key": "dev:fronius-solar", "host": "janitza-monitor" }
+  "message": "device down", "key": "dev:fronius-solar", "host": "multi-bus-monitor" }
 ```
 
 - **Without `webhook_body`** that raw object is POSTed as-is.
