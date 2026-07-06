@@ -394,10 +394,16 @@ class InfluxDBPublisher:
 
     def _start_reconnect_thread(self):
         """Start background thread for reconnection and health monitoring."""
+        # Clear the stop flag FIRST. If a previous close()/reconnect set it and
+        # its thread is still alive (blocked in a slow ping/setup/drain past the
+        # 2 s join), clearing before the alive-check makes that thread RESUME
+        # duty when it unblocks instead of exiting — otherwise it would see the
+        # stale set flag and quit, leaving the monitor permanently dead (no
+        # health checks, no reconnection, no buffer drain).
+        self._stop_reconnect.clear()
         if self._reconnect_thread is not None and self._reconnect_thread.is_alive():
             return
 
-        self._stop_reconnect.clear()
         self._reconnect_thread = threading.Thread(
             target=self._reconnect_loop,
             name="InfluxDB-Reconnect",

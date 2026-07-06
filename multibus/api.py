@@ -939,6 +939,34 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     raise ValueError
             except (TypeError, ValueError):
                 errors.append("connection.port: must be 1..65535")
+        elif protocol == 'rtu':
+            sp = str(conn.get('serial_port', '')).strip()
+            if not sp:
+                errors.append("connection.serial_port: required for Modbus RTU")
+            else:
+                # One physical serial line cannot be driven by two independent
+                # masters (each ModbusClient owns its own lock) without bus
+                # collisions. Until a shared-bus arbiter lands (Tier 3), refuse a
+                # second RTU device on a serial port already in use.
+                for d in config.devices:
+                    if (getattr(d, 'id', None) != existing_id
+                            and getattr(d, 'protocol', '') == 'rtu'
+                            and str(getattr(d.connection, 'serial_port', '')).strip() == sp):
+                        errors.append(f"connection.serial_port: '{sp}' is already used by "
+                                      f"device '{d.id}' — one RTU master per serial line")
+                        break
+            for fld, lo, hi in (("baudrate", 300, 4_000_000), ("stopbits", 1, 2),
+                                ("bytesize", 5, 8), ("unit_id", 0, 255)):
+                if fld in conn or fld == "unit_id":
+                    try:
+                        v = int(conn.get(fld, {"stopbits": 1, "bytesize": 8, "unit_id": 1,
+                                               "baudrate": 9600}[fld]))
+                        if not (lo <= v <= hi):
+                            raise ValueError
+                    except (TypeError, ValueError):
+                        errors.append(f"connection.{fld}: must be {lo}..{hi}")
+            if str(conn.get('parity', 'N')).upper() not in ('N', 'E', 'O'):
+                errors.append("connection.parity: must be N, E or O")
         else:
             if protocol == 'tcp' and not str(conn.get('host', '')).strip():
                 errors.append("connection.host: required for Modbus TCP")

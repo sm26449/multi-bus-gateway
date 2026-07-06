@@ -210,10 +210,13 @@ class MQTTPublisher:
 
     def _start_reconnect_thread(self):
         """Start background reconnection thread."""
+        # Clear the stop flag before the alive-check: a previous thread still
+        # winding down (past the join timeout) must resume duty rather than see
+        # a stale set flag and exit, which would leave no retry running.
+        self._stop_reconnect.clear()
         if self._reconnect_thread is not None and self._reconnect_thread.is_alive():
             return
 
-        self._stop_reconnect.clear()
         self._reconnect_thread = threading.Thread(
             target=self._reconnect_loop,
             name="MQTT-Reconnect",

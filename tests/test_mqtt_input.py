@@ -119,3 +119,19 @@ def test_mqtt_rejects_modbus_template(tmp_path):
                     "template": "eastron_sdm120",
                     "connection": {"protocol": "mqtt", "broker": "b", "topic": "t"}})
     assert r.status_code == 422 and "template" in " ".join(r.json()["detail"]["errors"])
+
+
+# ── P1: mqtt-in connect uses async + validates CONNACK ───────────────────────
+
+def test_on_connect_rejects_nonzero_connack():
+    from types import SimpleNamespace
+    cli = mi.MqttInputClient({"topic": "x"}, [_reg(1, "a", "a", "x", "W")])
+    # a failure reason code must NOT mark the source connected
+    cli._on_connect(None, None, {}, SimpleNamespace(is_failure=True), None)
+    assert cli.connected is False
+    cli._on_connect(None, None, {}, 5, None)          # int nonzero CONNACK
+    assert cli.connected is False
+    # success (0 / non-failure) connects
+    cli._client = SimpleNamespace(subscribe=lambda t: None)
+    cli._on_connect(cli._client, None, {}, SimpleNamespace(is_failure=False), None)
+    assert cli.connected is True

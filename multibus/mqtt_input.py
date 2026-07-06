@@ -91,6 +91,15 @@ class MqttInputClient:
 
     # ── paho callbacks ────────────────────────────────────────────────────
     def _on_connect(self, client, userdata, flags, reason_code, properties=None):
+        # A non-zero CONNACK (bad auth, not authorized, server unavailable) is
+        # NOT a successful connection — treating it as one would mark the source
+        # live while it receives nothing. paho keeps retrying on the loop thread.
+        if getattr(reason_code, 'is_failure', False) or (
+                isinstance(reason_code, int) and reason_code != 0):
+            self.connected = False
+            logger.warning("MQTT-in connect refused by %s:%s — %s",
+                           self.broker, self.port, reason_code)
+            return
         self.connected = True
         for t in self._subscriptions():
             try:
@@ -151,11 +160,16 @@ class MqttInputClient:
         c.on_disconnect = self._on_disconnect
         self._client = c
         try:
-            c.connect(self.broker, self.port, keepalive=60)
+            # connect_async + loop_start: paho owns the initial connect AND all
+            # retries on its network thread, so a broker that is down at startup
+            # (gateway-before-broker in compose ordering) is retried with
+            # backoff instead of leaving the source permanently dead. Returns
+            # True = "wired up"; actual link state is reported by connected.
+            c.connect_async(self.broker, self.port, keepalive=60)
             c.loop_start()
             return True
-        except Exception as e:  # noqa: BLE001
-            logger.warning("MQTT-in connect failed (%s:%s): %s", self.broker, self.port, e)
+        except Exception as e:  # noqa: BLE001 — bad host/args only; unreachable is retried
+            logger.warning("MQTT-in setup failed (%s:%s): %s", self.broker, self.port, e)
             return False
 
     def start_polling(self):

@@ -324,3 +324,21 @@ def test_reconnect_starts_pollers_even_if_connect_fails(monkeypatch):
     ok = client.reconnect()
     assert ok is False                           # immediate connect failed…
     assert started["n"] == 1                      # …but pollers were started anyway
+
+
+# ── P1: reconnect-thread clears the stop flag before the alive-check ──────────
+
+def test_influx_reconnect_thread_clears_stop_before_alive_check():
+    """Regression: a still-alive monitor thread past the join timeout must
+    RESUME (stop flag cleared first), not see a stale set flag and die."""
+    from multibus.influxdb_publisher import InfluxDBPublisher
+    from multibus.config import InfluxDBConfig
+    pub = InfluxDBPublisher.__new__(InfluxDBPublisher)
+    import threading
+    pub._stop_reconnect = threading.Event()
+    pub._stop_reconnect.set()                          # simulate a prior close()
+    class _AliveThread:
+        def is_alive(self): return True
+    pub._reconnect_thread = _AliveThread()
+    pub._start_reconnect_thread()
+    assert not pub._stop_reconnect.is_set()            # cleared → alive thread resumes
