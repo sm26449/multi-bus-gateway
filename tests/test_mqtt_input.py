@@ -41,6 +41,31 @@ def test_on_message_json_extraction():
     assert cli.updates == 2 and cli.messages == 1
 
 
+def test_retained_dropped_by_default_and_accepted_on_opt_in():
+    """P0: a retained delivery must not be laundered as a fresh value (arrival
+    time) — dropped by default, processed only with accept_retained."""
+    regs = [_reg(1, "power", "power", "sensors/x", "W")]
+    msg = SimpleNamespace(topic="sensors/x", payload=b'{"power": 42.0}', retain=True)
+
+    cli = mi.MqttInputClient({"topic": "sensors/x"}, regs)
+    got = {}
+    cli.publish_callback = lambda pg, data: got.update(data)
+    cli._on_message(None, None, msg)
+    assert got == {} and cli.retained_dropped == 1 and cli.messages == 0   # dropped
+
+    cli2 = mi.MqttInputClient({"topic": "sensors/x", "accept_retained": True}, regs)
+    got2 = {}
+    cli2.publish_callback = lambda pg, data: got2.update(data)
+    cli2._on_message(None, None, msg)
+    assert got2[1]["value"] == 42.0 and cli2.messages == 1                  # accepted
+
+    # a LIVE (non-retained) message is always processed
+    cli.retained_dropped = 0
+    cli._on_message(None, None, SimpleNamespace(topic="sensors/x",
+                                                payload=b'{"power": 43.0}', retain=False))
+    assert got[1]["value"] == 43.0 and cli.retained_dropped == 0
+
+
 def test_on_message_bare_number_and_per_register_topic():
     # register with its own topic and NO json_path → whole payload is the number
     regs = [_reg(1, "temp", "", "home/temp", "°C")]

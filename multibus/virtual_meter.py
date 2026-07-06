@@ -35,6 +35,35 @@ logger = logging.getLogger(__name__)
 # value_provider(source_name) -> (engineering_value, unix_ts) or None if unknown
 ValueProvider = Callable[[str], Optional[tuple]]
 
+# Write function codes (single/multiple coil+register, mask, read/write).
+_WRITE_FCS = (5, 6, 15, 16, 22, 23)
+
+
+def _read_only_slave_context():
+    """Return a ModbusSlaveContext subclass that refuses writes. Built lazily so
+    pymodbus is imported only when a meter actually starts (keeps import light
+    and testable)."""
+    from pymodbus.datastore import ModbusSlaveContext
+
+    class ReadOnlySlaveContext(ModbusSlaveContext):
+        """A meter has no writable data registers. pymodbus calls
+        ``context.validate(fc, addr, count)`` before every write, so returning
+        False for a write function code yields an ILLEGAL DATA ADDRESS exception
+        — the refusal a real meter gives — without ever mutating the block."""
+
+        def __init__(self, *a, on_write_refused=None, **kw):
+            super().__init__(*a, **kw)
+            self._on_write_refused = on_write_refused
+
+        def validate(self, fc_as_hex, address, count=1):
+            if fc_as_hex in _WRITE_FCS:
+                if self._on_write_refused:
+                    self._on_write_refused(fc_as_hex, address, count)
+                return False
+            return super().validate(fc_as_hex, address, count)
+
+    return ReadOnlySlaveContext
+
 
 @dataclass
 class RegisterDef:
@@ -454,6 +483,16 @@ class VirtualMeter:
         #    This is the data that let us reverse-engineer consumers — now a
         #    first-class observability feature. Cost: one in-RAM append per read.
         _stats, _dbg, _tid = self.stats, self.debug_reads, self.t.id
+
+        def _note_refused_write(fc, address, count):
+            try:
+                _stats.record(int(fc), int(address), int(count), None, 0.0,
+                              time.time(), err=True)
+                logger.warning("vmeter[%s] REFUSED write fc=%s addr=%s count=%s",
+                               _tid, fc, address, count)
+            except Exception:  # noqa: BLE001
+                pass
+
         _orig_get, _orig_val = block.getValues, block.validate
 
         def _instrumented_validate(address, count=1, _o=_orig_val):
@@ -491,8 +530,14 @@ class VirtualMeter:
             return vals
         block.validate = _instrumented_validate
         block.getValues = _instrumented_get
-        # serve the same data on holding + input registers (consumers vary by FC)
-        slave = ModbusSlaveContext(hr=block, ir=block, zero_mode=True)
+        # serve the same data on holding + input registers (consumers vary by FC).
+        # READ-ONLY: writes are refused (a real meter has no writable data
+        # registers) so a consumer cannot inject values into the block — pushed
+        # registers would be overwritten within update_interval_s, but pads/gaps
+        # would keep an injected value forever (a poisoned grid reading straight
+        # into the ESS loop).
+        slave = _read_only_slave_context()(hr=block, ir=block, zero_mode=True,
+                                           on_write_refused=_note_refused_write)
         # single=True → respond on ANY unit id (a client may poll unit 240 etc.).
         # With single=True pymodbus wants ONE slave context, not a dict.
         ctx = ModbusServerContext(slaves=slave, single=True)

@@ -72,20 +72,40 @@ class CalcEngine:
 
     def resolver(self, this_store: Dict[int, Dict]):
         """Resolve a reference to a live value: bare name -> this device;
-        ``dev.reg`` -> another device. Builds name->value maps lazily per store."""
+        ``dev.reg`` -> another device. Builds name->(value, ts) maps lazily.
+
+        The returned callable also records, in ``resolve.touched_ts``, the
+        measurement timestamp of every input it resolves, so a calc result can
+        inherit the OLDEST contributing input's freshness (a formula must not
+        launder a dead device's frozen value as fresh). Clear the list before
+        each evaluation."""
         def _index(store):
             # snapshot before iterating: a poller thread may insert a new address
             # concurrently (dict changed size during iteration otherwise)
-            return {it['name']: it.get('value') for it in list(store.values()) if it.get('name')}
+            out = {}
+            for it in list(store.values()):
+                nm = it.get('name')
+                if nm:
+                    out[nm] = (it.get('value'), it.get('timestamp'))
+            return out
         this_map = _index(this_store)
         others: Dict[str, Dict] = {}
+
         def resolve(name):
             if '.' in name:
                 dev, reg = name.split('.', 1)
                 if dev not in others:
                     others[dev] = _index(self._store_for(dev) or {})
-                return others[dev].get(reg)
-            return this_map.get(name)
+                pair = others[dev].get(reg)
+            else:
+                pair = this_map.get(name)
+            if pair is None:
+                return None
+            value, ts = pair
+            if ts is not None:
+                resolve.touched_ts.append(ts)
+            return value
+        resolve.touched_ts = []
         return resolve
 
     def run(self, calc_key, poll_group, values_store, *, topic_prefix,
@@ -104,6 +124,7 @@ class CalcEngine:
             now = time.time()
             dt = (now - st['ts']) if st['ts'] is not None else 0.0
             prevmap = st['prev']
+            resolve.touched_ts = []                # collect input freshness this run
             try:
                 val = expressions.evaluate(e['expr'], resolve,
                                            prev_resolve=prevmap.get, dt=dt)
@@ -127,10 +148,16 @@ class CalcEngine:
                 except (TypeError, ValueError):
                     pass
             reg = e['_reg']
+            # The result is only as fresh as its OLDEST input (vmeter 'sum'
+            # rule) — a calc referencing a dead device must not be re-stamped
+            # now() every cycle and read as good forever. ISO timestamps sort
+            # lexicographically in the same order as time, so min() is correct.
+            _in_ts = [t for t in resolve.touched_ts if t]
+            _result_ts = min(_in_ts) if _in_ts else datetime.now().isoformat()
             values_store[reg.address] = {
                 'value': val, 'name': reg.name, 'label': reg.label,
                 'unit': reg.unit, 'poll_group': reg.poll_group,
-                'timestamp': datetime.now().isoformat(), 'calculated': True,
+                'timestamp': _result_ts, 'calculated': True,
             }
             batch[reg.address] = {'value': val, 'register': reg}
         if not batch:

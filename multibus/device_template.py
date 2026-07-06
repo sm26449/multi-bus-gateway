@@ -336,6 +336,14 @@ class TemplateRegistry:
     def get(self, template_id: str) -> Optional[DeviceTemplate]:
         return self._templates.get(template_id)
 
+    def byte_order_for(self, template_id: Optional[str]) -> str:
+        """The word/byte decode order a device's template declares (default
+        'big'). The SINGLE source of truth for both the boot path (main.py) and
+        the runtime create/apply path (api.py) — they must agree, or a non-big
+        device decodes garbage and encodes wrong-order writes after a restart."""
+        tpl = self.get(template_id) if template_id else None
+        return (tpl.protocol.get('byte_order', 'big') if tpl else 'big')
+
     def list(self) -> List[DeviceTemplate]:
         return sorted(self._templates.values(),
                       key=lambda t: (not t.builtin, t.vendor.lower(), t.name.lower()))

@@ -205,3 +205,43 @@ def test_test_endpoint_live_preview(tmp_path):
     r2 = client.post("/api/devices/umg512/calculated/test",
                      json={"expr": "_P_SUM3 / _NOPE"}).json()
     assert r2["ok"] is False and "_NOPE" in r2["missing"]
+
+
+# ── P0: calc results inherit the oldest input timestamp (no staleness laundering) ──
+
+def test_calc_result_inherits_oldest_input_timestamp():
+    from types import SimpleNamespace
+    from multibus.calc_engine import CalcEngine, CALC_ADDR_BASE
+    # one store with two inputs of different age; the calc P = A + B must be
+    # stamped with the OLDER of the two, not now()
+    old_ts = "2020-01-01T00:00:00"
+    new_ts = "2020-01-01T00:00:30"
+    store = {
+        1: {"name": "_A", "value": 10.0, "timestamp": new_ts},
+        2: {"name": "_B", "value": 20.0, "timestamp": old_ts},   # the stale input
+    }
+    cfg = SimpleNamespace(load_calculated=lambda d: [{"name": "_P", "expr": "_A + _B"}])
+    eng = CalcEngine(cfg, store_for=lambda d: store,
+                     publishers=lambda: (None, None))
+    eng.load("dev")
+    eng.run("dev", "normal", store, topic_prefix="", bucket=None, device_tag=None,
+            device_id="dev", mqtt_on=False, influx_on=False)
+    calc = store[CALC_ADDR_BASE]
+    assert calc["value"] == 30.0 and calc["calculated"] is True
+    assert calc["timestamp"] == old_ts          # oldest input, NOT now()
+
+
+def test_calc_with_no_timestamped_inputs_falls_back_to_now():
+    from types import SimpleNamespace
+    from datetime import datetime
+    from multibus.calc_engine import CalcEngine, CALC_ADDR_BASE
+    store = {1: {"name": "_A", "value": 5.0}}   # no timestamp
+    cfg = SimpleNamespace(load_calculated=lambda d: [{"name": "_P", "expr": "_A * 2"}])
+    eng = CalcEngine(cfg, store_for=lambda d: store, publishers=lambda: (None, None))
+    eng.load("dev")
+    eng.run("dev", "normal", store, topic_prefix="", bucket=None, device_tag=None,
+            device_id="dev", mqtt_on=False, influx_on=False)
+    calc = store[CALC_ADDR_BASE]
+    assert calc["value"] == 10.0
+    # a parseable recent ISO timestamp (fell back to now)
+    assert datetime.fromisoformat(calc["timestamp"]).year >= 2020

@@ -362,3 +362,27 @@ def test_quality_block_default_off_and_overlap_guard():
     vm2 = VirtualMeter(T([live(QUALITY_BASE + 2, "a")]), _provider({}),
                        quality_block=True)
     assert vm2.quality_block is False
+
+
+# ── P0: virtual meter is read-only (rejects consumer writes) ─────────────────
+
+def test_readonly_slave_context_refuses_writes():
+    """The real ReadOnlySlaveContext used by every vmeter must refuse write FCs
+    (validate → False → ILLEGAL ADDRESS) and invoke the refusal callback, while
+    reads pass through."""
+    from pymodbus.datastore import ModbusSequentialDataBlock
+    from multibus.virtual_meter import _read_only_slave_context, _WRITE_FCS
+
+    refused = []
+    RO = _read_only_slave_context()
+    block = ModbusSequentialDataBlock(0, [7] * 8)
+    ctx = RO(hr=block, ir=block, zero_mode=True,
+             on_write_refused=lambda fc, a, c: refused.append((fc, a, c)))
+
+    assert ctx.validate(3, 0, 2) is True            # FC3 read allowed
+    assert ctx.validate(4, 0, 2) is True            # FC4 read allowed
+    for fc in _WRITE_FCS:                            # 5,6,15,16,22,23 refused
+        assert ctx.validate(fc, 0, 2) is False
+    assert [r[0] for r in refused] == list(_WRITE_FCS)
+    # a refused write never mutates the block
+    assert block.getValues(0, 2) == [7, 7]

@@ -160,7 +160,8 @@ def test_api_snapshot_restore_roundtrip(api):
     assert any(e["trigger"] == "pre-restore" for e in lst)
 
     # download + delete + guard-uri
-    assert client.get(f"/api/config/snapshots/{snap['id']}/download").status_code == 200
+    # download is credential-gated even auth-off (full-fidelity secrets) → 403
+    assert client.get(f"/api/config/snapshots/{snap['id']}/download").status_code == 403
     assert client.delete(f"/api/config/snapshots/{snap['id']}").status_code == 200
     assert client.post("/api/config/snapshots/nope/restore").status_code == 404
     assert client.delete("/api/config/snapshots/lkg").status_code == 400
@@ -228,3 +229,34 @@ def test_diff_api(api):
                for c in cfgch["changes"])
     assert client.get("/api/config/snapshots/nope/diff").status_code == 404
     assert client.get(f"/api/config/snapshots/{snap['id']}/diff?against=nope").status_code == 404
+
+
+# ── P0: snapshot download gates unconditionally (auth-off must not leak secrets) ──
+
+@needs_tc
+def test_snapshot_download_refused_on_open_box(api):
+    """On an auth-off box with no API key, a full-fidelity snapshot download
+    (contains secrets) must be REFUSED — the old guard vanished when auth was
+    off, leaking MQTT/Influx creds to any LAN peer."""
+    client, _cfg = api
+    snap = client.post("/api/config/snapshots", json={}).json()["snapshot"]
+    r = client.get(f"/api/config/snapshots/{snap['id']}/download")
+    assert r.status_code == 403                      # no admin, no key → refused
+
+
+@needs_tc
+def test_snapshot_download_allowed_with_api_key(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from fastapi.testclient import TestClient
+    from multibus.api import create_api
+    from tests.test_devices import write_config
+    monkeypatch.setenv("API_KEY", "k")
+    cfg = write_config(tmp_path)
+    fake = SimpleNamespace(publish_callback=None)
+    app, _ = create_api(cfg, fake, None, None, devices=[(d, fake) for d in cfg.devices])
+    client = TestClient(app, raise_server_exceptions=False)
+    snap = client.post("/api/config/snapshots", json={},
+                       headers={"X-API-Key": "k"}).json()["snapshot"]
+    assert client.get(f"/api/config/snapshots/{snap['id']}/download").status_code == 403
+    assert client.get(f"/api/config/snapshots/{snap['id']}/download",
+                      headers={"X-API-Key": "k"}).status_code == 200

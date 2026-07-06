@@ -495,15 +495,23 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
         def data_callback(poll_group: str, data: Dict[int, Dict]):
             """Callback from a Modbus poller to update values and publish."""
-            # Update current values
+            # Update current values. The timestamp is the MEASUREMENT time
+            # (item['ts'], set by the driver when the value was actually read),
+            # NOT callback time — the virtual-meter freshness watchdog reads
+            # this to decide stale-vs-fresh, so under slow/retried reads callback
+            # time would make stale data look newer than it is and defeat the
+            # fail-safe. InfluxDB already records item['ts']; this keeps every
+            # sink on the same clock.
             for address, item in data.items():
+                _ts = item.get('ts')
                 values_store[address] = {
                     'value': item.get('value'),
                     'name': item.get('register').name if item.get('register') else '',
                     'label': item.get('register').label if item.get('register') else '',
                     'unit': item.get('register').unit if item.get('register') else '',
                     'poll_group': poll_group,
-                    'timestamp': datetime.now().isoformat(),
+                    'timestamp': (datetime.fromtimestamp(_ts).isoformat()
+                                  if _ts else datetime.now().isoformat()),
                 }
 
             last_update['timestamp'] = datetime.now().isoformat()
@@ -762,12 +770,21 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                      and not any(p.startswith(x) or x in p for x in _AUDIT_SKIP)
                      and "/test" not in p and "/payload-sample" not in p)
         if auditable:
-            try:
-                raw = await request.body()      # cached by Starlette; handlers reread freely
-                if raw and len(raw) <= 65536 and raw.lstrip()[:1] in (b"{", b"["):
-                    body_summary = json.loads(raw)
-            except Exception:  # noqa: BLE001
-                body_summary = None
+            # Content-Length gate BEFORE reading: this middleware is outermost
+            # (runs before the IP-allowlist/auth guards), so buffering the body
+            # unconditionally would let an unauthenticated, non-allowlisted peer
+            # OOM the process with a multi-GB chunked/oversized POST. Only small,
+            # length-declared bodies are captured for the audit payload preview;
+            # everything else is audited without the body (handlers that need it
+            # read it themselves, with their own caps).
+            _cl = request.headers.get("content-length", "")
+            if _cl.isdigit() and int(_cl) <= 65536:
+                try:
+                    raw = await request.body()  # cached by Starlette; handlers reread freely
+                    if raw and raw.lstrip()[:1] in (b"{", b"["):
+                        body_summary = json.loads(raw)
+                except Exception:  # noqa: BLE001
+                    body_summary = None
         response = await call_next(request)
         if auditable:
             audit_log.append(
@@ -851,9 +868,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             client = MqttInputClient(mqtt_cfg=dev_cfg.mqtt_in, registers=regs, poll_groups=groups)
         else:
             from .modbus_client import ModbusClient
-            # decode order from the device template (default big = Janitza)
-            _tpl = template_registry.get(dev_cfg.template) if dev_cfg.template else None
-            _bo = (_tpl.protocol.get('byte_order', 'big') if _tpl else 'big')
+            # decode order from the device template (default big) — same
+            # resolver the boot path uses, so a restart is byte-identical
+            _bo = template_registry.byte_order_for(dev_cfg.template)
             client = ModbusClient(config=dev_cfg.connection,
                                   registers=regs, poll_groups=groups, byte_order=_bo,
                                   device_id=dev_cfg.id)
@@ -2321,10 +2338,15 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         """Download a snapshot ZIP. Snapshots are FULL-FIDELITY (secrets and
         identity included — they are local restore points), so downloading one
         is gated exactly like a with-secrets export."""
+        # UNCONDITIONAL gate, exactly like the with-secrets export: a snapshot
+        # is full-fidelity (MQTT password, InfluxDB token, password hashes), so
+        # proving admin (or a valid API key) is required REGARDLESS of whether
+        # login is enabled. The old `auth_state.enabled and …` made the whole
+        # check vanish on an auth-off box — any LAN peer could GET the secrets.
         _is_admin = auth_state.enabled and getattr(request.state, "role", None) == "admin"
         _key_ok = bool(_api_key) and hmac.compare_digest(
             request.headers.get("X-API-Key", ""), _api_key)
-        if auth_state.enabled and not (_is_admin or _key_ok):
+        if not (_is_admin or _key_ok):
             raise HTTPException(status_code=403, detail={"errors": [
                 "downloading a snapshot requires the admin role or a valid API key"]})
         p = snapshot_store.get_path(sid)

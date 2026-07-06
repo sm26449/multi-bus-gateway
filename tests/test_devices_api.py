@@ -494,6 +494,32 @@ devices:
 
 
 @needs_tc
+def test_store_stamps_measurement_time_not_callback_time(tmp_path):
+    """P0: the value store must carry the driver's measurement time (item['ts']),
+    not callback time — the vmeter freshness watchdog reads it, so a slow/retried
+    read must not look fresher than it is."""
+    from datetime import datetime
+    from types import SimpleNamespace
+    from multibus.api import create_api
+    from tests.test_devices import write_config
+    cfg = write_config(tmp_path)
+    clients = {d.id: SimpleNamespace(publish_callback=None) for d in cfg.devices}
+    app, _ = create_api(cfg, None, None, None,
+                        devices=[(d, clients[d.id]) for d in cfg.devices])
+    store = app.state.current_values      # primary device's store (the alias)
+    reg = SimpleNamespace(name="_V1", label="L1", unit="V",
+                          mqtt_enabled=False, influxdb_enabled=False)
+    measured = datetime(2020, 1, 2, 3, 4, 5).timestamp()      # a clearly-old read
+    clients["umg512"].publish_callback("realtime",
+                                       {19000: {"value": 230.0, "register": reg, "ts": measured}})
+    stored = store[19000]["timestamp"]
+    assert datetime.fromisoformat(stored).timestamp() == measured   # NOT now()
+    # missing ts → falls back to now() (never crashes)
+    clients["umg512"].publish_callback("realtime", {19002: {"value": 1.0, "register": reg}})
+    assert store[19002]["timestamp"]                                  # present, some ISO
+
+
+@needs_tc
 def test_device_rejects_template_protocol_mismatch(tmp_path):
     # A template's map is transport-specific: a Modbus map on an HTTP device (or
     # vice versa) must be refused, else every read silently resolves to nothing.

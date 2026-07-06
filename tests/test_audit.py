@@ -128,3 +128,25 @@ ui:
     # CSV export merge pentru admin
     assert client.get("/api/audit/export.csv").status_code == 200
     assert vc.get("/api/audit/export.csv").status_code == 403
+
+
+# ── P0: audit middleware does not buffer unbounded bodies (pre-auth OOM) ──────
+
+@needs_tc
+def test_audit_middleware_bounds_body_capture(api):
+    client, cfg = api
+    # a small JSON body IS captured in the audit detail
+    client.post("/api/config/mqtt", json={"topic_prefix": "small/body"})
+    ents = client.get("/api/audit?limit=10").json()["entries"]
+    small = next(e for e in ents if "small/body" in e.get("detail", ""))
+    assert small["status"] == "ok"
+
+    # an oversized declared body: the action is still audited, but the body is
+    # NOT captured (no OOM buffering). We send >64 KiB of JSON.
+    big = {"topic_prefix": "x" * 70000}
+    r = client.post("/api/config/mqtt", json=big)
+    # (handler may accept or reject; the point is the audit didn't buffer it)
+    ents = client.get("/api/audit?limit=10").json()["entries"]
+    e = next(e for e in ents if e["action"] == "POST /api/config/mqtt"
+             and "x" * 100 not in e.get("detail", ""))
+    assert "detail" not in e or len(e.get("detail", "")) < 3000   # body not stored

@@ -299,3 +299,28 @@ def test_buffer_persist_honors_age_bound_on_load(tmp_path):
         assert lines == ["fresh 1"]        # stale entry dropped on load
     finally:
         os.environ.pop("INFLUX_BUFFER_PATH", None)
+
+
+# ── P0: reconnect() starts pollers even when the immediate connect fails ──────
+
+def test_reconnect_starts_pollers_even_if_connect_fails(monkeypatch):
+    """A device unreachable at save/apply time must NOT be left permanently
+    unpolled: reconnect() calls start_polling() unconditionally (pollers
+    reconnect on demand), returning the immediate-connect result."""
+    import multibus.modbus_client as mc
+    from multibus.config import ModbusConfig, PollGroup
+
+    class DeadConn:
+        def __init__(self, *a, **k): pass
+        def connect(self): return False          # device unreachable
+        def disconnect(self): pass
+
+    monkeypatch.setattr(mc, "ModbusConnection", DeadConn)
+    client = mc.ModbusClient(config=ModbusConfig(host="192.0.2.1"),
+                             registers=[], poll_groups={"normal": PollGroup(interval=5)},
+                             device_id="d1")
+    started = {"n": 0}
+    monkeypatch.setattr(client, "start_polling", lambda: started.__setitem__("n", started["n"] + 1))
+    ok = client.reconnect()
+    assert ok is False                           # immediate connect failed…
+    assert started["n"] == 1                      # …but pollers were started anyway

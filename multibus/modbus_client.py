@@ -747,13 +747,17 @@ class ModbusClient:
         # Create new connection with current config
         self.connection = ModbusConnection(self.config, trace_label=self.device_id)
 
-        # Reconnect
+        # Reconnect. Start pollers UNCONDITIONALLY: they reconnect on demand
+        # inside read_registers, so gating start_polling on the immediate
+        # connect would leave the device permanently unpolled after a momentary
+        # blip at save/apply/restore time (the boot path self-heals the same
+        # way). The return value is only the immediate-connect report.
         self.connected = self.connection.connect()
+        self.start_polling()
         if self.connected:
-            self.start_polling()
             logger.info("Modbus reconnected successfully")
         else:
-            logger.warning("Modbus reconnection failed")
+            logger.warning("Modbus immediate reconnect failed — pollers will retry")
 
         return self.connected
 
@@ -768,10 +772,10 @@ class ModbusClient:
             poller.join(timeout=5)
         self.pollers.clear()
 
-        # Restart pollers with updated registers
-        if self.connected:
-            self.start_polling()
-            logger.info("Modbus registers reloaded")
+        # Restart pollers unconditionally (they reconnect on demand) — a device
+        # briefly unreachable at reload time must not be left unpolled forever.
+        self.start_polling()
+        logger.info("Modbus registers reloaded")
 
     def get_stats(self) -> Dict:
         """Return client statistics."""

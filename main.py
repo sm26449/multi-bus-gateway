@@ -75,6 +75,13 @@ class GatewayApp:
         # same registers file, same routing — behavior identical to before.
         self.devices = []                      # list of (DeviceConfig, ModbusClient|None)
         self.modbus_client = None              # primary client (back-compat)
+        # Template registry so the boot path resolves each device's byte_order
+        # EXACTLY like the runtime create/apply path (device_template.byte_order_for)
+        # — a non-big device (EM24, Fronius TS) must not decode word-swapped
+        # garbage after a restart. create_api builds its own from the same files.
+        from multibus.device_template import TemplateRegistry
+        self.template_registry = TemplateRegistry()
+
         for device in self.config.devices:
             if device.primary:
                 client = ModbusClient(
@@ -106,10 +113,12 @@ class GatewayApp:
                 client = None
             else:
                 regs, groups = self.config.load_device_registers(device)
+                _bo = self.template_registry.byte_order_for(device.template)
                 client = ModbusClient(config=device.connection,
-                                      registers=regs, poll_groups=groups, device_id=device.id)
+                                      registers=regs, poll_groups=groups,
+                                      byte_order=_bo, device_id=device.id)
                 logger.info(f"Device '{device.id}': {len(regs)} registers, "
-                            f"{device.connection.host}:{device.connection.port}")
+                            f"{device.connection.host}:{device.connection.port} ({_bo})")
             self.devices.append((device, client))
 
         # Create API

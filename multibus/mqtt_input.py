@@ -50,6 +50,13 @@ class MqttInputClient:
         self.password = str(mqtt_cfg.get('password', '') or '')
         self.tls = bool(mqtt_cfg.get('tls', False))
         self.base_topic = str(mqtt_cfg.get('topic', '') or '').strip()
+        # Retained messages are the broker's LAST value, redelivered on every
+        # (re)subscribe — stamping them with arrival time would launder an
+        # hours-old value as fresh into a composite vmeter, defeating the
+        # fail/sentinel/hold convention. Dropped by default; opt in only when
+        # the source truly publishes current state as retained.
+        self.accept_retained = bool(mqtt_cfg.get('accept_retained', False))
+        self.retained_dropped = 0
         self.registers = registers
         self.publish_callback = None
         self.connected = False
@@ -97,6 +104,12 @@ class MqttInputClient:
         self.connected = False
 
     def _on_message(self, client, userdata, msg):
+        # A retained delivery carries no trustworthy measurement time; treat it
+        # as absence (the staleness policy then does the right thing) unless the
+        # operator explicitly opts in for this source.
+        if getattr(msg, 'retain', False) and not self.accept_retained:
+            self.retained_dropped += 1
+            return
         self.messages += 1
         self.last_msg_ts = time.time()
         raw = msg.payload.decode('utf-8', 'replace') if msg.payload else ''

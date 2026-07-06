@@ -131,3 +131,32 @@ def test_sensor_templates_zigbee_and_ble_validate():
         names = {r.name for r in t.registers}
         assert fields <= names, f"{tid}: missing {fields - names}"
         assert all(r.json_path for r in t.registers), f"{tid}: every row needs json_path"
+
+
+# ── P0: byte_order resolves identically at boot and runtime ──────────────────
+
+def test_byte_order_for_matches_template():
+    from multibus.device_template import TemplateRegistry
+    reg = TemplateRegistry()
+    # EM24 is word-swapped (little/cdab) — the boot path MUST resolve this,
+    # else a restart decodes word-swapped garbage
+    assert reg.byte_order_for("carlo_gavazzi_em24") in ("little", "cdab")
+    assert reg.byte_order_for("carlo_gavazzi_em24") != "big"
+    # SDM630 is big
+    assert reg.byte_order_for("eastron_sdm630") == "big"
+    # unknown / none → safe default big (never crashes)
+    assert reg.byte_order_for("does_not_exist") == "big"
+    assert reg.byte_order_for(None) == "big"
+
+
+def test_boot_and_runtime_use_the_same_resolver():
+    """Regression for the restart-asymmetry defect: both main.py (boot) and
+    api.py (runtime) must go through TemplateRegistry.byte_order_for, so a
+    device's decode order survives a restart byte-identically."""
+    import inspect
+    import main as _main
+    import multibus.api as _api
+    boot_src = inspect.getsource(_main.GatewayApp.setup)
+    assert "byte_order_for(device.template)" in boot_src
+    api_src = inspect.getsource(_api.create_api)
+    assert "byte_order_for(dev_cfg.template)" in api_src
