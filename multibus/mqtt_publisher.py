@@ -247,7 +247,16 @@ class MQTTPublisher:
             self._reconnect_thread.join(timeout=2)
 
         if self.client:
-            self.publish_status("offline")
+            # Flush the retained "offline" status with qos=1 and WAIT for it to
+            # leave before stopping the loop — otherwise loop_stop() can kill the
+            # network thread before the message is sent, leaving a stale retained
+            # "online" ghost that consumers (HA, alertd) never see clear.
+            try:
+                info = self.client.publish(f"{self.config.topic_prefix}/status",
+                                           "offline", qos=1, retain=True)
+                info.wait_for_publish(timeout=2)
+            except Exception:  # noqa: BLE001
+                pass
             self.client.loop_stop()
             self.client.disconnect()
         self.connected = False

@@ -1484,8 +1484,7 @@ Object.assign(JanitzaMonitor.prototype, {
             const val = JSON.stringify(l.value);
             const numeric = typeof l.value === 'number' || typeof l.value === 'boolean';
             return `<div class="mqtt-browse-row" role="option" tabindex="0"
-                 onclick="app._pickJsonPathLeaf('${this._esc(l.path).replace(/'/g, '&#39;')}')"
-                 onkeydown="if(event.key==='Enter')this.click()">
+                 ${this._act('_pickJsonPathLeaf', [l.path])} data-key-enter>
                 <span class="mqtt-browse-topic">${this._esc(l.path)}</span>
                 <span class="mqtt-browse-payload" style="${numeric ? '' : 'opacity:.55;'}">${this._esc(String(val).slice(0, 60))}</span>
             </div>`;

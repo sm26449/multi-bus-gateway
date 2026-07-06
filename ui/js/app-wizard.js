@@ -262,8 +262,7 @@ Object.assign(JanitzaMonitor.prototype, {
         }
         list.innerHTML = rows.slice(0, 400).map(t => `
             <div class="mqtt-browse-row" role="option" tabindex="0"
-                 onclick="app._devWizBrowsePick('${this._esc(t.topic).replace(/'/g, '&#39;')}')"
-                 onkeydown="if(event.key==='Enter')this.click()">
+                 ${this._act('_devWizBrowsePick', [t.topic])} data-key-enter>
                 <span class="mqtt-browse-topic">${this._esc(t.topic)}</span>
                 ${t.retained ? '<span class="badge badge-secondary">retained</span>' : ''}
                 ${t.count > 1 ? `<span class="mqtt-browse-count">×${t.count}</span>` : ''}

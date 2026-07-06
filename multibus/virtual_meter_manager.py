@@ -790,6 +790,13 @@ class VirtualMeterManager:
             vm.stop()
             with self._meters_lock:
                 self.meters.remove(vm)
+            # clear the retained state so consumers don't see a ghost health for
+            # a meter that is no longer serving
+            if self.mqtt_publisher:
+                try:
+                    self.mqtt_publisher.publish_state(f"vmeter/{template_id}/state", "")
+                except Exception:  # noqa: BLE001
+                    pass
         return {"template": template_id, "enabled": bool(on)}
 
     def update_instance(self, template_id: str, port=None, unit_id=None,

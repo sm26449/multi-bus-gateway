@@ -310,8 +310,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 !this.histSearch || `${it.name} ${it.label || ''} ${it.unit || ''}`.toLowerCase().includes(this.histSearch));
             if (!items.length) continue;
             const disp = catName.charAt(0).toUpperCase() + catName.slice(1);
-            html += `<div class="monitor-category expanded" data-category="${catName}">
-                <div class="monitor-category-header"><span class="arrow">&#9654;</span><span>${disp}</span><span style="margin-left:auto;color:var(--text-tertiary);">(${items.length})</span></div>
+            html += `<div class="monitor-category expanded" data-category="${this._esc(catName)}">
+                <div class="monitor-category-header"><span class="arrow">&#9654;</span><span>${this._esc(disp)}</span><span style="margin-left:auto;color:var(--text-tertiary);">(${items.length})</span></div>
                 <div class="monitor-category-items">
                 ${items.map(it => {
                     const on = sel.has(it.name);
