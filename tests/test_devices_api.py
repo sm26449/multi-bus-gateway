@@ -254,10 +254,10 @@ def test_non_primary_ha_discovery_namespaced(tmp_path, monkeypatch):
     import json as _j
     cfg = _j.loads(payload)
     # namespaced so it never collides with device #1
-    assert "janitza_dev_em24" in topic
-    assert cfg["unique_id"] == "janitza_dev_em24_100__v1"
+    assert "mbg_dev_em24" in topic
+    assert cfg["unique_id"] == "mbg_dev_em24_100__v1"
     assert cfg["state_topic"] == "meters/em24/_v1"
-    assert cfg["device"]["identifiers"] == ["janitza_dev_em24"]
+    assert cfg["device"]["identifiers"] == ["mbg_dev_em24"]
     assert cfg["device"]["via_device"] == "janitza_umg512"
     assert cfg["availability_topic"] == "janitza/umg512/status"
 

@@ -226,7 +226,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     app = FastAPI(
         title="Multi-Bus Gateway",
-        description="Monitor and query Janitza power quality analyzer",
+        description="Multi-protocol acquisition gateway (Modbus/HTTP/MQTT in — MQTT/InfluxDB/virtual meters out)",
         version="3.0.0-dev",
         lifespan=lifespan
     )
@@ -1609,7 +1609,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                         continue
                     sn = r.name.lower().replace('[', '_').replace(']', '').replace('_g_', '')
                     mqtt_publisher._publish(
-                        f"{pref}/sensor/janitza_dev_{device_id}/{r.address}_{sn}/config",
+                        f"{pref}/sensor/mbg_dev_{device_id}/{r.address}_{sn}/config",
                         "", retain=True)          # empty retained payload = delete
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"clearing discovery for {device_id} failed: {e}")

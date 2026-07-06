@@ -7,7 +7,7 @@ Object.assign(JanitzaMonitor.prototype, {
         // the server is open. Robust to Headers/Request inputs; never mutates
         // the caller's options object.
         const orig = window.fetch.bind(window);
-        const KEY = 'janitza-api-key';
+        const KEY = 'mbg-api-key';
         window.fetch = (input, opts = {}) => {
             const method = ((opts && opts.method) || (input && input.method) || 'GET').toUpperCase();
             const writing = method !== 'GET' && method !== 'HEAD';

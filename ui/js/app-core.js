@@ -70,13 +70,13 @@ class JanitzaMonitor {
         this._debouncedRenderMonitorCategories = debounce(() => this.renderMonitorCategories(), 150);
 
         // Theme state
-        this.theme = localStorage.getItem('janitza-theme') || 'auto';
+        this.theme = localStorage.getItem('mbg-theme') || 'auto';
         this.wasDisconnected = false;
 
         // Dashboard view state (cards or table)
-        this.dashboardView = localStorage.getItem('janitza-dashboard-view') || 'cards';
+        this.dashboardView = localStorage.getItem('mbg-dashboard-view') || 'cards';
         // Dashboard device (Phase B): null = primary; persisted per browser
-        this.dashDevice = localStorage.getItem('janitza-dash-device') || null;
+        this.dashDevice = localStorage.getItem('mbg-dash-device') || null;
         this.dashValues = {};
         this.dashRegisters = [];
 
@@ -151,7 +151,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
     applyTheme(theme) {
         this.theme = theme;
-        localStorage.setItem('janitza-theme', theme);
+        localStorage.setItem('mbg-theme', theme);
 
         let effectiveTheme = theme;
         if (theme === 'auto') {
@@ -341,7 +341,7 @@ Object.assign(JanitzaMonitor.prototype, {
             this._defaultLang = d.default || 'en';
         } catch (e) { /* no languages dir → UI stays English (hardcoded) */ }
         this._tEn = await this._fetchLang('en');
-        const saved = localStorage.getItem('janitza-lang') || this._defaultLang;
+        const saved = localStorage.getItem('mbg-lang') || this._defaultLang;
         await this.setLanguage(saved, false);
         this._renderLangSelector();
     },
@@ -359,7 +359,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const sel = (code && code !== 'en') ? await this._fetchLang(code) : this._tEn;
         this._t = { ...this._tEn, ...sel };          // selected overrides the English base
         this._lang = code;
-        if (persist) localStorage.setItem('janitza-lang', code);
+        if (persist) localStorage.setItem('mbg-lang', code);
         document.documentElement.lang = code;
         this.applyTranslations();
         this._renderLangSelector();
@@ -732,10 +732,10 @@ Object.assign(JanitzaMonitor.prototype, {
             densBtn?.setAttribute('aria-pressed', String(on));
             densBtn?.classList.toggle('active', on);
         };
-        applyDensity(localStorage.getItem('janitza-dashboard-density') === 'compact');
+        applyDensity(localStorage.getItem('mbg-dashboard-density') === 'compact');
         densBtn?.addEventListener('click', () => {
-            const on = !(localStorage.getItem('janitza-dashboard-density') === 'compact');
-            localStorage.setItem('janitza-dashboard-density', on ? 'compact' : 'normal');
+            const on = !(localStorage.getItem('mbg-dashboard-density') === 'compact');
+            localStorage.setItem('mbg-dashboard-density', on ? 'compact' : 'normal');
             applyDensity(on);
         });
 
@@ -856,7 +856,7 @@ Object.assign(JanitzaMonitor.prototype, {
     async _setDashDevice(id) {
         const dev = id || this._primaryDeviceId();
         this.dashDevice = dev === this._primaryDeviceId() ? null : dev;
-        localStorage.setItem('janitza-dash-device', this.dashDevice || '');
+        localStorage.setItem('mbg-dash-device', this.dashDevice || '');
         this.valueHistory = {};                    // sparkline history is per device
         this.dashValues = {};
         const jobs = [this._refreshDashRegisters()];

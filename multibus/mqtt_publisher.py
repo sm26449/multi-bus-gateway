@@ -392,7 +392,7 @@ class MQTTPublisher:
             config = self._build_ha_sensor_config(register, device_info)
             if config:
                 safe_id = f"{register.address}_{register.name.lower().replace('[', '_').replace(']', '')}"
-                discovery_topic = f"{self.config.ha_discovery_prefix}/sensor/janitza/{safe_id}/config"
+                discovery_topic = f"{self.config.ha_discovery_prefix}/sensor/multibus/{safe_id}/config"
 
                 if self._publish(discovery_topic, json.dumps(config), retain=True):
                     count += 1
@@ -410,7 +410,7 @@ class MQTTPublisher:
         if not self.connected or not self.config.ha_discovery_enabled:
             return 0
         device_info = {
-            "identifiers": [f"janitza_dev_{device_id}"],
+            "identifiers": [f"mbg_dev_{device_id}"],
             "name": device_name or device_id,
             "manufacturer": "janitza-monitor",
             "model": model or "Modbus device",
@@ -426,7 +426,7 @@ class MQTTPublisher:
                 "name": register.label or register.name,
                 "state_topic": topic,
                 "availability_topic": f"{self.config.topic_prefix}/status",
-                "unique_id": f"janitza_dev_{device_id}_{register.address}_{safe_name}",
+                "unique_id": f"mbg_dev_{device_id}_{register.address}_{safe_name}",
                 "device": device_info,
             }
             if register.unit:
@@ -437,7 +437,7 @@ class MQTTPublisher:
             sc = HA_STATE_CLASSES.get(register.unit, "measurement")
             if sc:
                 config["state_class"] = sc
-            disc = f"{self.config.ha_discovery_prefix}/sensor/janitza_dev_{device_id}/{register.address}_{safe_name}/config"
+            disc = f"{self.config.ha_discovery_prefix}/sensor/mbg_dev_{device_id}/{register.address}_{safe_name}/config"
             if self._publish(disc, json.dumps(config), retain=True):
                 count += 1
         logger.info(f"Published {count} HA discovery configs for device {device_id}")

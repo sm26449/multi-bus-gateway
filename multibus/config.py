@@ -93,7 +93,7 @@ class MQTTConfig:
     port: int = 1883
     username: str = ""
     password: str = ""
-    topic_prefix: str = "janitza/umg512"
+    topic_prefix: str = "multibus/umg512"
     retain: bool = True
     qos: int = 0
     publish_mode: str = "changed"  # "changed" or "all"
@@ -119,7 +119,7 @@ class InfluxDBConfig:
     url: str = "http://localhost:8086"
     token: str = ""
     org: str = ""
-    bucket: str = "janitza"
+    bucket: str = "multibus"
     write_interval: int = 5
     publish_mode: str = "changed"  # "changed" or "all"
     # Default bucket pattern for NEW devices ({device} = the device id).

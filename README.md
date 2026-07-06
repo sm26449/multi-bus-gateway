@@ -1,5 +1,14 @@
 # Multi-Bus Gateway
 
+> **Ancestry.** Multi-Bus Gateway 3.0.0 is the direct successor of the
+> *Janitza UMG 512 Modbus/MQTT monitor* project — the same field-tested
+> engine, generalized into a protocol gateway: multiple southbound sources
+> (Modbus TCP/RTU, HTTP/JSON, MQTT), device-template catalog, composite
+> virtual meters with an in-band quality convention, and an operator UI
+> with commissioning diagnostics. The Janitza UMG 512-PRO remains a
+> first-class supported device (bundled template + verified register map).
+
+
 > fost *Janitza UMG 512-PRO Monitor* — gateway de protocol multi-sursă: Modbus TCP/RTU · HTTP/JSON · MQTT → MQTT / InfluxDB / contoare virtuale Modbus / HTTP-JSON / REST
 
 🇷🇴 **Română** | [🇬🇧 English](README.en.md)

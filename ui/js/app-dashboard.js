@@ -541,7 +541,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
     toggleDashboardView() {
         this.dashboardView = this.dashboardView === 'cards' ? 'table' : 'cards';
-        localStorage.setItem('janitza-dashboard-view', this.dashboardView);
+        localStorage.setItem('mbg-dashboard-view', this.dashboardView);
 
         // Update toggle button icon
         const toggleBtn = document.getElementById('dashboardViewToggle');

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Janitza UMG 512-PRO Monitor - Main Application."""
+"""Multi-Bus Gateway — main application."""
 
 import asyncio
 import time

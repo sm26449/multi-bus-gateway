@@ -37,7 +37,7 @@ Object.assign(JanitzaMonitor.prototype, {
         });
 
         // Show onboarding hint on first visit
-        if (!localStorage.getItem('janitza-monitor-visited')) {
+        if (!localStorage.getItem('mbg-monitor-visited')) {
             this.showMonitorOnboarding();
         }
     },
@@ -66,7 +66,7 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     dismissMonitorHint() {
-        localStorage.setItem('janitza-monitor-visited', 'true');
+        localStorage.setItem('mbg-monitor-visited', 'true');
         document.getElementById('monitorHint')?.remove();
     },
 
