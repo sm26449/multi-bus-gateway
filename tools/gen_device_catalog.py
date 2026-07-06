@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate docs/device-catalog.md from the bundled device templates.
 
-Single source of truth = janitza/device_templates/*.json. This tool renders a
+Single source of truth = multibus/device_templates/*.json. This tool renders a
 human-readable reference (register maps + provenance) so we always have the
 maps and their sources on hand. Re-run after adding or editing any template:
 
@@ -19,7 +19,7 @@ from glob import glob
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-TPL_DIR = os.path.join(ROOT, "janitza", "device_templates")
+TPL_DIR = os.path.join(ROOT, "multibus", "device_templates")
 OUT = os.path.join(ROOT, "docs", "device-catalog.md")
 
 # Above this register count we summarise instead of dumping every row.
@@ -105,7 +105,7 @@ def main():
     out.append("# Device catalog — bundled register maps & provenance")
     out.append("")
     out.append("> **Generated** by `tools/gen_device_catalog.py` from "
-               "`janitza/device_templates/*.json`. Do not edit by hand — "
+               "`multibus/device_templates/*.json`. Do not edit by hand — "
                "re-run the generator after changing a template.")
     out.append("")
     out.append("Every built-in device map, with its Modbus transport (function code + "

@@ -1,325 +1,704 @@
-# Manual de utilizare — Multi-Bus Gateway
+# Manual de utilizare — Multi-Bus Gateway 3.0.0
 
 [🇬🇧 English](MANUAL.md) | 🇷🇴 **Română**
 
-Un ghid pas cu pas: de la o instalare nouă la monitorizare, integrări și servirea
-contoarelor virtuale. Pentru analiza aprofundată a arhitecturii motorului de
-contoare virtuale vezi **[VIRTUAL-METER.ro.md](VIRTUAL-METER.ro.md)**.
+Ghid pas cu pas pentru tehnician/integrator: de la o instalare curată la un
+gateway multi-dispozitiv cu metere virtuale, diagnostice și acces securizat.
+Documente însoțitoare:
 
-> 🇷🇴 Română. Versiunile localizate sunt binevenite prin PR.
+- **[architecture.md](architecture.md)** — cum funcționează motorul (diagrame, EN).
+- **[API.md](API.md)** — referința completă a endpoint-urilor REST cu rolurile necesare (EN).
+- **[virtual-meter-spec.md](virtual-meter-spec.md)** — contractul la nivel de
+  fir al unui meter virtual (politici de staleness, blocul de calitate la 61440).
+- **[device-catalog.md](device-catalog.md)** — fiecare hartă de registre
+  inclusă și sursa față de care a fost verificată.
+- **[csv-import.md](csv-import.md)** — importul unei hărți de registre din CSV.
+- **[alerts-webhooks.md](alerts-webhooks.md)** — alertare de infrastructură.
 
 ## Cuprins
 1. [De ce ai nevoie](#1-de-ce-ai-nevoie)
 2. [Instalare (Docker)](#2-instalare-docker)
 3. [Prima configurare](#3-prima-configurare)
-4. [Interfața Web, tab cu tab](#4-interfața-web-tab-cu-tab)
-5. [Dispozitive & template-uri (multi-device)](#5-dispozitive--template-uri-multi-device)
-6. [Contoare virtuale — pas cu pas](#6-contoare-virtuale--pas-cu-pas)
-7. [Home Assistant (MQTT)](#7-home-assistant-mqtt)
-8. [InfluxDB & Grafana](#8-influxdb--grafana)
-9. [Securitate (opțional)](#9-securitate-opțional)
-10. [Depanare](#10-depanare)
+4. [Interfața web, tab cu tab](#4-interfața-web-tab-cu-tab)
+5. [Dispozitive & template-uri de dispozitiv (multi-device)](#5-dispozitive--template-uri-de-dispozitiv-multi-device)
+6. [Registre, grupuri de poll & praguri](#6-registre-grupuri-de-poll--praguri)
+7. [Registre calculate](#7-registre-calculate)
+8. [MQTT & Home Assistant](#8-mqtt--home-assistant)
+9. [InfluxDB & Grafana](#9-influxdb--grafana)
+10. [REST push & feed-ul HTTP/JSON](#10-rest-push--feed-ul-httpjson)
+11. [Metere virtuale — pas cu pas](#11-metere-virtuale--pas-cu-pas)
+12. [Alerte & webhook-uri](#12-alerte--webhook-uri)
+13. [Diagnostice](#13-diagnostice)
+14. [Scrieri Modbus & lease-uri dead-man](#14-scrieri-modbus--lease-uri-dead-man)
+15. [Siguranța configurației: snapshot-uri, rollback, backup](#15-siguranța-configurației-snapshot-uri-rollback-backup)
+16. [Securitate](#16-securitate)
+17. [Observabilitate: Status, /metrics, evenimente](#17-observabilitate-status-metrics-evenimente)
+18. [Limbi & fus orar](#18-limbi--fus-orar)
+19. [Depanare](#19-depanare)
 
 ---
 
 ## 1. De ce ai nevoie
-- Un **Janitza UMG 512-PRO** (sau un UMG compatibil) accesibil în rețea cu
-  **Modbus TCP activat** (portul implicit 502). Notează-i IP-ul.
-- O gazdă cu **Docker + Docker Compose**.
-- *(Opțional)* un broker MQTT (pentru Home Assistant) și/sau InfluxDB (pentru
-  Grafana).
+
+- Cel puțin o sursă southbound: un dispozitiv **Modbus TCP** (de ex. un
+  Janitza UMG 512-PRO — cu portul 502 activat), un dispozitiv **Modbus RTU**
+  pe linie serială (`/dev/ttyUSB0` + adaptor RS-485), un endpoint
+  **HTTP/JSON** (Fronius Solar API, Shelly, Tasmota…) sau un broker **MQTT**
+  cu topicuri de telemetrie.
+- Un host cu **Docker + Docker Compose** (amd64 sau arm64 — merge și pe
+  Raspberry Pi).
+- *(Opțional)* un broker MQTT pentru Home Assistant și/sau InfluxDB pentru
+  Grafana/istoric.
 
 ---
 
 ## 2. Instalare (Docker)
 
 ```bash
-# 1) Get the code
+# 1) Ia codul
 git clone https://github.com/sm26449/multi-bus-gateway.git
 cd multi-bus-gateway
 
-# 2) Create your environment file
+# 2) Creează fișierul de environment (opțional — totul se poate configura din UI)
 cp .env.example .env
-#    edit .env — at minimum set MODBUS_HOST to your Janitza's IP (see step 3)
 
-# 3) Start it
+# 3) Pornește
 docker compose up -d
 
-# 4) Open the UI
+# 4) Deschide UI-ul
 #    http://<host>:8080
 ```
 
-Atât pentru o configurare doar de monitorizare. Jurnale: `docker compose logs -f`.
+Porturi publicate de compose-ul implicit: `8080` (UI/API), `1502–1512`
+(gama meterelor virtuale, extinsă via `VMETER_PORT_START/END`) și `502`
+(Modbus standard, pentru consumatorii care îl cer — scoate-l dacă hostul îl
+folosește deja). Pentru un dispozitiv RTU, treci adaptorul serial în
+container: `devices: ["/dev/ttyUSB0:/dev/ttyUSB0"]` într-un override de
+compose.
+
+Loguri: `docker compose logs -f`.
 
 ---
 
 ## 3. Prima configurare
 
-> **Sfat:** după prima pornire poți seta tot din UI — conexiunea contorului pe
-> cardul lui din **Devices**, iar MQTT/InfluxDB sub **Config** — se salvează în
-> `config/config.yaml` și se aplică fără restart. `.env` e doar o cale comodă de a pre-popula un
-> deploy nou. O valoare din env are întâietate și blochează acel câmp în UI.
+> **Sfat:** după prima pornire poți seta totul din UI — conexiunile
+> dispozitivelor pe pagina **Devices**, MQTT/InfluxDB sub **Config** — se
+> persistă în `config/config.yaml` și se aplică fără restart. `.env` doar
+> pre-populează un deploy nou; o valoare dată prin env are întâietate și
+> **blochează** câmpul în UI (scoate-o din environment ca să-l poți edita).
 
-Editează `.env` (sau setează aceleași variabile în compose-ul tău). Esențialul:
+Variabilele de mediu opționale:
 
 | Variabilă | Ce este | Exemplu |
 |-----------|---------|---------|
-| `MODBUS_HOST` | IP-ul Janitza | `192.168.1.100` |
-| `MODBUS_PORT` | port Modbus TCP | `502` |
-| `MODBUS_UNIT_ID` | unitate Modbus | `1` |
-| `MQTT_BROKER` / `MQTT_PORT` | broker (opțional) | `192.168.1.100` / `1883` |
-| `INFLUXDB_URL` / `INFLUXDB_TOKEN` | InfluxDB (opțional) | — |
-| `UI_PORT` | port interfață Web | `8080` |
+| `MODBUS_HOST` / `MODBUS_PORT` / `MODBUS_UNIT_ID` | conexiunea dispozitivului primar | `192.168.1.100` / `502` / `1` |
+| `MQTT_ENABLED` / `MQTT_BROKER` / `MQTT_PORT` | sink-ul MQTT | `true` / `mosquitto` / `1883` |
+| `MQTT_USERNAME` / `MQTT_PASSWORD` / `MQTT_PREFIX` / `MQTT_PUBLISH_MODE` | detalii MQTT | — |
+| `INFLUXDB_ENABLED` / `INFLUXDB_URL` / `INFLUXDB_TOKEN` / `INFLUXDB_ORG` / `INFLUXDB_BUCKET` | sink-ul InfluxDB | — |
+| `UI_PORT` | portul UI-ului web | `8080` |
+| `API_KEY` | cere `X-API-Key` la cererile de modificare | — |
+| `VMETER_PORT_START` / `VMETER_PORT_END` | gama de porturi a meterelor virtuale | `1502` / `1512` |
 
-Repornește după editare: `docker compose up -d`. Punctul **Modbus** din colțul
-dreapta-sus al interfeței devine verde când se conectează.
-
-Poți de asemenea configura majoritatea acestor lucruri din interfață → tab-ul
-**Config** (fără repornire pentru modificările de registre/poll — ele se reîncarcă
-la cald).
+Punctele de status din bara de sus (Modbus / MQTT / InfluxDB) devin verzi pe
+măsură ce fiecare pipeline se conectează — click pe unul pentru detalii.
 
 ---
 
-## 4. Interfața Web, tab cu tab
+## 4. Interfața web, tab cu tab
 
-Deschide `http://<host>:8080`.
+Deschide `http://<host>:8080`. Navigarea de sus:
 
-Nav-ul de sus are patru zone — tot ce ține de un singur contor stă în
-workspace-ul acelui dispozitiv, nu într-un meniu global:
-
-- **Dashboard** — carduri KPI live globale + valorile pe care le-ai fixat. Apasă
-  *Customize* pentru a alege carduri; comută între vizualizarea card/tabel.
-- **Devices** — fiecare sursă (Modbus TCP, RTU în curând, sau **HTTP/JSON**) ca
-  un card cu status live; wizard-ul **Add Device** e aici. Deschide un dispozitiv
-  pentru **workspace-ul lui cu tab-uri**: *Overview* (rezumat read-only +
-  sănătatea datelor), *Edit* (conexiune, template, intervale de poll, toggle-uri
-  ieșiri MQTT/InfluxDB), *Registers* (harta Available/Selected) și *Monitor /
-  History / Energy* pentru acel dispozitiv (vezi pasul 5).
-- **Config** — doar setări globale: broker **MQTT**, conexiune **InfluxDB**,
-  **Backup**, **Security**. Modificările se reîncarcă la cald.
-- **Virtual Meters** — servește valorile live ca și contoare standard către alte
-  sisteme (vezi pasul 6).
-
-Cele trei puncte din dreapta-sus (Modbus / MQTT / InfluxDB) arată starea
-conexiunii — apasă pe unul pentru detalii.
-
-**Monitor / History / Energy per dispozitiv** — din workspace-ul unui dispozitiv:
-*Monitor* (necesită polling) trage orice valoare pe un grafic live cu zoom;
-*History* și *Energy* (necesită ieșirea InfluxDB a dispozitivului) citesc datele
-stocate înapoi — linii de istoric cu bandă min/max și totaluri lunare de energie
-import/export/reactivă/aparentă.
+- **Dashboard** — carduri KPI live globale + valorile fixate de tine de pe
+  orice dispozitiv. *Customize* alege cardurile; comutare card/tabel;
+  culorile implicite ale widgeturilor urmează convenția de faze setată în
+  Config → General.
+- **Devices** — fiecare sursă southbound ca un card cu sănătatea live;
+  wizard-ul **Add Device** și **Discover devices** stau aici. Deschiderea
+  unui dispozitiv oferă workspace-ul lui cu tab-uri: *Overview* (rezumat
+  read-only + sănătatea datelor), *Edit* (conexiune, template, intervale de
+  poll, comutatoare de ieșiri), *Registers*, *Calculated*, *Outputs* și
+  *Monitor / History / Energy* per dispozitiv.
+- **Virtual Meters** — servește valorile live ca metere Modbus standard
+  (vezi §11).
+- **Diagnostics** — trusa de punere în funcțiune: bus monitor, register
+  probe, discovery, scanare SunSpec (vezi §13).
+- **Status** — sănătatea pipeline-urilor, taxonomia erorilor, evenimente,
+  alerte, amprenta de resurse (vezi §17).
+- **Config** — setări globale: MQTT, InfluxDB, General (fus orar, culori),
+  Security, Backup & Snapshots.
 
 ---
 
-## 5. Dispozitive & template-uri (multi-device)
+## 5. Dispozitive & template-uri de dispozitiv (multi-device)
 
-O singură instalare poate citi **mai multe surse**. Fiecare dispozitiv combină o
-**conexiune** (Modbus TCP acum, RTU în curând, **HTTP/JSON**, sau **MQTT**) cu un
-**template de dispozitiv** — harta de registre a acelui tip de echipament — și
-**rutarea lui proprie de date**.
+O instalare citește **mai multe surse**. Fiecare dispozitiv împerechează o
+**conexiune** cu un **template de dispozitiv** (harta de registre a acelui
+tip de echipament) și **rutarea proprie a datelor** (prefix de topic MQTT,
+bucket + tag InfluxDB, comutatoare de ieșiri).
 
-> **Nu știi adresa unui dispozitiv?** Devices → *Discover devices* → *Modbus TCP
-> scan*: scanează un interval privat din LAN pe portul Modbus după dispozitive
-> care răspund și poate mătura unit-id-urile pe un host. *Use* pre-completează
-> wizard-ul.
+### 5.1 Discovery — găsește întâi dispozitivul
 
-**Adaugă un dispozitiv:** Devices → *Add Device*:
+Devices → *Discover devices*:
 
-1. **Conexiune** — protocol, apoi Modbus (host/IP, port, unit ID, timeout),
-   **HTTP/JSON** (un URL JSON; fiecare registru își extrage valoarea printr-un
-   `json_path`, ex. un contor Fronius prin Solar API), sau **MQTT** (broker, port,
-   un topic de abonare + opțional user/parolă/TLS; fiecare registru citește
-   valoarea din payload-ul JSON prin `json_path`, sau ia payload-ul brut ca număr,
-   și poate avea topicul lui cu wildcard `+`/`#`). Apasă **Test connection**: la
-   Modbus orice răspuns confirmă un dispozitiv viu; la MQTT se conectează și
-   așteaptă scurt un mesaj-eșantion.
-2. **Template** — alege din bibliotecă (harta Janitza UMG 512-PRO e inclusă),
-   **încarcă** un template `.json` (validat rând cu rând; conflictele întreabă
-   înainte de suprascriere) sau **creează** unul în editor. În editor definești
-   metadatele (id, producător, model) și registrele (adresă, nume, etichetă,
-   unitate, tip de date, categorie, grup de poll); erorile sunt marcate exact
-   pe rândul problematic. Built-in-urile sunt read-only — folosește *Duplicate
-   to edit*. Un template folosit de un dispozitiv nu poate fi șters. *Export*
-   descarcă template-ul pentru distribuire.
-3. **Rutare date** — **id-ul** dispozitivului devine cheia de rutare: valorile
-   se publică sub **prefixul de topic MQTT** al dispozitivului (preview-ul live
-   arată un topic real de exemplu) și ajung în **bucket-ul InfluxDB** al lui
-   (creat automat, retenție 90 de zile), cu tag-ul lui de device.
+- **Scanare Modbus TCP** — parcurge un CIDR privat (maxim /24) pe un port
+  (implicit 502) după dispozitive care răspund. Read-only; restricționat la
+  LAN.
+- **Sweep de unit-ID** — parcurge ID-urile de unit/slave (implicit 1–32) pe
+  un host TCP sau pe o linie serială RTU.
+- **Scanare SunSpec** — parcurge lanțul de modele SunSpec (marker-ul `SunS`
+  la 40000/50000/0, apoi fiecare model declarat, inclusiv blocul de
+  identitate). Primul pas natural pentru hardware Fronius/SolarEdge/Huawei.
+- **Răsfoire topicuri MQTT** — se conectează la un broker și arată topicurile
+  care vorbesc, cu preview de payload (topicurile retained apar instant; o
+  fereastră scurtă de ascultare prinde publisher-ii live), ca să alegi un
+  topic în loc să-l tastezi.
+- **Fronius Solar API discover** — enumeră invertoarele/meterele din spatele
+  unui DataManager, cu indicația că meterul stă la unitatea Modbus 240.
 
-După creare, tab-ul **Registers** al dispozitivului arată catalogul lui din
-template; selectezi ce se citește (sau folosești auto-select pentru registrele
-implicite ale template-ului), salvezi — se reîncarcă doar pollerele acelui
-dispozitiv. Fiecare card din pagina **Devices** arată sănătatea live (punct de
-stare, rată de poll, vechimea datelor) și rutarea; workspace-ul are editare și
-ștergere (ștergerea e blocată cât timp un contor virtual folosește dispozitivul).
+*Use* pe orice rezultat pre-completează wizard-ul Add Device.
 
-**Instalările existente:** UMG 512-PRO al tău apare automat ca device #1 —
-topicurile, bucket-ul, tagurile și entitățile Home Assistant rămân neschimbate,
-iar identitatea de rutare e blocată ca să rămână byte-identică.
+### 5.2 Adaugă un dispozitiv (wizard)
 
-**Măsurători calculate** (workspace-ul dispozitivului → *Calculated*): derivi o
-valoare nouă prin formulă din măsurătorile dispozitivului — factor de putere
-`_P / _S`, o sumă pe faze, o conversie de unitate, `(E - prev(E)) / dt * 3600`
-pentru putere medie dintr-un contor Wh etc. Builder-ul îți dă chip-uri clickabile
-cu câmpurile din Measurements, o paletă de funcții/operatori și preview live;
-preset-urile completează formule comune și îți poți *salva propriile preset-uri*.
-O valoare calculată curge la toate ieșirile și apare în Monitor și History ca
-orice măsurătoare.
+1. **Conexiune** — alege protocolul:
+   - **Modbus TCP**: host, port, unit ID, timeout.
+   - **Modbus RTU**: port serial (de ex. `/dev/ttyUSB0`), baud rate,
+     paritate, biți de stop — nu uita să treci adaptorul în container.
+   - **HTTP/JSON**: un URL care întoarce JSON; fiecare registru își extrage
+     valoarea cu un `json_path` (de ex. `Body.Data.PowerReal_P_Sum`).
+     URL-urile trebuie să indice un host din LAN-ul privat, cu excepția
+     cazului în care setezi `security.allow_nonlan_http_devices` (gardă
+     SSRF).
+   - **MQTT**: broker, port, credențiale/TLS, un topic de subscribe; fiecare
+     registru citește din payload-ul JSON prin `json_path` sau ia payload-ul
+     brut ca număr, și poate avea propriul topic cu wildcard-uri `+`/`#`.
 
-**Ieșiri** (workspace-ul dispozitivului → *Outputs*): pe lângă MQTT și InfluxDB,
-fiecare dispozitiv poate și **servi** valorile live ca JSON read-only la
-`GET /api/meters/<id>` (stil Solar API, opt-in), și le poate **împinge** ca JSON
-către un URL extern la interval (webhook / cloud), cu headere de auth stocate
-mascat. Ambele se comută per dispozitiv, lângă sink-urile MQTT/InfluxDB.
+   Apasă **Test connection**: la Modbus, *orice* răspuns la nivel de
+   protocol — chiar și o excepție — dovedește un dispozitiv viu; la HTTP cu
+   un template ales, testul raportează câte `json_path`-uri s-au rezolvat;
+   la MQTT se conectează și așteaptă scurt un mesaj de probă.
+2. **Template** — alege din bibliotecă (10 hărți incluse, vezi
+   [device-catalog.md](device-catalog.md)), **încarcă** un template `.json`
+   (validat rând cu rând; conflictele de id întreabă înainte de suprascriere),
+   **creează** unul în editor sau **importă un CSV** cu harta de registre
+   ([csv-import.md](csv-import.md)). Built-in-urile sunt read-only —
+   *Duplicate to edit*. Un template folosit de un dispozitiv nu poate fi
+   șters.
+3. **Rutarea datelor** — **id-ul** dispozitivului devine cheia de rutare:
+   valorile se publică sub prefixul lui de topic MQTT (preview live) și
+   ajung în bucket-ul lui InfluxDB (creat automat, retenție 90 de zile),
+   etichetate cu tag-ul lui. **Capcană:** identitatea de rutare e fixă după
+   creare — schimbarea ei ar orfaniza istoricul și entitățile Home
+   Assistant.
+
+După creare, dispozitivul începe să citească imediat: template-urile curate
+își auto-selectează subsetul recomandat de registre (harta Janitza selectează
+58 din 4.126); un template fără defaults și cu peste 300 de registre nu
+selectează nimic, ca să nu inunde MQTT/InfluxDB cu mii de serii dintr-un
+click.
+
+**Instalările existente:** meterul original apare automat ca dispozitivul #1
+cu identitatea de rutare blocată — topicurile, bucket-ul, tag-urile și
+entitățile HA rămân byte-identice.
+
+**Ștergerea unui dispozitiv** păstrează fișierul lui de registre pe disc
+(siguranța datelor) și e blocată cât timp un meter virtual îl folosește ca
+sursă.
 
 ---
 
-## 6. Contoare virtuale — pas cu pas
+## 6. Registre, grupuri de poll & praguri
 
-Scop: a permite unui alt sistem (Victron ESS, un invertor Fronius, orice client
-SunSpec) să citească acest unic Janitza ca și contorul pe care *el* îl așteaptă.
+Workspace-ul dispozitivului → **Registers**:
 
-> ⚠️ Un contor virtual poate alimenta o buclă de control. Parcurge pașii 6.1→6.3
-> (validare în paralel) înainte de a-l face vreodată singurul contor al unui
+- **Available** — catalogul din template-ul dispozitivului (răsfoire/căutare;
+  4.126 de intrări pentru Janitza). Poți adăuga manual un **registru
+  custom** dacă lipsește din hartă.
+- **Selected** — ce se citește efectiv. Per registru: grup de poll, tip de
+  date, scale (valoare inginerească = raw ÷ scale), tip de registru
+  (holding FC3 / input FC4 / coil FC1 / discrete FC2), topic MQTT,
+  measurement + tags InfluxDB, widget de dashboard și **praguri**.
+
+**Grupurile de poll** (`realtime` / `normal` / `slow` implicit) citesc
+fiecare la intervalul propriu — editabil per dispozitiv între 0,05 s și
+24 h, aplicat live. Registrele dintr-un grup se unesc în citiri batch care
+sar peste goluri de până la `max_gap` (implicit 10); slave-urile stricte
+care refuză blocurile unite cu *illegal data address* trebuie setate cu
+`max_gap: 0`.
+
+**Pragurile** colorează o valoare (warningLow/High, dangerLow/High) pe
+dashboard și pe gauge-uri. Sunt per registru și doar vizuale — pentru
+*alertare* vezi §12 (infrastructură) sau folosește un sistem downstream
+pentru alarme pe valori.
+
+Salvarea selecției re-încarcă hot doar pollerele acelui dispozitiv.
+
+---
+
+## 7. Registre calculate
+
+Workspace-ul dispozitivului → **Calculated**: derivă măsurători noi prin
+formulă din valorile live. Exemple:
+
+| Scop | Expresie |
+|---|---|
+| Factor de putere | `_G_P_SUM3 / _G_S_SUM3` |
+| Sumă pe faze | `p_l1 + p_l2 + p_l3` |
+| Conversie de unități | `energy_wh / 1000` |
+| Dezechilibru de curent % | `(max(i1,i2,i3) - avg(i1,i2,i3)) / avg(i1,i2,i3) * 100` |
+| Putere medie dintr-un contor de energie | `(E - prev(E)) / dt * 3600` |
+| Între dispozitive | `grid.p_total + pv.p_total` |
+
+- Builder-ul oferă chip-uri clicabile cu măsurătorile, o paletă de
+  funcții/operatori (`min max avg abs round sqrt pow floor ceil clamp`,
+  `pi e`, comparații, `a if cond else b`), **preview live** și preset-uri —
+  îți poți salva propriile formule ca preset-uri reutilizabile.
+- `prev(x)` și `dt` fac posibile calculele de rată; o formulă cu stare nu
+  poate fi previzualizată one-shot (UI-ul o spune) — produce valori de la a
+  doua evaluare încolo.
+- Expresiile sunt validate pe o listă albă sigură înainte de salvare; la
+  rulare, un input lipsă sare peste runda respectivă (fără valori parțiale
+  sau fabricate), iar o eroare nu poate omorî pollerul.
+- O valoare calculată curge către **toate** ieșirile (MQTT, InfluxDB,
+  metere virtuale, feed-uri) și apare în Monitor/History ca orice
+  măsurătoare. Grupul ei de poll decide cât de des se recalculează.
+
+---
+
+## 8. MQTT & Home Assistant
+
+Config → **MQTT**: broker, port, credențiale, QoS, retain și TLS
+(port 8883; certificat CA pentru verificarea brokerului, opțional certificat
+client + cheie pentru TLS mutual — pune fișierele sub `config/` și
+referențiază căile din container; „skip verification" e doar pentru teste).
+
+- **Topicuri**: `<prefixul dispozitivului>/<topicul registrului sau numele
+  derivat>`. Dispozitivul #1 își păstrează prefixul istoric; dispozitivele
+  noi primesc implicit `mqtt.default_topic_pattern` (`meters/{device}`).
+- **Mod de publicare**: `changed` (implicit — publică doar valorile care
+  s-au schimbat; cache-ul de schimbări se confirmă doar după o publicare
+  reușită, deci o pană de broker nu pierde nimic) sau `all` (fiecare
+  citire).
+- **Disponibilitate**: un Last-Will marchează `<prefix>/status` = `offline`
+  dacă gateway-ul moare; `online` e publicat retained la conectare.
+- **Home Assistant discovery**: activat implicit. Fiecare dispozitiv devine
+  un device HA cu registrele selectate ca senzori (`unique_id`
+  `mbg_dev_<device>_<addr>_<name>` pentru dispozitivele non-primare), cu
+  device/state class deduse din unități. Meterele virtuale publică propriile
+  entități de diagnostic (stare de servire, rată de cereri, erori,
+  prospețime…). Ștergerea unui dispozitiv curăță discovery-ul retained, deci
+  HA renunță la entități.
+
+**Capcană:** cu `retain: true` (implicit) un consumator care se abonează
+târziu vede totuși ultima valoare — dar după un restart de broker fără
+persistență, valorile reapar doar pe măsură ce se publică din nou;
+gateway-ul își golește cache-ul de schimbări la fiecare reconectare și
+republică starea completă exact din acest motiv.
+
+---
+
+## 9. InfluxDB & Grafana
+
+Config → **InfluxDB**: URL, token, org, bucket. Bucket-urile per dispozitiv
+se creează automat cu retenție de 90 de zile; measurement/tags per registru
+se setează în tab-ul Registers. Îndreaptă Grafana spre același bucket.
+Profilurile opționale de compose pornesc un InfluxDB + Grafana local
+(`--profile influxdb --profile grafana`).
+
+**Garanții asupra datelor.** Fiecare punct e ștampilat cu ora *citirii*, nu
+ora scrierii. Dacă InfluxDB devine inaccesibil, punctele intră într-un
+**buffer store-and-forward** (implicit 10 minute / 50.000 de puncte —
+reglabil prin `influxdb.buffer_minutes` / `buffer_max_points`) și sunt
+replay-ate cu timestamp-urile originale la reconectare, idempotent. Cu
+`influxdb.buffer_persist: true` (implicit) buffer-ul supraviețuiește și unui
+restart în timpul penei (`config/influx_buffer.jsonl`). Batch-urile la care
+clientul renunță după cele ~5 min de retry intern sunt recuperate în același
+buffer. Penele mai lungi decât fereastra pierd punctele cele mai vechi;
+pentru tensiunile Janitza, înregistrarea internă a meterului le poate
+recupera prin `python -m multibus.backfill`. Urmărește `buffer_points` /
+`replayed_total` / `dropped_total` în `/api/status` sau
+`gateway_influx_buffer_points` în `/metrics`.
+
+MQTT **nu** este replay-at, intenționat: e un bus live — la reconectare se
+republică starea curentă.
+
+**History** per dispozitiv (linii agregate cu bandă min/max) și **Energy**
+(totaluri lunare din contoarele cumulative + defalcare zilnică, în fusul
+orar din §18; selecția contoarelor din tab-ul Energy e per dispozitiv)
+citesc aceste date înapoi.
+
+---
+
+## 10. REST push & feed-ul HTTP/JSON
+
+Workspace-ul dispozitivului → **Outputs** — două sink-uri suplimentare per
+dispozitiv, ambele opt-in:
+
+- **HTTP/JSON output** — servește valorile live ale dispozitivului ca JSON
+  read-only la `GET /api/meters/<id>` (stil Solar API, indexat pe numele
+  registrelor, cu un flag `stale`). Gateway-ul nu împinge nimic; orice
+  client HTTP trage datele. Notă: cu login activat, feed-ul cere o sesiune —
+  ține cont în designul accesului.
+- **REST push** — POST-ează valorile dispozitivului ca JSON către un URL
+  extern la interval (minim 5 s): `{enabled, url, interval_s, headers,
+  format, verify_tls, timeout}`. `format: native` trimite
+  `{nume: {value, unit, ts}}`; `flat` trimite `{nume: valoare}`.
+  Autentificarea merge în `headers` (stocate mascat, păstrate la salvare).
+  Țintele *pot* fi externe (spre deosebire de inputurile HTTP de
+  dispozitiv), dar redirecturile sunt refuzate ca să nu-ți fie rejucate
+  credențialele în altă parte. Livrarea e fire-and-forget; cardul arată
+  ultimul status, iar **Test** împinge o dată imediat.
+
+---
+
+## 11. Metere virtuale — pas cu pas
+
+Scop: alt sistem (Victron ESS, un invertor Fronius, orice client SunSpec) să
+citească acest gateway ca meterul pe care *el* îl așteaptă.
+
+> ⚠️ Un meter virtual poate alimenta o buclă de control. Fă pașii 11.1→11.3
+> (validare în paralel) înainte să-l faci vreodată singurul meter al unui
 > consumator.
 
-**6.0 — Publică porturile (o singură dată).** În `docker-compose.yml` intervalul de
-porturi al contoarelor este publicat (implicit `1502-1512`, plus `502` pentru
-Fronius). Alege porturile instanțelor în interiorul acelui interval. Lărgește
-intervalul + recreează containerul dacă ai nevoie de mai multe.
+**11.0 — Publică porturile (o dată).** Compose-ul publică `1502–1512` (plus
+`502`). Alege porturi de instanță din gamă; lărgește-o prin
+`VMETER_PORT_START/END` + recreează containerul dacă ai nevoie de mai multe.
 
-**6.1 — Alege sau creează un șablon.** Mergi la **Virtual Meters → Templates**.
-- Livrate: `em24_av53` (Carlo Gavazzi EM24 → Victron), `fronius_ts_native`
-  (Fronius Smart Meter → DataManager), `fronius_sunspec_meter` (SunSpec generic).
-- *Șablon nou*: definește fiecare registru (adresă, tip, scalare, sursă). Sursa
-  poate fi un registru Janitza live, o constantă sau o sumă de registre.
-- *Import*: adaugă un `.yaml` partajat de altcineva (validat înainte de salvare).
+**11.1 — Alege sau creează un template.** Virtual Meters → **Templates**.
+Incluse: `em24_av53` (Carlo Gavazzi EM24 → Victron), `fronius_ts_native`
+(Fronius Smart Meter TS → DataManager), `fronius_sunspec_meter` (SunSpec 213
+float). Un rând de template = adresă, tip, scale, ordine de cuvinte și o
+**sursă**: un registru live (`nume`, sau `dispozitiv.registru` pentru alt
+dispozitiv), o constantă sau un `sum` de mai multe surse. Import/export ca
+YAML.
 
-**6.2 — Adaugă o instanță.** Pe sub-tab-ul **Meters**, alege șablonul, un port
-liber, unit id → **Add instance**. Pornește **dezactivată**.
+**11.2 — Adaugă o instanță.** Pe tab-ul **Meters**: template, un port liber,
+unit id, dispozitivul sursă, politica de staleness → **Add instance**.
+Pornește **dezactivată**.
 
-**6.3 — Validează în paralel.** Activează instanța (comutator). Îndreaptă un
-consumator de *test* — sau pur și simplu deschide tab-ul **Logs** — către
-`host:port`. Urmărește jurnalul de interogări live: vezi exact ce citește
-consumatorul, când și ce returnezi. Compară valorile servite cu contorul tău real.
-Tab-ul **Stats** arată rata de cereri, erorile și ce registre sunt citite cel mai
-mult.
+**11.3 — Validează în paralel.** Activeaz-o și îndreaptă un consumator de
+*test* — sau doar urmărește tab-ul **Logs** — spre `host:port`. Jurnalul de
+query-uri arată exact ce citește consumatorul, când, și ce i s-a răspuns
+(ultimele 1024 de cereri). Compară cu meterul real. **Stats** arată rata,
+erorile, registrele cele mai citite; **Decode** interpretează orice interval
+de adrese înapoi la variabilele-sursă.
 
-**6.4 — Fă comutarea.** Odată ce ai încredere în el, îndreaptă consumatorul real
-către contorul virtual și elimină contorul fizic dedicat al acestuia. **Watchdog-ul
-de prospețime** este plasa ta de siguranță: dacă datele Janitza devin învechite,
-contorul oprește răspunsul astfel încât fail-safe-ul propriu al consumatorului
-pentru pierderea rețelei să se activeze.
+**11.4 — Alege politica de staleness** (`on_stale`) — ce servește un rând
+stale/lipsă:
 
-**6.5 — Observă și exportă.** Tab-urile **Logs**/**Stats** păstrează ultimele 1024
-de cereri + contoare în RAM. **Exportă** un șablon (YAML) pentru a-l partaja sau a
-face backup; cardul contorului (acordeon) arată conexiunile active ale clienților
-(ip:port).
+| Politică | Comportament | Folosire |
+|---|---|---|
+| `legacy` (implicit) | comportamentul clasic single-source: un singur watchdog de prospețime per instanță; golurile păstrează ultimele cuvinte | meterele existente — neatinse |
+| `fail` | orice citire care atinge un rând stale → **excepție Modbus** (fără adevăr parțial) | consumatori de control (Victron, PLC) |
+| `sentinel` | N/A SunSpec: float→NaN, int16→0x8000, uint16→0xFFFF… | consumatori care înțeleg santinelele |
+| `hold` | ultima valoare până la `max_hold_s` (implicit 30 s), apoi ca `fail` | display-uri tolerante |
 
----
+Absența nu se servește **niciodată** ca 0/false. Sumele preiau calitatea
+celui mai slab membru. În modurile cu politică, serverul rămâne pornit cât
+timp cel puțin o sursă e proaspătă; toate moarte → nu mai răspunde, ca
+fail-safe-ul de pierdere-de-meter al consumatorului să se activeze.
 
-
-### Registre de calitate pentru PLC/SCADA (opțional)
-
-Dacă sistemul care CITEȘTE virtual meter-ul trebuie să știe cât de de
-încredere sunt datele (proaspete vs ținute vs lipsă), bifează **„Bloc de
-calitate in-band"** pe instanță (formularul de adăugare/editare). Meter-ul
-servește atunci și un mic bloc read-only la adresa **61440** — identic
-pentru orice virtual meter:
+**11.5 — Opțional: blocul de calitate in-band.** Dacă consumatorul
+(PLC/SCADA) trebuie să știe calitatea datelor pe aceeași conexiune Modbus,
+activează *In-band quality block* pe instanță. Servește un bloc read-only la
+**61440** (identic pentru orice meter):
 
 | Adresă | Tip | Semnificație |
 |-------:|-----|--------------|
-| 61440 | u16 | versiune format (1) |
+| 61440 | u16 | versiunea formatului (1) |
 | 61441 | u16 | 0 legacy · 1 ok · 2 degradat · 3 stale |
-| 61442–61444 | u16 | rânduri fresh / stale / lipsă |
+| 61442–61444 | u16 | rânduri proaspete / stale / lipsă |
 | 61445 | u16 | total rânduri de date |
-| 61446 | u32 | vârsta celei mai noi valori fresh (s); 0xFFFFFFFF = niciodată |
+| 61446 | u32 | vârsta celei mai noi valori proaspete (s); 0xFFFFFFFF = niciodată |
 
-Garda tipică în consumator: *folosește datele doar cât 61441 == 1; alarmă
-pe 3*. Împerechează-l cu politica `fail`/`sentinel`/`hold` (cu `legacy`
-starea e 0 — calitatea nu se judecă per registru). Specificația completă:
-`docs/virtual-meter-spec.md`.
+Garda tipică în consumator: *folosește datele doar cât timp 61441 == 1;
+alarmă pe 3*. Specificația completă:
+[virtual-meter-spec.md](virtual-meter-spec.md).
 
-## 7. Home Assistant (MQTT)
+**11.6 — Cut-over.** Îndreaptă consumatorul real spre meterul virtual.
+Watchdog-ul de prospețime e plasa de siguranță. Aceeași hartă e servită și
+ca JSON la `/api/virtual-meters/<id>/values` sub convenția de agregator
+(`value: null` + `quality` + `age_s`, `last_value` separat) — un SCADA
+citește totul într-un singur poll.
 
-Setează `MQTT_BROKER`/`MQTT_PORT` (și credențialele) în `.env`, repornește.
-Monitorul publică **autodiscovery MQTT pentru Home Assistant**, astfel încât
-entitățile apar automat sub dispozitiv. Un topic Last-Will marchează dispozitivul
-ca offline dacă monitorul se oprește. Alege ce registre se publică (și topicurile
-lor) în tab-ul **Registers** al dispozitivului.
-
----
-
-## 8. InfluxDB & Grafana
-
-Setează `INFLUXDB_URL`, `INFLUXDB_TOKEN`, `INFLUXDB_ORG`, `INFLUXDB_BUCKET` în
-`.env`. Scrierile sunt grupate cu reîncercare/backoff automat și o protecție
-anti-NaN. Îndreaptă Grafana către același bucket. Măsurătoarea/tag-urile per
-registru sunt configurabile în tab-ul **Registers** al fiecărui dispozitiv. Profilurile compose
-opționale pot porni un InfluxDB + Grafana local (vezi README).
-
-**Garanții de date.** Fiecare punct e ștampilat cu ora *citirii* Modbus, nu a
-flush-ului. Dacă InfluxDB devine inaccesibil, punctele intră într-un buffer
-store-and-forward în RAM (implicit **10 minute / 50.000 de puncte**, reglabil
-prin `influxdb.buffer_minutes` / `buffer_max_points` în `config.yaml`) și sunt
-replay-ate cu timestamp-urile originale la reconectare — idempotent, pentru că
-InfluxDB deduplică pe măsurătoare+taguri+timestamp, deci fără duplicate.
-Batch-urile abandonate de client după ~5 min de reîncercări proprii sunt
-recuperate în același buffer. Panele mai lungi decât fereastra bufferului pierd
-punctele cele mai vechi (doar RAM — un restart golește bufferul); pentru
-tensiuni, înregistrarea internă a contorului le poate reface prin
-`python -m janitza.backfill`. Urmărește `buffer_points` / `replayed_total` /
-`dropped_total` în **`/api/status`**. MQTT nu se replay-ează intenționat: e o
-magistrală live (consumatorii acționează pe „acum”), iar la reconectare se
-republică întreaga stare curentă.
+**Capcane:** meterul răspunde pe orice unit id (cel configurat e
+informativ); citirile în afara hărții emulate răspund *illegal data
+address* prin design (consumatorii identifică meterele sondând adresele
+joase); ștergerea unui dispozitiv sursă e blocată cât timp un meter îl
+folosește.
 
 ---
 
-## 9. Securitate (opțional)
+## 12. Alerte & webhook-uri
 
-Totul de mai jos este **dezactivat implicit** — aparatul e gândit pentru o
-rețea de încredere. Activează din **Config → Security** când trebuie să fie
-accesibil dintr-o rețea mai largă.
+Alertare de sănătate a infrastructurii (un dispozitiv sau un sink pică,
+latența de citire rămâne mare, buffer-ul InfluxDB crește) — **nu** alarme pe
+valori. Se configurează din Config → Alerts sau blocul `alerts:`:
 
-- **Autentificare** — cere utilizator/parolă pentru UI/API. Un **admin**
-  (acces complet) și un **viewer** opțional (doar citire: vede tot, nu schimbă
-  nimic). Parolele se stochează criptat (hash PBKDF2); lasă câmpul de parolă gol
-  la salvare ca să o păstrezi. Autentificările eșuate sunt limitate per IP
-  (blocare după N încercări, M minute — configurabile). Apare un ecran de login;
-  butonul de deconectare e în bara de titlu.
-- **HTTPS** — servește UI-ul prin TLS. Indică un certificat + cheie, sau lasă
-  căile goale pentru a genera automat o pereche self-signed la următoarea
-  pornire (**repornește containerul pentru a aplica**). Un certificat
-  self-signed produce un avertisment în browser; pune un certificat real în
-  producție.
-- **MQTT TLS** — criptează legătura cu brokerul (portul 8883). Încarcă un
-  certificat CA pentru a verifica brokerul și, opțional, un certificat + cheie
-  de client pentru **mutual TLS**. Pune fișierele în `config/` și indică-le
-  căile din container. „Sari peste verificare” e doar pentru test.
-- **Listă IP permise** — restricționează ce IP-uri/subrețele pot accesa UI/API
-  (una pe linie, ex. `192.168.1.0/24`; gol = deschis). Loopback e mereu permis.
-  Cardul arată *IP-ul tău curent* ca să nu te blochezi singur. **Notă Docker:**
-  în spatele rețelei bridge implicite, conexiunile par a veni de la IP-ul
-  gateway-ului docker, nu de la clientul real — verifică „IP-ul tău curent” și
-  permite ce vezi acolo; pentru filtrare reală per client folosește rețea host
-  sau macvlan. Dacă te blochezi, editează `config/config.yaml`
-  (`security.allowlist`) și repornește.
-- **Cheie API** (existentă) — setează `API_KEY` în environment pentru a cere un
-  header `X-API-Key` la cererile care modifică date, independent de login.
+```yaml
+alerts:
+  enabled: true
+  mqtt: true                                   # publică pe <topic_prefix>/alert
+  webhook_url: "https://ntfy.example/gateway"  # gol = webhook oprit
+  webhook_headers: { "X-API-Key": "secret" }
+  webhook_body: { "message": "[{severity}] {source}: {message}" }
+  min_interval_s: 300
+  latency_ms: 1000
+  buffer_points: 1000
+  signals: { device: true, sink: true, latency: true, buffer: true }
+```
+
+Alertele sunt limitate per cheie (`min_interval_s`), oglindite în jurnalul
+de evenimente și pe pagina Status. Butonul **Test** (sau
+`POST /api/alerts/test`) declanșează o alertă sintetică prin canalele reale
+— cere login sau cheie API și are cooldown, pentru că generează trafic real.
+Livrarea pe webhook e best-effort (fără retry) și refuză redirecturile.
+Detalii: [alerts-webhooks.md](alerts-webhooks.md).
 
 ---
 
-## 10. Depanare
+## 13. Diagnostice
+
+Trusa de punere în funcțiune (pagina Diagnostics). Totul aici e read-only pe
+bus.
+
+- **Bus monitor** — captură la nivel de cadru a fiecărei tranzacții Modbus:
+  hex TX/RX, funcție/adresă/count decodate, rezultat
+  (ok / excepție / fără răspuns / eroare CRC), latență — și **fiecare retry
+  ca intrare separată**, ca să vezi exact ce face o legătură instabilă. Ring
+  buffer doar în RAM (implicit 1000, până la 20000 de cadre): pornește
+  dezactivat și nu persistă niciodată, deci o sesiune uitată nu poate crește
+  în memoria unei cutii pornite de un an.
+- **Register probe** — citire one-shot a oricărei adrese (FC1–4, count 1–8)
+  pe orice dispozitiv Modbus, decodată în **toate felurile plauzibile**: o
+  matrice de tip de date (uint16/int16, float/int32/uint32,
+  double/int64/uint64) × ordine de cuvinte (ABCD / CDAB / BADC / DCBA), plus
+  hex brut și ASCII. E bancul de lucru pentru endianness: când o valoare se
+  citește ca gunoi, combinația corectă tip+ordine e de obicei vizibilă în
+  matrice. NaN e arătat ca o constatare (SunSpec „not available"), nu
+  ascuns.
+- **Payload sample** — ia un payload JSON complet de la un dispozitiv HTTP
+  sau MQTT salvat (MQTT retained → instant), pentru picker-ul de
+  `json_path`.
+- **Taxonomia erorilor** — eșecurile de citire sunt numărate pe tip:
+  `timeout` (fără răspuns), `exception_N` (dispozitivul a răspuns cu
+  excepția Modbus N — legătura e bună, cererea e greșită), `connection`
+  (nivel TCP/serial). Vizibile per dispozitiv pe Status și `/metrics`.
+
+---
+
+## 14. Scrieri Modbus & lease-uri dead-man
+
+Scrierea în hardware de câmp e apărată în adâncime. Totul e **oprit
+implicit**.
+
+1. Activează `security.allow_writes: true` (Config → Security).
+2. Scrierile trebuie **autentificate** — activează login-ul sau setează
+   `API_KEY` (scrierile anonime sunt refuzate chiar cu poarta deschisă).
+3. Registrul trebuie declarat **writable în template-ul dispozitivului**, cu
+   limite opționale `write_min` / `write_max`; codificarea (tip de date,
+   scale) vine mereu din rândul de template, niciodată de la apelant.
+4. **Dispozitivul primar e mereu read-only**; dispozitivele HTTP/JSON și
+   registrele input/discrete nu se pot scrie.
+5. Limită de rată per IP (`security.write_rate_limit_per_s`, implicit
+   10/s).
+
+`POST /api/devices/<id>/write` cu `{"address": ..., "value": ...}` scrie
+FC6/FC16 (holding) sau FC5 (coil), verifică prin recitire și consemnează
+fiecare încercare în audit.
+
+**Lease-uri dead-man.** Adaugă `"lease_ms": 5000` și scrierea armează un
+lease: dacă nu e reînnoit (printr-o altă scriere cu lease) în 5 s,
+gateway-ul readuce registrul la valoarea `write_safe` declarată în template.
+Lease-urile sunt **rezistente la crash**: setul activ persistă pe disc, deci
+dacă gateway-ul însuși cade, registrele revin la valoarea sigură la
+următorul boot. E primitiva corectă pentru bucle de control de tip limitare
+de export / setpoint de putere: un controller căzut nu poate lăsa în urmă un
+setpoint periculos. Lease-urile active: `GET /api/writes/leases`.
+
+---
+
+## 15. Siguranța configurației: snapshot-uri, rollback, backup
+
+Config → **Backup & Snapshots**.
+
+- **Snapshot-uri automate** — fiecare modificare de configurație reușită
+  (dispozitive, registre, template-uri, metere virtuale, setări) face un
+  snapshot al întregului pachet de configurație (debounce de 2 s
+  coalizează rafalele). Se păstrează 50; snapshot manual cu notă oricând.
+- **Diff semantic** — orice snapshot se compară cu configurația live sau cu
+  alt snapshot **cheie cu cheie** (nu zgomot de linii): *ce ar anula un
+  rollback*. Valorile secrete sunt mascate.
+- **Rollback** — restaurarea înlocuiește pachetul verbatim, după un snapshot
+  `pre-restore`, deci un rollback e el însuși reversibil.
+- **Centura de siguranță last-known-good (LKG)** — după ~5 minute de
+  funcționare sănătoasă, pachetul e marcat LKG. Dacă `config.yaml` nu se
+  poate parsa la boot (editare manuală greșită, scriere ruptă), gateway-ul
+  restaurează LKG automat și pornește — o cutie nesupravegheată își revine
+  singură. Un fișier corupt blochează și salvările (o copie rămâne ca
+  `config.yaml.bad`), deci valorile implicite nu-ți pot suprascrie niciodată
+  configurația reală.
+- **Backup export/import (ZIP)** — pentru portabilitate între hosturi.
+  Exportul **elimină secretele** (credențiale MQTT/Influx, hash-uri de
+  parole, headere de webhook/REST-push) și identitatea hostului implicit;
+  `include_secrets=true` cere rolul admin sau cheia API și se consemnează în
+  audit. Importul (body ZIP brut, ≤25 MB) face **merge** peste configurația
+  live, ca secretele eliminate să supraviețuiască, și face întâi un snapshot
+  `pre-import`. Snapshot-urile, prin contrast, sunt puncte de restaurare
+  locale cu fidelitate completă — descărcarea unuia e păzită ca un export cu
+  secrete.
+
+**Capcană:** snapshot-urile stau sub `config/snapshots/` în volumul de
+configurație — protejează împotriva editărilor greșite, nu împotriva
+pierderii volumului. Ține și un ZIP exportat altundeva.
+
+---
+
+## 16. Securitate
+
+Totul e **oprit implicit** — appliance-ul țintește un LAN de încredere.
+Activează straturile din **Config → Security** pe măsură ce expunerea
+crește. Apărare în adâncime: fiecare strat se aplică independent.
+
+### 16.1 Login & roluri
+
+Un cont **admin**, plus conturi opționale **operator** și **viewer**:
+
+| Rol | Poate | Nu poate |
+|---|---|---|
+| `viewer` | vede tot (GET), rulează interogările de registre la cerere | schimba ceva |
+| `operator` | acțiuni live: diagnostice, bus trace, discovery, teste de dispozitiv, payload samples, **scrieri Modbus** (în limitele din template), test de alertă, reload de registre, propriile passkey-uri | orice ajunge într-un fișier de configurație (dispozitive, registre, template-uri, vmetere, setări, snapshot-uri), audit trail |
+| `admin` | tot | — |
+
+Parolele sunt hash-uite (PBKDF2-SHA256, 600k iterații); lasă câmpul de
+parolă gol la salvare ca să o păstrezi pe cea curentă. **Activarea
+login-ului refuză admin/admin implicit** — setează întâi o parolă reală.
+Login-urile eșuate se blochează per IP (`lockout_threshold` /
+`lockout_minutes`, implicit 5 / 5 min). Sesiunile sunt cookie-uri HttpOnly,
+12 h glisante, în memorie — un restart de container deloghează pe toată
+lumea. Audit trail-ul e doar pentru admin.
+
+### 16.2 Passkey-uri (WebAuthn)
+
+Login fără parolă cu un autentificator de platformă sau o cheie de
+securitate. Înrolare din meniul de utilizator (fiecare cont își
+administrează propriile passkey-uri; adminul le vede pe toate). Cerințe și
+capcane:
+
+- Browserele rulează WebAuthn doar în **context securizat**: deschide UI-ul
+  prin `localhost` (pe cutie) sau printr-un **hostname peste HTTPS** (de ex.
+  `gateway.lan` în spatele Traefik). O adresă IP brută e respinsă — RP ID-ul
+  trebuie să fie un hostname.
+- Un passkey e legat de hostname-ul pe care a fost înrolat; alt nume =
+  înrolare din nou.
+- Login-ul cu passkey împarte lockout-ul cu parola, și poți înrola
+  **înainte** să activezi login-ul, ca să nu rămâi blocat la mijloc de
+  migrare.
+
+### 16.3 HTTPS & reverse proxy (Traefik)
+
+- **TLS încorporat**: indică în Config → Security un certificat + cheie sub
+  `config/`, sau lasă gol pentru o pereche self-signed generată automat
+  (**restart pentru aplicare**; browserele avertizează pe self-signed).
+- **În spatele unui reverse proxy** (recomandat pentru certificate reale):
+  termină TLS în Traefik/nginx/Caddy și setează `ui.trusted_proxies` la
+  IP-ul proxy-ului (de ex. adresa containerului Traefik). Doar atunci sunt
+  onorate `X-Forwarded-For` / `X-Forwarded-Proto` — altfel allowlist-ul de
+  IP-uri, lockout-ul de login și audit trail-ul ar vedea toate proxy-ul în
+  loc de clientul real, iar cookie-urile de sesiune n-ar fi marcate Secure.
+  Gol (implicit) = nu ai încredere în nimeni. Schiță minimă Traefik: rutează
+  `gateway.example.com` → `:8080` și adaugă IP-ul de rețea al containerului
+  gateway-ului în `trusted_proxies`.
+
+### 16.4 Allowlist de IP-uri
+
+`security.allowlist` — un IP/CIDR pe linie (de ex. `192.168.1.0/24`); gol =
+deschis. Loopback-ul e mereu permis; păzește și `/ws`, `/health` și
+`/metrics`. Cardul arată *IP-ul tău curent* ca să nu te blochezi singur.
+**Notă Docker:** în spatele rețelei bridge implicite, clienții apar adesea
+cu IP-ul gateway-ului docker — verifică „IP-ul tău curent" și pune în listă
+ce vezi efectiv, sau folosește rețea host/macvlan pentru filtrare reală per
+client. Blocat totuși? Editează `security.allowlist` în
+`config/config.yaml` și repornește.
+
+### 16.5 Cheie API
+
+Setează `API_KEY` în environment ca să ceri `X-API-Key` la fiecare cerere de
+modificare, independent de login — util pentru scripturi și CI. GET-urile
+read-only și interogările la cerere rămân deschise.
+
+### 16.6 Audit trail
+
+JSONL append-only sub `config/audit.jsonl` (rotire 1 MB × 5 fișiere):
+login-uri (inclusiv eșecuri și lockout-uri), evenimente de passkey,
+**fiecare scriere Modbus**, exporturi/importuri de configurație, restaurări
+de snapshot — cu utilizator, IP, acțiune, țintă, status; valorile secrete
+din payload-uri sunt redactate înainte de scriere. Îl vezi/filtrezi pe
+pagina Status (admin) sau îl exporți CSV prin `GET /api/audit/export.csv`.
+
+---
+
+## 17. Observabilitate: Status, /metrics, evenimente
+
+- **Pagina Status** — sănătatea per dispozitiv (conectat, rată de poll,
+  taxonomia erorilor, vârsta datelor, latență), statistici de sink
+  (publicate/sărite/eșuate, contoare de buffer), clienți WebSocket, resurse
+  de proces (CPU, RSS, thread-uri, FD-uri), evenimente și alerte recente.
+- **`/metrics`** — format text Prometheus, fără login (un scraper nu se
+  poate loga), dar în spatele allowlist-ului de IP-uri; doar contoare și
+  sănătate, niciodată configurație. Serii: `gateway_device_up/poll_rate/
+  reads_total/errors_total/read_latency_ms/staleness_seconds/health`,
+  `gateway_mqtt_connected/published_total`, `gateway_influx_connected/
+  written_total/buffer_points/dropped_total`, `gateway_vmeter_up/
+  requests_total/request_rate/errors_total/connections/quality`. Exemplu de
+  scrape:
+
+  ```yaml
+  scrape_configs:
+    - job_name: multi-bus-gateway
+      static_configs: [{ targets: ["gateway:8080"] }]
+  ```
+- **`/health`** — proba containerului. Întoarce HTTP 503 **doar** când un
+  meter virtual activat e cu adevărat picat (ceva ce un restart poate
+  repara); un meter upstream inaccesibil degradează doar corpul răspunsului
+  și rămâne HTTP 200 — restartul containerului nu-ți repară cablarea, iar
+  watchdog-ul vmeter deja protejează consumatorii.
+- **Jurnalul de evenimente** — ring persistat (`config/events.jsonl`,
+  ultimele 300): eșecuri de citire, conectări/deconectări de sink, ciclul de
+  viață al vmeterelor, rollback-uri, alerte.
+
+---
+
+## 18. Limbi & fus orar
+
+- **Limbi** — UI-ul vine cu engleză și română; selectorul e în bara de
+  titlu. Limbile sunt fișiere simple: copiază `ui/languages/en.json` în
+  `<cod>.json`, traduci, și apare în selector — fără rebuild. Vezi
+  `ui/languages/README.md`.
+- **Fus orar** — Config → General. O zonă IANA (validată) care determină
+  granițele calendaristice ale raportului lunar de energie; se aplică live.
+  Implicit `Europe/Bucharest`.
+
+---
+
+## 19. Depanare
 
 | Simptom | Verifică |
 |---------|----------|
-| Punctul Modbus roșu | `MODBUS_HOST`/portul corecte? Modbus TCP activat pe Janitza? firewall? |
-| Interfața arată versiunea veche după actualizare | reîmprospătează forțat browserul (bundle-ul aplicației are cache-busting, dar proxy-urile pot stoca în cache) |
-| Contor virtual „stale / starting” | sursa Janitza nu este proaspătă — verifică conexiunea Modbus; watchdog-ul nu va servi date învechite, prin design |
-| Consumatorul nu poate ajunge la un contor virtual | este portul în interiorul intervalului compose publicat? accesibil din rețeaua consumatorului? verifică tab-ul **Logs** pentru citiri primite |
-| Entitățile MQTT lipsesc din HA | brokerul accesibil? autodiscovery activat? urmărește `docker compose logs` |
-| Avertismente InfluxDB write-retry | URL/token/bucket InfluxDB corecte? Clientul reîncearcă ~5 min, apoi batch-ul e recuperat în bufferul RAM și replay-at la reconectare — vezi `replayed_total`/`dropped_total` în `/api/status` |
+| Punctul Modbus roșu | host/port/unit id corecte? Modbus TCP activat pe dispozitiv? firewall? Folosește Diagnostics → probe: un răspuns cu excepție înseamnă totuși un dispozitiv viu |
+| Valorile arată ca gunoiul | tip de date sau ordine de cuvinte greșite — rulează register probe și citește matricea tip×ordine |
+| O citire unită eșuează cu *illegal data address* | slave strict/cu goluri — setează `max_gap: 0` pe dispozitiv |
+| UI-ul arată o versiune veche după update | hard-refresh (bundle-ul e cache-busted, dar proxy-urile pot cache-ui) |
+| Meter virtual „stale / starting" | sursa nu e proaspătă — verifică conexiunea dispozitivului; watchdog-ul refuză să servească date stale prin design |
+| Consumatorul nu ajunge la un meter virtual | portul e în gama publicată de compose? accesibil din rețeaua consumatorului? urmărește tab-ul Logs pentru citiri |
+| Entități MQTT lipsă în HA | broker accesibil? discovery activat? verifică `docker compose logs` |
+| Avertismente de write-retry InfluxDB | URL/token/bucket corecte? Clientul reîncearcă ~5 min, apoi batch-ul e recuperat în buffer și replay-at — urmărește `replayed_total`/`dropped_total` |
+| Login-ul refuză să se activeze | setează întâi o parolă nouă de admin — `admin` implicit nu poate fi folosită |
+| Blocat (login) | așteaptă `lockout_minutes`, sau repornește containerul (sesiunile/lockout-urile sunt în memorie) |
+| Blocat (allowlist IP) | editează `security.allowlist` în `config/config.yaml`, repornește |
+| Înrolarea passkey eșuează | ești pe URL cu IP sau HTTP simplu — folosește `localhost` sau un hostname peste HTTPS |
+| Configurația s-a stricat după o editare | boot-ul restaurează automat last-known-good; fișierul stricat rămâne ca `config.yaml.bad`; sau fă rollback la un snapshot din Config → Backup |
+| Scrierile întorc 403 | `security.allow_writes` oprit, lipsă credențial (login/cheie API), registru nedeclarat writable, sau valoare în afara `write_min`/`write_max` |
 
-Tot blocat? Deschide un issue — include `docker compose logs` și configurația ta
-(cu datele sensibile mascate). Vezi **[VIRTUAL-METER.ro.md](VIRTUAL-METER.ro.md)**
-pentru detaliile interne ale motorului și cum să adaugi un nou șablon de contor.
+Tot blocat? Deschide un issue — include `docker compose logs` și
+configurația ta (redactată).

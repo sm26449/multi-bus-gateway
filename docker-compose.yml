@@ -7,7 +7,7 @@ services:
       - "${UI_PORT}:${UI_PORT}"
       # Virtual meters — publish a contiguous range so they are reachable on the
       # LAN. Any virtual meter on a port in this range works without editing the
-      # compose again; grow VMETER_PORT_END if you need more. (See docs/VIRTUAL-METER.md.)
+      # compose again; grow VMETER_PORT_END if you need more. (See docs/MANUAL.md §11.)
       - "${VMETER_PORT_START:-1502}-${VMETER_PORT_END:-1512}:${VMETER_PORT_START:-1502}-${VMETER_PORT_END:-1512}"
       # Standard Modbus port — some consumers (e.g. the Fronius DataManager) poll
       # their meter on :502. Remove this line if host port 502 is already in use.

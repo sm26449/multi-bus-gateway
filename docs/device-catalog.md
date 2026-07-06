@@ -1,20 +1,23 @@
 # Device catalog — bundled register maps & provenance
 
-> **Generated** by `tools/gen_device_catalog.py` from `janitza/device_templates/*.json`. Do not edit by hand — re-run the generator after changing a template.
+> **Generated** by `tools/gen_device_catalog.py` from `multibus/device_templates/*.json`. Do not edit by hand — re-run the generator after changing a template.
 
 Every built-in device map, with its Modbus transport (function code + byte/word order), the exact register table, and the **source it was verified against**. We do not fabricate maps — each entry cites its provenance. **Confidence varies by entry:** some are *vendor-verified* (confirmed against the manufacturer manual or a field-tested driver — e.g. ABB B23 vs the ABB manual, Schneider iEM3000 vs volkszaehler/mbmd, Carlo Gavazzi EM24 vs Victron), while others are *community-sourced* and their description says to verify against your specific unit's manual before billing-grade use (e.g. the Eastron SDM entries). Read each entry's Source line. `scale` is a divisor — engineering value = raw / scale.
 
-**7 device maps.**
+**10 device maps.**
 
 | Map | Vendor | Model | Registers | Transport |
 |---|---|---|---|---|
 | [Janitza UMG 512-PRO](#janitza-umg-512-pro) | Janitza electronics GmbH | UMG 512-PRO | 4126 | FC03 / big |
 | [ABB B21 (single-phase)](#abb-b21-single-phase) | ABB | B21 (System pro M compact) | 10 | FC03 / big |
 | [ABB B23 (3-phase)](#abb-b23-3-phase) | ABB | B23 (System pro M compact) | 32 | FC03 / big |
+| [BLE sensor (Theengs / BTHome → MQTT)](#ble-sensor-theengs--bthome--mqtt) | Theengs | BLE advertisement sensor | 5 | FC03 / big |
 | [Carlo Gavazzi EM24 (AV5/AV53, 3-phase)](#carlo-gavazzi-em24-av5av53-3-phase) | Carlo Gavazzi | EM24-DIN AV5(3) | 16 | FC03 / little |
 | [Eastron SDM120 (single-phase)](#eastron-sdm120-single-phase) | Eastron | SDM120 Modbus | 10 | FC04 / big |
 | [Eastron SDM630 (3-phase)](#eastron-sdm630-3-phase) | Eastron | SDM630 Modbus V2 | 29 | FC04 / big |
+| [Generic MQTT (JSON)](#generic-mqtt-json) | Generic | MQTT JSON source | 3 | FC03 / big |
 | [Schneider iEM3000 (3-phase)](#schneider-iem3000-3-phase) | Schneider Electric | iEM3155 / iEM3255 / iEM3455 / iEM3555 | 22 | FC03 / big |
+| [Zigbee sensor (zigbee2mqtt)](#zigbee-sensor-zigbee2mqtt) | Zigbee2MQTT | climate / battery sensor | 6 | FC03 / big |
 
 ---
 
@@ -94,6 +97,23 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 23355 / 0x5B3B | `PF_L1` | Power factor L1 | int16 | 1000 | — | normal |
 | 23356 / 0x5B3C | `PF_L2` | Power factor L2 | int16 | 1000 | — | normal |
 | 23357 / 0x5B3D | `PF_L3` | Power factor L3 | int16 | 1000 | — | normal |
+
+## BLE sensor (Theengs / BTHome → MQTT)
+
+**id** `ble_theengs_sensor` · **vendor** Theengs · **model** BLE advertisement sensor · **version** 1.0.0 · **registers** 5
+
+- **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
+- **Source / provenance:** https://decoder.theengs.io/devices/devices_by_brand.html
+
+> A BLE sensor (Xiaomi LYWSD03MMC/ATC, RuuviTag, Govee, SwitchBot…) whose advertisements are decoded to MQTT JSON by Theengs Gateway or OpenMQTTGateway. Set the device connection topic to the gateway's per-device topic (e.g. home/TheengsGateway/BTtoMQTT/<MAC>). Field names follow the Theengs decoder properties (tempc/hum/batt/volt/rssi) — edit per your sensor model. BLE advertising is slow: keep generous per-row stale bounds when used in composites.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 1 / 0x0001 | `tempc` | Temperature | float | 1 | °C | normal |
+| 2 / 0x0002 | `hum` | Humidity | float | 1 | % | normal |
+| 3 / 0x0003 | `batt` | Battery | float | 1 | % | normal |
+| 4 / 0x0004 | `volt` | Battery voltage | float | 1 | V | normal |
+| 5 / 0x0005 | `rssi` | RSSI | float | 1 | dBm | normal |
 
 ## Carlo Gavazzi EM24 (AV5/AV53, 3-phase)
 
@@ -186,6 +206,20 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 342 / 0x0156 | `Total_kWh` | Total active energy | float | 1 | kWh | slow |
 | 344 / 0x0158 | `Total_kvarh` | Total reactive energy | float | 1 | kvarh | slow |
 
+## Generic MQTT (JSON)
+
+**id** `mqtt_json_generic` · **vendor** Generic · **model** MQTT JSON source · **version** 1.0.0 · **registers** 3
+
+- **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
+
+> Starter map for a device that publishes JSON on MQTT (Shelly, Tasmota, Zigbee2MQTT, ESPHome, custom). Each measurement reads a topic and a json_path into the payload — edit these to match your device, then add or remove rows in Measurements.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 1 / 0x0001 | `power` | Power | float | 1 | W | normal |
+| 2 / 0x0002 | `voltage` | Voltage | float | 1 | V | normal |
+| 3 / 0x0003 | `current` | Current | float | 1 | A | normal |
+
 ## Schneider iEM3000 (3-phase)
 
 **id** `schneider_iem3000` · **vendor** Schneider Electric · **model** iEM3155 / iEM3255 / iEM3455 / iEM3555 · **version** 1.0.0 · **registers** 22
@@ -219,3 +253,21 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 3517 / 0x0DBD | `Import_L1_kWh` | Active energy import L1 | int64 | 1000 | kWh | slow |
 | 3521 / 0x0DC1 | `Import_L2_kWh` | Active energy import L2 | int64 | 1000 | kWh | slow |
 | 3525 / 0x0DC5 | `Import_L3_kWh` | Active energy import L3 | int64 | 1000 | kWh | slow |
+
+## Zigbee sensor (zigbee2mqtt)
+
+**id** `zigbee2mqtt_sensor` · **vendor** Zigbee2MQTT · **model** climate / battery sensor · **version** 1.0.0 · **registers** 6
+
+- **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
+- **Source / provenance:** https://www.zigbee2mqtt.io/guide/usage/exposes.html
+
+> A Zigbee sensor bridged by zigbee2mqtt (Sonoff SNZB, Aqara, Tuya, Xiaomi…). Set the device connection topic to zigbee2mqtt/<friendly_name> — z2m publishes one JSON payload there and every row below reads a field from it (standard z2m exposes; field names per zigbee2mqtt.io). Rows are editable: remove what your sensor lacks, add plug fields (power/current/energy/state) or occupancy/contact for other device classes.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 1 / 0x0001 | `temperature` | Temperature | float | 1 | °C | normal |
+| 2 / 0x0002 | `humidity` | Humidity | float | 1 | % | normal |
+| 3 / 0x0003 | `pressure` | Pressure | float | 1 | hPa | normal |
+| 4 / 0x0004 | `battery` | Battery | float | 1 | % | normal |
+| 5 / 0x0005 | `voltage` | Battery voltage | float | 1 | mV | normal |
+| 6 / 0x0006 | `linkquality` | Link quality | float | 1 | lqi | normal |
