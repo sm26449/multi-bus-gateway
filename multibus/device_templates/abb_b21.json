@@ -1,0 +1,26 @@
+{
+  "device_template": {
+    "schema_version": 1,
+    "id": "abb_b21",
+    "name": "ABB B21 (single-phase)",
+    "vendor": "ABB",
+    "model": "B21 (System pro M compact)",
+    "version": "1.0.0",
+    "description": "ABB B21 single-phase DIN-rail energy meter (B-series). Same Modbus map as the B23, populated on L1/total. Integer measurements in HOLDING registers (FC03), big-endian / high-word-first. Scales are divisors: V/10, A/100, W|var|VA/100, Hz/100, PF/1000, kWh/100. Verified against the same authoritative B-series sources as the B23 template.",
+    "source_document": "ABB B-series Modbus (2CDC512084D0101); cross-checked vs steefan85/ABB_B23_Energy_Meter and roastedelectrons/ABBEnergyMeter",
+    "protocol": {"byte_order": "big", "default_register_type": "holding"},
+    "categories": {},
+    "registers": [
+      {"address": 23296, "name": "V", "label": "Voltage L-N", "unit": "V", "data_type": "uint32", "scale": 10, "register_type": "holding", "category": "voltage", "poll_group": "realtime"},
+      {"address": 23308, "name": "I", "label": "Current", "unit": "A", "data_type": "uint32", "scale": 100, "register_type": "holding", "category": "current", "poll_group": "realtime"},
+      {"address": 23316, "name": "P", "label": "Active power", "unit": "W", "data_type": "int32", "scale": 100, "register_type": "holding", "category": "power_active", "poll_group": "realtime"},
+      {"address": 23324, "name": "Q", "label": "Reactive power", "unit": "var", "data_type": "int32", "scale": 100, "register_type": "holding", "category": "power_reactive", "poll_group": "normal"},
+      {"address": 23332, "name": "S", "label": "Apparent power", "unit": "VA", "data_type": "int32", "scale": 100, "register_type": "holding", "category": "power_apparent", "poll_group": "normal"},
+      {"address": 23340, "name": "Freq", "label": "Frequency", "unit": "Hz", "data_type": "uint16", "scale": 100, "register_type": "holding", "category": "frequency", "poll_group": "realtime"},
+      {"address": 23354, "name": "PF", "label": "Power factor", "unit": "", "data_type": "int16", "scale": 1000, "register_type": "holding", "category": "power_factor", "poll_group": "normal"},
+      {"address": 20480, "name": "Import_kWh", "label": "Active energy import (total)", "unit": "kWh", "data_type": "uint64", "scale": 100, "register_type": "holding", "category": "energy", "poll_group": "slow"},
+      {"address": 20484, "name": "Export_kWh", "label": "Active energy export (total)", "unit": "kWh", "data_type": "uint64", "scale": 100, "register_type": "holding", "category": "energy", "poll_group": "slow"},
+      {"address": 20488, "name": "Net_kWh", "label": "Active energy net (total)", "unit": "kWh", "data_type": "int64", "scale": 100, "register_type": "holding", "category": "energy", "poll_group": "slow"}
+    ]
+  }
+}

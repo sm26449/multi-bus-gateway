@@ -1,0 +1,44 @@
+{
+  "device_template": {
+    "schema_version": 1,
+    "id": "ble_theengs_sensor",
+    "name": "BLE sensor (Theengs / BTHome → MQTT)",
+    "vendor": "Theengs",
+    "model": "BLE advertisement sensor",
+    "version": "1.0.0",
+    "author": "built-in",
+    "description": "A BLE sensor (Xiaomi LYWSD03MMC/ATC, RuuviTag, Govee, SwitchBot…) whose advertisements are decoded to MQTT JSON by Theengs Gateway or OpenMQTTGateway. Set the device connection topic to the gateway's per-device topic (e.g. home/TheengsGateway/BTtoMQTT/<MAC>). Field names follow the Theengs decoder properties (tempc/hum/batt/volt/rssi) — edit per your sensor model. BLE advertising is slow: keep generous per-row stale bounds when used in composites.",
+    "source_document": "https://decoder.theengs.io/devices/devices_by_brand.html",
+    "protocol": { "transports": ["mqtt"] },
+    "poll_groups": {
+      "normal": { "interval": 60, "description": "BLE advertisements arrive every few seconds to minutes" }
+    },
+    "categories": {
+      "climate": { "label": "Climate", "order": 1 },
+      "battery": { "label": "Battery", "order": 2 },
+      "diagnostics": { "label": "Diagnostics", "order": 3 }
+    },
+    "registers": [
+      { "address": 1, "name": "tempc", "label": "Temperature", "unit": "°C",
+        "data_type": "float", "category": "climate",
+        "description": "Theengs property 'tempc' (°C)",
+        "json_path": "tempc", "poll_group": "normal" },
+      { "address": 2, "name": "hum", "label": "Humidity", "unit": "%",
+        "data_type": "float", "category": "climate",
+        "description": "Theengs property 'hum' (%RH)",
+        "json_path": "hum", "poll_group": "normal" },
+      { "address": 3, "name": "batt", "label": "Battery", "unit": "%",
+        "data_type": "float", "category": "battery",
+        "description": "Theengs property 'batt' (%)",
+        "json_path": "batt", "poll_group": "normal" },
+      { "address": 4, "name": "volt", "label": "Battery voltage", "unit": "V",
+        "data_type": "float", "category": "battery",
+        "description": "Theengs property 'volt' (V)",
+        "json_path": "volt", "poll_group": "normal" },
+      { "address": 5, "name": "rssi", "label": "RSSI", "unit": "dBm",
+        "data_type": "float", "category": "diagnostics",
+        "description": "Received signal strength of the advertisement",
+        "json_path": "rssi", "poll_group": "normal" }
+    ]
+  }
+}

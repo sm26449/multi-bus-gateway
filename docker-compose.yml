@@ -1,0 +1,100 @@
+services:
+  janitza-monitor:
+    build: .
+    container_name: janitza-monitor
+    restart: unless-stopped
+    ports:
+      - "${UI_PORT}:${UI_PORT}"
+      # Virtual meters — publish a contiguous range so they are reachable on the
+      # LAN. Any virtual meter on a port in this range works without editing the
+      # compose again; grow VMETER_PORT_END if you need more. (See docs/VIRTUAL-METER.md.)
+      - "${VMETER_PORT_START:-1502}-${VMETER_PORT_END:-1512}:${VMETER_PORT_START:-1502}-${VMETER_PORT_END:-1512}"
+      # Standard Modbus port — some consumers (e.g. the Fronius DataManager) poll
+      # their meter on :502. Remove this line if host port 502 is already in use.
+      - "502:502"
+    volumes:
+      - ./config:/app/config
+      - ./docs:/app/docs:ro
+      # For live frontend editing without rebuilds, see
+      # docker-compose.override.yml.example (mounts ./ui over the baked /app/ui).
+    environment:
+      # Virtual meters (the UI uses this range to offer/validate instance ports)
+      - VMETER_PORT_START=${VMETER_PORT_START:-1502}
+      - VMETER_PORT_END=${VMETER_PORT_END:-1512}
+      # Modbus / MQTT / InfluxDB connection settings are configured from the UI
+      # (Config -> Settings) and persisted to the mounted config/config.yaml, applied
+      # live without a restart. The app prompts you on first run if it can't connect.
+      # If you'd rather pre-seed them from the environment, uncomment the lines below
+      # (and set them in .env) — note an env value OVERRIDES the UI/yaml on every start.
+      # - MODBUS_HOST
+      # - MODBUS_PORT
+      # - MODBUS_UNIT_ID
+      # - MQTT_ENABLED
+      # - MQTT_BROKER
+      # - MQTT_PORT
+      # - MQTT_USERNAME
+      # - MQTT_PASSWORD
+      # - MQTT_PREFIX
+      # - MQTT_PUBLISH_MODE
+      # - INFLUXDB_ENABLED
+      # - INFLUXDB_URL
+      # - INFLUXDB_TOKEN
+      # - INFLUXDB_ORG
+      # - INFLUXDB_BUCKET
+      # - INFLUXDB_PUBLISH_MODE
+      # UI
+      - UI_PORT
+      # Security — optional API key required for state-changing requests (empty = open)
+      - API_KEY
+    networks:
+      - monitoring
+      - pv-stack-network
+
+  # Optional: InfluxDB for local storage
+  influxdb:
+    image: influxdb:2.7
+    container_name: janitza-influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+      - influxdb-config:/etc/influxdb2
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME
+      - DOCKER_INFLUXDB_INIT_PASSWORD
+      - DOCKER_INFLUXDB_INIT_ORG
+      - DOCKER_INFLUXDB_INIT_BUCKET
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN
+    networks:
+      - monitoring
+    profiles:
+      - influxdb
+
+  # Optional: Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: janitza-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD
+    networks:
+      - monitoring
+    profiles:
+      - grafana
+
+networks:
+  monitoring:
+    driver: bridge
+  pv-stack-network:
+    external: true
+
+volumes:
+  influxdb-data:
+  influxdb-config:
+  grafana-data:

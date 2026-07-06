@@ -1,0 +1,130 @@
+# Janitza UMG 512-PRO Monitor Configuration
+
+general:
+  # Logging level: DEBUG, INFO, WARNING, ERROR
+  log_level: INFO
+  # Log file path (optional, logs to stdout if not set)
+  log_file: ""
+
+modbus:
+  # Janitza device IP address — or leave this and set it from the UI
+  # (Config → Settings) on first run; the app prompts you if it can't connect.
+  host: 192.168.1.100
+  # Modbus TCP port (default 502)
+  port: 502
+  # Modbus unit/slave ID
+  unit_id: 1
+  # Connection timeout in seconds
+  timeout: 3
+  # Retry attempts on failure
+  retry_attempts: 3
+  # Delay between retries in seconds
+  retry_delay: 1
+  # No successful read within this many seconds => acquisition reported "stale"
+  # in /health and /api/status (does NOT fail the container healthcheck).
+  stale_after_s: 30
+
+polling:
+  # Default poll interval in seconds
+  default_interval: 5
+  # Poll groups with different intervals
+  groups:
+    realtime:
+      interval: 1
+      description: "Real-time values (voltage, current, power)"
+    normal:
+      interval: 5
+      description: "Standard measurements"
+    slow:
+      interval: 60
+      description: "Energy counters, statistics"
+
+mqtt:
+  # Enable MQTT publishing
+  enabled: true
+  # MQTT broker address
+  broker: 192.168.1.100
+  # MQTT broker port
+  port: 1883
+  # Authentication (leave empty if not required)
+  username: ""
+  password: ""
+  # Base topic prefix
+  topic_prefix: "janitza/umg512"
+  # Retain messages
+  retain: true
+  # QoS level (0, 1, or 2)
+  qos: 0
+  # Publish mode: "changed" (only changed values) or "all" (all values every poll)
+  publish_mode: "changed"
+  # Enable Home Assistant MQTT autodiscovery
+  ha_discovery:
+    enabled: true
+    prefix: "homeassistant"
+    device_name: "Janitza UMG 512-PRO"
+
+influxdb:
+  # Enable InfluxDB publishing
+  enabled: false
+  # InfluxDB server URL
+  url: "http://localhost:8086"
+  # API token
+  token: ""
+  # Organization
+  org: ""
+  # Bucket name
+  bucket: "janitza"
+  # Minimum write interval per measurement (seconds)
+  write_interval: 5
+  # Publish mode: "changed" (only changed values) or "all" (all values every poll)
+  publish_mode: "changed"
+  # Store-and-forward buffer: points produced while InfluxDB is unreachable are
+  # kept in RAM and replayed with their original timestamps on reconnect
+  # (idempotent - InfluxDB dedupes on measurement+tags+timestamp).
+  buffer_minutes: 10
+  buffer_max_points: 50000
+
+ui:
+  # Web UI host
+  host: "0.0.0.0"
+  # Web UI port
+  port: 8080
+  # Enable authentication (optional)
+  auth:
+    enabled: false
+    username: "admin"
+    password: "admin"
+
+# Alerting hooks (optional, off by default). When enabled, notable Status-page
+# conditions are delivered over the channels below so alertd / Home Assistant /
+# Node-RED / a webhook notifier can act on them. Each alert is rate-limited per
+# key (min_interval_s) so a flapping signal cannot spam. Applies on restart.
+alerts:
+  enabled: false
+  # Publish a JSON alert to <mqtt.topic_prefix>/alert on the same broker.
+  mqtt: true
+  # Optional: also POST the JSON alert to this URL (SMS gateway, ntfy, Telegram
+  # bridge, alertd HTTP ingest). Leave empty to disable the webhook channel.
+  webhook_url: ""
+  # Optional extra HTTP headers on the webhook POST — e.g. an API key or bearer
+  # token the receiver requires (the webhook has no LAN/SSRF restriction, so this
+  # is how you authenticate to an external notifier).
+  webhook_headers: {}      # e.g. { "X-API-Key": "secret" }
+  # Optional body template. WITHOUT it, the raw alert JSON is posted:
+  #   {ts, severity, source, message, key, host}
+  # WITH it (a dict), each string value is rendered with those alert fields via
+  # {placeholders}, and the dict is POSTed as JSON. This maps the alert onto a
+  # specific endpoint's contract — e.g. an SMS gateway that expects {"message":...}:
+  #   webhook_body: { "message": "{severity} {source}: {message}" }
+  webhook_body: null
+  # Do not re-fire the same alert key more often than this (seconds).
+  min_interval_s: 300
+  # Thresholds
+  latency_ms: 1000        # alert when a source's read latency exceeds this
+  buffer_points: 1000     # alert when the InfluxDB store-and-forward buffer grows past this
+  # Which signals raise an alert
+  signals:
+    device: true          # a source device goes down / recovers
+    sink: true            # MQTT or InfluxDB disconnects / reconnects
+    latency: true         # sustained high read latency
+    buffer: true          # InfluxDB buffer backlog or dropped points

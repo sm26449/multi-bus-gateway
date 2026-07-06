@@ -1,0 +1,32 @@
+{
+  "device_template": {
+    "schema_version": 1,
+    "id": "carlo_gavazzi_em24",
+    "name": "Carlo Gavazzi EM24 (AV5/AV53, 3-phase)",
+    "vendor": "Carlo Gavazzi",
+    "model": "EM24-DIN AV5(3)",
+    "version": "1.0.0",
+    "description": "Carlo Gavazzi EM24-DIN 3-phase energy meter (the legacy Victron grid meter). 32-bit measurements are signed INT32 in HOLDING registers (FC03), LOW-WORD-FIRST (little-endian, Reg_s32l). Scales are divisors: V/10, A/1000, W/10, Hz/10, kWh/10. Register map is authoritative from Victron dbus-modbus-client/carlo_gavazzi.py (model detected via reg 0x000b == 1651) and matches this repo's production-proven em24_av53 emulation. CG meters answer both FC03 and FC04 for measurements; FC03 is canonical.",
+    "source_document": "Victron dbus-modbus-client carlo_gavazzi.py (EM24_Meter) + Carlo Gavazzi EM24-DIN communication protocol",
+    "protocol": {"byte_order": "little", "default_register_type": "holding"},
+    "categories": {},
+    "registers": [
+      {"address": 0,  "name": "V_L1", "label": "Voltage L1-N", "unit": "V", "data_type": "int32", "scale": 10, "register_type": "holding", "category": "voltage", "poll_group": "realtime"},
+      {"address": 2,  "name": "V_L2", "label": "Voltage L2-N", "unit": "V", "data_type": "int32", "scale": 10, "register_type": "holding", "category": "voltage", "poll_group": "realtime"},
+      {"address": 4,  "name": "V_L3", "label": "Voltage L3-N", "unit": "V", "data_type": "int32", "scale": 10, "register_type": "holding", "category": "voltage", "poll_group": "realtime"},
+      {"address": 12, "name": "I_L1", "label": "Current L1", "unit": "A", "data_type": "int32", "scale": 1000, "register_type": "holding", "category": "current", "poll_group": "realtime"},
+      {"address": 14, "name": "I_L2", "label": "Current L2", "unit": "A", "data_type": "int32", "scale": 1000, "register_type": "holding", "category": "current", "poll_group": "realtime"},
+      {"address": 16, "name": "I_L3", "label": "Current L3", "unit": "A", "data_type": "int32", "scale": 1000, "register_type": "holding", "category": "current", "poll_group": "realtime"},
+      {"address": 18, "name": "P_L1", "label": "Active power L1", "unit": "W", "data_type": "int32", "scale": 10, "register_type": "holding", "category": "power_active", "poll_group": "realtime"},
+      {"address": 20, "name": "P_L2", "label": "Active power L2", "unit": "W", "data_type": "int32", "scale": 10, "register_type": "holding", "category": "power_active", "poll_group": "realtime"},
+      {"address": 22, "name": "P_L3", "label": "Active power L3", "unit": "W", "data_type": "int32", "scale": 10, "register_type": "holding", "category": "power_active", "poll_group": "realtime"},
+      {"address": 40, "name": "P_total", "label": "Total active power", "unit": "W", "data_type": "int32", "scale": 10, "register_type": "holding", "category": "power_active", "poll_group": "realtime"},
+      {"address": 51, "name": "Freq", "label": "Frequency", "unit": "Hz", "data_type": "uint16", "scale": 10, "register_type": "holding", "category": "frequency", "poll_group": "realtime"},
+      {"address": 64, "name": "Energy_L1_Import", "label": "Import active energy L1", "unit": "kWh", "data_type": "int32", "scale": 10, "register_type": "holding", "category": "energy", "poll_group": "slow"},
+      {"address": 66, "name": "Energy_L2_Import", "label": "Import active energy L2", "unit": "kWh", "data_type": "int32", "scale": 10, "register_type": "holding", "category": "energy", "poll_group": "slow"},
+      {"address": 68, "name": "Energy_L3_Import", "label": "Import active energy L3", "unit": "kWh", "data_type": "int32", "scale": 10, "register_type": "holding", "category": "energy", "poll_group": "slow"},
+      {"address": 52, "name": "Import_kWh", "label": "Import active energy (total)", "unit": "kWh", "data_type": "int32", "scale": 10, "register_type": "holding", "category": "energy", "poll_group": "slow"},
+      {"address": 78, "name": "Export_kWh", "label": "Export active energy (total)", "unit": "kWh", "data_type": "int32", "scale": 10, "register_type": "holding", "category": "energy", "poll_group": "slow"}
+    ]
+  }
+}

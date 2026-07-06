@@ -1,0 +1,36 @@
+{
+  "device_template": {
+    "schema_version": 1,
+    "id": "mqtt_json_generic",
+    "name": "Generic MQTT (JSON)",
+    "vendor": "Generic",
+    "model": "MQTT JSON source",
+    "version": "1.0.0",
+    "author": "built-in",
+    "description": "Starter map for a device that publishes JSON on MQTT (Shelly, Tasmota, Zigbee2MQTT, ESPHome, custom). Each measurement reads a topic and a json_path into the payload — edit these to match your device, then add or remove rows in Measurements.",
+    "source_document": "",
+    "protocol": { "transports": ["mqtt"] },
+    "poll_groups": {
+      "normal": { "interval": 5, "description": "MQTT input is push-driven; interval is informational" }
+    },
+    "categories": {
+      "power_active": { "label": "Active power" },
+      "voltage": { "label": "Voltage" },
+      "current": { "label": "Current" }
+    },
+    "registers": [
+      { "address": 1, "name": "power", "label": "Power", "unit": "W",
+        "data_type": "float", "category": "power_active",
+        "description": "Example: field 'power' in the JSON payload",
+        "topic": "sensors/example/state", "json_path": "power", "poll_group": "normal" },
+      { "address": 2, "name": "voltage", "label": "Voltage", "unit": "V",
+        "data_type": "float", "category": "voltage",
+        "description": "Example: field 'voltage' in the JSON payload",
+        "topic": "sensors/example/state", "json_path": "voltage", "poll_group": "normal" },
+      { "address": 3, "name": "current", "label": "Current", "unit": "A",
+        "data_type": "float", "category": "current",
+        "description": "Example: field 'current' in the JSON payload",
+        "topic": "sensors/example/state", "json_path": "current", "poll_group": "normal" }
+    ]
+  }
+}

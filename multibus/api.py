@@ -1,0 +1,2495 @@
+"""REST API and WebSocket server for Janitza Monitor."""
+
+import asyncio
+import hmac
+import json
+import logging
+import os
+import re
+import threading
+import time
+from typing import Dict, Any, List, Optional, Set
+from datetime import datetime
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Body, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+from .mqtt_publisher import MQTTPublisher
+from .influxdb_publisher import InfluxDBPublisher
+
+logger = logging.getLogger(__name__)
+
+# Static assets referenced as /static/<path>?v=<token>. The token is rewritten
+# at serve time from the file's mtime (see _render_index_html) so a changed
+# app.js/css busts the browser cache automatically — no hand-edited ?v= tokens.
+_STATIC_ASSET_RE = re.compile(r'(/static/([^"\'?\s]+))\?v=[^"\'\s]*')
+
+
+def _render_index_html(path: str = "ui/templates/index.html") -> str:
+    """Return the SPA shell with each static asset's ?v= cache-bust token set to
+    the asset's mtime (files are served from ui/ at /static/)."""
+    html = open(path, encoding="utf-8").read()
+
+    def _stamp(m):
+        rel = m.group(2)
+        try:
+            ver = int(os.path.getmtime(os.path.join("ui", rel)))
+        except OSError:
+            ver = 0
+        return f"{m.group(1)}?v={ver}"
+
+    return _STATIC_ASSET_RE.sub(_stamp, html)
+
+
+# Process start (approx = module import) for uptime, and last CPU sample for the
+# %-delta. Read from /proc/self so no psutil dependency is needed (Linux/container).
+_APP_START_TS = time.time()
+_CPU_SAMPLE = {"wall": None, "cpu_s": None}
+
+
+def _read_self_resources() -> dict:
+    """Host/process resource footprint from /proc/self (no external deps).
+
+    CPU% is the delta since the previous call, so the first call after start
+    returns null and subsequent polls (the Status page refreshes) report a real
+    figure. All fields are best-effort: missing /proc entries just omit a key."""
+    out: dict = {"num_cpus": os.cpu_count(), "uptime_s": int(time.time() - _APP_START_TS)}
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    out["rss_mb"] = round(int(line.split()[1]) / 1024, 1)
+                elif line.startswith("Threads:"):
+                    out["threads"] = int(line.split()[1])
+    except OSError:
+        pass
+    try:
+        out["open_fds"] = len(os.listdir("/proc/self/fd"))
+    except OSError:
+        pass
+    try:
+        est = 0
+        for fn in ("/proc/self/net/tcp", "/proc/self/net/tcp6"):
+            try:
+                with open(fn) as f:
+                    next(f, None)  # header row
+                    for line in f:
+                        parts = line.split()
+                        if len(parts) > 3 and parts[3] == "01":  # 01 = ESTABLISHED
+                            est += 1
+            except OSError:
+                continue
+        out["tcp_established"] = est
+    except OSError:
+        pass
+    try:
+        with open("/proc/self/stat") as f:
+            fields = f.read().split()
+        cpu_s = (int(fields[13]) + int(fields[14])) / os.sysconf("SC_CLK_TCK")
+        now = time.time()
+        prev_w, prev_c = _CPU_SAMPLE["wall"], _CPU_SAMPLE["cpu_s"]
+        _CPU_SAMPLE["wall"], _CPU_SAMPLE["cpu_s"] = now, cpu_s
+        out["cpu_pct"] = (round(100.0 * (cpu_s - prev_c) / (now - prev_w), 1)
+                          if prev_w is not None and now > prev_w else None)
+    except (OSError, IndexError, ValueError):
+        pass
+    return out
+
+
+# Pydantic request models shared with the route modules — re-exported so
+# janitza.api.<Model> references (tests, tooling) keep working.
+from .routes._models import (RegisterBatchQuery, RegisterQuery,  # noqa: F401,E402
+                             SelectedRegisterUpdate, ThresholdConfig)
+
+
+class ModbusConfigUpdate(BaseModel):
+    """Request model for Modbus configuration update."""
+    host: Optional[str] = None
+    port: Optional[int] = None
+    unit_id: Optional[int] = None
+    timeout: Optional[int] = None
+    retry_attempts: Optional[int] = None
+    retry_delay: Optional[float] = None
+
+
+class MQTTConfigUpdate(BaseModel):
+    """Request model for MQTT configuration update."""
+    enabled: Optional[bool] = None
+    broker: Optional[str] = None
+    port: Optional[int] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+    topic_prefix: Optional[str] = None
+    retain: Optional[bool] = None
+    qos: Optional[int] = None
+    publish_mode: Optional[str] = None
+    ha_discovery_enabled: Optional[bool] = None
+    ha_discovery_prefix: Optional[str] = None
+    ha_device_name: Optional[str] = None
+    tls_enabled: Optional[bool] = None
+    tls_ca_cert: Optional[str] = None
+    tls_client_cert: Optional[str] = None
+    tls_client_key: Optional[str] = None
+    tls_insecure: Optional[bool] = None
+    default_topic_pattern: Optional[str] = None
+
+
+class InfluxDBConfigUpdate(BaseModel):
+    """Request model for InfluxDB configuration update."""
+    enabled: Optional[bool] = None
+    url: Optional[str] = None
+    token: Optional[str] = None
+    org: Optional[str] = None
+    bucket: Optional[str] = None
+    write_interval: Optional[int] = None
+    publish_mode: Optional[str] = None
+    default_bucket_pattern: Optional[str] = None
+
+
+class WebSocketManager:
+    """Manages WebSocket connections and broadcasts."""
+
+    def __init__(self):
+        self.active_connections: Set[WebSocket] = set()
+        self.lock = asyncio.Lock()
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        async with self.lock:
+            self.active_connections.add(websocket)
+        logger.info(f"WebSocket connected. Active: {len(self.active_connections)}")
+
+    async def disconnect(self, websocket: WebSocket):
+        async with self.lock:
+            self.active_connections.discard(websocket)
+        logger.info(f"WebSocket disconnected. Active: {len(self.active_connections)}")
+
+    async def broadcast(self, message: Dict):
+        """Broadcast message to all connected clients."""
+        if not self.active_connections:
+            return
+
+        data = json.dumps(message)
+        async with self.lock:
+            disconnected = set()
+            for connection in self.active_connections:
+                try:
+                    await connection.send_text(data)
+                except Exception:
+                    disconnected.add(connection)
+
+            for conn in disconnected:
+                self.active_connections.discard(conn)
+
+
+def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
+               devices=None) -> FastAPI:
+    """
+    Create FastAPI application.
+
+    Args:
+        config: Application configuration
+        modbus_client: ModbusClient instance (device #1 — legacy back-compat)
+        mqtt_publisher: MQTTPublisher instance
+        influxdb_publisher: InfluxDBPublisher instance
+        devices: optional list of (DeviceConfig, ModbusClient) pairs including
+            device #1 first (Tier 2 multi-device). None => single legacy device.
+
+    Returns:
+        FastAPI application
+    """
+    # WebSocket manager
+    ws_manager = WebSocketManager()
+
+    # Store current values for dashboard
+    current_values: Dict[int, Dict] = {}
+    last_update = {"timestamp": None}
+
+    # Store event loop reference for thread-safe async calls
+    main_loop = {"loop": None}
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # Startup
+        main_loop["loop"] = asyncio.get_running_loop()
+        logger.info("API started, event loop captured")
+        yield
+        # Shutdown (cleanup if needed)
+        logger.info("API shutting down")
+        hs = getattr(app.state, 'harvester_stop', None)
+        if hs is not None:
+            hs.set()                               # let the event harvester exit its loop
+
+    app = FastAPI(
+        title="Multi-Bus Gateway",
+        description="Monitor and query Janitza power quality analyzer",
+        version="3.0.0-dev",
+        lifespan=lifespan
+    )
+
+    # Expose the live value cache so the virtual-meter engine can read it.
+    app.state.current_values = current_values
+
+    # CORS — the UI is same-origin so it needs no CORS; the wildcard only eases
+    # read-only third-party access. Credentials are OFF (wildcard + credentials is
+    # spec-invalid and a CSRF liability). NOTE: the API is UNAUTHENTICATED, incl.
+    # control endpoints — run on a trusted LAN / behind an auth proxy. See README.
+    # The UI is served by this same app (same-origin), so cross-origin access
+    # is not needed. A wildcard here would let any web page the operator visits
+    # fire state-changing POSTs at the gateway (drive-by CSRF on a box that can
+    # feed an ESS). Cross-origin API consumers can be added explicitly via
+    # CORS_ALLOW_ORIGINS (comma-separated) if ever needed.
+    _cors = [o.strip() for o in os.environ.get("CORS_ALLOW_ORIGINS", "").split(",") if o.strip()]
+    if _cors:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=_cors,
+            allow_credentials=False,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+    # Optional login/auth (off by default). auth_state manages sessions,
+    # password hashing and per-IP lockout; middleware enforces it when enabled.
+    from . import auth as _auth
+    auth_state = _auth.AuthState(config.ui)
+    if auth_state.enabled and not getattr(config.ui, "tls_enabled", False):
+        logger.warning("SECURITY: login is enabled but UI TLS is OFF — the session "
+                       "cookie travels in cleartext; a LAN sniffer can hijack it. "
+                       "Enable ui.tls or terminate TLS in front of the gateway.")
+    if auth_state.enabled and not _auth.is_hashed(getattr(config.ui, "auth_password", "")):
+        logger.warning("SECURITY: login is enabled but the admin password is stored "
+                       "UNHASHED (likely a hand-edited default like 'admin') — change "
+                       "it in the UI / hash it; a plaintext default is trivially guessed.")
+
+    # Write-lease dead-man switch: a leased write auto-reverts to a safe value if
+    # the controller stops renewing it.
+    from .write_lease import WriteLeaseManager
+    _lease_mgr = WriteLeaseManager(persist_path=config.config_path.parent / "write_leases.json")
+    _lease_mgr.start()
+
+    # IP allowlist (opt-in): when config.security.allowlist is non-empty, only
+    # peers whose IP is in the list (or a listed CIDR) may reach the HTTP
+    # API/UI. Loopback and the docker gateway are always allowed so the
+    # container's own health probes and same-host access keep working. Empty
+    # list => open (trusted-LAN default).
+    import ipaddress as _ipaddr
+
+    def _allow_networks():
+        nets = []
+        for entry in (getattr(config, 'security', None).allowlist
+                      if getattr(config, 'security', None) else []):
+            entry = str(entry).strip()
+            if not entry:
+                continue
+            try:
+                nets.append(_ipaddr.ip_network(entry, strict=False))
+            except ValueError:
+                logger.warning("security.allowlist: ignoring invalid entry %r", entry)
+        return nets
+
+    def _ip_allowed(peer: str) -> bool:
+        nets = _allow_networks()
+        if not nets:
+            return True                       # allowlist empty => open
+        try:
+            ip = _ipaddr.ip_address(peer)
+        except ValueError:
+            return False
+        # Dual-stack sockets report a v4 client as ::ffff:a.b.c.d — normalize so an
+        # IPv4 allowlist entry (192.168.1.0/24) and loopback detection still match
+        # (else legit admins/healthchecks get locked out on an IPv6-bound listener).
+        if getattr(ip, "ipv4_mapped", None) is not None:
+            ip = ip.ipv4_mapped
+        if ip.is_loopback:
+            return True
+        for n in nets:
+            if ip in n:
+                return True
+        return False
+
+    @app.middleware("http")
+    async def _allowlist_guard(request, call_next):
+        nets = _allow_networks()
+        if nets:
+            peer = request.client.host if request.client else ""
+            # docker gateway (172.16/12) reaches the container for healthchecks;
+            # loopback is handled in _ip_allowed. Everything else must be listed.
+            if not _ip_allowed(peer):
+                return JSONResponse({"detail": "forbidden (IP not in allowlist)"},
+                                    status_code=403)
+        return await call_next(request)
+
+    # Optional write protection (opt-in, defense-in-depth for a LAN appliance):
+    # if API_KEY (or JANITZA_API_KEY) is set, every state-changing request
+    # (POST/PUT/PATCH/DELETE) must carry a matching X-API-Key header. Read-only
+    # telemetry (GET) and the on-demand query POSTs stay open so the UI works
+    # without a key. Unset => fully open (default, backward-compatible).
+    _api_key = os.getenv("API_KEY") or os.getenv("JANITZA_API_KEY") or ""
+    _open_writes = {"/api/query/register", "/api/query/batch"}  # POST but read-only
+
+    # OPERATOR: live actions yes, configuration no. Allowed mutations are the
+    # commissioning tools (trace/probe/discovery/query), device tests, device
+    # WRITES (bounded by the template's write_min/max — that is exactly the
+    # operator's job) and logout. Everything that lands in a config file
+    # (devices, registers, templates, vmeters, settings, snapshots) is admin's.
+    _OPERATOR_WRITE_PREFIXES = ("/api/bus-trace", "/api/diagnostics",
+                                "/api/discover", "/api/query",
+                                "/api/auth/logout", "/api/alerts/test",
+                                "/api/config/reload-registers",
+                                # self-service passkey enrollment/removal
+                                "/api/auth/passkey", "/api/auth/passkeys")
+
+    def _operator_may_write(path: str) -> bool:
+        if path.startswith(_OPERATOR_WRITE_PREFIXES):
+            return True
+        if path.startswith("/api/devices") and path.endswith(
+                ("/write", "/test", "/payload-sample")):
+            return True
+        return False
+
+    @app.middleware("http")
+    async def _write_guard(request, call_next):
+        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            # CSRF: reject a browser cross-site state-change (drive-by from any
+            # page the operator visits). A non-browser client (curl/scripts)
+            # sends neither header → allowed; the same-origin UI is 'same-origin'.
+            sfs = request.headers.get("sec-fetch-site")
+            if sfs in ("cross-site", "cross-origin"):
+                return JSONResponse({"detail": "cross-site request blocked"}, status_code=403)
+            origin = request.headers.get("origin")
+            if origin:
+                from urllib.parse import urlparse
+                # Compare host:PORT, not just host — a different port is a different
+                # origin (a co-hosted service on another port must not be trusted).
+                o = urlparse(origin).netloc.lower()
+                if o and o not in (request.headers.get("host", "").lower(),
+                                   request.url.netloc.lower()):
+                    return JSONResponse({"detail": "cross-origin request blocked"}, status_code=403)
+            # Optional X-API-Key (opt-in), skipping the read-only query POSTs.
+            if (_api_key and request.url.path not in _open_writes
+                    and not hmac.compare_digest(request.headers.get("X-API-Key", ""), _api_key)):
+                return JSONResponse({"detail": "missing or invalid API key"}, status_code=401)
+        return await call_next(request)
+
+    # Login/auth gate (opt-in). Open paths always work so the login flow and
+    # static assets load; everything else needs a valid session when enabled.
+    # A viewer session is read-only (GET/HEAD only).
+    # /metrics joins /health: scrapers (Prometheus) can't log in; both stay
+    # behind the IP allowlist and expose operational stats only, never config.
+    _auth_open = {"/api/auth/login", "/api/auth/status", "/health", "/metrics", "/favicon.ico",
+                  # passkey assertion happens BEFORE a session exists
+                  "/api/auth/passkey/login/begin", "/api/auth/passkey/login/finish"}
+    _auth_open_prefixes = ("/static/",)
+
+    @app.middleware("http")
+    async def _auth_guard(request, call_next):
+        if not auth_state.enabled:
+            return await call_next(request)
+        path = request.url.path
+        if path in _auth_open or path.startswith(_auth_open_prefixes):
+            return await call_next(request)
+        token = request.cookies.get(_auth.COOKIE_NAME, "")
+        role = auth_state.role_for(token)
+        if role is None:
+            # unauthenticated: serve the SPA shell for navigations, 401 for API
+            if path.startswith("/api/") or path == "/ws":
+                return JSONResponse({"detail": "login required"}, status_code=401)
+            return HTMLResponse(_render_index_html())
+        # identity lands on request.state BEFORE any deny, so the audit trail
+        # records WHO was refused, not an anonymous dash
+        request.state.role = role
+        ident = auth_state.identity_for(token)
+        request.state.user = ident[1] if ident else role
+        if role == "viewer" and request.method not in ("GET", "HEAD", "OPTIONS"):
+            if request.url.path not in _open_writes:
+                return JSONResponse({"detail": "read-only account"}, status_code=403)
+        if role == "operator" and request.method not in ("GET", "HEAD", "OPTIONS"):
+            if not _operator_may_write(path):
+                return JSONResponse(
+                    {"detail": "the operator account cannot change configuration"},
+                    status_code=403)
+        return await call_next(request)
+
+    # Tier 2: the DeviceRegistry owns the (DeviceConfig, client) pairs and one
+    # live-value store per device; device #1's store IS the legacy
+    # current_values dict (alias), so the UI/vmeters/api keep reading the same
+    # object. Mutations are atomic inside the registry (device CRUD runs in
+    # FastAPI's threadpool); reads are lock-free snapshots, as before.
+    from .device_registry import DeviceRegistry
+    registry = DeviceRegistry(config.primary_device.id, current_values)
+    for dev_cfg, _client in (devices or []):
+        registry.register(dev_cfg, _client)
+    app.state.registry = registry
+    app.state.device_values = registry.values
+
+    # ---- Calculated registers (formula-derived measurements) -------------------
+    # Engine in janitza/calc_engine.py (synthetic 8M+ addressing, expression
+    # eval, sink routing). store_for preserves the exact legacy store semantics;
+    # publishers() resolves the (possibly nonlocal-rebound by /api/config/apply)
+    # sink refs at call time.
+    from . import expressions
+    from .calc_engine import CalcEngine
+
+    calc_engine = CalcEngine(config, registry.store_for,
+                             lambda: (mqtt_publisher, influxdb_publisher))
+    app.state.calc_engine = calc_engine
+
+    for _dc, _c in registry:
+        calc_engine.load(_dc.id)
+
+    # ---- Generic REST push sink (northbound) -----------------------------------
+    from .rest_push import RestPushManager, RestPusher
+    rest_push_manager = RestPushManager()
+    app.state.rest_push_manager = rest_push_manager
+    _REST_HDR_MASK = "••••••"
+
+    def _rest_provider(device_id, primary):
+        def provider():
+            return current_values if primary else (registry.store_for(device_id) or {})
+        return provider
+
+    def _rest_cfg(dev_cfg):
+        cfg = dict(dev_cfg.rest_push or {})
+        cfg.setdefault('name', dev_cfg.name)
+        return cfg
+
+    def _apply_rest_push(dev_cfg):
+        rest_push_manager.apply(dev_cfg.id, _rest_cfg(dev_cfg),
+                                _rest_provider(dev_cfg.id, dev_cfg.primary))
+
+    def _rest_push_public(dev_cfg):
+        """The device's REST push config for the API — header VALUES masked."""
+        rp = dict(dev_cfg.rest_push or {})
+        if rp.get('headers'):
+            rp['headers'] = {k: _REST_HDR_MASK for k in rp['headers']}
+        rp['last'] = rest_push_manager.status(dev_cfg.id)
+        return rp
+
+    for _dc, _c in registry:
+        _apply_rest_push(_dc)
+
+    def make_data_callback(device_cfg=None):
+        """Build the poller callback for one device. device_cfg None (or the
+        primary device) keeps the exact legacy behavior: publishers fall back
+        to their own config for routing (topics/bucket/tags byte-identical and
+        live-tracking config edits); WS broadcast stays primary-only until the
+        UI grows a device dimension (Phase B)."""
+        primary = device_cfg is None or device_cfg.primary
+        topic_prefix = None if primary else device_cfg.mqtt_topic_prefix
+        bucket = None if primary else device_cfg.influxdb_bucket
+        device_tag = None if primary else device_cfg.influxdb_device_tag
+        device_id = "" if primary else device_cfg.id
+        values_store = (current_values if primary
+                        else registry.ensure_store(device_cfg.id))
+        # Per-device output sinks (Phase 2): a device can opt out of MQTT and/or
+        # InfluxDB while still polling. The primary always routes to both.
+        mqtt_on = True if device_cfg is None else device_cfg.mqtt_enabled
+        influx_on = True if device_cfg is None else device_cfg.influxdb_enabled
+        calc_key = config.primary_device.id if (device_cfg is None or device_cfg.primary) else device_cfg.id
+
+        def data_callback(poll_group: str, data: Dict[int, Dict]):
+            """Callback from a Modbus poller to update values and publish."""
+            # Update current values
+            for address, item in data.items():
+                values_store[address] = {
+                    'value': item.get('value'),
+                    'name': item.get('register').name if item.get('register') else '',
+                    'label': item.get('register').label if item.get('register') else '',
+                    'unit': item.get('register').unit if item.get('register') else '',
+                    'poll_group': poll_group,
+                    'timestamp': datetime.now().isoformat(),
+                }
+
+            last_update['timestamp'] = datetime.now().isoformat()
+
+            # Publish to each output sink independently — one sink failing (broker
+            # down, bucket missing, network blip) must never skip the other sink or
+            # the value store above. The poller thread itself is already isolated
+            # per device, so a fault here stays local.
+            if mqtt_publisher and mqtt_on:
+                try:
+                    mqtt_publisher.publish_register_data(poll_group, data,
+                                                         topic_prefix=topic_prefix)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"MQTT publish failed for {device_id or 'primary'}: {e}")
+            if influxdb_publisher and influx_on:
+                try:
+                    influxdb_publisher.write_register_data(
+                        poll_group, data, bucket=bucket,
+                        device_tag=device_tag, device_id=device_id)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"InfluxDB write failed for {device_id or 'primary'}: {e}")
+
+            # Calculated registers: derive formula values from the freshly-updated
+            # store and route them to this device's sinks (same routing as above).
+            calc_batch = calc_engine.run(calc_key, poll_group, values_store,
+                                         topic_prefix=topic_prefix, bucket=bucket,
+                                         device_tag=device_tag, device_id=device_id,
+                                         mqtt_on=mqtt_on, influx_on=influx_on)
+
+            # Broadcast via WebSocket (thread-safe async call). Phase B: every
+            # device broadcasts, tagged with its id — the client filters on the
+            # active dashboard device (address spaces overlap across devices, so
+            # an untagged merge would collide). Primary messages are unchanged
+            # apart from the additive `device` field.
+            if main_loop["loop"]:
+                ws_values = {
+                    str(addr): {
+                        'value': item.get('value'),
+                        'name': item.get('register').name if item.get('register') else '',
+                    }
+                    for addr, item in data.items()
+                }
+                # Include calc values so the live Monitor (which reads the WS-fed
+                # store) can chart them; carry unit+label since they have no entry
+                # in the register catalog the picker draws from.
+                for addr, item in (calc_batch or {}).items():
+                    reg = item.get('register')
+                    ws_values[str(addr)] = {
+                        'value': item.get('value'),
+                        'name': reg.name if reg else '',
+                        'unit': reg.unit if reg else '',
+                        'label': reg.label if reg else '',
+                        'calculated': True,
+                    }
+                asyncio.run_coroutine_threadsafe(
+                    ws_manager.broadcast({
+                        'type': 'data',
+                        'device': calc_key,               # primary id for legacy/primary
+                        'poll_group': poll_group,
+                        'values': ws_values,
+                        'timestamp': last_update['timestamp'],
+                    }),
+                    main_loop["loop"]
+                )
+
+        return data_callback
+
+    # Wire a callback per device; legacy single-client mode keeps working.
+    if registry:
+        for dev_cfg, client in registry:
+            if client:
+                client.publish_callback = make_data_callback(dev_cfg)
+    elif modbus_client:
+        modbus_client.publish_callback = make_data_callback(None)
+
+    # --- Routes ---
+
+    @app.get("/")
+    async def root():
+        """Serve main UI (with mtime-derived asset cache-bust tokens)."""
+        return HTMLResponse(_render_index_html())
+
+    # /api/status(+resources) → routes/status_routes.py
+
+    # ── Persisted cross-subsystem event log + alerting hooks (Status page) ──
+    from .event_log import EventLog
+    from .alerts import AlertManager
+    event_log = EventLog()
+    app.state.event_log = event_log
+    alert_mgr = AlertManager(getattr(config, 'alerts', {}), mqtt_publisher, event_log)
+    app.state.alert_manager = alert_mgr
+
+    # /api/events, /api/alerts(+test), /api/config/alerts → routes/system.py
+
+    def _harvest_events():
+        """Fold new subsystem events into the persisted log (~every 5s) and fire
+        alerts off them: source read failures, per-device up/down, MQTT/InfluxDB
+        connect transitions, sustained high latency, InfluxDB buffer backlog and
+        virtual-meter last errors. Deduped so an event/alert is emitted once."""
+        seen: Set = set()
+        prev: Dict[str, Optional[bool]] = {}
+        drop_prev = {"n": None}
+        last_err: Dict[str, str] = {"msg": ""}
+
+        def note(src, evs):
+            for e in (evs or []):
+                k = (src, round(e.get('ts') or 0, 1), e.get('message') or e.get('kind') or '')
+                if k in seen:
+                    continue
+                seen.add(k)
+                event_log.add(e.get('level', 'warn'), src,
+                              e.get('message') or e.get('kind') or 'event',
+                              e.get('kind', ''), e.get('ts'))
+
+        def transition(pk, src, connected, signal):
+            if prev.get(pk) is not None and connected != prev[pk]:
+                event_log.add('info' if connected else 'error', src,
+                              'connected' if connected else 'disconnected', 'transition')
+                fire = (signal == 'device' and alert_mgr.sig_device) or \
+                       (signal == 'sink' and alert_mgr.sig_sink)
+                if fire:
+                    alert_mgr.fire('info' if connected else 'error',
+                                   f'{pk}:{"up" if connected else "down"}', src,
+                                   'recovered — connected' if connected else 'down — not responding')
+            prev[pk] = connected
+
+        while not harvester_stop.is_set():
+            try:
+                pairs = registry.pairs() or ([(None, modbus_client)] if modbus_client else [])
+                for dev_cfg, client in pairs:
+                    if not client or not hasattr(client, 'get_stats'):
+                        continue
+                    try:
+                        st = client.get_stats()
+                    except Exception:  # noqa: BLE001
+                        continue
+                    did = dev_cfg.id if dev_cfg else 'modbus'
+                    name = (dev_cfg.name or dev_cfg.id) if dev_cfg else 'Modbus'
+                    note(name, st.get('events'))
+                    transition('dev:' + did, name, bool(st.get('connected')), 'device')
+                    lat = st.get('last_latency_ms')
+                    if alert_mgr.sig_latency and lat and lat > alert_mgr.latency_ms:
+                        alert_mgr.fire('warn', 'lat:' + did, name,
+                                       f'read latency {lat} ms exceeds {int(alert_mgr.latency_ms)} ms')
+                if mqtt_publisher:
+                    transition('mqtt', 'MQTT', bool(mqtt_publisher.get_stats().get('connected')), 'sink')
+                if influxdb_publisher:
+                    ist = influxdb_publisher.get_stats()
+                    transition('influx', 'InfluxDB', bool(ist.get('connected')), 'sink')
+                    if alert_mgr.sig_buffer:
+                        bp = ist.get('buffer_points') or 0
+                        if bp > alert_mgr.buffer_points:
+                            alert_mgr.fire('warn', 'buffer', 'InfluxDB',
+                                           f'store-and-forward buffer {bp} points exceeds {alert_mgr.buffer_points}')
+                        dropped = ist.get('dropped_total') or 0
+                        if drop_prev['n'] is not None and dropped > drop_prev['n']:
+                            alert_mgr.fire('error', 'dropped', 'InfluxDB',
+                                           f'{dropped - drop_prev["n"]} points dropped (buffer overflow)')
+                        drop_prev['n'] = dropped
+                mgr = getattr(app.state, 'vmeter_manager', None)
+                if mgr:
+                    try:
+                        for i in mgr.overview():
+                            le = i.get('last_error')
+                            nm = i.get('name') or i.get('template') or ''
+                            if le:
+                                k = ('vmeter:' + nm, round(le.get('ts') or 0, 1), le.get('message') or le.get('kind') or '')
+                                if k not in seen:
+                                    seen.add(k)
+                                    event_log.add(le.get('level', 'error'), 'vMeter ' + nm,
+                                                  le.get('message') or le.get('kind') or 'error',
+                                                  le.get('kind', ''), le.get('ts'))
+                    except Exception:  # noqa: BLE001
+                        pass
+                if len(seen) > 3000:
+                    seen.clear()
+                last_err["msg"] = ""               # a clean pass resets the dedupe
+            except Exception as e:  # noqa: BLE001
+                # Inner operations already guard themselves, so a top-level error
+                # here is a real bug — surface it (deduped, so no 5s spam).
+                msg = f"{type(e).__name__}: {e}"
+                if msg != last_err["msg"]:
+                    logger.warning("event harvest error: %s", msg)
+                    last_err["msg"] = msg
+            harvester_stop.wait(5)
+
+    harvester_stop = threading.Event()
+    app.state.harvester_stop = harvester_stop
+    threading.Thread(target=_harvest_events, daemon=True, name="event-harvester").start()
+
+    # ── Tier 2: devices + device templates ─────────────────────────────────
+    from .device_template import TemplateRegistry
+    template_registry = TemplateRegistry()
+    app.state.template_registry = template_registry
+
+    # ── Config snapshots (rollback + last-known-good) ───────────────────────
+    from pathlib import Path as _PathSnap
+    from .snapshots import SnapshotStore, write_bundle_files as _write_bundle_files
+    snapshot_store = SnapshotStore(
+        config.config_path.parent,
+        _PathSnap(getattr(template_registry, "user_dir", "config/device_templates")),
+        device_ids=lambda: [d.id for d in config.devices],
+        registers_path_for=config.device_registers_path)
+    app.state.snapshot_store = snapshot_store
+    if not snapshot_store.list():
+        # first boot with the feature: capture a baseline so there is always a
+        # "before" to return to
+        try:
+            snapshot_store.create("baseline")
+        except Exception:  # noqa: BLE001
+            logger.exception("baseline snapshot failed")
+
+    # Auto-snapshot: a successful mutation on any config-bearing route captures
+    # the resulting state (bursts coalesce into one). The trigger list is an
+    # allowlist of path prefixes; live actions (writes, probes, tests, trace)
+    # deliberately do NOT snapshot — they change devices, not config files.
+    _SNAP_PREFIXES = ("/api/devices", "/api/config/", "/api/registers/selected",
+                      "/api/device-templates", "/api/virtual-meters",
+                      "/api/calculated", "/api/energy/fields", "/api/poll-groups")
+    _SNAP_EXCLUDE = ("/test", "/write", "/payload-sample", "/api/config/import",
+                     "/api/config/reload-registers", "/api/config/snapshots")
+
+    @app.middleware("http")
+    async def _snapshot_trigger(request: Request, call_next):
+        response = await call_next(request)
+        try:
+            if (request.method in ("POST", "PUT", "DELETE")
+                    and response.status_code < 400):
+                p = request.url.path
+                if p.startswith(_SNAP_PREFIXES) and not any(x in p for x in _SNAP_EXCLUDE):
+                    snapshot_store.schedule(f"{request.method} {p}",
+                                            user=getattr(request.state, "user", "") or "")
+        except Exception:  # noqa: BLE001 — never fail the request over a snapshot
+            logger.exception("snapshot trigger failed")
+        return response
+
+    # ── Audit trail (who changed what, when, from where) ────────────────────
+    from .audit import AuditLog
+    audit_log = AuditLog(str(config.config_path.parent / "audit.jsonl"))
+    app.state.audit_log = audit_log
+
+    # every mutating /api/ call is recorded — including DENIED ones (401/403
+    # are exactly what a security review wants to see). Live-data actions with
+    # no config effect (queries, probes, discovery) are skipped; device writes
+    # have their own richer entry on the write route.
+    _AUDIT_SKIP = ("/api/query", "/api/diagnostics/probe", "/api/discover",
+                   "/api/auth/", "/api/alerts/test", "/api/devices/test",
+                   "/api/bus-trace")
+
+    @app.middleware("http")
+    async def _audit_mw(request: Request, call_next):
+        body_summary = None
+        p = request.url.path
+        auditable = (request.method in ("POST", "PUT", "DELETE")
+                     and p.startswith("/api/")
+                     and not any(p.startswith(x) or x in p for x in _AUDIT_SKIP)
+                     and "/test" not in p and "/payload-sample" not in p)
+        if auditable:
+            try:
+                raw = await request.body()      # cached by Starlette; handlers reread freely
+                if raw and len(raw) <= 65536 and raw.lstrip()[:1] in (b"{", b"["):
+                    body_summary = json.loads(raw)
+            except Exception:  # noqa: BLE001
+                body_summary = None
+        response = await call_next(request)
+        if auditable:
+            audit_log.append(
+                user=getattr(request.state, "user", "") or "-",
+                ip=request.client.host if request.client else "-",
+                action=f"{request.method} {p}",
+                status=("ok" if response.status_code < 400
+                        else f"denied ({response.status_code})" if response.status_code in (401, 403)
+                        else f"failed ({response.status_code})"),
+                detail=body_summary)
+        return response
+
+    _DEVICE_ID_RE = re.compile(r'^[a-z0-9][a-z0-9_-]{1,63}$')
+
+    def _find_device(device_id: str):
+        return registry.find(device_id)
+
+    def _make_lease_revert(dev, rt, addr, dt, sc, sv):
+        """Build the dead-man revert: resolve the *current* device client at
+        revert time (surviving device restarts) and write the safe value. Used by
+        both the live write path and boot recovery, so they behave identically."""
+        def _revert(is_current):
+            # Re-check right before the (blocking) write: if the lease was renewed
+            # while we waited on the Modbus lock, abort so we don't clobber the
+            # fresh setpoint.
+            if not is_current():
+                return
+            _i, _c, c = _find_device(dev)
+            if c is None:
+                # device gone/restarting — raise so the dead-man retries instead
+                # of silently dropping the lease with a live setpoint
+                raise RuntimeError(f"device {dev} not running; cannot revert to safe")
+            rok, rerr, _w = c.write_value(addr, rt, dt, sv, scale=sc)
+            logger.warning("MODBUS WRITE (lease-revert) %s: device=%s addr=%s safe=%r%s",
+                           "OK" if rok else "FAILED", dev, addr, sv, "" if rok else f" err={rerr}")
+            if not rok:
+                raise RuntimeError(f"lease-revert write failed: {rerr}")
+        return _revert
+
+    # Boot recovery: any write-lease left on disk means a previous run may have
+    # crashed while holding a device at a non-safe setpoint. Re-arm each as
+    # already-expired so the next sweep reverts it to safe (retrying until the
+    # device is reachable). This closes the "crash strands a dangerous setpoint"
+    # gap that the in-RAM-only lease store had.
+    for _m in _lease_mgr.load_persisted():
+        try:
+            _rv = _make_lease_revert(_m['device'], _m['register_type'], int(_m['address']),
+                                     _m['data_type'], float(_m['scale']), _m['safe_value'])
+            _lease_mgr.arm(_m['device'], _m['register_type'], int(_m['address']),
+                           int(_m.get('lease_ms') or 0), _rv, meta=_m, fire_now=True)
+            logger.warning("WRITE-LEASE recovered after restart → reverting to safe: "
+                           "device=%s addr=%s safe=%r", _m['device'], _m['address'], _m['safe_value'])
+        except Exception as _e:  # noqa: BLE001
+            logger.error("write-lease recovery: bad persisted record %r: %s", _m, _e)
+
+    def _write_rule(dev_cfg, address: int, rtype: str):
+        """The TemplateRegister governing writes to (address, register_type) on
+        this device, or None. Carries writable + bounds + safe value. A register
+        absent here (or not writable) cannot be written — the safety allowlist."""
+        tpl = template_registry.get(dev_cfg.template) if dev_cfg.template else None
+        if tpl is None:
+            return None
+        for r in tpl.registers:
+            if r.address == address and (r.register_type or 'holding') == rtype:
+                return r
+        return None
+
+    def _start_device_client(dev_cfg):
+        """Create + wire + background-start a client for a device (Modbus
+        TCP/RTU or HTTP/JSON). Returns None for disabled/unknown-protocol
+        devices."""
+        if not dev_cfg.enabled or dev_cfg.protocol not in ('tcp', 'rtu', 'http', 'mqtt'):
+            return None
+        regs, groups = config.load_device_registers(dev_cfg)
+        if dev_cfg.protocol == 'http':
+            from .http_client import HttpClient
+            client = HttpClient(http_cfg=dev_cfg.http, registers=regs, poll_groups=groups,
+                                allow_nonlan=config.security.allow_nonlan_http_devices)
+        elif dev_cfg.protocol == 'mqtt':
+            from .mqtt_input import MqttInputClient
+            client = MqttInputClient(mqtt_cfg=dev_cfg.mqtt_in, registers=regs, poll_groups=groups)
+        else:
+            from .modbus_client import ModbusClient
+            # decode order from the device template (default big = Janitza)
+            _tpl = template_registry.get(dev_cfg.template) if dev_cfg.template else None
+            _bo = (_tpl.protocol.get('byte_order', 'big') if _tpl else 'big')
+            client = ModbusClient(config=dev_cfg.connection,
+                                  registers=regs, poll_groups=groups, byte_order=_bo,
+                                  device_id=dev_cfg.id)
+        client.publish_callback = make_data_callback(dev_cfg)
+
+        def _bg():
+            if client.connect():
+                logger.info(f"device {dev_cfg.id}: connected")
+            else:
+                logger.warning(f"device {dev_cfg.id}: connect failed — pollers will retry")
+            client.start_polling()
+
+        threading.Thread(target=_bg, daemon=True,
+                         name=f"Device-Init-{dev_cfg.id}").start()
+        return client
+
+    def _validate_device_payload(payload: Dict, *, existing_id: str = None) -> Dict:
+        """Normalize + validate the raw device dict from the UI. Raises
+        HTTPException(422) with a per-field error list."""
+        errors = []
+        did = str(payload.get('id', existing_id or '')).strip().lower()
+        if not _DEVICE_ID_RE.match(did):
+            errors.append("id: use a-z 0-9 - _ (2-64 chars, starts alphanumeric)")
+        if existing_id and did != existing_id:
+            errors.append("id: cannot be changed after creation")
+        if not existing_id and registry.has(did):
+            errors.append(f"id: '{did}' already exists")
+        template_id = str(payload.get('template', '')).strip()
+        conn = payload.get('connection', {}) or {}
+        protocol = str(conn.get('protocol', 'tcp')).lower()
+        if protocol not in ('tcp', 'rtu', 'http', 'mqtt'):
+            errors.append("connection.protocol: must be 'tcp', 'rtu', 'http' or 'mqtt'")
+        # A template's register map is transport-specific (Modbus reads by address,
+        # HTTP/MQTT by json_path), so the device protocol MUST match the template's
+        # transport class — otherwise every read silently resolves to nothing.
+        _tpl = template_registry.get(template_id) if template_id else None
+        _classmap = {'http': 'http', 'mqtt': 'mqtt'}
+        if template_id and _tpl is None:
+            errors.append(f"template: '{template_id}' not found")
+        elif _tpl is not None and protocol in ('tcp', 'rtu', 'http', 'mqtt'):
+            from .device_template import template_transport
+            dev_class = _classmap.get(protocol, 'modbus')
+            tpl_class = template_transport(_tpl)
+            if dev_class != tpl_class:
+                errors.append(
+                    f"template: '{template_id}' is a {tpl_class.upper()} map but this "
+                    f"device is {protocol.upper()} — pick a {dev_class.upper()} template")
+        if protocol == 'http':
+            url = str(conn.get('url', '')).strip()
+            if not (url.startswith('http://') or url.startswith('https://')):
+                errors.append("connection.url: required (http:// or https://) for HTTP/JSON")
+            elif not config.security.allow_nonlan_http_devices:
+                from .http_client import lan_url_error
+                _e = lan_url_error(url)                # SSRF guard
+                if _e:
+                    errors.append(f"connection.url: {_e} — set "
+                                  "security.allow_nonlan_http_devices=true to allow it")
+        elif protocol == 'mqtt':
+            if not str(conn.get('broker', '')).strip():
+                errors.append("connection.broker: required for MQTT input")
+            if not str(conn.get('topic', '')).strip():
+                errors.append("connection.topic: required for MQTT input")
+            try:
+                mp = int(conn.get('port', 1883))
+                if not (1 <= mp <= 65535):
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors.append("connection.port: must be 1..65535")
+        else:
+            if protocol == 'tcp' and not str(conn.get('host', '')).strip():
+                errors.append("connection.host: required for Modbus TCP")
+            try:
+                port = int(conn.get('port', 502))
+                if not (1 <= port <= 65535):
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors.append("connection.port: must be 1..65535")
+            try:
+                unit = int(conn.get('unit_id', 1))
+                if not (0 <= unit <= 255):
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors.append("connection.unit_id: must be 0..255")
+        if errors:
+            raise HTTPException(status_code=422, detail={"errors": errors})
+        raw = {
+            'id': did,
+            'name': str(payload.get('name', '') or did),
+            'template': template_id,
+            'enabled': bool(payload.get('enabled', True)),
+            'connection': conn,
+        }
+        mqtt_block = dict(payload.get('mqtt') or {})
+        # per-device HA discovery toggle lives under mqtt.ha_discovery
+        if 'ha_discovery_enabled' in payload:
+            mqtt_block['ha_discovery'] = bool(payload['ha_discovery_enabled'])
+        if mqtt_block:
+            raw['mqtt'] = mqtt_block
+        if payload.get('influxdb'):
+            raw['influxdb'] = payload['influxdb']
+        return raw
+
+    def _device_entry(dev_cfg, client) -> Dict:
+        entry = dev_cfg.summary()
+        regs, _groups = config.load_device_registers(dev_cfg)
+        entry['selected_registers'] = len(regs)
+        entry['influxdb_device_tag'] = dev_cfg.influxdb_device_tag
+        # full connection block for the device detail editor
+        c = dev_cfg.connection
+        entry['connection'] = {
+            'protocol': dev_cfg.protocol,
+            'host': c.host, 'port': c.port, 'unit_id': c.unit_id,
+            'timeout': c.timeout, 'retry_attempts': c.retry_attempts,
+            'retry_delay': c.retry_delay,
+            'serial_port': c.serial_port, 'baudrate': c.baudrate,
+            'parity': c.parity, 'stopbits': c.stopbits, 'bytesize': c.bytesize,
+            'url': dev_cfg.http.get('url', '') if dev_cfg.protocol == 'http' else '',
+            'verify_tls': dev_cfg.http.get('verify_tls', True),
+        }
+        if dev_cfg.protocol == 'mqtt':
+            m = dev_cfg.mqtt_in
+            entry['connection'].update({
+                'broker': m.get('broker', ''), 'port': m.get('port', 1883),
+                'topic': m.get('topic', ''), 'username': m.get('username', ''),
+                'tls': bool(m.get('tls', False)),
+                'password': '******' if m.get('password') else '',   # never echo the secret
+            })
+        if dev_cfg.protocol == 'rtu':
+            entry['serial'] = dev_cfg.serial
+        if dev_cfg.protocol == 'http':
+            # Never echo header VALUES back — they can carry Authorization / API
+            # tokens and /api/devices is readable by the viewer role. Show the
+            # header names only (masked); the UI does not round-trip headers.
+            _http = dict(dev_cfg.http)
+            if _http.get('headers'):
+                _http['headers'] = {k: '******' for k in _http['headers']}
+            entry['http'] = _http
+        # Output-sink status (Phase 2): per-device enable + the shared broker/db
+        # connection state, so the device detail can show each sink live.
+        mqtt_conn = bool(getattr(mqtt_publisher, 'connected', False)) if mqtt_publisher else False
+        influx_conn = bool(getattr(influxdb_publisher, 'connected', False)) if influxdb_publisher else False
+        entry['sinks'] = {
+            'mqtt': {
+                'enabled': dev_cfg.mqtt_enabled,
+                'available': mqtt_publisher is not None,
+                'connected': mqtt_conn,
+                'active': dev_cfg.mqtt_enabled and mqtt_conn,
+                'topic_prefix': dev_cfg.mqtt_topic_prefix,
+            },
+            'influxdb': {
+                'enabled': dev_cfg.influxdb_enabled,
+                'available': influxdb_publisher is not None,
+                'connected': influx_conn,
+                'active': dev_cfg.influxdb_enabled and influx_conn,
+                'bucket': dev_cfg.influxdb_bucket,
+            },
+            # HTTP/JSON output: serve this device's live values as JSON, Solar-API
+            # style. Always "available" (it's just this app's own HTTP server);
+            # active == enabled. Read-only, no external connection to fail.
+            'http': {
+                'enabled': dev_cfg.http_output_enabled,
+                'available': True,
+                'connected': True,
+                'active': dev_cfg.http_output_enabled,
+                'path': f"/api/meters/{dev_cfg.id}",
+            },
+            # Generic REST push: POST values to an external URL on an interval.
+            'rest': {
+                'enabled': bool(dev_cfg.rest_push.get('enabled')),
+                'available': True,
+                'connected': rest_push_manager.status(dev_cfg.id).get('ok') is not False,
+                'active': bool(dev_cfg.rest_push.get('enabled')),
+                'url': dev_cfg.rest_push.get('url', ''),
+            },
+        }
+        entry['rest_push'] = _rest_push_public(dev_cfg)
+        if client:
+            stats = client.get_stats()
+            connected = stats.get('connected')
+            health = client.data_health().get('status')
+            # The status dot must never contradict the connection text: a device
+            # that isn't connected can't be 'ok'. data_health() reports 'ok' on
+            # cold start / when nothing has been polled yet, so gate it on the
+            # actual connection — not connected but enabled => degraded (amber),
+            # 'down' only once reads have actually been failing.
+            if not connected and health == 'ok':
+                health = 'degraded'
+            entry.update({
+                'connected': connected,
+                'successful_reads': stats.get('successful_reads'),
+                'failed_reads': stats.get('failed_reads'),
+                'staleness_age_s': stats.get('staleness_age_s'),
+                'poll_rate': stats.get('poll_rate'),
+                'data_health': health,
+            })
+        else:
+            # disabled or transport not run — idle (grey), not green
+            entry.update({'connected': False, 'data_health': 'idle'})
+        return entry
+
+    @app.get("/api/devices")
+    def list_devices():
+        """All southbound devices with live health (device #1 first)."""
+        return {"devices": [_device_entry(d, c) for d, c in registry]}
+
+    def _sync_device_discovery():
+        """Rebuild the MQTT discovery hooks from the current non-primary
+        devices and publish them now (so HA sees a device the moment it is
+        added/edited, not only on the next reconnect). Idempotent (retained)."""
+        if not mqtt_publisher:
+            return
+        hooks = []
+        for dev_cfg, _c in registry:
+            if dev_cfg.primary or not dev_cfg.ha_discovery_enabled:
+                continue
+
+            def _hook(d=dev_cfg):
+                regs, _g = config.load_device_registers(d)
+                mqtt_publisher.publish_device_discovery(
+                    d.id, d.name, d.mqtt_topic_prefix, regs, model=d.template)
+            hooks.append(_hook)
+        mqtt_publisher.discovery_hooks = hooks
+        if getattr(mqtt_publisher, "connected", False):
+            for h in hooks:
+                try:
+                    h()
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"device discovery publish failed: {e}")
+
+    def _apply_routing_defaults(raw: Dict) -> Dict:
+        """Fill missing topic prefix / bucket from the configured {device}
+        patterns so a new device always has sane routing."""
+        did = raw['id']
+        raw.setdefault('mqtt', {})
+        if not raw['mqtt'].get('topic_prefix'):
+            raw['mqtt']['topic_prefix'] = config.default_topic_prefix(did)
+        raw.setdefault('influxdb', {})
+        if not raw['influxdb'].get('bucket'):
+            raw['influxdb']['bucket'] = config.default_bucket(did)
+        return raw
+
+    def _autoselect_template_registers(dev_cfg):
+        """Seed a new device with ALL of its template's registers (poll groups +
+        intervals from the template) so it polls immediately — no manual picking.
+        Skips if it already has a selection or has no template."""
+        if not dev_cfg.template or dev_cfg.primary:
+            return
+        existing, _g = config.load_device_registers(dev_cfg)
+        if existing:
+            return
+        tpl = template_registry.get(dev_cfg.template)
+        if tpl is None or not tpl.registers:
+            return
+        # Curated templates mark a recommended subset via per-register `defaults`
+        # (the Janitza map has 58 of 4126) — seed only those. A template without
+        # defaults is seeded whole, but capped so a huge map can't flood
+        # MQTT/InfluxDB with thousands of series on a single click.
+        chosen = [r for r in tpl.registers if r.defaults]
+        if not chosen:
+            chosen = tpl.registers
+            if len(chosen) > 300:
+                logger.warning(f"device {dev_cfg.id}: template {tpl.id} has "
+                               f"{len(chosen)} registers and no curated defaults — "
+                               "auto-selecting none (pick registers in the UI)")
+                return
+        reg_list = [{
+            'address': r.address, 'name': r.name, 'label': r.label or r.name,
+            'unit': r.unit, 'data_type': r.data_type,
+            'poll_group': r.poll_group or 'normal', 'json_path': r.json_path,
+            'topic': getattr(r, 'topic', ''), 'scale': r.scale,
+            'register_type': getattr(r, 'register_type', 'holding'),
+            'mqtt': {'enabled': True, 'topic': ''},
+            'influxdb': {'enabled': True, 'measurement': r.category, 'tags': {}},
+            'ui': {'show_on_dashboard': True, 'widget': 'value'},
+        } for r in chosen]
+        tpg = {n: {'interval': g.get('interval', 5), 'description': g.get('description', '')}
+               for n, g in (tpl.poll_groups or {}).items()} or None
+        config.save_device_registers(dev_cfg.id, reg_list, poll_groups=tpg)
+        logger.info(f"device {dev_cfg.id}: auto-selected {len(reg_list)} template registers")
+
+    def _ensure_device_bucket(dev_cfg):
+        """Auto-create the device's InfluxDB bucket (off-thread) so its history/
+        energy work without manual setup. Non-fatal."""
+        if not (influxdb_publisher and dev_cfg.influxdb_enabled and dev_cfg.influxdb_bucket):
+            return
+        threading.Thread(target=influxdb_publisher.ensure_bucket,
+                         args=(dev_cfg.influxdb_bucket,), daemon=True,
+                         name=f"Bucket-{dev_cfg.id}").start()
+
+    @app.post("/api/devices")
+    def create_device(payload: Dict = Body(...)):
+        """Create a device: validate → persist → auto-select its template
+        registers + ensure its InfluxDB bucket → hot-start its poller and
+        publish HA discovery (no restart)."""
+        raw = _apply_routing_defaults(_validate_device_payload(payload))
+        try:
+            dev_cfg = config.upsert_raw_device(raw)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+        _autoselect_template_registers(dev_cfg)   # before start → poller loads them
+        _ensure_device_bucket(dev_cfg)
+        client = _start_device_client(dev_cfg)
+        registry.add(dev_cfg, client)
+        _sync_device_discovery()
+        logger.info(f"device {dev_cfg.id}: created "
+                    f"({dev_cfg.protocol}, template={dev_cfg.template or '—'})")
+        return {"status": "created", "device": _device_entry(dev_cfg, client)}
+
+    def _update_primary_device(payload: Dict):
+        """Edit device #1 in place: connection → config.modbus, HA flag →
+        global mqtt, name/template updatable; routing identity (topic prefix /
+        bucket / device tag) stays FIXED for byte-identical migration.
+        Reconnects the primary client live."""
+        conn = payload.get('connection', {}) or {}
+        if str(conn.get('protocol', 'tcp')).lower() != 'tcp':
+            raise HTTPException(status_code=422, detail={"errors": [
+                "the primary device (UMG512) is Modbus TCP"]})
+        # Validate like a secondary device — the primary was skipping this, so a
+        # bad port/unit_id (e.g. "abc") was persisted and broke the primary client.
+        errors = []
+        host = str(conn.get('host', '')).strip()
+        if not host:
+            errors.append("connection.host: required for Modbus TCP")
+        try:
+            port = int(conn.get('port', 502))
+            if not (1 <= port <= 65535):
+                raise ValueError
+        except (TypeError, ValueError):
+            errors.append("connection.port: must be 1..65535")
+        try:
+            unit = int(conn.get('unit_id', 1))
+            if not (0 <= unit <= 255):
+                raise ValueError
+        except (TypeError, ValueError):
+            errors.append("connection.unit_id: must be 0..255")
+        try:
+            timeout = float(conn.get('timeout', 3))
+        except (TypeError, ValueError):
+            errors.append("connection.timeout: must be a number")
+        if errors:
+            raise HTTPException(status_code=422, detail={"errors": errors})
+        config.update_modbus(
+            host=host, port=port, unit_id=unit, timeout=timeout,
+            retry_attempts=conn.get('retry_attempts'),
+            retry_delay=conn.get('retry_delay'))
+        if 'ha_discovery_enabled' in payload:
+            config.mqtt.ha_discovery_enabled = bool(payload['ha_discovery_enabled'])
+        config.save_yaml_config()
+        config._build_devices()
+        prim = config.primary_device
+        # _build_devices() rebuilt EVERY DeviceConfig — re-sync the whole list
+        # (clients matched by id), so pollers and config.get_device() never
+        # diverge on derived fields after a primary edit.
+        registry.resync(config.devices, modbus_client)
+        if modbus_client:
+            modbus_client.update_config(config.modbus)
+            modbus_client.reconnect()
+        if mqtt_publisher and config.mqtt.ha_discovery_enabled:
+            try:
+                mqtt_publisher.publish_ha_discovery()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"primary HA re-publish failed: {e}")
+        return {"status": "updated", "device": _device_entry(prim, modbus_client)}
+
+    @app.put("/api/devices/{device_id}")
+    def update_device(device_id: str, payload: Dict = Body(...)):
+        """Update a device: stop its poller, persist, restart. The primary
+        (UMG512) is editable too — its connection maps to the flat Modbus
+        config; its routing identity stays fixed."""
+        idx, dev_cfg, client = _find_device(device_id)
+        if dev_cfg is None:
+            raise HTTPException(status_code=404, detail="device not found")
+        if dev_cfg.primary:
+            return _update_primary_device(payload)
+        raw = _apply_routing_defaults(_validate_device_payload(payload, existing_id=device_id))
+        # Routing identity (topic prefix / bucket / Influx tag) is FIXED after
+        # creation — changing it would re-route future data and orphan the
+        # device's existing history + Home Assistant entities. Keep the stored
+        # values on update (the MQTT/InfluxDB enable + HA-discovery flags stay
+        # editable); this also stops an API caller bypassing the locked UI fields.
+        raw.setdefault('mqtt', {})['topic_prefix'] = dev_cfg.mqtt_topic_prefix
+        raw.setdefault('influxdb', {})['bucket'] = dev_cfg.influxdb_bucket
+        raw['influxdb']['device_tag'] = dev_cfg.influxdb_device_tag
+        # Preserve the HTTP-output opt-in across an edit (it is toggled from the
+        # Outputs tab, not carried in the wizard payload — an omit must not wipe it).
+        if dev_cfg.http_output_enabled:
+            raw.setdefault('http_output', {})['enabled'] = True
+        # Same for the REST push config (managed from the Outputs tab).
+        if dev_cfg.rest_push:
+            raw['rest_push'] = dev_cfg.rest_push
+        # Preserve real HTTP header secrets across an edit: the API echoes header
+        # VALUES masked ("******"), and the UI does not manage headers, so an
+        # update that omits or masks them must keep the stored values rather than
+        # wiping/overwriting the tokens.
+        if dev_cfg.protocol == 'http':
+            _conn = raw.get('connection') or {}
+            _old_h = dict(dev_cfg.http.get('headers') or {})
+            _new_h = _conn.get('headers')
+            if isinstance(_new_h, dict):
+                _conn['headers'] = {k: (_old_h.get(k, v) if v == '******' else v)
+                                    for k, v in _new_h.items()}
+            elif _old_h:
+                _conn['headers'] = _old_h
+            raw['connection'] = _conn
+        # Preserve the MQTT broker password across an edit (echoed masked).
+        if dev_cfg.protocol == 'mqtt':
+            _conn = raw.get('connection') or {}
+            pw = _conn.get('password')
+            if pw in ('', '******', None):
+                _conn['password'] = dev_cfg.mqtt_in.get('password', '')
+            raw['connection'] = _conn
+        if client:
+            client.disconnect()
+        try:
+            new_cfg = config.upsert_raw_device(raw)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+        _autoselect_template_registers(new_cfg)   # first-time template assignment
+        _ensure_device_bucket(new_cfg)            # influx just enabled / bucket changed
+        new_client = _start_device_client(new_cfg)
+        # re-resolve by id: a concurrent delete may have shifted the index
+        registry.replace(device_id, new_cfg, client=new_client, add_if_missing=True)
+        _apply_rest_push(new_cfg)                  # restart pusher with new config
+        _sync_device_discovery()
+        logger.info(f"device {device_id}: updated")
+        return {"status": "updated", "device": _device_entry(new_cfg, new_client)}
+
+    @app.post("/api/devices/{device_id}/http-output")
+    def set_device_http_output(device_id: str, payload: Dict = Body(...)):
+        """Toggle the HTTP/JSON output sink for a device. Read-only feed, so no
+        poller restart — just flip the flag, persist, and refresh the runtime
+        cfg so /api/devices reflects it. Works for the primary too."""
+        dev_cfg = config.get_device(device_id)
+        if dev_cfg is None:
+            raise HTTPException(status_code=404, detail="device not found")
+        enabled = bool(payload.get('enabled', False))
+        try:
+            config.set_http_output(device_id, enabled)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+        new_cfg = config.get_device(device_id)
+        registry.replace(device_id, new_cfg)       # keep the running client
+        logger.info(f"device {device_id}: http output {'enabled' if enabled else 'disabled'}")
+        return {"status": "ok", "device_id": device_id,
+                "http_output_enabled": enabled,
+                "path": f"/api/meters/{device_id}"}
+
+    @app.post("/api/devices/{device_id}/rest-push")
+    def set_device_rest_push(device_id: str, payload: Dict = Body(...)):
+        """Configure the generic REST push sink for a device (POST its values to
+        an external URL on an interval). Header VALUES are masked on read and
+        preserved on save; the pusher thread is (re)started in place."""
+        dev = config.get_device(device_id)
+        if dev is None:
+            raise HTTPException(status_code=404, detail="device not found")
+        errors = []
+        enabled = bool(payload.get('enabled', False))
+        url = str(payload.get('url', '') or '').strip()
+        if enabled and not (url.startswith('http://') or url.startswith('https://')):
+            errors.append("url: required (http:// or https://) when enabled")
+        try:
+            interval = int(payload.get('interval_s', 30))
+            if interval < 5:
+                errors.append("interval_s: minimum 5 seconds")
+        except (TypeError, ValueError):
+            errors.append("interval_s: must be an integer")
+            interval = 30
+        fmt = str(payload.get('format', 'native'))
+        if fmt not in ('native', 'flat'):
+            errors.append("format: must be 'native' or 'flat'")
+        if errors:
+            raise HTTPException(status_code=422, detail={"errors": errors})
+        # Preserve masked header secrets: a value equal to the mask keeps the stored one.
+        old_h = dict(dev.rest_push.get('headers') or {})
+        new_h = payload.get('headers')
+        headers = old_h
+        if isinstance(new_h, dict):
+            headers = {k: (old_h.get(k, v) if v == _REST_HDR_MASK else v)
+                       for k, v in new_h.items() if k}
+        cfg = {'enabled': enabled, 'url': url, 'interval_s': interval,
+               'headers': headers, 'format': fmt,
+               'verify_tls': bool(payload.get('verify_tls', True)),
+               'timeout': int(payload.get('timeout', 10) or 10)}
+        try:
+            config.set_rest_push(device_id, cfg)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+        new_cfg = config.get_device(device_id)
+        registry.replace(device_id, new_cfg)       # keep the running client
+        _apply_rest_push(new_cfg)
+        logger.info(f"device {device_id}: REST push {'enabled' if enabled else 'disabled'}")
+        return {"status": "ok", "rest_push": _rest_push_public(new_cfg)}
+
+    @app.post("/api/devices/{device_id}/rest-push/test")
+    def test_device_rest_push(device_id: str):
+        """Push once right now and report the result — the card's Test button.
+        Works even before enabling, as long as a URL is configured."""
+        dev = config.get_device(device_id)
+        if dev is None:
+            raise HTTPException(status_code=404, detail="device not found")
+        cfg = _rest_cfg(dev)
+        if not str(cfg.get('url', '')).strip():
+            raise HTTPException(status_code=422, detail={"errors": ["configure a URL first"]})
+        status = (rest_push_manager.push_now(device_id)
+                  if rest_push_manager.running(device_id)
+                  else RestPusher(device_id, cfg,
+                                  _rest_provider(device_id, dev.primary)).push_once())
+        return {"status": "ok", **(status or {})}
+
+    # ---- Modbus device auto-discovery -----------------------------------------
+    # /api/discover/modbus/* → routes/discovery_routes.py
+
+    # ---- Calculated registers API ---------------------------------------------
+    # /api/calculated/* + /api/devices/{id}/calculated(+test) → routes/calculated.py
+
+    # Per-client-IP token bucket for the write API. A write floods the shared
+    # Modbus lock (blocking I/O), so a burst can starve the pollers; excess writes
+    # get 429 instead of piling up. Generous default so a normal control loop is
+    # unaffected; security.write_rate_limit_per_s=0 disables it.
+    _write_rl_state: Dict[str, tuple] = {}
+    _write_rl_lock = threading.Lock()
+
+    def _write_rate_ok(ip: str) -> bool:
+        rate = config.security.write_rate_limit_per_s
+        if rate <= 0:
+            return True
+        cap = max(rate, 1.0)
+        now = time.monotonic()
+        with _write_rl_lock:
+            tokens, last = _write_rl_state.get(ip, (cap, now))
+            tokens = min(cap, tokens + (now - last) * rate)
+            if tokens < 1.0:
+                _write_rl_state[ip] = (tokens, now)
+                return False
+            _write_rl_state[ip] = (tokens - 1.0, now)
+            return True
+
+    @app.post("/api/devices/{device_id}/write")
+    def write_device_register(device_id: str, request: Request, payload: Dict = Body(...)):
+        """Write a value to a device (Modbus FC5 coil / FC6+FC16 holding).
+
+        GATED and secure-by-default:
+        - refused unless security.allow_writes is true (writing real hardware is
+          irreversible);
+        - the primary device is always read-only;
+        - HTTP/JSON devices and input/discrete registers cannot be written;
+        - admin-only (the auth middleware blocks the viewer role from POSTs);
+        - every attempt is audit-logged; the written value is read back to verify.
+        """
+        from .config import normalize_register_type
+        from .modbus_client import coil_truthy as _coil_truthy
+        if not config.security.allow_writes:
+            raise HTTPException(status_code=403, detail={"errors": [
+                "Modbus writes are disabled — set security.allow_writes=true to enable"]})
+        # Writes must be authenticated so every write is attributable — refuse
+        # unless login is enabled or an API key is configured. (Reads stay open
+        # on a trusted LAN; writes touch hardware, so they always need a credential.)
+        if not (auth_state.enabled or _api_key):
+            raise HTTPException(status_code=403, detail={"errors": [
+                "writes require authentication — enable login (ui.auth) or set an API_KEY"]})
+        if not _write_rate_ok(request.client.host if request.client else "?"):
+            raise HTTPException(status_code=429, detail={"errors": [
+                f"write rate limit exceeded (> {config.security.write_rate_limit_per_s}/s) — slow down"]})
+        _idx, dev_cfg, client = _find_device(device_id)
+        if dev_cfg is None:
+            raise HTTPException(status_code=404, detail="device not found")
+        if dev_cfg.primary:
+            raise HTTPException(status_code=403, detail={"errors": [
+                "the primary device is read-only"]})
+        if dev_cfg.protocol == 'http':
+            raise HTTPException(status_code=400, detail={"errors": [
+                "HTTP/JSON devices cannot be written"]})
+        rtype = normalize_register_type(payload.get('register_type') or payload.get('fc') or 'holding')
+        if rtype in ('input', 'discrete'):
+            raise HTTPException(status_code=400, detail={"errors": [
+                f"{rtype} registers are read-only — write holding (FC16) or coil (FC5)"]})
+        try:
+            address = int(payload.get('address'))
+            assert 0 <= address <= 65535
+        except (TypeError, ValueError, AssertionError):
+            raise HTTPException(status_code=422, detail={"errors": ["address must be an integer 0..65535"]})
+        if 'value' not in payload:
+            raise HTTPException(status_code=422, detail={"errors": ["value is required"]})
+        # ── write safety envelope: allowlist + bounds (declared in the template) ──
+        rule = _write_rule(dev_cfg, address, rtype)
+        if rule is None or not rule.writable:
+            raise HTTPException(status_code=403, detail={"errors": [
+                f"address {address} ({rtype}) is not writable on this device — "
+                f"declare it writable in the device template"]})
+        # Encoding is a property of the register (its template row), NOT caller-
+        # controlled — a writable register always writes with its declared type
+        # and scale, so a caller can't corrupt it (or an adjacent register) with a
+        # mismatched data_type/word-count. The payload's data_type/scale are ignored.
+        data_type = (rule.data_type or 'uint16').lower()
+        scale = float(rule.scale if rule.scale is not None else 1.0)
+        prefer_fc6 = bool(payload.get('prefer_fc6', False))
+        if rtype == 'holding':
+            try:
+                _fval = float(payload.get('value'))
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422, detail={"errors": ["value must be numeric"]})
+            if rule.write_min is not None and _fval < rule.write_min:
+                raise HTTPException(status_code=422, detail={"errors": [
+                    f"value {_fval} is below the register minimum {rule.write_min}"]})
+            if rule.write_max is not None and _fval > rule.write_max:
+                raise HTTPException(status_code=422, detail={"errors": [
+                    f"value {_fval} is above the register maximum {rule.write_max}"]})
+        lease_ms = int(payload.get('lease_ms', 0) or 0)
+        if lease_ms > 0 and rule.write_safe is None:
+            raise HTTPException(status_code=422, detail={"errors": [
+                "lease requested but the register has no write_safe value in the template"]})
+        if client is None:
+            raise HTTPException(status_code=409, detail={"errors": ["device is not running"]})
+        ok, err, words = client.write_value(address, rtype, data_type,
+                                            payload.get('value'), scale=scale, prefer_fc6=prefer_fc6)
+        _who = getattr(request.state, "user", None) or ("api-key" if _api_key else "anon")
+        _src = request.client.host if request.client else "?"
+        logger.warning("MODBUS WRITE %s: by=%s@%s device=%s addr=%s type=%s dtype=%s value=%r words=%s%s",
+                       "OK" if ok else "FAILED", _who, _src, device_id, address, rtype, data_type,
+                       payload.get('value'), words, "" if ok else f" err={err}")
+        audit_log.append(user=_who, ip=_src, action="modbus write",
+                         target=f"{device_id} {rtype}@{address}",
+                         status="ok" if ok else "failed",
+                         detail={"value": payload.get('value'), "data_type": data_type,
+                                 "lease_ms": lease_ms})
+        if not ok:
+            raise HTTPException(status_code=502, detail={"errors": [f"write failed: {err}"]})
+        # arm/renew (or cancel) the dead-man lease for this register
+        if lease_ms > 0:
+            _revert = _make_lease_revert(device_id, rtype, address, data_type, scale, rule.write_safe)
+            meta = {'device': device_id, 'register_type': rtype, 'address': address,
+                    'data_type': data_type, 'scale': scale, 'safe_value': rule.write_safe,
+                    'lease_ms': lease_ms}
+            _lease_mgr.arm(device_id, rtype, address, lease_ms, _revert, meta=meta)
+        else:
+            _lease_mgr.clear(device_id, rtype, address)
+        read_back, verified = None, None
+        try:
+            raw_back = client.read_register(address, data_type, rtype)
+            if raw_back is not None:
+                want = payload.get('value')
+                if rtype == 'coil':
+                    read_back = bool(raw_back)
+                    verified = read_back == _coil_truthy(want)
+                else:
+                    # read_register returns the RAW value; the write applied *scale,
+                    # so divide back to engineering units before comparing to `want`
+                    # (otherwise `verified` is always false for any scale != 1).
+                    read_back = float(raw_back) / (scale or 1.0)
+                    verified = abs(read_back - float(want)) <= max(1e-6, abs(float(want)) * 1e-4)
+        except Exception:  # noqa: BLE001
+            pass
+        return {"ok": True, "device": device_id, "address": address, "register_type": rtype,
+                "data_type": data_type, "written": payload.get('value'),
+                "words": words, "read_back": read_back, "verified": verified,
+                "lease_ms": lease_ms or None,
+                "reverts_to": rule.write_safe if lease_ms > 0 else None}
+
+    @app.get("/api/writes/leases")
+    def list_write_leases():
+        """Active write-leases (dead-man switches) with time remaining."""
+        return {"leases": _lease_mgr.snapshot()}
+
+    @app.get("/api/devices/{device_id}/poll-groups")
+    def get_device_poll_groups(device_id: str):
+        """Current poll-group intervals for a device (from its registers file)."""
+        _i, dev_cfg, _c = _find_device(device_id)
+        if dev_cfg is None:
+            raise HTTPException(status_code=404, detail="device not found")
+        _regs, groups = config.load_device_registers(dev_cfg)
+        return {"device": device_id, "poll_groups": {
+            n: {"interval": g.interval, "description": g.description} for n, g in groups.items()}}
+
+    @app.post("/api/devices/{device_id}/poll-groups")
+    def set_device_poll_groups(device_id: str, payload: Dict = Body(...)):
+        """Update a device's poll-group intervals and live-restart its pollers so
+        each group re-samples at its own rate (e.g. slow down a fragile HTTP/
+        gateway source)."""
+        idx, dev_cfg, client = _find_device(device_id)
+        if dev_cfg is None:
+            raise HTTPException(status_code=404, detail="device not found")
+        groups_in = payload.get("poll_groups", payload) or {}
+        clean = {}
+        for name, g in groups_in.items():
+            try:
+                iv = float(g.get("interval") if isinstance(g, dict) else g)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail=f"{name}: interval must be a number")
+            if not (0.05 <= iv <= 86400):
+                raise HTTPException(status_code=400, detail=f"{name}: interval must be 0.05..86400 s")
+            desc = g.get("description", "") if isinstance(g, dict) else ""
+            clean[str(name)] = {"interval": iv, "description": desc}
+        if not clean:
+            raise HTTPException(status_code=400, detail="no poll groups given")
+        config.save_device_poll_groups(device_id, clean)
+        # live-restart this device's pollers with the new intervals
+        target = modbus_client if dev_cfg.primary else client
+        if target:
+            regs, groups = config.load_device_registers(dev_cfg)
+            target.update_registers(regs, groups)
+            if hasattr(target, 'reload_registers'):
+                target.reload_registers()
+        return {"status": "ok", "device": device_id, "poll_groups": clean}
+
+    @app.delete("/api/devices/{device_id}")
+    def delete_device(device_id: str):
+        """Delete a non-primary device (its selected-registers file is kept
+        on disk for safety)."""
+        idx, dev_cfg, client = _find_device(device_id)
+        if dev_cfg is None:
+            raise HTTPException(status_code=404, detail="device not found")
+        if dev_cfg.primary:
+            raise HTTPException(status_code=422, detail={"errors": [
+                "the primary device cannot be deleted"]})
+        # A virtual meter sourcing from this device would go permanently stale
+        # (fail-safe, but confusing) — make the dependency explicit instead.
+        # Covers both the instance-level source device AND composite templates
+        # with explicit `<device_id>.<register>` rows.
+        mgr = getattr(app.state, "vmeter_manager", None)
+        if mgr is not None:
+            users = set()
+            for i in mgr._load_cfg().get("instances", []):
+                tid = i.get("template")
+                if i.get("device") == device_id:
+                    users.add(tid)
+                    continue
+                try:
+                    from .virtual_meter import load_template as _lt
+                    t = _lt(str(mgr.templates_dir / f"{tid}.yaml"))
+                    pref = device_id + "."
+                    for r in t.registers:
+                        srcs = (r.source if isinstance(r.source, list) else [r.source])
+                        if r.source_kind in ("live", "sum") and any(
+                                isinstance(s, str) and s.startswith(pref) for s in srcs):
+                            users.add(tid)
+                            break
+                except Exception:  # noqa: BLE001 — a broken template must not block deletes
+                    pass
+            if users:
+                raise HTTPException(status_code=422, detail={"errors": [
+                    f"device is the source of virtual meter(s): {', '.join(sorted(users))} — "
+                    "delete or re-point them first"]})
+        if client:
+            client.disconnect()
+        rest_push_manager.apply(device_id, {'enabled': False}, lambda: {})  # stop pusher
+        _lease_mgr.clear_device(device_id)        # drop any dead-man leases
+        # clear the device's retained HA discovery so HA drops its entities
+        if mqtt_publisher and getattr(mqtt_publisher, "connected", False):
+            try:
+                regs, _g = config.load_device_registers(dev_cfg)
+                pref = mqtt_publisher.config.ha_discovery_prefix
+                for r in regs:
+                    if not r.mqtt_enabled:
+                        continue
+                    sn = r.name.lower().replace('[', '_').replace(']', '').replace('_g_', '')
+                    mqtt_publisher._publish(
+                        f"{pref}/sensor/janitza_dev_{device_id}/{r.address}_{sn}/config",
+                        "", retain=True)          # empty retained payload = delete
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"clearing discovery for {device_id} failed: {e}")
+        config.remove_raw_device(device_id)
+        # re-resolve by id (idx may be stale after a concurrent mutation);
+        # drops the pair AND its value store in one atomic step
+        registry.remove(device_id)
+        _sync_device_discovery()
+        logger.info(f"device {device_id}: deleted")
+        return {"status": "deleted"}
+
+    def _modbus_probe(conn: Dict, unit_id: int, timeout: float,
+                      address: int = 0) -> Dict:
+        """One ad-hoc Modbus probe (TCP or RTU): connect + FC3 read. ANY
+        protocol-level answer (even a Modbus exception) proves a live device;
+        only silence/timeouts fail. Used by the wizard's Test connection button."""
+        from pymodbus.client import ModbusTcpClient, ModbusSerialClient
+        from pymodbus.pdu import ExceptionResponse
+        rtu = str(conn.get('protocol', 'tcp')).lower() == 'rtu'
+        t0 = time.perf_counter()
+        if rtu:
+            where = f"{conn.get('serial_port','')}@{conn.get('baudrate',9600)}"
+            c = ModbusSerialClient(port=conn.get('serial_port', ''),
+                                   baudrate=int(conn.get('baudrate', 9600)),
+                                   parity=str(conn.get('parity', 'N')),
+                                   stopbits=int(conn.get('stopbits', 1)),
+                                   bytesize=int(conn.get('bytesize', 8)),
+                                   timeout=timeout)
+        else:
+            where = f"{conn.get('host','')}:{conn.get('port',502)}"
+            c = ModbusTcpClient(host=conn.get('host', ''),
+                                port=int(conn.get('port', 502)), timeout=timeout)
+        try:
+            if not c.connect():
+                return {"ok": False,
+                        "message": (f"Serial open of {where} failed — check the port/permissions"
+                                    if rtu else
+                                    f"TCP connect to {where} failed — check IP/port/firewall")}
+            rr = c.read_holding_registers(address=address, count=2, slave=unit_id)
+            lat = round((time.perf_counter() - t0) * 1000, 1)
+            if not rr.isError():
+                return {"ok": True, "latency_ms": lat,
+                        "message": f"Device answered in {lat} ms (unit {unit_id}, FC3 @ {address})"}
+            if isinstance(rr, ExceptionResponse):
+                return {"ok": True, "latency_ms": lat,
+                        "message": f"Device is alive (answered with Modbus exception "
+                                   f"code {getattr(rr, 'exception_code', '?')} @ {address} "
+                                   f"— try another register address)"}
+            return {"ok": False,
+                    "message": f"TCP connected but no Modbus response from unit {unit_id} "
+                               f"(timeout) — check unit ID"}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "message": f"probe failed: {e}"}
+        finally:
+            try:
+                c.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    @app.post("/api/devices/test")
+    def test_device_adhoc(payload: Dict = Body(...)):
+        """Wizard step-1 probe for a NOT-yet-saved device (TCP or RTU)."""
+        conn = payload.get('connection', payload) or {}
+        protocol = str(conn.get('protocol', 'tcp')).lower()
+        if protocol == 'http':
+            url = str(conn.get('url', '')).strip()
+            if not (url.startswith('http://') or url.startswith('https://')):
+                raise HTTPException(status_code=422, detail={"errors": ["connection.url required (http:// or https://)"]})
+            from .http_client import HttpClient
+            # If a template is named, resolve ITS json_paths against the live
+            # response so the test reports "N/M paths resolved" (proves the map
+            # fits the endpoint), not just that the URL is reachable.
+            tpl_id = str(payload.get('template') or conn.get('template') or '').strip()
+            tpl = template_registry.get(tpl_id) if tpl_id else None
+            regs = list(tpl.registers) if tpl else []
+            return HttpClient({'url': url, 'timeout': conn.get('timeout', 8)}, regs, {},
+                              allow_nonlan=config.security.allow_nonlan_http_devices).test_read()
+        if protocol == 'mqtt':
+            broker = str(conn.get('broker', '')).strip()
+            topic = str(conn.get('topic', '')).strip()
+            if not broker or not topic:
+                raise HTTPException(status_code=422, detail={"errors": ["connection.broker and connection.topic required"]})
+            import paho.mqtt.client as mqtt
+            got = {"connected": False, "msg": None, "topic": None}
+            ev = threading.Event()
+            cli = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+            if conn.get('username'):
+                cli.username_pw_set(str(conn.get('username')), str(conn.get('password', '')))
+            if conn.get('tls'):
+                try:
+                    cli.tls_set()
+                except Exception:  # noqa: BLE001
+                    pass
+
+            def _oc(c, u, f, rc, props=None):
+                got["connected"] = True
+                c.subscribe(topic)
+
+            def _om(c, u, m):
+                got["msg"] = m.payload.decode('utf-8', 'replace')[:400]
+                got["topic"] = m.topic
+                ev.set()
+            cli.on_connect = _oc
+            cli.on_message = _om
+            try:
+                cli.connect(broker, int(conn.get('port', 1883)), keepalive=10)
+                cli.loop_start()
+                ev.wait(timeout=3.0)
+            except Exception as e:  # noqa: BLE001
+                try:
+                    cli.loop_stop()
+                except Exception:  # noqa: BLE001
+                    pass
+                return {"ok": False, "error": f"connect failed: {e}"}
+            try:
+                cli.loop_stop(); cli.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+            if not got["connected"]:
+                return {"ok": False, "message": "could not connect to the broker"}
+            if got["msg"] is not None:
+                return {"ok": True, "connected": True, "message_received": True,
+                        "topic": got["topic"], "sample": got["msg"],
+                        "message": f"connected · message on {got['topic']}: {got['msg'][:80]}"}
+            return {"ok": True, "connected": True, "message_received": False,
+                    "message": "connected — no message on the topic within 3s (it may be idle)"}
+        if protocol == 'rtu' and not str(conn.get('serial_port', '')).strip():
+            raise HTTPException(status_code=422, detail={"errors": ["connection.serial_port required"]})
+        if protocol == 'tcp' and not str(conn.get('host', '')).strip():
+            raise HTTPException(status_code=422, detail={"errors": ["connection.host required"]})
+        return _modbus_probe(conn, int(conn.get('unit_id', 1)),
+                             float(conn.get('timeout', 3)),
+                             int(payload.get('address', 0)))
+
+    @app.post("/api/devices/{device_id}/test")
+    def test_device(device_id: str):
+        """Probe a saved device (TCP or RTU). Uses its first selected register
+        (a real address beats address 0) when one exists."""
+        _idx, dev_cfg, _client = _find_device(device_id)
+        if dev_cfg is None:
+            raise HTTPException(status_code=404, detail="device not found")
+        regs, _g = config.load_device_registers(dev_cfg)
+        address = regs[0].address if regs else 0
+        c = dev_cfg.connection
+        conn = {"protocol": dev_cfg.protocol, "host": c.host, "port": c.port,
+                "serial_port": c.serial_port, "baudrate": c.baudrate,
+                "parity": c.parity, "stopbits": c.stopbits, "bytesize": c.bytesize}
+        return _modbus_probe(conn, c.unit_id, float(c.timeout), address)
+
+    # /api/device-templates/* → routes/device_templates.py
+
+    # /health → routes/status_routes.py
+
+    # /api/languages(+{code}) → routes/languages.py
+
+    @app.get("/api/config")
+    async def get_config():
+        """Get current configuration."""
+        return config.to_dict()
+
+    # /api/registers/* → routes/registers_routes.py
+
+    # /api/values*, /api/meters*, /api/history* → routes/values_routes.py
+
+    # /api/energy/* → routes/energy.py
+
+    # /api/fronius/discover → routes/discovery_routes.py
+
+    # /api/virtual-meters/* → routes/vmeters.py
+
+    # /api/query/*, /api/search, /api/poll-groups → routes/registers_routes.py
+
+    # --- Config Management ---
+
+    @app.get("/api/config/env-overrides")
+    async def get_env_overrides():
+        """Get environment variable overrides currently in effect."""
+        return config.get_env_overrides()
+
+    @app.get("/api/config/modbus")
+    async def get_modbus_config():
+        """Get Modbus configuration."""
+        return {
+            "host": config.modbus.host,
+            "port": config.modbus.port,
+            "unit_id": config.modbus.unit_id,
+            "timeout": config.modbus.timeout,
+            "retry_attempts": config.modbus.retry_attempts,
+            "retry_delay": config.modbus.retry_delay,
+        }
+
+    @app.post("/api/config/modbus")
+    async def update_modbus_config(update: ModbusConfigUpdate):
+        """Update Modbus configuration."""
+        try:
+            config.update_modbus(
+                host=update.host,
+                port=update.port,
+                unit_id=update.unit_id,
+                timeout=update.timeout,
+                retry_attempts=update.retry_attempts,
+                retry_delay=update.retry_delay,
+            )
+            config.save_yaml_config()
+            return {"status": "ok", "message": "Modbus config updated. Apply to reconnect."}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/api/config/mqtt")
+    async def get_mqtt_config():
+        """Get MQTT configuration."""
+        return {
+            "enabled": config.mqtt.enabled,
+            "broker": config.mqtt.broker,
+            "port": config.mqtt.port,
+            "username": config.mqtt.username,
+            "topic_prefix": config.mqtt.topic_prefix,
+            "retain": config.mqtt.retain,
+            "qos": config.mqtt.qos,
+            "publish_mode": config.mqtt.publish_mode,
+            "ha_discovery_enabled": config.mqtt.ha_discovery_enabled,
+            "ha_discovery_prefix": config.mqtt.ha_discovery_prefix,
+            "ha_device_name": config.mqtt.ha_device_name,
+            "tls_enabled": config.mqtt.tls_enabled,
+            "tls_ca_cert": config.mqtt.tls_ca_cert,
+            "tls_client_cert": config.mqtt.tls_client_cert,
+            "tls_client_key": config.mqtt.tls_client_key,
+            "tls_insecure": config.mqtt.tls_insecure,
+            "default_topic_pattern": config.mqtt.default_topic_pattern,
+        }
+
+    @app.post("/api/config/mqtt")
+    async def update_mqtt_config(update: MQTTConfigUpdate):
+        """Update MQTT configuration."""
+        try:
+            config.update_mqtt(
+                enabled=update.enabled,
+                broker=update.broker,
+                port=update.port,
+                username=update.username,
+                password=update.password,
+                topic_prefix=update.topic_prefix,
+                retain=update.retain,
+                qos=update.qos,
+                publish_mode=update.publish_mode,
+                ha_discovery_enabled=update.ha_discovery_enabled,
+                ha_discovery_prefix=update.ha_discovery_prefix,
+                ha_device_name=update.ha_device_name,
+                tls_enabled=update.tls_enabled,
+                tls_ca_cert=update.tls_ca_cert,
+                tls_client_cert=update.tls_client_cert,
+                tls_client_key=update.tls_client_key,
+                tls_insecure=update.tls_insecure,
+                default_topic_pattern=update.default_topic_pattern,
+            )
+            config.save_yaml_config()
+            return {"status": "ok", "message": "MQTT config updated. Apply to reconnect."}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/api/config/ui-security")
+    async def get_ui_security():
+        """HTTPS + login config for the Security card (no passwords returned)."""
+        return {
+            "tls_enabled": config.ui.tls_enabled,
+            "tls_cert": config.ui.tls_cert,
+            "tls_key": config.ui.tls_key,
+            "auth_enabled": config.ui.auth_enabled,
+            "auth_username": config.ui.auth_username,
+            "viewer_username": config.ui.viewer_username,
+            "operator_username": config.ui.operator_username,
+            "lockout_threshold": config.ui.lockout_threshold,
+            "lockout_minutes": config.ui.lockout_minutes,
+            "has_viewer": bool(config.ui.viewer_username),
+            "has_operator": bool(config.ui.operator_username),
+        }
+
+    @app.post("/api/config/ui-security")
+    async def update_ui_security(payload: Dict = Body(...)):
+        """Update HTTPS + login config. Passwords are hashed on write; a blank
+        password keeps the current one. HTTPS changes need a restart."""
+        from . import auth as _auth
+        u = config.ui
+        restart_needed = False
+        if "tls_enabled" in payload:
+            new_tls = bool(payload["tls_enabled"])
+            if new_tls != u.tls_enabled:
+                restart_needed = True
+            u.tls_enabled = new_tls
+        if "tls_cert" in payload:
+            u.tls_cert = str(payload["tls_cert"]).strip(); restart_needed = restart_needed or u.tls_enabled
+        if "tls_key" in payload:
+            u.tls_key = str(payload["tls_key"]).strip()
+        if "auth_enabled" in payload:
+            u.auth_enabled = bool(payload["auth_enabled"])
+        if payload.get("auth_username"):
+            u.auth_username = str(payload["auth_username"]).strip()
+        if payload.get("auth_password"):
+            u.auth_password = _auth.hash_password(str(payload["auth_password"]))
+        if "viewer_username" in payload:
+            u.viewer_username = str(payload["viewer_username"]).strip()
+        if payload.get("viewer_password"):
+            u.viewer_password = _auth.hash_password(str(payload["viewer_password"]))
+        if "operator_username" in payload:
+            u.operator_username = str(payload["operator_username"]).strip()
+        if payload.get("operator_password"):
+            u.operator_password = _auth.hash_password(str(payload["operator_password"]))
+        if payload.get("lockout_threshold"):
+            u.lockout_threshold = int(payload["lockout_threshold"])
+        if payload.get("lockout_minutes"):
+            u.lockout_minutes = int(payload["lockout_minutes"])
+        # guard: enabling auth requires a real hashed admin password. The default
+        # is the plaintext "admin", and verify_password accepts legacy plaintext,
+        # so enabling login without setting a NEW password would silently leave
+        # admin/admin usable. Refuse unless the stored password is a PBKDF2 hash.
+        if u.auth_enabled and not _auth.is_hashed(u.auth_password):
+            raise HTTPException(status_code=422, detail={"errors": [
+                "set a new admin password before enabling login "
+                "(the default password cannot be used)"]})
+        config.save_yaml_config()
+        if auth_state is not None:
+            auth_state.reload(config.ui)
+        return {"status": "ok", "restart_needed": restart_needed}
+
+    @app.get("/api/config/security")
+    async def get_security_config(request: Request):
+        """Get security config (IP allowlist) + the caller's own IP so the UI
+        can warn before you lock yourself out."""
+        return {
+            "allowlist": config.security.allowlist,
+            "allow_writes": config.security.allow_writes,
+            "allow_nonlan_http_devices": config.security.allow_nonlan_http_devices,
+            "your_ip": request.client.host if request.client else "",
+        }
+
+    @app.post("/api/config/security")
+    async def update_security_config(payload: Dict = Body(...)):
+        """Update the IP allowlist + the Modbus-write / non-LAN-HTTP gates."""
+        import ipaddress as _ip
+        if "allowlist" in payload:
+            raw = payload.get("allowlist", [])
+            if not isinstance(raw, list):
+                raise HTTPException(status_code=422, detail={"errors": ["allowlist must be a list"]})
+            cleaned, errors = [], []
+            for entry in raw:
+                entry = str(entry).strip()
+                if not entry:
+                    continue
+                try:
+                    _ip.ip_network(entry, strict=False)
+                    cleaned.append(entry)
+                except ValueError:
+                    errors.append(f"invalid IP/CIDR: {entry}")
+            if errors:
+                raise HTTPException(status_code=422, detail={"errors": errors})
+            config.security.allowlist = cleaned
+        if "allow_writes" in payload:
+            config.security.allow_writes = bool(payload["allow_writes"])
+        if "allow_nonlan_http_devices" in payload:
+            config.security.allow_nonlan_http_devices = bool(payload["allow_nonlan_http_devices"])
+        config.save_yaml_config()
+        return {"status": "ok", "allowlist": config.security.allowlist,
+                "active": bool(config.security.allowlist),
+                "allow_writes": config.security.allow_writes,
+                "allow_nonlan_http_devices": config.security.allow_nonlan_http_devices}
+
+    @app.get("/api/config/influxdb")
+    async def get_influxdb_config():
+        """Get InfluxDB configuration."""
+        return {
+            "enabled": config.influxdb.enabled,
+            "url": config.influxdb.url,
+            "org": config.influxdb.org,
+            "bucket": config.influxdb.bucket,
+            "write_interval": config.influxdb.write_interval,
+            "publish_mode": config.influxdb.publish_mode,
+            "default_bucket_pattern": config.influxdb.default_bucket_pattern,
+        }
+
+    @app.post("/api/config/influxdb")
+    async def update_influxdb_config(update: InfluxDBConfigUpdate):
+        """Update InfluxDB configuration."""
+        try:
+            config.update_influxdb(
+                enabled=update.enabled,
+                url=update.url,
+                token=update.token,
+                org=update.org,
+                bucket=update.bucket,
+                write_interval=update.write_interval,
+                publish_mode=update.publish_mode,
+                default_bucket_pattern=update.default_bucket_pattern,
+            )
+            config.save_yaml_config()
+            return {"status": "ok", "message": "InfluxDB config updated. Apply to reconnect."}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/api/config/apply")
+    def apply_config():
+        """Apply configuration changes by reconnecting all services."""
+        nonlocal mqtt_publisher, influxdb_publisher
+
+        results = {"modbus": False, "mqtt": False, "influxdb": False}
+
+        try:
+            # Reconnect Modbus
+            if modbus_client:
+                modbus_client.update_config(config.modbus)
+                modbus_client.update_registers(config.selected_registers, config.poll_groups)
+                results["modbus"] = modbus_client.reconnect()
+
+            # Handle MQTT - create if needed
+            if config.mqtt.enabled:
+                if mqtt_publisher:
+                    mqtt_publisher.update_config(config.mqtt)
+                    mqtt_publisher.update_registers(config.selected_registers)
+                    results["mqtt"] = mqtt_publisher.reconnect()
+                else:
+                    # Create new MQTT publisher (MQTT was off at boot / just
+                    # enabled) and re-wire it into the virtual-meter manager so
+                    # its state + HA discovery publish through the LIVE ref
+                    # instead of the old None — otherwise vmeter state/discovery
+                    # stays dark until a restart.
+                    mqtt_publisher = MQTTPublisher(
+                        config=config.mqtt,
+                        registers=config.selected_registers,
+                        publish_mode=config.mqtt.publish_mode
+                    )
+                    ctx.mqtt_publisher = mqtt_publisher   # mirror for route modules
+                    vmgr = getattr(app.state, "vmeter_manager", None)
+                    if vmgr is not None:
+                        vmgr.mqtt_publisher = mqtt_publisher
+                    # Connect in background
+                    def connect_mqtt():
+                        if mqtt_publisher.connect():
+                            logger.info("MQTT connected after enable")
+                            if config.mqtt.ha_discovery_enabled:
+                                mqtt_publisher.publish_ha_discovery()
+                            # (re)start the vmeter state publisher on the new ref
+                            if vmgr is not None:
+                                try:
+                                    vmgr.start_state_publisher()
+                                    vmgr.publish_ha_discovery()
+                                except Exception as e:  # noqa: BLE001
+                                    logger.warning("vmeter re-wire after MQTT enable failed: %s", e)
+                    threading.Thread(target=connect_mqtt, daemon=True).start()
+                    results["mqtt"] = True
+            elif mqtt_publisher:
+                # Disable MQTT
+                mqtt_publisher.disconnect()
+                results["mqtt"] = True
+
+            # Handle InfluxDB - create if needed
+            if config.influxdb.enabled:
+                if influxdb_publisher:
+                    influxdb_publisher.update_config(config.influxdb)
+                    influxdb_publisher.update_registers(config.selected_registers)
+                    results["influxdb"] = influxdb_publisher.reconnect()
+                else:
+                    # Create new InfluxDB publisher
+                    influxdb_publisher = InfluxDBPublisher(
+                        config=config.influxdb,
+                        registers=config.selected_registers,
+                        publish_mode=config.influxdb.publish_mode
+                    )
+                    ctx.influxdb_publisher = influxdb_publisher   # mirror for route modules
+                    results["influxdb"] = influxdb_publisher.connected
+                    logger.info(f"InfluxDB publisher created, connected: {influxdb_publisher.connected}")
+            elif influxdb_publisher:
+                # Disable InfluxDB
+                influxdb_publisher.close()
+                results["influxdb"] = True
+
+            return {
+                "status": "ok",
+                "results": results,
+                "message": "Configuration applied"
+            }
+        except Exception as e:
+            logger.error(f"Error applying config: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/api/config/reload-registers")
+    def reload_registers():
+        """Reload registers without full reconnect."""
+        try:
+            # Reload config
+            config._load_selected_registers()
+
+            # Update clients
+            if modbus_client:
+                modbus_client.update_registers(config.selected_registers, config.poll_groups)
+                modbus_client.reload_registers()
+
+            if mqtt_publisher:
+                mqtt_publisher.update_registers(config.selected_registers)
+
+            if influxdb_publisher:
+                influxdb_publisher.update_registers(config.selected_registers)
+
+            return {
+                "status": "ok",
+                "count": len(config.selected_registers),
+                "message": "Registers reloaded"
+            }
+        except Exception as e:
+            logger.error(f"Error reloading registers: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # --- Config backup / restore (ZIP) ---
+
+    import io
+    import zipfile
+    import yaml as _yaml
+    from pathlib import Path as _Path
+
+    BACKUP_VERSION = 1
+    # secret keys stripped from config.yaml on export unless include_secrets=true
+    _SECRET_PATHS = [("mqtt", "password"), ("influxdb", "token"),
+                     ("ui", "auth", "password"), ("ui", "auth", "viewer_password"),
+                     ("ui", "auth", "operator_password"),
+                     ("alerts", "webhook_headers"),   # holds the webhook X-API-Key/bearer
+                     ("rest_push", "headers")]        # primary device REST-push auth headers
+
+    def _strip_device_secrets(data: dict):
+        """Redact per-device secrets that live inside the devices[] list: the MQTT
+        broker / HTTP-input password + headers, and REST-push auth headers. These
+        are NOT top-level so _strip_paths misses them."""
+        for dev in (data.get("devices") or []):
+            if not isinstance(dev, dict):
+                continue
+            conn = dev.get("connection")
+            if isinstance(conn, dict):
+                conn.pop("password", None)           # MQTT-input broker password
+                conn.pop("headers", None)            # HTTP-input auth headers
+            rp = dev.get("rest_push")
+            if isinstance(rp, dict):
+                rp.pop("headers", None)              # REST-push auth headers
+    # network identity kept out of a portable backup (clone-to-another-host safe)
+    _IDENTITY_PATHS = [("ui", "host"), ("ui", "port")]
+
+    def _strip_paths(d: dict, paths):
+        for p in paths:
+            node = d
+            for k in p[:-1]:
+                node = node.get(k) if isinstance(node, dict) else None
+                if node is None:
+                    break
+            if isinstance(node, dict):
+                node.pop(p[-1], None)
+
+    @app.get("/api/config/export")
+    def export_config(request: Request,
+                      include_secrets: bool = Query(default=False),
+                      include_identity: bool = Query(default=False)):
+        """Download a ZIP backup: config.yaml (secrets/identity stripped by
+        default), every device's selected_registers.json, user device
+        templates, and virtual_meters.yaml. Restores via /api/config/import."""
+        # A backup WITH secrets carries the MQTT/InfluxDB credentials and the
+        # admin/viewer password hashes, so it always needs a credential — a
+        # read-only viewer must not walk away with the admin hash. Export is a GET,
+        # and the API-key middleware only guards state-changing methods, so we
+        # must check the key HERE too (else an api-key-protected, auth-off box
+        # would still leak secrets over a plain GET).
+        if include_secrets or include_identity:
+            _is_admin = auth_state.enabled and getattr(request.state, "role", None) == "admin"
+            _key_ok = bool(_api_key) and hmac.compare_digest(
+                request.headers.get("X-API-Key", ""), _api_key)
+            if not (_is_admin or _key_ok):
+                raise HTTPException(status_code=403, detail={"errors": [
+                    "exporting secrets/identity requires the admin role or a valid API key"]})
+        if include_secrets or include_identity:
+            audit_log.append(user=getattr(request.state, "user", "") or "-",
+                             ip=request.client.host if request.client else "-",
+                             action="config export", status="ok",
+                             detail={"include_secrets": include_secrets,
+                                     "include_identity": include_identity})
+        cfg_dir = config.config_path.parent
+        buf = io.BytesIO()
+        manifest = {"backup_version": BACKUP_VERSION,
+                    "app_version": __import__("multibus").__version__,
+                    "include_secrets": include_secrets,
+                    "include_identity": include_identity,
+                    "devices": [d.id for d in config.devices]}
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            # config.yaml (sanitized copy — never mutate the live file)
+            if config.config_path.exists():
+                data = _yaml.safe_load(config.config_path.read_text()) or {}
+                if not include_secrets:
+                    _strip_paths(data, _SECRET_PATHS)
+                    _strip_device_secrets(data)
+                if not include_identity:
+                    _strip_paths(data, _IDENTITY_PATHS)
+                z.writestr("config.yaml", _yaml.dump(data, default_flow_style=False,
+                                                     allow_unicode=True, sort_keys=False))
+            # per-device selected registers
+            for d in config.devices:
+                p = config.device_registers_path(d.id)
+                if p.exists():
+                    z.writestr(f"devices/{d.id}/selected_registers.json", p.read_text())
+            # user device templates
+            from .device_template import USER_DIR as _UDIR
+            udir = _Path(getattr(template_registry, "user_dir", _UDIR))
+            if udir.is_dir():
+                for f in udir.iterdir():
+                    if f.suffix.lower() in (".json", ".yaml", ".yml"):
+                        z.writestr(f"device_templates/{f.name}", f.read_text())
+            # virtual meters
+            vm = cfg_dir / "virtual_meters.yaml"
+            if vm.exists():
+                z.writestr("virtual_meters.yaml", vm.read_text())
+            z.writestr("manifest.json", json.dumps(manifest, indent=1))
+        buf.seek(0)
+        return Response(
+            content=buf.getvalue(), media_type="application/zip",
+            headers={"Content-Disposition": 'attachment; filename="janitza-config-backup.zip"'})
+
+    @app.post("/api/config/import")
+    async def import_config(request: Request, apply: bool = Query(default=True)):
+        """Restore a ZIP backup produced by /api/config/export. The raw ZIP is
+        sent as the request body (application/zip) — no multipart dependency.
+        Writes the files back under the config dir (paths validated — no
+        traversal), reloads config and hot-applies. Secrets/identity absent
+        from the backup keep their current values (the live config.yaml is
+        merged, not blindly overwritten)."""
+        # Bound the input: a config backup is tiny, so cap the body and the total
+        # uncompressed size to refuse an oversized upload / ZIP bomb (OOM guard).
+        _MAX_IMPORT = 25 * 1024 * 1024        # 25 MB compressed
+        _cl = request.headers.get('content-length', '')
+        if _cl.isdigit() and int(_cl) > _MAX_IMPORT:
+            raise HTTPException(status_code=413, detail={"errors": ["backup too large (max 25 MB)"]})
+        raw = await request.body()
+        if len(raw) > _MAX_IMPORT:
+            raise HTTPException(status_code=413, detail={"errors": ["backup too large (max 25 MB)"]})
+        cfg_dir = config.config_path.parent
+        try:
+            zf = zipfile.ZipFile(io.BytesIO(raw))
+        except Exception:
+            raise HTTPException(status_code=422, detail={"errors": ["not a valid ZIP file"]})
+        if sum(getattr(zi, 'file_size', 0) for zi in zf.infolist()) > 50 * 1024 * 1024:
+            raise HTTPException(status_code=422, detail={"errors": ["archive expands too large (ZIP bomb?)"]})
+        from .device_template import USER_DIR as _UDIR
+        # safety net: the pre-import state is one click away if the backup is bad
+        try:
+            snapshot_store.create("pre-import",
+                                  user=getattr(request.state, "role", "") or "")
+        except Exception:  # noqa: BLE001
+            logger.exception("pre-import snapshot failed")
+        try:
+            # sanitized backups merge config.yaml over the live file so stripped
+            # secrets/identity survive; per-device register paths are mapped
+            # through device_registers_path (the primary keeps its legacy root
+            # file — writing devices/<primary>/ would be a dead copy).
+            summary = _write_bundle_files(
+                zf, cfg_dir=cfg_dir,
+                user_tpl_dir=_Path(getattr(template_registry, "user_dir", _UDIR)),
+                registers_path_for=config.device_registers_path,
+                replace_config=False)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+        _reload_from_disk(apply)
+        summary["note"] = ("imported; a restart is recommended so newly-added "
+                           "devices start polling") if len(config.devices) > 1 else "imported"
+        logger.info(f"config import: {summary}")
+        return {"status": "ok", **summary}
+
+    def _reload_from_disk(apply: bool = True) -> None:
+        """Reload config + registries from disk and hot-apply — the shared tail
+        of backup import and snapshot restore (restart-lite)."""
+        config.load()
+        # hot-apply imported login settings so a backup that enables/disables auth
+        # or rotates credentials takes effect immediately (the middleware reads
+        # auth_state live) — matches update_ui_security(), not a restart-only change
+        auth_state.reload(config.ui)
+        template_registry.reload()
+        if apply:
+            # rebuild device runtime like a restart-lite: reconnect primary +
+            # reload its registers; other devices are picked up on next restart
+            if modbus_client:
+                modbus_client.update_config(config.modbus)
+                modbus_client.update_registers(config.selected_registers, config.poll_groups)
+                modbus_client.reconnect()
+            if mqtt_publisher:
+                mqtt_publisher.update_config(config.mqtt)
+                mqtt_publisher.update_registers(config.selected_registers)
+            if influxdb_publisher:
+                influxdb_publisher.update_config(config.influxdb)
+                influxdb_publisher.update_registers(config.selected_registers)
+
+    # --- Config snapshots: list / create / download / delete / restore ---
+
+    @app.get("/api/config/snapshots")
+    def list_snapshots():
+        """Automatic + manual snapshots, newest first (LKG on top when present)."""
+        return {"snapshots": snapshot_store.list(), "keep": snapshot_store.keep}
+
+    @app.post("/api/config/snapshots")
+    def create_snapshot(request: Request, payload: Dict = Body(default={})):
+        """Take a manual snapshot of the current config bundle."""
+        meta = snapshot_store.create("manual",
+                                     user=getattr(request.state, "role", "") or "",
+                                     note=str(payload.get("note", "") or ""))
+        return {"status": "ok", "snapshot": meta}
+
+    @app.get("/api/config/snapshots/{sid}/download")
+    def download_snapshot(request: Request, sid: str):
+        """Download a snapshot ZIP. Snapshots are FULL-FIDELITY (secrets and
+        identity included — they are local restore points), so downloading one
+        is gated exactly like a with-secrets export."""
+        _is_admin = auth_state.enabled and getattr(request.state, "role", None) == "admin"
+        _key_ok = bool(_api_key) and hmac.compare_digest(
+            request.headers.get("X-API-Key", ""), _api_key)
+        if auth_state.enabled and not (_is_admin or _key_ok):
+            raise HTTPException(status_code=403, detail={"errors": [
+                "downloading a snapshot requires the admin role or a valid API key"]})
+        p = snapshot_store.get_path(sid)
+        if p is None:
+            raise HTTPException(status_code=404, detail=f"unknown snapshot {sid!r}")
+        audit_log.append(user=getattr(request.state, "user", "") or "-",
+                         ip=request.client.host if request.client else "-",
+                         action="snapshot download", target=sid, status="ok")
+        return Response(content=p.read_bytes(), media_type="application/zip",
+                        headers={"Content-Disposition":
+                                 f'attachment; filename="config-snapshot-{sid}.zip"'})
+
+    @app.delete("/api/config/snapshots/{sid}")
+    def delete_snapshot(sid: str):
+        if sid == "lkg":
+            raise HTTPException(status_code=400,
+                                detail="the last-known-good snapshot cannot be deleted")
+        if not snapshot_store.delete(sid):
+            raise HTTPException(status_code=404, detail=f"unknown snapshot {sid!r}")
+        return {"status": "deleted"}
+
+    @app.get("/api/config/snapshots/{sid}/diff")
+    def diff_snapshot(sid: str, against: str = Query(default="live")):
+        """Semantic, secrets-masked diff: what changed SINCE this snapshot
+        (against=live, default) or between two snapshots (against=<sid>).
+        A rollback to the snapshot would undo exactly these changes."""
+        from .snapshots import diff_bundles
+        p = snapshot_store.get_path(sid)
+        if p is None:
+            raise HTTPException(status_code=404, detail=f"unknown snapshot {sid!r}")
+        if against == "live":
+            newer = snapshot_store.build_bundle_bytes()
+        else:
+            p2 = snapshot_store.get_path(against)
+            if p2 is None:
+                raise HTTPException(status_code=404, detail=f"unknown snapshot {against!r}")
+            newer = p2.read_bytes()
+        return {"base": sid, "against": against,
+                **diff_bundles(p.read_bytes(), newer)}
+
+    @app.post("/api/config/snapshots/{sid}/restore")
+    def restore_snapshot(request: Request, sid: str, apply: bool = Query(default=True)):
+        """Roll the config back to a snapshot. The current state is snapshotted
+        first ('pre-restore'), so a rollback is itself reversible. Snapshots are
+        verbatim, so config.yaml is REPLACED, not merged."""
+        p = snapshot_store.get_path(sid)
+        if p is None:
+            raise HTTPException(status_code=404, detail=f"unknown snapshot {sid!r}")
+        try:
+            snapshot_store.create("pre-restore",
+                                  user=getattr(request.state, "role", "") or "")
+        except Exception:  # noqa: BLE001
+            logger.exception("pre-restore snapshot failed")
+        try:
+            with zipfile.ZipFile(io.BytesIO(p.read_bytes())) as zf:
+                from .device_template import USER_DIR as _UDIR
+                summary = _write_bundle_files(
+                    zf, cfg_dir=config.config_path.parent,
+                    user_tpl_dir=_Path(getattr(template_registry, "user_dir", _UDIR)),
+                    registers_path_for=config.device_registers_path,
+                    replace_config=True)
+        except (ValueError, zipfile.BadZipFile) as e:
+            raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+        _reload_from_disk(apply)
+        event_log.add("warn", "snapshots", f"config rolled back to snapshot {sid}")
+        logger.warning(f"config restored from snapshot {sid}: {summary}")
+        return {"status": "ok", "restored": sid, **summary}
+
+    # --- Auth (login / logout / status) ---
+
+    # /api/auth/* → routes/auth_routes.py
+
+    # --- WebSocket ---
+
+    @app.websocket("/ws")
+    async def websocket_endpoint(websocket: WebSocket):
+        """WebSocket endpoint for real-time data."""
+        # The HTTP middlewares (IP allowlist + auth) do not run for the websocket
+        # ASGI scope, so enforce both here before streaming the live value cache.
+        peer = websocket.client.host if websocket.client else ""
+        if not _ip_allowed(peer):
+            await websocket.close(code=1008)       # policy violation
+            return
+        if auth_state is not None and auth_state.enabled:
+            token = websocket.cookies.get(_auth.COOKIE_NAME, "")
+            if auth_state.role_for(token) is None:
+                await websocket.close(code=1008)
+                return
+        # WebSockets are exempt from the browser same-origin policy, so a page the
+        # operator visits could otherwise open ws://<lan-ip>/ws and read the live
+        # telemetry stream. Reject a cross-origin Origin (host:port mismatch); a
+        # non-browser client (no Origin header) is allowed, like the HTTP guard.
+        _origin = websocket.headers.get("origin")
+        if _origin:
+            from urllib.parse import urlparse
+            _o = urlparse(_origin).netloc.lower()
+            if _o and _o != websocket.headers.get("host", "").lower():
+                await websocket.close(code=1008)
+                return
+        await ws_manager.connect(websocket)
+        try:
+            # Send initial data
+            await websocket.send_json({
+                'type': 'init',
+                'device': config.primary_device.id,   # the snapshot is the primary's
+                'values': current_values,
+                'timestamp': last_update['timestamp'],
+            })
+
+            # Keep connection alive
+            while True:
+                try:
+                    # Wait for messages (ping/pong handled automatically)
+                    data = await asyncio.wait_for(websocket.receive_text(), timeout=30)
+
+                    # Handle client messages
+                    try:
+                        msg = json.loads(data)
+                        if msg.get('type') == 'ping':
+                            await websocket.send_json({'type': 'pong'})
+                        elif msg.get('type') == 'subscribe':
+                            # Client can subscribe to specific addresses
+                            pass
+                    except json.JSONDecodeError:
+                        pass
+
+                except asyncio.TimeoutError:
+                    # Send ping
+                    await websocket.send_json({'type': 'ping'})
+
+        except WebSocketDisconnect:
+            pass
+        except Exception as e:
+            logger.error(f"WebSocket error: {e}")
+        finally:
+            await ws_manager.disconnect(websocket)
+
+    # --- Domain routers (janitza/routes/) ---
+    # Shared context for the extracted route modules. The publisher slots are
+    # MUTABLE: /api/config/apply rebinds them (nonlocal) and mirrors the new
+    # object here, so routers reading ctx.<publisher> at request time always
+    # see the live one. Everything else is a stable singleton.
+    from .routes import (ApiCtx, auth_routes, calculated, device_templates,
+                         diagnostics, discovery_routes, energy, general_config,
+                         languages, metrics, registers_routes, status_routes,
+                         system, values_routes, vmeters)
+    ctx = ApiCtx(
+        app=app, config=config, registry=registry, calc_engine=calc_engine,
+        event_log=event_log, alert_mgr=alert_mgr,
+        auth_state=auth_state, api_key=_api_key,
+        template_registry=template_registry,
+        current_values=current_values, last_update=last_update,
+        modbus_client=modbus_client, ws_manager=ws_manager,
+        mqtt_publisher=mqtt_publisher, influxdb_publisher=influxdb_publisher,
+        audit_log=audit_log,
+    )
+    app.state.ctx = ctx
+    for _mod in (calculated, device_templates, diagnostics, discovery_routes,
+                 energy, general_config, languages, metrics, registers_routes,
+                 status_routes, system, auth_routes, values_routes, vmeters):
+        app.include_router(_mod.build(ctx))
+    app.include_router(auth_routes.build_passkeys(ctx))
+
+    # --- Static files ---
+
+    # Mount static files last
+    app.mount("/static", StaticFiles(directory="ui"), name="static")
+
+    return app, ws_manager

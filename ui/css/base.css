@@ -1,0 +1,1202 @@
+/* ============================================
+   Janitza Monitor - Base Styles
+   Common styles shared across all pages
+   ============================================ */
+
+/* ==================== CSS VARIABLES ==================== */
+:root {
+    --bg-primary: #1e1e1e;
+    --bg-secondary: #2d2d2d;
+    --bg-tertiary: #3d3d3d;
+    --bg-window: rgba(30, 30, 30, 0.95);
+    --bg-hover: rgba(255, 255, 255, 0.05);
+    /* Instrument-panel teal accent (adopted 2026-07-04) */
+    --accent: #12a3b2;
+    --accent-hover: #22c4d3;
+    --accent-text: #45d3e0;
+    --accent-tint: rgba(18, 163, 178, 0.16);
+    --accent-ink: #8fe6ef;
+    /* Status palette — muted, instrument-panel tones (softened 2026-07-06:
+       the raw iOS system colors #32d74b/#ff453a read neon against the teal
+       accent; these keep the semantic hue but sit much quieter). */
+    --success: #46a86b;
+    --success-text: #5ec488;
+    --warning-text: #e3b341;
+    --purple-text: #d0a9ee;
+    --danger: #d4635d;
+    --warning: #d29922;
+    --orange: #ff9f0a;
+    --text-primary: #ffffff;
+    --text-secondary: rgba(255, 255, 255, 0.7);
+    --text-tertiary: rgba(255, 255, 255, 0.62);
+    --border: rgba(255, 255, 255, 0.1);
+    --border-light: rgba(255, 255, 255, 0.05);
+    --shadow: 0 22px 70px 4px rgba(0, 0, 0, 0.56);
+    --radius: 10px;
+    --radius-sm: 6px;
+    --font-mono: 'SF Mono', 'Monaco', 'Consolas', monospace;
+    /* Phase identity colors (L1/L2/L3) — JS overrides these per the convention
+       chosen in Settings → General (distinct | IEC RO/EU | RST | custom),
+       theme-aware. Widgets store var(--phase-lN) so a theme/convention switch
+       recolors them live. */
+    --phase-l1: #3b82f6;
+    --phase-l2: #12a3b2;
+    --phase-l3: #8b5cf6;
+}
+
+/* Light Theme */
+:root[data-theme="light"] {
+    --bg-primary: #f5f5f7;
+    --bg-secondary: #ffffff;
+    --bg-tertiary: #e5e5e7;
+    --bg-window: rgba(255, 255, 255, 0.95);
+    --bg-hover: rgba(0, 0, 0, 0.05);
+    /* Instrument-panel teal accent — deeper for the light ground */
+    --accent: #0e7d8a;
+    --accent-hover: #0b6c78;
+    --accent-text: #0a5b65;
+    --accent-tint: rgba(14, 125, 138, 0.10);
+    --accent-ink: #0a5b65;
+    /* Status palette — deeper on the light ground (these overrides were
+       missing: the neon dark-theme values were bleeding into light mode). */
+    --success: #2f8f55;
+    --success-text: #116932;
+    --danger: #c0504a;
+    --danger-text: #c0392b;
+    --warning: #b58414;
+    --warning-text: #8a5a00;
+    --purple-text: #7c3aed;
+    --text-primary: #1d1d1f;
+    --text-secondary: rgba(0, 0, 0, 0.6);
+    --text-tertiary: rgba(0, 0, 0, 0.57);
+    --border: rgba(0, 0, 0, 0.1);
+    --border-light: rgba(0, 0, 0, 0.05);
+    --shadow: 0 22px 70px 4px rgba(0, 0, 0, 0.15);
+}
+
+
+/* Page titles outside .section-header (e.g. Virtual Meters) match the app scale */
+#vmetersPage h2 {
+    font-size: 16px;
+    font-weight: 600;
+}
+#vmetersPage h2 i { color: var(--accent-text); }
+
+/* ==================== RESET & BASE ==================== */
+*, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    color: var(--text-primary);
+    min-height: 100vh;
+    line-height: 1.4;
+    -webkit-font-smoothing: antialiased;
+}
+
+:root[data-theme="light"] body {
+    background: linear-gradient(135deg, #e8e8ed 0%, #d1d1d6 50%, #c7c7cc 100%);
+}
+
+/* ==================== WINDOW LAYOUT ==================== */
+.window {
+    max-width: 1600px;
+    width: calc(100% - 40px);
+    height: calc(100vh - 40px);
+    margin: 20px auto;
+    background: var(--bg-window);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(50px);
+    border: 1px solid var(--border);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ==================== TITLEBAR ==================== */
+.titlebar {
+    display: flex;
+    align-items: center;
+    padding: 10px 16px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.02) 100%);
+    border-bottom: 1px solid var(--border-light);
+    gap: 12px;
+}
+
+.titlebar-left {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;          /* never shrink — the brand must not wrap */
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-primary);
+    white-space: nowrap;     /* "Janitza UMG 512-PRO" stays on one line */
+}
+
+.logo i {
+    font-size: 20px;
+    color: var(--warning);
+    flex: none;
+}
+
+.titlebar-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 0 0 auto;          /* status pills + controls keep their size */
+}
+
+/* Navigation Tabs — take the middle, scroll if the row gets tight instead of
+   squeezing the brand/status into wrapping */
+.nav-tabs {
+    display: flex;
+    gap: 2px;
+    flex: 1 1 auto;
+    min-width: 0;
+    /* center when there's room; fall back to left-aligned (no clipped tabs)
+       when the row is tight, instead of clipping both ends */
+    justify-content: safe center;
+    overflow-x: auto;
+    scrollbar-width: none;   /* Firefox */
+}
+.nav-tabs::-webkit-scrollbar { display: none; }
+
+.nav-tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 9px;
+    white-space: nowrap;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.nav-tab:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.nav-tab.active {
+    background: var(--accent);
+    color: white;
+}
+
+.nav-tab i {
+    font-size: 14px;
+}
+
+/* Status Indicators */
+.status-indicators {
+    display: flex;
+    gap: 6px;
+}
+
+.status-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-tertiary);
+    background: none;
+    border: none;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    cursor: default;
+    white-space: nowrap;     /* "Modbus TCP" / "vMeter 2/2" never wrap */
+    flex: none;
+}
+.status-item .status-dot { flex: none; }
+
+.status-item.clickable {
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.status-item.clickable:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--danger);
+    transition: all 0.3s;
+}
+
+/* Soft translucent halo instead of the old neon glow (0 0 8px solid) — the
+   status still reads at a glance without shouting. Browsers without
+   color-mix() simply drop the halo and keep the plain dot. */
+.status-item.connected .status-dot {
+    background: var(--success);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 22%, transparent);
+}
+
+.status-item.disconnected .status-dot {
+    background: var(--danger);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 22%, transparent);
+}
+
+.status-item.partial .status-dot {
+    background: var(--warning, #e08e0b);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning, #e08e0b) 22%, transparent);
+}
+
+.status-item.disabled .status-dot {
+    background: var(--text-tertiary);
+}
+
+/* Status pills show only the colored dot by default (compact — keeps the 7
+   nav tabs fully visible on laptop widths); the full "Modbus TCP" etc. labels
+   appear on wide screens. The service name lives in each pill's title/aria so
+   the dots stay legible when collapsed. */
+.status-label {
+    display: none;
+}
+
+@media (min-width: 1600px) {
+    .status-label { display: inline; }
+}
+
+/* Language selector */
+.lang-select {
+    height: 32px;
+    padding: 0 6px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: all 0.2s;
+}
+.lang-select:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+.lang-select option { color: var(--text-primary); background: var(--bg-secondary); }
+
+/* Theme Toggle */
+.theme-toggle {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.theme-toggle:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+/* ==================== CONTENT AREA ==================== */
+.content {
+    flex: 1;
+    padding: 20px;
+    overflow-y: auto;
+}
+
+.page {
+    display: none;
+}
+
+.page.active {
+    display: block;
+}
+
+/* ==================== SECTION HEADER ==================== */
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.section-header h2 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.section-header h2 i {
+    color: var(--accent-text);
+}
+
+.header-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+/* ==================== BUTTONS ==================== */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+    text-decoration: none;
+}
+
+.btn-primary {
+    background: var(--accent);
+    color: white;
+}
+
+.btn-primary:hover {
+    background: var(--accent-hover);
+}
+
+.btn-success {
+    background: rgba(50, 215, 75, 0.2);
+    color: var(--success-text);
+    border: 1px solid var(--success);
+}
+
+.btn-success:hover {
+    background: rgba(50, 215, 75, 0.3);
+}
+
+.btn-danger {
+    background: rgba(255, 69, 58, 0.2);
+    color: var(--danger);
+    border: 1px solid var(--danger);
+}
+
+.btn-danger:hover {
+    background: rgba(255, 69, 58, 0.3);
+}
+
+.btn-warning {
+    background: rgba(255, 159, 10, 0.2);
+    color: var(--orange);
+    border: 1px solid var(--orange);
+}
+
+.btn-warning:hover {
+    background: rgba(255, 159, 10, 0.3);
+}
+
+.btn-ghost {
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+}
+
+.btn-ghost:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.btn-sm {
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+.btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* Action Buttons */
+.btn-action {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-action:hover {
+    background: var(--accent);
+    border-color: var(--accent-text);
+    color: white;
+}
+
+.btn-action.danger:hover {
+    background: var(--danger);
+    border-color: var(--danger);
+}
+
+/* ==================== FORMS ==================== */
+.input {
+    width: 100%;
+    padding: 8px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+    transition: border-color 0.2s;
+}
+
+.input:focus {
+    outline: none;
+    border-color: var(--accent-text);
+}
+
+.input::placeholder {
+    color: var(--text-tertiary);
+}
+
+.input-sm {
+    padding: 6px 10px;
+    font-size: 12px;
+}
+
+/* Consistent control heights — inputs and buttons of the same tier line up
+   everywhere (normal = 36px, small = 30px), regardless of padding/border. */
+.btn,
+.input,
+select.input {
+    box-sizing: border-box;
+    min-height: 36px;
+}
+.btn-sm,
+.input-sm {
+    min-height: 30px;
+}
+/* native date/month/time pickers render taller than other controls — cap them
+   so they line up with adjacent buttons/inputs */
+input[type="month"].input,
+input[type="date"].input,
+input[type="time"].input {
+    height: 36px;
+}
+
+.form-group {
+    margin-bottom: 16px;
+}
+
+.form-label {
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
+.form-row {
+    display: flex;
+    gap: 12px;
+}
+
+.form-row .form-group {
+    flex: 1;
+}
+
+.form-section {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-light);
+}
+
+.form-section h4 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    margin-bottom: 12px;
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent);
+}
+
+/* ==================== CARDS ==================== */
+.card {
+    background: var(--bg-secondary);
+    border-radius: var(--radius);
+    border: 1px solid var(--border-light);
+    overflow: hidden;
+}
+
+.card-header {
+    padding: 12px 16px;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border-light);
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.card-body {
+    padding: 16px;
+}
+
+/* ==================== MODALS ==================== */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(4px);
+}
+
+.modal.active {
+    display: flex;
+}
+
+.modal-content {
+    background: var(--bg-secondary);
+    border-radius: var(--radius);
+    width: 90%;
+    max-width: 500px;
+    max-height: 90vh;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
+}
+
+.modal-content.modal-lg {
+    max-width: 700px;
+}
+
+.modal-content.modal-sm {
+    max-width: 360px;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.modal-header h3 {
+    font-size: 16px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.modal-header h3 i {
+    color: var(--accent-text);
+}
+
+.modal-close {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: var(--text-tertiary);
+    font-size: 20px;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    transition: all 0.2s;
+}
+
+.modal-close:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.modal-body {
+    padding: 20px;
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 16px 20px;
+    border-top: 1px solid var(--border-light);
+}
+
+.modal-divider {
+    border: none;
+    border-top: 1px solid var(--border-light);
+    margin: 20px 0;
+}
+
+/* Status Detail Modal */
+.status-detail-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.status-detail-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.status-detail-row:last-child {
+    border-bottom: none;
+}
+
+.status-detail-label {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.status-detail-value {
+    font-size: 13px;
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.status-detail-value.mono {
+    font-family: 'SF Mono', Monaco, Consolas, monospace;
+}
+
+.status-detail-value.success {
+    color: var(--success-text);
+}
+
+.status-detail-value.error {
+    color: var(--danger);
+}
+
+.status-detail-hint {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 8px;
+    margin-top: 12px;
+    background: rgba(128, 128, 128, 0.1);
+    border-radius: var(--radius-sm);
+    font-size: 10px;
+    color: var(--text-tertiary);
+}
+
+.status-detail-hint i {
+    color: var(--text-tertiary);
+    font-size: 10px;
+    opacity: 0.7;
+}
+
+/* Info Box */
+.info-box {
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    padding: 12px 16px;
+    margin-bottom: 16px;
+}
+
+.info-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    padding: 4px 0;
+}
+
+.info-row span {
+    color: var(--text-tertiary);
+}
+
+.info-row strong {
+    color: var(--text-primary);
+}
+
+/* Flex utilities */
+.flex-1 {
+    flex: 1;
+}
+
+/* ==================== STATUS BAR ==================== */
+.statusbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 16px;
+    background: var(--bg-tertiary);
+    border-top: 1px solid var(--border-light);
+    font-size: 11px;
+    color: var(--text-tertiary);
+}
+
+.statusbar-left,
+.statusbar-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#connectionStatus i {
+    font-size: 8px;
+    margin-right: 4px;
+}
+
+#connectionStatus.connected {
+    color: var(--success-text);
+}
+
+#connectionStatus.disconnected {
+    color: var(--danger);
+}
+
+.statusbar-divider {
+    width: 1px;
+    height: 12px;
+    background: var(--border);
+    margin: 0 8px;
+}
+
+.poll-groups-status {
+    display: flex;
+    gap: 12px;
+}
+
+.poll-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-tertiary);
+}
+
+.poll-item i {
+    font-size: 10px;
+    opacity: 0.7;
+}
+
+/* ==================== TOAST NOTIFICATIONS ==================== */
+.toast-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.toast {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    box-shadow: var(--shadow);
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    min-width: 300px;
+    max-width: 400px;
+    animation: slideIn 0.3s ease;
+}
+
+.toast.success { border-left: 3px solid var(--success); }
+.toast.error { border-left: 3px solid var(--danger); }
+.toast.warning { border-left: 3px solid var(--warning); }
+.toast.info { border-left: 3px solid var(--accent); }
+
+.toast-icon {
+    font-size: 18px;
+}
+
+.toast.success .toast-icon { color: var(--success-text); }
+.toast.error .toast-icon { color: var(--danger); }
+.toast.warning .toast-icon { color: var(--warning); }
+.toast.info .toast-icon { color: var(--accent-text); }
+
+.toast-content {
+    flex: 1;
+}
+
+.toast-title {
+    font-weight: 600;
+    font-size: 13px;
+    margin-bottom: 2px;
+}
+
+.toast-message {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.toast-close {
+    background: none;
+    border: none;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0;
+}
+
+.toast-close:hover {
+    color: var(--text-primary);
+}
+
+@keyframes slideIn {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+
+/* ==================== UTILITIES ==================== */
+.hint-text {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-bottom: 12px;
+}
+
+.text-success { color: var(--success-text); }
+.text-danger { color: var(--danger); }
+.text-warning { color: var(--warning); }
+.text-accent { color: var(--accent-text); }
+
+.badge {
+    display: inline-block;
+    padding: 3px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    border-radius: var(--radius-sm, 6px);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.badge-success { background: rgba(50, 215, 75, 0.2); color: var(--success-text); }
+.badge-danger { background: rgba(255, 69, 58, 0.2); color: var(--danger); }
+.badge-warning { background: rgba(255, 214, 10, 0.2); color: var(--warning); }
+.badge-secondary { background: var(--bg-tertiary); color: var(--text-tertiary); }
+
+/* Register status badges */
+.badge.configured {
+    background: rgba(50, 215, 75, 0.15);
+    color: var(--success-text);
+    border: 1px solid rgba(50, 215, 75, 0.3);
+}
+
+/* Poll group badges — realtime = accent (teal), then purple/amber for the slower
+   tiers. (realtime's fill used to be the old blue accent while its text was already
+   teal — an accent-migration mismatch.) */
+.badge.poll-realtime {
+    background: var(--accent-tint, rgba(18, 163, 178, 0.16));
+    color: var(--accent-text);
+    border: 1px solid var(--accent);
+}
+
+.badge.poll-normal {
+    background: rgba(191, 90, 242, 0.15);
+    color: var(--purple-text);
+    border: 1px solid rgba(191, 90, 242, 0.3);
+}
+
+.badge.poll-slow {
+    background: rgba(255, 159, 10, 0.15);
+    color: var(--warning-text);
+    border: 1px solid rgba(255, 159, 10, 0.3);
+}
+
+/* Empty State */
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-tertiary);
+    background: var(--bg-secondary);
+    border-radius: var(--radius);
+    border: 1px dashed var(--border);
+}
+
+.empty-state i {
+    font-size: 48px;
+    margin-bottom: 16px;
+    opacity: 0.5;
+}
+
+.empty-state h3 {
+    font-size: 16px;
+    margin-bottom: 8px;
+    color: var(--text-secondary);
+}
+
+.empty-state p {
+    font-size: 13px;
+    margin-bottom: 16px;
+}
+
+/* Loading */
+.loading {
+    color: var(--text-tertiary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.spin {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* ==================== RESPONSIVE ==================== */
+@media (max-width: 1024px) {
+    .window {
+        width: 100%;
+        height: 100vh;
+        margin: 0;
+        border-radius: 0;
+    }
+
+    .nav-tab span {
+        display: none;
+    }
+
+    .nav-tab {
+        padding: 8px 12px;
+    }
+}
+
+@media (max-width: 768px) {
+    .titlebar {
+        flex-wrap: wrap;
+        gap: 8px 10px;
+        padding: 8px 12px 6px;
+    }
+    /* Two clean rows on a phone: brand + controls on row 1, nav on row 2.
+       The health dots are redundant on mobile — the bottom status bar already
+       shows Connected/last-update and the Status page has the full picture — so
+       hide them here; that frees the width for the brand + language + theme to
+       sit together instead of spilling onto a third row. */
+    .logo { font-size: 13px; }
+    .logo i { font-size: 18px; }
+    .titlebar-right { gap: 8px; margin-left: auto; }
+    .status-indicators { display: none; }
+    .lang-select { height: 30px; }
+    .theme-toggle { width: 30px; height: 30px; }
+
+    /* Own full row under the titlebar. The base rule's `flex: 1` sets
+       flex-basis: 0, which BEATS `width: 100%` on the main axis — the nav
+       was collapsing onto row 2 with the tabs clipped off-screen. */
+    .nav-tabs {
+        order: 3;
+        flex: 1 1 100%;
+        min-width: 0;
+        justify-content: space-around;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .nav-tab {
+        min-height: 40px;      /* touch target */
+        flex: none;
+    }
+
+    .form-row {
+        flex-direction: column;
+    }
+
+    /* statusbar: keep one readable line; poll-group details are on the
+       Config page anyway — connection, last update and version win on phones */
+    .statusbar {
+        gap: 8px;
+        font-size: 10.5px;
+    }
+    .poll-groups-status { display: none; }
+
+    /* Section headers: title gets its own line; controls wrap below it,
+       full-width, so nothing is squeezed or clipped (Registers, Energy…) */
+    .section-header {
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    .section-header h2 { flex: 1 1 100%; }
+    .section-header .header-actions {
+        flex: 1 1 100%;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .section-header .header-actions .input,
+    .section-header .header-actions select.input {
+        flex: 1 1 150px;
+        min-width: 0;
+        max-width: none;
+    }
+    .section-header .header-actions .btn { flex: none; }
+
+    /* Virtual Meters page header stacks (title+description, then Refresh) */
+    #vmetersPage > div:first-child { flex-direction: column; }
+    #vmetersPage > div:first-child .btn { align-self: flex-start; }
+
+    /* Virtual Meters accordion: name+status on row 1, stats+controls on
+       row 2 — instead of the name collapsing to nothing and the delete
+       button clipping off-screen */
+    .vm-acc-head { flex-wrap: wrap; row-gap: 6px; }
+    /* let the name / source chip / status badge drop onto their own lines
+       cleanly instead of the name clipping to a few letters and the source
+       chip wrapping mid-word into a tall grey box */
+    .vm-acc-head .vm-head-l { flex: 1 1 100%; flex-wrap: wrap; row-gap: 6px; }
+    .vm-acc-head .vm-head-l h3 { min-width: 0; }
+    .vm-acc-head .vm-head-r {
+        flex: 1 1 100%;
+        justify-content: space-between;
+        padding-left: 24px;    /* aligns under the name, past the chevron */
+    }
+    .vm-acc-head .vm-head-summary { white-space: normal; }
+}
+
+/* ── Login overlay ─────────────────────────────────────────────────────── */
+.login-overlay {
+    position: fixed; inset: 0; z-index: 3000;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg-primary);
+}
+.login-card {
+    display: flex; flex-direction: column; gap: 12px;
+    width: min(360px, 92vw); padding: 28px 26px;
+    background: var(--bg-secondary); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.login-card .login-logo {
+    display: flex; align-items: center; gap: 8px;
+    font-weight: 600; font-size: 15px; color: var(--text-primary);
+}
+.login-card .login-logo i { color: var(--warning); font-size: 20px; }
+.login-card h3 { margin: 4px 0 2px; font-size: 15px; color: var(--text-secondary); font-weight: 500; }
+.login-card .btn { justify-content: center; margin-top: 4px; }
+.login-error { color: var(--danger-text); font-size: 12.5px; min-height: 16px; }
+
+/* logout button (titlebar) */
+.logout-btn {
+    width: 32px; height: 32px; display: none;
+    align-items: center; justify-content: center;
+    background: transparent; border: 1px solid var(--border);
+    border-radius: var(--radius-sm); color: var(--text-secondary); cursor: pointer;
+}
+.logout-btn:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.logout-btn.visible { display: flex; }
+
+/* ── Diagnostics: frame-level bus monitor ─────────────────────────────── */
+.diag-toolbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin: 12px 0;
+}
+.diag-filter { max-width: 220px; }
+.diag-table-wrap { overflow-x: auto; }
+.diag-table td, .diag-table th { white-space: nowrap; }
+.diag-table tbody tr[data-seq] { cursor: pointer; }
+.diag-table tbody tr[data-seq]:hover { background: var(--bg-tertiary); }
+.diag-table tr.expanded { background: var(--bg-tertiary); }
+.diag-table .mono {
+    font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace;
+    font-variant-numeric: tabular-nums; font-size: 12px;
+}
+.diag-empty { color: var(--text-secondary); text-align: center; padding: 24px !important; white-space: normal !important; }
+.diag-detail td {
+    background: var(--bg-secondary); white-space: normal !important;
+    padding: 10px 14px !important;
+}
+.diag-frame {
+    font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace;
+    font-size: 12px; line-height: 1.9; word-break: break-all; white-space: normal;
+}
+.diag-dir { display: inline-block; min-width: 42px; color: var(--text-tertiary); font-weight: 600; }
+.diag-seg { padding: 2px 5px; border-radius: 4px; margin-right: 6px; }
+.diag-seg-mbap { background: rgba(100, 149, 237, 0.15); }
+.diag-seg-unit { background: rgba(100, 149, 237, 0.15); }
+.diag-seg-pdu  { background: rgba(50, 215, 75, 0.12); }
+.diag-seg-crc  { background: rgba(255, 214, 10, 0.15); }
+.diag-hex-none { color: var(--text-tertiary); font-style: italic; }
+.diag-exc { color: var(--warning); margin-bottom: 6px; font-size: 13px; }
+.diag-meta { color: var(--text-secondary); font-size: 12px; margin-top: 4px; }
+#diagPauseBtn.active { background: var(--bg-tertiary); }
+
+/* ── Diagnostics: register probe ──────────────────────────────────────── */
+.diag-probe-header { margin-top: 28px; }
+.diag-probe-addr { max-width: 130px; }
+.probe-raw { margin: 10px 0; font-size: 12px; }
+.probe-ascii { margin-left: 12px; color: var(--text-secondary); letter-spacing: 2px; }
+.probe-table td, .probe-table th { white-space: nowrap; }
+.probe-table th small { color: var(--text-tertiary); font-weight: 400; }
+.probe-bits { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.ss-identity { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
+.ss-dim { color: var(--text-secondary); font-size: 12.5px; }
+
+/* ── MQTT topic browse (device wizard) ────────────────────────────────── */
+.mqtt-browse-list {
+    max-height: 260px; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg-secondary);
+}
+.mqtt-browse-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 10px; cursor: pointer; font-size: 12.5px;
+    border-bottom: 1px solid var(--border);
+}
+.mqtt-browse-row:last-child { border-bottom: none; }
+.mqtt-browse-row:hover, .mqtt-browse-row:focus { background: var(--bg-tertiary); outline: none; }
+.mqtt-browse-topic {
+    font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace;
+    white-space: nowrap;
+}
+.mqtt-browse-count { color: var(--text-tertiary); font-size: 11px; }
+.mqtt-browse-payload {
+    color: var(--text-tertiary); font-size: 11.5px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    margin-left: auto; max-width: 45%;
+}
+.snap-diff-file { margin: 14px 0; }
+.snap-diff-file h4 { margin-bottom: 6px; font-size: 13px; }
+.snap-diff-old { color: var(--danger); text-decoration: line-through; text-decoration-thickness: 1px; }
+.snap-diff-new { color: var(--success-text, #2da44e); }

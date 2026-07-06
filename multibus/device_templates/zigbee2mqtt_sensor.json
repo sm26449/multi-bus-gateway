@@ -1,0 +1,48 @@
+{
+  "device_template": {
+    "schema_version": 1,
+    "id": "zigbee2mqtt_sensor",
+    "name": "Zigbee sensor (zigbee2mqtt)",
+    "vendor": "Zigbee2MQTT",
+    "model": "climate / battery sensor",
+    "version": "1.0.0",
+    "author": "built-in",
+    "description": "A Zigbee sensor bridged by zigbee2mqtt (Sonoff SNZB, Aqara, Tuya, Xiaomi…). Set the device connection topic to zigbee2mqtt/<friendly_name> — z2m publishes one JSON payload there and every row below reads a field from it (standard z2m exposes; field names per zigbee2mqtt.io). Rows are editable: remove what your sensor lacks, add plug fields (power/current/energy/state) or occupancy/contact for other device classes.",
+    "source_document": "https://www.zigbee2mqtt.io/guide/usage/exposes.html",
+    "protocol": { "transports": ["mqtt"] },
+    "poll_groups": {
+      "normal": { "interval": 60, "description": "MQTT input is push-driven; Zigbee sensors report on change / periodically" }
+    },
+    "categories": {
+      "climate": { "label": "Climate", "order": 1 },
+      "battery": { "label": "Battery", "order": 2 },
+      "diagnostics": { "label": "Diagnostics", "order": 3 }
+    },
+    "registers": [
+      { "address": 1, "name": "temperature", "label": "Temperature", "unit": "°C",
+        "data_type": "float", "category": "climate",
+        "description": "z2m expose 'temperature' (°C)",
+        "json_path": "temperature", "poll_group": "normal" },
+      { "address": 2, "name": "humidity", "label": "Humidity", "unit": "%",
+        "data_type": "float", "category": "climate",
+        "description": "z2m expose 'humidity' (%RH)",
+        "json_path": "humidity", "poll_group": "normal" },
+      { "address": 3, "name": "pressure", "label": "Pressure", "unit": "hPa",
+        "data_type": "float", "category": "climate",
+        "description": "z2m expose 'pressure' (hPa) — only on sensors that have it",
+        "json_path": "pressure", "poll_group": "normal" },
+      { "address": 4, "name": "battery", "label": "Battery", "unit": "%",
+        "data_type": "float", "category": "battery",
+        "description": "z2m expose 'battery' (%)",
+        "json_path": "battery", "poll_group": "normal" },
+      { "address": 5, "name": "voltage", "label": "Battery voltage", "unit": "mV",
+        "data_type": "float", "category": "battery",
+        "description": "z2m expose 'voltage' — battery devices report millivolts",
+        "json_path": "voltage", "poll_group": "normal" },
+      { "address": 6, "name": "linkquality", "label": "Link quality", "unit": "lqi",
+        "data_type": "float", "category": "diagnostics",
+        "description": "z2m expose 'linkquality' (0–255)",
+        "json_path": "linkquality", "poll_group": "normal" }
+    ]
+  }
+}

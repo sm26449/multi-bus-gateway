@@ -1,0 +1,26 @@
+{
+  "device_template": {
+    "schema_version": 1,
+    "id": "eastron_sdm120",
+    "name": "Eastron SDM120 (single-phase)",
+    "vendor": "Eastron",
+    "model": "SDM120 Modbus",
+    "version": "0.9.0",
+    "description": "Eastron SDM120 single-phase energy meter (also SDM220). Measurements are 32-bit IEEE-754 floats in INPUT registers (FC4), big-endian — same base addresses as the SDM630 phase 1. Community-sourced canonical map — verify against your unit's manual.",
+    "source_document": "Eastron SDM120/SDM220 Modbus Protocol (input registers, FC04, float32)",
+    "protocol": {"byte_order": "big", "default_register_type": "input"},
+    "categories": {},
+    "registers": [
+      {"address": 0,   "name": "V", "label": "Voltage", "unit": "V", "data_type": "float", "register_type": "input", "category": "voltage", "poll_group": "realtime"},
+      {"address": 6,   "name": "I", "label": "Current", "unit": "A", "data_type": "float", "register_type": "input", "category": "current", "poll_group": "realtime"},
+      {"address": 12,  "name": "P", "label": "Active power", "unit": "W", "data_type": "float", "register_type": "input", "category": "power_active", "poll_group": "realtime"},
+      {"address": 18,  "name": "S", "label": "Apparent power", "unit": "VA", "data_type": "float", "register_type": "input", "category": "power_apparent", "poll_group": "normal"},
+      {"address": 24,  "name": "Q", "label": "Reactive power", "unit": "var", "data_type": "float", "register_type": "input", "category": "power_reactive", "poll_group": "normal"},
+      {"address": 30,  "name": "PF", "label": "Power factor", "unit": "", "data_type": "float", "register_type": "input", "category": "power_factor", "poll_group": "normal"},
+      {"address": 70,  "name": "Freq", "label": "Frequency", "unit": "Hz", "data_type": "float", "register_type": "input", "category": "frequency", "poll_group": "realtime"},
+      {"address": 72,  "name": "Import_kWh", "label": "Import active energy", "unit": "kWh", "data_type": "float", "register_type": "input", "category": "energy", "poll_group": "slow"},
+      {"address": 74,  "name": "Export_kWh", "label": "Export active energy", "unit": "kWh", "data_type": "float", "register_type": "input", "category": "energy", "poll_group": "slow"},
+      {"address": 342, "name": "Total_kWh", "label": "Total active energy", "unit": "kWh", "data_type": "float", "register_type": "input", "category": "energy", "poll_group": "slow"}
+    ]
+  }
+}

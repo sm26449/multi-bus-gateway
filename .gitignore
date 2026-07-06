@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+.eggs/
+*.egg-info/
+*.egg
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Config files (keep examples)
+config/config.yaml
+config/selected_registers.json
+
+# Environment (contains secrets)
+.env
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/
+
+# Test
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build
+dist/
+build/
+
+# Node
+node_modules/
+
+# Internal dev tools / docs — kept in the private repo, not published to the public one
+tools/capture-screenshots.js
+docs/PUBLISHING.md
+docs/ROADMAP.md
+docs/vendor/
+config/audit.jsonl*
+config/events.jsonl
+config/snapshots/
+config/passkeys.json
+config/audit.jsonl*
+config/events.jsonl
+config/snapshots/
+config/passkeys.json
+__pycache__/

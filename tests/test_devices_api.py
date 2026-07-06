@@ -1,0 +1,607 @@
+"""Tier 2 Phase B: devices CRUD API, template library API, per-device
+registers catalog/selection routing."""
+import json
+import pathlib
+
+import pytest
+
+from multibus.api import create_api
+from multibus.config import Config
+
+try:
+    from fastapi.testclient import TestClient
+    _HAS_TC = True
+except Exception:  # noqa: BLE001
+    _HAS_TC = False
+
+needs_tc = pytest.mark.skipif(not _HAS_TC, reason="TestClient not installed")
+
+
+def make_app(tmp_path, extra_yaml=""):
+    from tests.test_devices import write_config
+    cfg = write_config(tmp_path, extra_yaml=extra_yaml)
+    devices = [(d, None) for d in cfg.devices]      # no live clients in tests
+    app, _ = create_api(cfg, None, None, None, devices=devices)
+    return cfg, TestClient(app, raise_server_exceptions=False)
+
+
+@needs_tc
+def test_devices_crud_roundtrip(tmp_path):
+    cfg, client = make_app(tmp_path)
+
+    # list: primary present
+    devices = client.get("/api/devices").json()["devices"]
+    assert [d["id"] for d in devices] == ["umg512"]
+    assert devices[0]["primary"] and devices[0]["selected_registers"] == 1
+
+    # create (disabled → no client thread in tests)
+    payload = {"id": "em24-hala", "name": "Warehouse EM24", "enabled": False,
+               "connection": {"protocol": "tcp", "host": "192.0.2.10", "port": 1502,
+                              "unit_id": 5},
+               "mqtt": {"topic_prefix": "meters/em24-hala"},
+               "influxdb": {"bucket": "warehouse"}}
+    r = client.post("/api/devices", json=payload)
+    assert r.status_code == 200, r.text
+    assert r.json()["device"]["id"] == "em24-hala"
+
+    # persisted to config.yaml and reloadable
+    reloaded = Config(str(tmp_path / "config.yaml"))
+    dev = reloaded.get_device("em24-hala")
+    assert dev and dev.influxdb_bucket == "warehouse"
+    assert dev.mqtt_topic_prefix == "meters/em24-hala"
+
+    # update
+    payload["name"] = "EM24 Hala 2"
+    r = client.put("/api/devices/em24-hala", json=payload)
+    assert r.status_code == 200 and r.json()["device"]["name"] == "EM24 Hala 2"
+
+    # duplicate id rejected; primary can't be deleted
+    r = client.post("/api/devices", json=payload)
+    assert r.status_code == 422 and "already exists" in json.dumps(r.json())
+    assert client.delete("/api/devices/umg512").status_code == 422
+
+    # primary IS editable now: its connection updates, routing identity fixed
+    r = client.put("/api/devices/umg512", json={"connection": {"protocol": "tcp",
+                   "host": "10.9.9.9", "port": 5020, "unit_id": 9}})
+    assert r.status_code == 200, r.text
+    d1 = r.json()["device"]
+    assert d1["connection"]["host"] == "10.9.9.9" and d1["connection"]["port"] == 5020
+    assert d1["mqtt_topic_prefix"] == "janitza/umg512"      # routing identity unchanged
+    assert d1["influxdb_bucket"] == "janitza"
+    assert d1["influxdb_device_tag"] == "janitza_umg512"
+
+    # delete
+    assert client.delete("/api/devices/em24-hala").json()["status"] == "deleted"
+    assert [d["id"] for d in client.get("/api/devices").json()["devices"]] == ["umg512"]
+    assert Config(str(tmp_path / "config.yaml")).get_device("em24-hala") is None
+
+
+@needs_tc
+def test_device_validation_errors(tmp_path):
+    _cfg, client = make_app(tmp_path)
+    r = client.post("/api/devices", json={
+        "id": "Bad Id!", "template": "nope",
+        "connection": {"protocol": "tcp", "host": "", "port": 99999, "unit_id": 999},
+    })
+    assert r.status_code == 422
+    errors = json.dumps(r.json())
+    for frag in ("id:", "template:", "connection.host", "connection.port",
+                 "connection.unit_id"):
+        assert frag in errors
+
+
+@needs_tc
+def test_template_library_endpoints(tmp_path):
+    _cfg, client = make_app(tmp_path)
+    templates = client.get("/api/device-templates").json()["templates"]
+    ids = [t["id"] for t in templates]
+    assert "janitza_umg512_pro" in ids
+    full = client.get("/api/device-templates/janitza_umg512_pro").json()
+    assert full["device_template"]["builtin"] is True
+    assert len(full["device_template"]["registers"]) > 4000
+    assert client.get("/api/device-templates/nope").status_code == 404
+
+
+@needs_tc
+def test_per_device_catalog_and_selection(tmp_path):
+    cfg, client = make_app(tmp_path, extra_yaml="""
+devices:
+  - id: em24
+    template: janitza_umg512_pro
+    enabled: false
+    connection: { protocol: tcp, host: 192.0.2.10 }
+""")
+    # catalog for a non-primary device comes from its TEMPLATE, same shape
+    cat = client.get("/api/registers/all?device=em24").json()
+    assert "measurements" in cat
+    total = sum(len(c.get("entries", [])) for c in cat["measurements"].values())
+    assert total > 4000
+    assert cat["device_template"]["id"] == "janitza_umg512_pro"
+    # Tier 2: the primary now ALSO draws its catalog from its device template
+    # (uniform model), not the fixed modbus_data.json — same shape as any device.
+    primary = client.get("/api/registers/all?device=umg512").json()
+    assert primary["device_template"]["id"] == "janitza_umg512_pro"
+
+    # selection: save to the device's own file, primary untouched
+    sel = [{"address": 19000, "name": "_G_ULN[0]", "label": "L1", "unit": "V",
+            "data_type": "float", "poll_group": "realtime",
+            "mqtt_enabled": True, "mqtt_topic": "voltage/l1_n",
+            "influxdb_enabled": True, "influxdb_measurement": "voltage",
+            "influxdb_tags": {}, "ui_show_on_dashboard": True,
+            "ui_widget": "value", "ui_config": {}, "thresholds": None}]
+    r = client.post("/api/registers/selected?device=em24", json=sel)
+    assert r.status_code == 200 and r.json()["device"] == "em24"
+    per_dev = tmp_path / "devices" / "em24" / "selected_registers.json"
+    assert per_dev.exists()
+    got = client.get("/api/registers/selected?device=em24").json()
+    assert len(got["registers"]) == 1
+    # legacy selection unchanged (still the 1 register from write_config)
+    legacy_sel = client.get("/api/registers/selected").json()
+    assert len(legacy_sel["registers"]) == 1
+    assert legacy_sel["registers"][0]["mqtt_topic"] == "voltage/l1_n"
+
+
+@needs_tc
+def test_template_save_upload_export_delete(tmp_path, monkeypatch):
+    # user templates land in a relative config/ dir — isolate it
+    import multibus.device_template as dt
+    monkeypatch.setattr(dt, 'USER_DIR', tmp_path / 'user_templates')
+    _cfg, client = make_app(tmp_path)
+
+    tpl = {"device_template": {
+        "schema_version": 1, "id": "cg_em24", "name": "Carlo Gavazzi EM24",
+        "poll_groups": {"normal": {"interval": 5}},
+        "categories": {"basic": {"label": "Basic", "order": 1}},
+        "registers": [{"address": 0, "name": "V_L1", "unit": "V",
+                       "data_type": "int32", "category": "basic"}]}}
+    # save (create)
+    r = client.post("/api/device-templates", json=tpl)
+    assert r.status_code == 200, r.text
+    assert r.json()["template"]["id"] == "cg_em24"
+    # appears in the library, not builtin
+    lib = {t["id"]: t for t in client.get("/api/device-templates").json()["templates"]}
+    assert lib["cg_em24"]["builtin"] is False and lib["cg_em24"]["used_by"] == []
+    # validation errors are row-level
+    bad = {"device_template": {**tpl["device_template"],
+                               "registers": [{"address": 99999, "name": "X",
+                                              "data_type": "nope", "category": "basic"}]}}
+    r = client.post("/api/device-templates", json=bad)
+    assert r.status_code == 422 and "0..65535" in json.dumps(r.json())
+    # builtin ids shielded
+    shield = {"device_template": {**tpl["device_template"], "id": "janitza_umg512_pro"}}
+    assert client.post("/api/device-templates", json=shield).status_code == 422
+    # upload conflict → 409, overwrite works
+    r = client.post("/api/device-templates/upload", json={"template": tpl})
+    assert r.status_code == 409
+    r = client.post("/api/device-templates/upload", json={"template": tpl, "overwrite": True})
+    assert r.status_code == 200
+    # export round-trips
+    r = client.get("/api/device-templates/cg_em24/export")
+    assert r.status_code == 200
+    assert "attachment" in r.headers["content-disposition"]
+    assert r.json()["device_template"]["id"] == "cg_em24"
+    # delete guard: assign to a device → blocked; unassign → ok
+    dev = {"id": "em24-x", "template": "cg_em24", "enabled": False,
+           "connection": {"protocol": "tcp", "host": "192.0.2.9"}}
+    assert client.post("/api/devices", json=dev).status_code == 200
+    r = client.delete("/api/device-templates/cg_em24")
+    assert r.status_code == 422 and "in use" in json.dumps(r.json())
+    assert client.delete("/api/devices/em24-x").status_code == 200
+    assert client.delete("/api/device-templates/cg_em24").json()["status"] == "deleted"
+    assert client.delete("/api/device-templates/janitza_umg512_pro").status_code == 422
+
+
+@needs_tc
+def test_config_export_import_roundtrip(tmp_path, monkeypatch):
+    import io, zipfile
+    import multibus.device_template as dt
+    monkeypatch.setattr(dt, 'USER_DIR', tmp_path / 'device_templates')
+    cfg, client = make_app(tmp_path, extra_yaml="""
+devices:
+  - id: em24
+    template: janitza_umg512_pro
+    enabled: false
+    connection: { protocol: tcp, host: 192.0.2.9 }
+    influxdb: { bucket: warehouse }
+""")
+    # export (secrets stripped by default)
+    r = client.get("/api/config/export")
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    zf = zipfile.ZipFile(io.BytesIO(r.content))
+    names = zf.namelist()
+    assert "config.yaml" in names and "manifest.json" in names
+    import yaml as y
+    exported = y.safe_load(zf.read("config.yaml"))
+    assert "devices" in exported and exported["devices"][0]["id"] == "em24"
+    assert "password" not in exported.get("mqtt", {})     # secret stripped
+
+    # mutate: delete the extra device, then restore from the backup
+    assert client.delete("/api/devices/em24").status_code == 200
+    assert cfg.get_device("em24") is None
+    r = client.post("/api/config/import?apply=false",
+                    content=r.content, headers={"Content-Type": "application/zip"})
+    assert r.status_code == 200, r.text
+    assert r.json()["config"] is True
+    # em24 came back
+    assert cfg.get_device("em24") is not None
+    assert cfg.get_device("em24").influxdb_bucket == "warehouse"
+
+    # traversal guard
+    bad = io.BytesIO()
+    with zipfile.ZipFile(bad, "w") as z:
+        z.writestr("../evil.yaml", "x: 1")
+    r = client.post("/api/config/import", content=bad.getvalue(),
+                    headers={"Content-Type": "application/zip"})
+    assert r.status_code == 422 and "unsafe path" in json.dumps(r.json())
+
+
+@needs_tc
+def test_non_primary_ha_discovery_namespaced(tmp_path, monkeypatch):
+    import multibus.device_template as dt
+    monkeypatch.setattr(dt, 'USER_DIR', tmp_path / 'device_templates')
+    from multibus.mqtt_publisher import MQTTPublisher
+    from multibus.config import MQTTConfig, SelectedRegister
+    pub = MQTTPublisher(MQTTConfig(enabled=False, topic_prefix="janitza/umg512",
+                                   ha_discovery_enabled=True), [], publish_mode="changed")
+    published = {}
+    pub.connected = True
+    pub._publish = lambda topic, payload, retain=None: published.__setitem__(topic, payload) or True
+    reg = SelectedRegister(address=100, name="_V1", label="Voltage", unit="V",
+                           data_type="float", poll_group="normal")
+    n = pub.publish_device_discovery("em24", "Warehouse EM24", "meters/em24", [reg], model="cg_em24")
+    assert n == 1
+    topic, payload = next(iter(published.items()))
+    import json as _j
+    cfg = _j.loads(payload)
+    # namespaced so it never collides with device #1
+    assert "janitza_dev_em24" in topic
+    assert cfg["unique_id"] == "janitza_dev_em24_100__v1"
+    assert cfg["state_topic"] == "meters/em24/_v1"
+    assert cfg["device"]["identifiers"] == ["janitza_dev_em24"]
+    assert cfg["device"]["via_device"] == "janitza_umg512"
+    assert cfg["availability_topic"] == "janitza/umg512/status"
+
+
+@needs_tc
+def test_values_per_device(tmp_path):
+    cfg, client = make_app(tmp_path, extra_yaml="""
+devices:
+  - id: em24
+    template: janitza_umg512_pro
+    enabled: false
+    connection: { protocol: tcp, host: 192.0.2.9 }
+""")
+    r = client.get("/api/values?device=em24").json()
+    assert r["device"] == "em24" and r["values"] == {}   # not polling in tests
+    r2 = client.get("/api/values").json()
+    assert r2["device"] == "umg512"
+
+
+@needs_tc
+def test_health_http_codes(tmp_path):
+    """/health returns 503 ONLY when an enabled virtual meter is down; a stale
+    Modbus source degrades the body but stays HTTP 200 (never restart-loop on an
+    unreachable meter)."""
+    from multibus.api import create_api
+    from tests.test_devices import write_config
+
+    class FakeModbus:
+        def __init__(self, status): self._s = status
+        def data_health(self, threshold=30): return {"status": self._s}
+        def get_stats(self): return {"connected": self._s == "ok"}
+        def data_health_status(self): return self._s
+
+    def app_with(modbus_status, vmeter_status):
+        cfg = write_config(tmp_path)
+        app, _ = create_api(cfg, FakeModbus(modbus_status), None, None,
+                            devices=[(d, None) for d in cfg.devices])
+        app.state.vmeter_manager = type("M", (), {
+            "health": staticmethod(lambda: {"status": vmeter_status,
+                                            "enabled_meters": 1, "meters": []})})()
+        return TestClient(app, raise_server_exceptions=False)
+
+    # all good → 200 ok
+    r = app_with("ok", "ok").get("/health")
+    assert r.status_code == 200 and r.json()["status"] == "ok"
+    # modbus stale/down → body degrades but HTTP stays 200
+    r = app_with("down", "ok").get("/health")
+    assert r.status_code == 200 and r.json()["status"] == "down"
+    assert r.json()["modbus"]["status"] == "down"
+    # a vmeter down → 503
+    r = app_with("ok", "down").get("/health")
+    assert r.status_code == 503 and r.json()["status"] == "down"
+
+
+@needs_tc
+def test_device_routing_defaults_and_ha_flag(tmp_path):
+    cfg, client = make_app(tmp_path)
+    # create with NO topic/bucket → defaults from {device} patterns
+    r = client.post("/api/devices", json={"id": "meter-x", "enabled": False,
+                    "connection": {"protocol": "tcp", "host": "192.0.2.20"},
+                    "ha_discovery_enabled": False})
+    assert r.status_code == 200, r.text
+    d = r.json()["device"]
+    assert d["mqtt_topic_prefix"] == "meters/meter-x"     # default_topic_pattern
+    assert d["influxdb_bucket"] == "meter-x"              # default_bucket_pattern
+    assert d["ha_discovery_enabled"] is False
+    # config endpoints expose the patterns
+    m = client.get("/api/config/mqtt").json()
+    assert m["default_topic_pattern"] == "meters/{device}"
+    i = client.get("/api/config/influxdb").json()
+    assert i["default_bucket_pattern"] == "{device}"
+    # reload persists the ha flag
+    dev = Config(str(tmp_path / "config.yaml")).get_device("meter-x")
+    assert dev.ha_discovery_enabled is False
+
+
+@needs_tc
+def test_per_device_sink_toggles(tmp_path):
+    cfg, client = make_app(tmp_path)
+    # a device that logs to InfluxDB only (no MQTT sink)
+    r = client.post("/api/devices", json={"id": "logger", "enabled": False,
+                    "connection": {"protocol": "tcp", "host": "192.0.2.30"},
+                    "mqtt": {"enabled": False}, "influxdb": {"enabled": True}})
+    assert r.status_code == 200, r.text
+    d = r.json()["device"]
+    assert d["mqtt_enabled"] is False and d["influxdb_enabled"] is True
+    # sink status block is exposed per device
+    assert d["sinks"]["mqtt"]["enabled"] is False
+    assert d["sinks"]["influxdb"]["enabled"] is True
+    # flags persist across reload
+    dev = Config(str(tmp_path / "config.yaml")).get_device("logger")
+    assert dev.mqtt_enabled is False and dev.influxdb_enabled is True
+    # the primary is always locked on
+    prim = next(x for x in client.get("/api/devices").json()["devices"] if x["primary"])
+    assert prim["mqtt_enabled"] is True and prim["influxdb_enabled"] is True
+
+
+@needs_tc
+def test_device_poll_group_intervals(tmp_path):
+    cfg, client = make_app(tmp_path)
+    r = client.post("/api/devices", json={"id": "m3", "enabled": False,
+                    "connection": {"protocol": "tcp", "host": "192.0.2.40"}})
+    assert r.status_code == 200, r.text
+    # set intervals
+    r = client.post("/api/devices/m3/poll-groups",
+                    json={"poll_groups": {"realtime": {"interval": 7}, "slow": {"interval": 120}}})
+    assert r.status_code == 200, r.text
+    # read back
+    g = client.get("/api/devices/m3/poll-groups").json()["poll_groups"]
+    assert g["realtime"]["interval"] == 7 and g["slow"]["interval"] == 120
+    # bad interval rejected
+    assert client.post("/api/devices/m3/poll-groups",
+                       json={"poll_groups": {"realtime": {"interval": -1}}}).status_code == 400
+    # persists across reload
+    dev = Config(str(tmp_path / "config.yaml")).get_device("m3")
+    _regs, groups = Config(str(tmp_path / "config.yaml")).load_device_registers(dev)
+    assert groups["realtime"].interval == 7
+
+
+@needs_tc
+def test_autoselect_uses_curated_defaults(tmp_path):
+    """Creating a device with a curated template auto-selects only the
+    registers marked with `defaults` (58 for the Janitza map, not 4126)."""
+    cfg, client = make_app(tmp_path)
+    r = client.post("/api/devices", json={"id": "j2", "enabled": False,
+                    "template": "janitza_umg512_pro",
+                    "connection": {"protocol": "tcp", "host": "192.0.2.50"}})
+    assert r.status_code == 200, r.text
+    assert r.json()["device"]["selected_registers"] == 58
+    # intervals seeded from the template's poll groups
+    g = client.get("/api/devices/j2/poll-groups").json()["poll_groups"]
+    assert set(g) >= {"realtime", "normal", "slow"}
+
+
+@needs_tc
+def test_scale_roundtrip_and_ssrf_and_csrf(tmp_path):
+    cfg, client = make_app(tmp_path)
+    # scale survives the selected-registers round-trip
+    sel = [{"address": 100, "name": "_X", "label": "X", "unit": "V",
+            "data_type": "int16", "poll_group": "normal", "scale": 100,
+            "mqtt_enabled": True, "influxdb_enabled": True}]
+    assert client.post("/api/registers/selected?device=umg512", json=sel).status_code == 200
+    got = client.get("/api/registers/selected?device=umg512").json()["registers"]
+    assert got[0]["scale"] == 100
+    # SSRF: a public host is rejected (must be private LAN)
+    r = client.get("/api/fronius/discover?host=1.1.1.1")
+    assert r.status_code == 400 and "LAN" in r.json()["detail"]
+    # cloud metadata blocked
+    assert client.get("/api/fronius/discover?host=169.254.169.254").status_code == 400
+    # CSRF: a cross-site browser POST is blocked
+    r = client.post("/api/registers/selected?device=umg512", json=sel,
+                    headers={"sec-fetch-site": "cross-site"})
+    assert r.status_code == 403
+
+
+@needs_tc
+def test_primary_catalog_comes_from_template_byte_equivalent(tmp_path):
+    # Tier 2: the primary's register catalog is now sourced from its device
+    # template (janitza_umg512_pro), uniform with every other device. Prove the
+    # available-register set is byte-equivalent to the legacy modbus_data.json,
+    # so nothing is lost/added. (Polling reads selected_registers.json, which is
+    # untouched, so the MQTT/InfluxDB output is byte-identical by construction.)
+    _cfg, client = make_app(tmp_path)
+    r = client.get("/api/registers/all?device=umg512")
+    assert r.status_code == 200
+    cat = r.json()
+    assert cat.get("device_template", {}).get("id") == "janitza_umg512_pro"
+    tmpl_addrs = {e["address"] for c in cat["measurements"].values() for e in c["entries"]}
+
+    md = json.loads(pathlib.Path("docs/modbus_data.json").read_text())
+    md_addrs = set()
+    for c in md["measurements"].values():
+        subs = c.get("subtypes")
+        entries = ([e for s in subs.values() for e in s.get("entries", [])]
+                   if subs else c.get("entries", []))
+        md_addrs |= {e["address"] for e in entries}
+
+    assert tmpl_addrs == md_addrs      # same 4126 addresses — catalog byte-equivalent
+
+
+@needs_tc
+def test_nonprimary_poll_routes_to_its_own_sinks(tmp_path):
+    # END-TO-END: a non-primary device's poll must publish to ITS OWN MQTT topic
+    # prefix and InfluxDB bucket/tag (the core Tier 2 "no single global sink"
+    # promise). create_api wires make_data_callback(dev) onto the device's client,
+    # so we invoke that callback and capture where each sink was routed.
+    from types import SimpleNamespace
+    from multibus.api import create_api
+    from tests.test_devices import write_config
+
+    class _CapMQTT:
+        connected = True
+        config = SimpleNamespace(enabled=True, topic_prefix="janitza/umg512",
+                                 ha_discovery_enabled=False)
+        def __init__(self): self.routed = []
+        def publish_register_data(self, poll_group, data, topic_prefix=None):
+            self.routed.append(topic_prefix)
+        def __getattr__(self, n): return lambda *a, **k: None
+
+    class _CapInflux:
+        config = SimpleNamespace(enabled=True)
+        def __init__(self): self.routed = []
+        def write_register_data(self, poll_group, data, bucket=None,
+                                device_tag=None, device_id=""):
+            self.routed.append((bucket, device_tag, device_id))
+        def __getattr__(self, n): return lambda *a, **k: None
+
+    cfg = write_config(tmp_path, extra_yaml="""
+devices:
+  - id: em24
+    template: janitza_umg512_pro
+    enabled: true
+    connection: { protocol: tcp, host: 192.0.2.9 }
+    mqtt: { topic_prefix: "meters/em24" }
+    influxdb: { bucket: "warehouse", device_tag: "em24tag" }
+""")
+    mq, ix = _CapMQTT(), _CapInflux()
+    clients = {d.id: SimpleNamespace(publish_callback=None) for d in cfg.devices}
+    create_api(cfg, None, mq, ix, devices=[(d, clients[d.id]) for d in cfg.devices])
+    reg = SimpleNamespace(name="_V1", label="L1", unit="V",
+                          mqtt_enabled=True, influxdb_enabled=True)
+
+    # non-primary → routed to its OWN sinks
+    clients["em24"].publish_callback("realtime", {19000: {"value": 230.0, "register": reg}})
+    assert mq.routed == ["meters/em24"]                       # MQTT → device's own prefix
+    assert ix.routed == [("warehouse", "em24tag", "em24")]    # Influx → device's bucket+tag+id
+
+    # primary → legacy routing (None): publishers fall back to their own global
+    # config, so device #1's topics/bucket/tag stay byte-identical to today
+    mq.routed.clear(); ix.routed.clear()
+    clients["umg512"].publish_callback("realtime", {19000: {"value": 231.0, "register": reg}})
+    assert mq.routed == [None]
+    assert ix.routed == [(None, None, "")]
+
+
+@needs_tc
+def test_device_rejects_template_protocol_mismatch(tmp_path):
+    # A template's map is transport-specific: a Modbus map on an HTTP device (or
+    # vice versa) must be refused, else every read silently resolves to nothing.
+    _cfg, client = make_app(tmp_path)
+    bad = client.post("/api/devices", json={
+        "id": "bad", "enabled": False, "template": "janitza_umg512_pro",
+        "connection": {"protocol": "http", "url": "http://192.168.1.5/data"}})
+    assert bad.status_code == 422
+    assert "MODBUS" in json.dumps(bad.json())        # transport-mismatch message
+    ok = client.post("/api/devices", json={
+        "id": "ok", "enabled": False, "template": "janitza_umg512_pro",
+        "connection": {"protocol": "tcp", "host": "192.168.1.6"}})
+    assert ok.status_code == 200, ok.text            # Modbus template on a TCP device is fine
+
+
+def test_template_transport_classifier():
+    from types import SimpleNamespace
+    from multibus.device_template import template_transport
+    def reg(**k): return SimpleNamespace(json_path=k.get("json_path", ""), address=k.get("address", 0))
+    modbus = SimpleNamespace(protocol={"byte_order": "big"}, registers=[reg(address=100)])
+    http_declared = SimpleNamespace(protocol={"transports": ["http"]}, registers=[reg(address=0)])
+    http_inferred = SimpleNamespace(protocol={}, registers=[reg(json_path="a.b"), reg(json_path="c.d")])
+    janitza = SimpleNamespace(protocol={"transports": ["tcp", "rtu"]}, registers=[reg(address=1)])
+    assert template_transport(modbus) == "modbus"
+    assert template_transport(http_declared) == "http"
+    assert template_transport(http_inferred) == "http"
+    assert template_transport(janitza) == "modbus"
+
+
+@needs_tc
+def test_nonprimary_routing_locked_on_update(tmp_path):
+    # topic/bucket/tag are fixed after creation — an update (even a raw API call
+    # that changes them) must keep the stored routing, so history/HA don't orphan.
+    _cfg, client = make_app(tmp_path)
+    client.post("/api/devices", json={"id": "em24", "enabled": False,
+        "connection": {"protocol": "tcp", "host": "192.168.1.9"},
+        "mqtt": {"topic_prefix": "meters/em24"},
+        "influxdb": {"bucket": "warehouse", "device_tag": "em24tag"}})
+    r = client.put("/api/devices/em24", json={"id": "em24", "enabled": False,
+        "connection": {"protocol": "tcp", "host": "192.168.1.9"},
+        "mqtt": {"topic_prefix": "HACKED/topic"},
+        "influxdb": {"bucket": "HACKED", "device_tag": "HACKEDtag"}})
+    assert r.status_code == 200, r.text
+    d = r.json()["device"]
+    assert d["mqtt_topic_prefix"] == "meters/em24"        # unchanged
+    assert d["influxdb_bucket"] == "warehouse"
+    assert d["influxdb_device_tag"] == "em24tag"
+
+
+@needs_tc
+def test_energy_fields_autodetect_and_select(tmp_path):
+    _cfg, client = make_app(tmp_path)
+    client.post("/api/devices", json={"id": "em24", "enabled": False,
+        "connection": {"protocol": "tcp", "host": "192.168.1.9"}})
+    reg = lambda a, n, l, u, pg: {"address": a, "name": n, "label": l, "unit": u,
+        "data_type": "uint32", "poll_group": pg, "mqtt_enabled": False, "mqtt_topic": "",
+        "influxdb_enabled": True, "influxdb_measurement": "e", "influxdb_tags": {},
+        "ui_show_on_dashboard": False, "ui_widget": "value", "ui_config": {}, "thresholds": None}
+    client.post("/api/registers/selected?device=em24", json=[
+        reg(100, "_imp", "Import", "Wh", "slow"), reg(200, "_v", "Voltage", "V", "realtime")])
+    r = client.get("/api/energy/fields?device=em24").json()
+    names = [c["name"] for c in r["candidates"]]
+    assert "_imp" in names and "_v" not in names          # only the cumulative energy counter
+    imp = next(c for c in r["candidates"] if c["name"] == "_imp")
+    assert imp["unit"] == "kWh" and imp["div"] == 1000     # Wh presented as kWh
+    assert r["selected"] == []                             # nothing picked yet
+    client.post("/api/energy/fields?device=em24",
+                json={"fields": [{"name": "_imp", "label": "Import", "unit": "kWh", "div": 1000}]})
+    assert [f["name"] for f in client.get("/api/energy/fields?device=em24").json()["selected"]] == ["_imp"]
+
+
+@needs_tc
+def test_primary_edit_validates_connection(tmp_path):
+    _cfg, client = make_app(tmp_path)
+    # a bad port must be rejected (was silently persisted, breaking the primary)
+    r = client.put("/api/devices/umg512", json={"connection": {"protocol": "tcp",
+                   "host": "10.0.0.9", "port": "abc", "unit_id": 1}})
+    assert r.status_code == 422 and "port" in json.dumps(r.json())
+    # out-of-range unit id rejected too
+    r = client.put("/api/devices/umg512", json={"connection": {"protocol": "tcp",
+                   "host": "10.0.0.9", "port": 502, "unit_id": 999}})
+    assert r.status_code == 422 and "unit_id" in json.dumps(r.json())
+    # a valid edit still works
+    r = client.put("/api/devices/umg512", json={"connection": {"protocol": "tcp",
+                   "host": "10.0.0.9", "port": 5020, "unit_id": 9}})
+    assert r.status_code == 200 and r.json()["device"]["connection"]["port"] == 5020
+
+
+@needs_tc
+def test_status_devices_carry_poll_rate(tmp_path):
+    # Regression: devices[] lacked poll_rate → the Status page showed 0.00/s per
+    # device while the pipeline header (top-level modbus.poll_rate) said 4.2/s.
+    from types import SimpleNamespace
+    from tests.test_devices import write_config
+    from multibus.api import create_api
+
+    class _Client(SimpleNamespace):
+        def get_stats(self):
+            return {"connected": True, "poll_rate": 4.22,
+                    "successful_reads": 10, "failed_reads": 0,
+                    "staleness_age_s": 0.2, "last_latency_ms": 6}
+        def data_health(self, *a):
+            return {"status": "ok"}
+
+    cfg = write_config(tmp_path)
+    fake = _Client(publish_callback=None)
+    app, _ = create_api(cfg, fake, None, None,
+                        devices=[(d, fake) for d in cfg.devices])
+    client = TestClient(app, raise_server_exceptions=False)
+    dev = client.get("/api/status").json()["devices"][0]
+    assert dev["poll_rate"] == 4.22
