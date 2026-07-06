@@ -25,7 +25,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class JanitzaMonitor:
+class GatewayApp:
     """Main application class."""
 
     def __init__(self, config_path: str = "config/config.yaml"):
@@ -41,7 +41,7 @@ class JanitzaMonitor:
 
     def setup(self):
         """Initialize all components."""
-        logger.info("Janitza UMG 512-PRO Monitor starting...")
+        logger.info("Multi-Bus Gateway starting...")
 
         # Load configuration — through the last-known-good seatbelt: a
         # config.yaml that fails to parse (bad edit, torn write) is restored
@@ -318,7 +318,7 @@ class JanitzaMonitor:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Janitza UMG 512-PRO Monitor")
+    parser = argparse.ArgumentParser(description="Multi-Bus Gateway")
     parser.add_argument(
         "-c", "--config",
         default="config/config.yaml",
@@ -346,7 +346,7 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
 
     # Create application
-    monitor = JanitzaMonitor(args.config)
+    monitor = GatewayApp(args.config)
     monitor.setup()
 
     # Override host/port if specified

@@ -1,7 +1,7 @@
 """Calculated registers — presets/functions/templates + per-device CRUD/test.
 
 Moved verbatim from create_api() (routes only; the runtime engine lives in
-janitza/calc_engine.py)."""
+multibus/calc_engine.py)."""
 from __future__ import annotations
 
 import re

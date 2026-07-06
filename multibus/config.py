@@ -1,4 +1,4 @@
-"""Configuration loader for Janitza Monitor."""
+"""Configuration loader for Multi-Bus Gateway."""
 
 import os
 import yaml
@@ -240,7 +240,7 @@ class SelectedRegister:
 
 
 class Config:
-    """Configuration manager for Janitza Monitor."""
+    """Configuration manager for Multi-Bus Gateway."""
 
     def __init__(self, config_path: str = "config/config.yaml"):
         self.config_path = Path(config_path)
@@ -738,7 +738,7 @@ class Config:
             self._raw_devices = data.get('devices', []) or []
 
             # Optional alerting hooks (off unless enabled). Kept as a raw dict —
-            # the AlertManager reads it. See janitza/alerts.py.
+            # the AlertManager reads it. See multibus/alerts.py.
             self.alerts = data.get('alerts', {}) or {}
 
             logger.info(f"Loaded config from {self.config_path}")

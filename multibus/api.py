@@ -330,7 +330,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # telemetry (GET) and the on-demand query POSTs stay open so the UI works
     # without a key. Unset => fully open (default, backward-compatible).
     _api_key = os.getenv("API_KEY") or os.getenv("JANITZA_API_KEY") or ""
-    _open_writes = {"/api/query/register", "/api/query/batch"}  # POST but read-only
+    _open_writes = {"/api/query/register", "/api/query/batch",
+                    "/api/auth/logout"}  # POST but read-only (any role ends its own session)
 
     # OPERATOR: live actions yes, configuration no. Allowed mutations are the
     # commissioning tools (trace/probe/discovery/query), device tests, device
@@ -428,7 +429,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     app.state.device_values = registry.values
 
     # ---- Calculated registers (formula-derived measurements) -------------------
-    # Engine in janitza/calc_engine.py (synthetic 8M+ addressing, expression
+    # Engine in multibus/calc_engine.py (synthetic 8M+ addressing, expression
     # eval, sink routing). store_for preserves the exact legacy store semantics;
     # publishers() resolves the (possibly nonlocal-rebound by /api/config/apply)
     # sink refs at call time.
@@ -2226,7 +2227,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         buf.seek(0)
         return Response(
             content=buf.getvalue(), media_type="application/zip",
-            headers={"Content-Disposition": 'attachment; filename="janitza-config-backup.zip"'})
+            headers={"Content-Disposition": 'attachment; filename="multibus-config-backup.zip"'})
 
     @app.post("/api/config/import")
     async def import_config(request: Request, apply: bool = Query(default=True)):
