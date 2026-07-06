@@ -116,9 +116,14 @@ class CalcEngine:
         if not entries:
             return {}
         resolve = self.resolver(values_store)
+        # A push-driven source (MQTT input) publishes on the synthetic 'mqtt'
+        # group, which no calc register is assigned to — so match ALL calc groups
+        # there, else calculated registers on an MQTT-in device would never
+        # evaluate. Polled sources keep matching their exact group.
+        _wildcard = (poll_group == 'mqtt')
         batch = {}
         for e in entries:
-            if e['poll_group'] != poll_group:
+            if not _wildcard and e['poll_group'] != poll_group:
                 continue
             st = e['_state']
             now = time.time()

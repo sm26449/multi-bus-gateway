@@ -139,6 +139,10 @@ class MqttInputClient:
             val = _coerce_numeric(val)
             if val is None:
                 continue
+            # raw / scale, same convention as Modbus/HTTP (default 1.0)
+            _sc = getattr(r, 'scale', 1.0) or 1.0
+            if _sc != 1.0:
+                val = val / _sc
             data[r.address] = {'value': val, 'register': r, 'ts': self.last_msg_ts}
         if data and self.publish_callback:
             self.updates += len(data)

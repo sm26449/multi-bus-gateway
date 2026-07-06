@@ -84,7 +84,10 @@ class RestPusher(threading.Thread):
         try:
             payload = build_payload(self.device_id, self.name_label,
                                     self.provider() or {}, self.fmt)
-            data = json.dumps(payload).encode("utf-8")
+            # allow_nan=False → a NaN/inf that slipped through produces INVALID
+            # JSON (NaN is not JSON); fail the push loudly instead of emitting a
+            # payload the receiver cannot parse.
+            data = json.dumps(payload, allow_nan=False).encode("utf-8")
             headers = {"Content-Type": "application/json", **self.headers}
             req = urllib.request.Request(self.url, data=data, headers=headers, method="POST")
             with self._opener.open(req, timeout=self.timeout) as r:  # noqa: S310 (user-configured)

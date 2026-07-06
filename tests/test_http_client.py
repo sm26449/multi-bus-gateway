@@ -44,3 +44,15 @@ def test_guarded_redirect_refuses_downgrade_and_strips_auth():
     hdrs = {k.lower() for k in new.headers}
     assert "authorization" not in hdrs and "x-api-key" not in hdrs
     assert "accept" in hdrs                                    # non-secret header kept
+
+
+# ── P1: scale applied + finite-check on all string/number inputs ─────────────
+
+def test_coerce_numeric_rejects_inf_strings_and_numbers():
+    from multibus.http_client import _coerce_numeric
+    assert _coerce_numeric("inf") is None            # was accepted before (== inf)
+    assert _coerce_numeric("Infinity") is None
+    assert _coerce_numeric("nan") is None
+    assert _coerce_numeric(float("inf")) is None
+    assert _coerce_numeric("42.5") == 42.5
+    assert _coerce_numeric(True) == 1

@@ -379,6 +379,17 @@ class InfluxDBPublisher:
                                record="\n".join(line for _, _, line in chunk))
                     self.points_replayed += len(chunk)
                 except Exception as e:  # noqa: BLE001
+                    # A 4xx (except 429) is a PERMANENT rejection of this data
+                    # (malformed line protocol, field-type conflict) — re-buffering
+                    # it would block every later point behind the poison chunk
+                    # forever. Drop it and keep draining. 429/5xx/connection are
+                    # transient: re-buffer and retry.
+                    _status = getattr(e, "status", None)
+                    if isinstance(_status, int) and 400 <= _status < 500 and _status != 429:
+                        self.points_dropped = getattr(self, "points_dropped", 0) + len(chunk)
+                        logger.error(f"InfluxDB replay dropped {len(chunk)} points "
+                                     f"(permanent {_status}: {e}) — poison chunk skipped")
+                        continue
                     with self._buf_lock:
                         self._buffer.extendleft(reversed(chunk))
                     logger.warning(f"InfluxDB replay failed ({e}) — will retry")

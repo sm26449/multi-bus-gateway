@@ -135,3 +135,16 @@ def test_on_connect_rejects_nonzero_connack():
     cli._client = SimpleNamespace(subscribe=lambda t: None)
     cli._on_connect(cli._client, None, {}, SimpleNamespace(is_failure=False), None)
     assert cli.connected is True
+
+
+# ── P1: scale applied on mqtt-in values ──────────────────────────────────────
+
+def test_mqtt_in_applies_scale():
+    r = _reg(1, "power", "power", "sensors/x", "W")
+    r.scale = 10.0                                    # raw/10 = engineering
+    cli = mi.MqttInputClient({"topic": "sensors/x"}, [r])
+    got = {}
+    cli.publish_callback = lambda pg, data: got.update(data)
+    cli._on_message(None, None, SimpleNamespace(topic="sensors/x",
+                                                payload=b'{"power": 2300}', retain=False))
+    assert got[1]["value"] == 230.0

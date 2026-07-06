@@ -245,3 +245,19 @@ def test_calc_with_no_timestamped_inputs_falls_back_to_now():
     assert calc["value"] == 10.0
     # a parseable recent ISO timestamp (fell back to now)
     assert datetime.fromisoformat(calc["timestamp"]).year >= 2020
+
+
+# ── P1: calc registers evaluate on push-driven (mqtt) group ──────────────────
+
+def test_calc_evaluates_on_mqtt_wildcard_group():
+    from types import SimpleNamespace
+    from multibus.calc_engine import CalcEngine, CALC_ADDR_BASE
+    store = {1: {"name": "_A", "value": 5.0, "timestamp": "2020-01-01T00:00:00"}}
+    cfg = SimpleNamespace(load_calculated=lambda d: [
+        {"name": "_P", "expr": "_A * 2", "poll_group": "normal"}])   # NOT 'mqtt'
+    eng = CalcEngine(cfg, store_for=lambda d: store, publishers=lambda: (None, None))
+    eng.load("dev")
+    # a push on the 'mqtt' group must still evaluate the 'normal'-group calc
+    eng.run("dev", "mqtt", store, topic_prefix="", bucket=None, device_tag=None,
+            device_id="dev", mqtt_on=False, influx_on=False)
+    assert store[CALC_ADDR_BASE]["value"] == 10.0

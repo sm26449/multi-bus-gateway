@@ -593,10 +593,14 @@ class VirtualMeter:
 
     def _serving_ok(self, port: int) -> bool:
         """Liveness probe: a thread can be alive() but wedged (not accepting
-        connections). A quick local TCP connect confirms the listener actually
-        serves; used to force-restart a hung meter."""
+        connections). A quick TCP connect confirms the listener actually serves.
+        Probe the CONFIGURED bind — a server bound to a specific interface is not
+        reachable on 127.0.0.1, so a loopback probe would force-restart a healthy
+        meter in a loop."""
+        bind = str(self.t.transport.get("bind", "0.0.0.0") or "0.0.0.0")
+        host = "127.0.0.1" if bind in ("0.0.0.0", "", "::") else bind
         try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            with socket.create_connection((host, port), timeout=0.5):
                 return True
         except Exception:  # noqa: BLE001
             return False

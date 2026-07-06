@@ -231,14 +231,15 @@ def resolve_json_path(obj: Any, path: str) -> Any:
 def _coerce_numeric(val) -> Optional[float]:
     """Coerce a json_path result to a finite number, or None to skip it.
     bool → 0/1; numeric strings parse; dict/list/text → None (fail-safe)."""
+    import math
     if isinstance(val, bool):
         return int(val)
     if isinstance(val, (int, float)):
-        return val if val == val and val not in (float('inf'), float('-inf')) else None
+        return val if math.isfinite(val) else None
     if isinstance(val, str):
         try:
             f = float(val)
-            return f if f == f else None
+            return f if math.isfinite(f) else None    # "inf"/"nan" strings rejected too
         except ValueError:
             return None
     return None
@@ -281,6 +282,12 @@ class _JsonPoller(threading.Thread):
                             # whole batch, and a vmeter can't encode it (stalls the
                             # block refresh). Skip the register instead.
                             continue
+                        # engineering value = raw / scale, same convention as the
+                        # Modbus path — so a register's scale means the same thing
+                        # on every transport (default 1.0 = unchanged).
+                        _sc = getattr(reg, 'scale', 1.0) or 1.0
+                        if _sc != 1.0:
+                            val = val / _sc
                         data[reg.address] = {'value': val, 'register': reg, 'ts': t0}
                     if data and self.publish_callback:
                         self.publish_callback(self.poll_group_name, data)
