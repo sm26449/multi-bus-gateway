@@ -57,3 +57,16 @@ def test_four_orders_are_distinct():
     layouts = {o: tuple(RegisterEncoder(o).encode(0x12345678, 'uint32'))
                for o in ('abcd', 'cdab', 'badc', 'dcba')}
     assert len(set(layouts.values())) == 4, layouts
+
+
+# ── P2: ambiguous le/littleendian aliases removed ────────────────────────────
+
+def test_le_littleendian_aliases_removed():
+    from multibus.register_parser import RegisterParser
+    # 'little' stays (word-swap = CDAB); the ambiguous ones fall back to big
+    assert RegisterParser.resolve_order("little") == (False, True)
+    assert RegisterParser.resolve_order("cdab") == (False, True)
+    assert RegisterParser.resolve_order("dcba") == (True, True)
+    # 'le'/'littleendian' no longer silently mean DCBA — unknown → big default
+    assert RegisterParser.resolve_order("le") == (False, False)
+    assert RegisterParser.resolve_order("littleendian") == (False, False)

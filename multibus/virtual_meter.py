@@ -268,6 +268,18 @@ class VirtualMeter:
         # Server-up rule in policy modes: serving while AT LEAST ONE live source
         # is fresh; all-stale still stops the server (nothing trustworthy left).
         self.on_stale = on_stale if on_stale in ("legacy", "fail", "sentinel", "hold") else "legacy"
+        # sentinel encodes SunSpec NA words — unambiguous for float (NaN) but for
+        # an INTEGER row the NA sentinel (0x8000 / 0xFFFF) reads as a plausible
+        # value to a non-SunSpec consumer. Warn so the operator picks 'fail' for
+        # integer maps feeding a plain PLC.
+        if self.on_stale == "sentinel":
+            _int_rows = [r.addr for r in template.registers
+                         if str(r.type).lower() in ("int16", "uint16", "int32",
+                                                    "uint32", "int64", "uint64", "short")]
+            if _int_rows:
+                logger.warning("vmeter[%s] sentinel policy on %d integer row(s) — a "
+                               "non-SunSpec consumer may read the NA sentinel as a real "
+                               "value; consider 'fail' for integer maps", template.id, len(_int_rows))
         self.max_hold_s = float(max_hold_s)
         self._last_good: dict[int, tuple[list[int], float]] = {}   # addr → (words, ts) for hold
         self._unavail_spans: list[tuple[int, int]] = []            # [start, end) refused when policy=fail

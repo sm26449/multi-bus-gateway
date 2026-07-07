@@ -72,7 +72,11 @@ def build(ctx) -> APIRouter:
                 continue
             try:
                 st = client.get_stats()
-            except Exception:  # noqa: BLE001 — one sick client must not kill the scrape
+            except Exception:  # noqa: BLE001 — a sick client is DOWN, not absent
+                # emit up=0 rather than dropping the series: a device that
+                # vanishes from /metrics reads as "no data" on the dashboard,
+                # hiding exactly the fault an alert should fire on
+                f.add("gateway_device_up", "Source device connected (1/0)", "gauge", 0, lbl)
                 continue
             f.add("gateway_device_up", "Source device connected (1/0)", "gauge",
                   1 if st.get("connected") else 0, lbl)
@@ -118,8 +122,14 @@ def build(ctx) -> APIRouter:
                       st.get("writes_total"))
                 f.add("gateway_influx_buffer_points", "Store-and-forward buffer size", "gauge",
                       st.get("buffer_points"))
-                f.add("gateway_influx_dropped_total", "Points dropped (buffer overflow)", "counter",
-                      st.get("dropped_total"))
+                f.add("gateway_influx_dropped_total", "Points dropped (buffer overflow or poison chunk)",
+                      "counter", st.get("dropped_total"))
+                f.add("gateway_influx_buffered_total", "Points diverted to the store-and-forward buffer",
+                      "counter", st.get("buffered_total"))
+                f.add("gateway_influx_replayed_total", "Buffered points successfully replayed",
+                      "counter", st.get("replayed_total"))
+                f.add("gateway_influx_recovered_total", "Points restored from the on-disk buffer at boot",
+                      "counter", st.get("recovered_total"))
             except Exception:  # noqa: BLE001
                 pass
 

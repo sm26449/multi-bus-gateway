@@ -38,11 +38,15 @@ class RegisterParser:
     # "word_swap" reverses the word order. The four combinations cover the classic
     # ABCD / CDAB / BADC / DCBA orderings. 'big'/'little' keep the historical
     # word-only meaning (big=ABCD, little=CDAB) for byte-for-byte back-compat.
+    # NOTE: 'le'/'littleendian' are deliberately NOT aliases. They read as
+    # "opposite of big" (DCBA) to some and "little-endian words" (CDAB) to
+    # others — the classic Modbus ordering footgun. Only unambiguous names are
+    # accepted; unknown → big (safe default). Use 'little'/'cdab' or 'dcba'.
     _ORDER_MAP = {
         'big': (False, False), 'abcd': (False, False), 'be': (False, False), 'bigendian': (False, False),
         'little': (False, True), 'cdab': (False, True), 'wordswap': (False, True),
         'badc': (True, False), 'byteswap': (True, False),
-        'dcba': (True, True), 'le': (True, True), 'littleendian': (True, True),
+        'dcba': (True, True),
     }
 
     @classmethod

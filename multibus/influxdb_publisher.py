@@ -535,22 +535,25 @@ class InfluxDBPublisher:
             return register.influxdb_measurement
 
         unit = register.unit.lower() if register.unit else ''
-        if 'v' in unit and 'var' not in unit:
-            return 'voltage'
-        elif 'a' in unit and 'va' not in unit:
-            return 'current'
-        elif unit == 'w':
-            return 'power_active'
-        elif 'va' in unit and 'var' not in unit:
-            return 'power_apparent'
-        elif 'var' in unit:
-            return 'power_reactive'
+        # MOST-SPECIFIC first: 'v' is a substring of 'va'/'var'/'varh', 'w' of
+        # 'wh', 'var' of 'varh' — so energy (…h) and reactive/apparent must be
+        # tested before the bare V/A/W, else e.g. 'VA' matches 'v' → voltage.
+        if 'varh' in unit:
+            return 'energy_reactive'
         elif 'wh' in unit:
             return 'energy_active'
-        elif 'varh' in unit:
-            return 'energy_reactive'
+        elif 'var' in unit:
+            return 'power_reactive'
+        elif 'va' in unit:
+            return 'power_apparent'
         elif 'hz' in unit:
             return 'frequency'
+        elif 'w' in unit:
+            return 'power_active'
+        elif 'v' in unit:
+            return 'voltage'
+        elif 'a' in unit:
+            return 'current'
         elif '%' in unit:
             return 'percentage'
         else:

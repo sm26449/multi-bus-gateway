@@ -276,3 +276,23 @@ def test_history_and_energy_503_without_influx():
     c = _client()   # influxdb_publisher is None
     assert c.get("/api/history?name=_TEMP&start=-1h").status_code == 503
     assert c.get("/api/energy/monthly?year=2026&month=6").status_code == 503
+
+
+# ── P2: InfluxDB unit-heuristic precedence (specific before generic) ─────────
+
+def test_influx_unit_heuristic_precedence():
+    from types import SimpleNamespace
+    from multibus.influxdb_publisher import InfluxDBPublisher
+    pub = InfluxDBPublisher.__new__(InfluxDBPublisher)
+    def m(unit):
+        r = SimpleNamespace(influxdb_measurement="", unit=unit)
+        return InfluxDBPublisher._get_measurement(pub, r)
+    assert m("VA") == "power_apparent"       # was misclassified as voltage
+    assert m("kVA") == "power_apparent"
+    assert m("varh") == "energy_reactive"    # was power_reactive
+    assert m("var") == "power_reactive"
+    assert m("kWh") == "energy_active"
+    assert m("W") == "power_active"
+    assert m("V") == "voltage"
+    assert m("A") == "current"
+    assert m("Hz") == "frequency"
