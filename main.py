@@ -140,6 +140,7 @@ class GatewayApp:
             mqtt_publisher=self.mqtt_publisher,
             influxdb_publisher=self.influxdb_publisher,
             devices=self.devices,
+            template_registry=self.template_registry,   # reuse the boot registry (no 2nd load)
         )
 
         logger.info("API server initialized")

@@ -681,6 +681,45 @@ pagina Status (admin) sau îl exporți CSV prin `GET /api/audit/export.csv`.
 
 ---
 
+
+## 18b. Rulare pe hardware limitat (Raspberry Pi)
+
+Multi-Bus Gateway rulează confortabil pe un Raspberry Pi 3/4/5 sau pe un Intel
+de putere mică. E frugal prin design — la o instalare tipică cu un singur meter
+folosește ~90 MB RAM și câteva procente CPU, cu buffere mărginite și fără
+scurgeri.
+
+**Singurul lucru care contează pe un Pi: intervalul de poll realtime.** Tot ce
+face gateway-ul per valoare (citire, parsare, publicare, buffering) se întâmplă
+sub un singur GIL Python, deci CPU-ul total scalează cu *poll-uri pe secundă*,
+iar un core Cortex-A53 e de ~8–10x mai lent decât un core Intel de desktop.
+RAM-ul și numărul de thread-uri nu sunt niciodată zidul — CPU-ul la o cadență
+rapidă este.
+
+**Plicul de capacitate (măsurat + proiectat):**
+
+| Config | RSS | Thread-uri | RPi 3 CPU @ realtime 1 s | RPi 3 @ 250 ms |
+|--------|-----|------------|--------------------------|----------------|
+| 1 dispozitiv | 65–80 MB | ~14 | 3–5 % | 10–18 % |
+| 5 dispozitive + 3 vmeters | 90–110 MB | ~30 | 15–20 % | 55–75 % |
+| 10 dispozitive + 10 vmeters | 130–160 MB | ~58 | 35–50 % | saturează un core |
+
+**Setări recomandate pe un Pi 3:**
+
+- Ține **realtime la 1 s** pentru monitorizare generală. Rezervă polling-ul
+  sub-secundă (ex. 250 ms) pentru *singurul* registru care conduce o buclă de
+  control în timp real — un meter de grid care alimentează o limită de export a
+  invertorului — nu pentru toată harta.
+- Folosește grupurile **normal (5 s)** și **slow (60 s)** pentru tot ce nu e
+  critic pentru control (contoare de energie, temperaturi, diagnostic).
+- Podeaua intervalului e 50 ms; `0` este refuzat (ar inunda bus-ul).
+- Un Pi 4/5 are ~2–3x marja unui Pi 3 — cadența de 250 ms e ok acolo pentru o
+  hartă mică.
+
+**Regula de bază:** un RPi 3 rulează confortabil **~4–5 dispozitive + ~3 metere
+virtuale** cu realtime ≥ 1 s. Peste asta, scalează *lateral* (un al doilea Pi /
+host per bus), nu *pe verticală* — GIL-ul nu poate fi eliminat într-un proces.
+
 ## 19. Depanare
 
 | Simptom | Verifică |

@@ -654,6 +654,42 @@ written. View/filter it on the Status page (admin), or export CSV via
 
 ---
 
+
+## 18b. Running on constrained hardware (Raspberry Pi)
+
+Multi-Bus Gateway runs comfortably on a Raspberry Pi 3/4/5 or a low-power
+Intel box. It is frugal by design — at a typical single-meter install it uses
+~90 MB RAM and a few percent CPU, with bounded buffers and no leaks.
+
+**The one thing that matters on a Pi: the realtime poll interval.** Everything
+the gateway does per value (read, parse, publish, buffer) happens under one
+Python GIL, so total CPU scales with *polls per second*, and a Cortex-A53 core
+is ~8–10x slower than a desktop Intel core. RAM and thread count are never the
+wall — the CPU at a fast cadence is.
+
+**Capacity envelope (measured + projected):**
+
+| Setup | RSS | Threads | RPi 3 CPU @ realtime 1 s | RPi 3 @ 250 ms |
+|-------|-----|---------|--------------------------|----------------|
+| 1 device | 65–80 MB | ~14 | 3–5 % | 10–18 % |
+| 5 devices + 3 vmeters | 90–110 MB | ~30 | 15–20 % | 55–75 % |
+| 10 devices + 10 vmeters | 130–160 MB | ~58 | 35–50 % | saturates a core |
+
+**Recommended settings on a Pi 3:**
+
+- Keep **realtime at 1 s** for general monitoring. Reserve sub-second polling
+  (e.g. 250 ms) for the *one* register that drives a real-time control loop —
+  a grid meter feeding an inverter export limit — not for the whole map.
+- Use **normal (5 s)** and **slow (60 s)** poll groups for everything that is
+  not control-critical (energy counters, temperatures, diagnostics).
+- The interval floor is 50 ms; `0` is refused (it would flood the bus).
+- A Pi 4/5 has ~2–3x the headroom of a Pi 3 — the 250 ms cadence is fine there
+  for a small map.
+
+**Rule of thumb:** an RPi 3 comfortably runs **~4–5 devices + ~3 virtual
+meters** with realtime ≥ 1 s. Beyond that, scale *out* (a second Pi / host per
+bus), not *up* — the GIL can't be scaled away inside one process.
+
 ## 19. Troubleshooting
 
 | Symptom | Check |

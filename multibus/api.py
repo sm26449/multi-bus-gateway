@@ -206,7 +206,7 @@ class WebSocketManager:
 
 
 def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
-               devices=None) -> FastAPI:
+               devices=None, template_registry=None) -> FastAPI:
     """
     Create FastAPI application.
 
@@ -759,8 +759,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     threading.Thread(target=_harvest_events, daemon=True, name="event-harvester").start()
 
     # ── Tier 2: devices + device templates ─────────────────────────────────
+    # Reuse the registry the boot path already built (main.py) instead of
+    # loading every bundled template a SECOND time (~4000-register maps parsed
+    # twice = wasted RSS + boot time). Tests that don't pass one get a fresh
+    # registry, so behaviour is unchanged.
     from .device_template import TemplateRegistry
-    template_registry = TemplateRegistry()
+    if template_registry is None:
+        template_registry = TemplateRegistry()
     app.state.template_registry = template_registry
 
     # ── Config snapshots (rollback + last-known-good) ───────────────────────

@@ -1,4 +1,4 @@
-# Janitza UMG 512-PRO Monitor - Python Dependencies
+# Multi-Bus Gateway — runtime dependencies
 
 # Modbus
 pymodbus==3.6.9
@@ -17,11 +17,6 @@ pydantic>=2.5.0
 
 # Configuration
 PyYAML>=6.0.1
-
-# Development (optional)
-pytest>=7.4.0
-pytest-asyncio>=0.23.0
-httpx>=0.24.0          # FastAPI TestClient (API / middleware tests)
 
 # Passkeys / WebAuthn (login without passwords)
 webauthn>=2.1.0,<3

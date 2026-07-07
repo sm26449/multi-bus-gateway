@@ -1,0 +1,6 @@
+# Test image: the production runtime image plus the dev/test dependencies.
+# Build:  docker build -f Dockerfile.test -t multi-bus-gateway:test .
+# Run:    docker run --rm -v "$(pwd)":/app -w /app --entrypoint sh \
+#           multi-bus-gateway:test -c "python -m pytest -q"
+FROM multi-bus-gateway:latest
+RUN pip install --no-cache-dir pytest>=7.4.0 pytest-asyncio>=0.23.0 httpx>=0.24.0
