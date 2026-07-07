@@ -39,13 +39,21 @@ def build(ctx) -> APIRouter:
         import csv
         import io as _io
         from datetime import datetime as _dt
+
+        def _safe(v):
+            # CSV formula-injection guard: a spreadsheet executes a cell that
+            # starts with = + - @ (or a tab/CR before one). Prefix a quote so
+            # audit content (usernames, targets) can't run as a formula.
+            s = "" if v is None else str(v)
+            return "'" + s if s[:1] in ("=", "+", "-", "@", "\t", "\r") else s
+
         buf = _io.StringIO()
         w = csv.writer(buf)
         w.writerow(["time", "user", "ip", "action", "target", "status", "detail"])
         for e in reversed(ctx.audit_log.recent(10000)):
             w.writerow([_dt.fromtimestamp(e.get("ts", 0)).isoformat(sep=" ", timespec="seconds"),
-                        e.get("user", ""), e.get("ip", ""), e.get("action", ""),
-                        e.get("target", ""), e.get("status", ""), e.get("detail", "")])
+                        _safe(e.get("user", "")), _safe(e.get("ip", "")), _safe(e.get("action", "")),
+                        _safe(e.get("target", "")), _safe(e.get("status", "")), _safe(e.get("detail", ""))])
         from fastapi.responses import Response as _Resp
         return _Resp(content=buf.getvalue(), media_type="text/csv",
                      headers={"Content-Disposition": 'attachment; filename="audit.csv"'})

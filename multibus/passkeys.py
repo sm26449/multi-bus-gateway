@@ -65,8 +65,11 @@ class ChallengeCache:
             now = time.time()
             self._pending = {k: v for k, v in self._pending.items()
                              if v["ts"] + self.ttl > now}       # prune expired
-            if len(self._pending) > 64:                          # flood guard
-                self._pending.clear()
+            # flood guard: evict the OLDEST entries, not all — a burst must not
+            # invalidate a legitimate ceremony that is mid-flight
+            while len(self._pending) >= 64:
+                oldest = min(self._pending, key=lambda k: self._pending[k]["ts"])
+                self._pending.pop(oldest, None)
             self._pending[state] = {**meta, "ts": now}
         return state
 

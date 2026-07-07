@@ -107,6 +107,10 @@ def build_passkeys(ctx) -> APIRouter:
         """The browser's Origin, validated against the RP ID before it is
         trusted as the expected_origin of the ceremony."""
         origin = request.headers.get("origin", "")
+        # An opaque origin ("null" — sandboxed iframe, file://, some privacy
+        # modes) must never satisfy the RP check.
+        if origin == "null":
+            raise HTTPException(status_code=422, detail={"errors": ["opaque origin rejected"]})
         host = urlsplit(origin).hostname or ""
         if not origin or not (host == rp_id or host.endswith("." + rp_id)):
             raise HTTPException(status_code=422,

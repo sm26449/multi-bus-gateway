@@ -312,6 +312,30 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 return True
         return False
 
+    # Security response headers. CSP keeps 'unsafe-inline' because the UI relies
+    # on inline event handlers + inline styles (the two XSS-dangerous, data-
+    # interpolating handlers were converted to delegation); it still blocks
+    # external script/frame injection, clickjacking (frame-ancestors) and
+    # base-uri hijack. HSTS is emitted only over HTTPS.
+    _CSP = ("default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "font-src 'self' https://cdn.jsdelivr.net data:; "
+            "img-src 'self' data:; connect-src 'self'; "
+            "frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+
+    @app.middleware("http")
+    async def _security_headers(request, call_next):
+        resp = await call_next(request)
+        resp.headers.setdefault("Content-Security-Policy", _CSP)
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        resp.headers.setdefault("X-Frame-Options", "DENY")
+        resp.headers.setdefault("Referrer-Policy", "same-origin")
+        if request.url.scheme == "https":
+            resp.headers.setdefault("Strict-Transport-Security",
+                                    "max-age=31536000; includeSubDomains")
+        return resp
+
     @app.middleware("http")
     async def _allowlist_guard(request, call_next):
         nets = _allow_networks()
@@ -2009,11 +2033,17 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         # attacker who enrolled on the open LAN.
         enabling = changes.get("auth_enabled") and not u.auth_enabled
         # all valid → commit atomically
+        _pw_rotated = any(k in changes for k in
+                          ("auth_password", "viewer_password", "operator_password"))
         for k, v in changes.items():
             setattr(u, k, v)
         config.save_yaml_config()
         if auth_state is not None:
             auth_state.reload(config.ui)
+            # a password change invalidates every existing session, so an old
+            # cookie can't outlive the rotation (the caller re-logs in)
+            if _pw_rotated:
+                auth_state.revoke_all_sessions()
         resp = {"status": "ok", "restart_needed": restart_needed}
         if enabling:
             _pk = getattr(getattr(app.state, "ctx", None), "passkey_store", None)

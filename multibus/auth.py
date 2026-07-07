@@ -56,7 +56,9 @@ def verify_password(password: str, stored: str) -> bool:
         return False
     # legacy plaintext (hand-edited config): still constant-time, but surface it —
     # a successful plaintext auth means the stored credential is not hashed.
-    ok = hmac.compare_digest(password, stored)
+    # encode to bytes: compare_digest on str raises TypeError for non-ASCII,
+    # which would leak (via the exception) that the stored value is plaintext
+    ok = hmac.compare_digest(password.encode("utf-8"), stored.encode("utf-8"))
     if ok:
         logger.warning("SECURITY: authenticated against a PLAINTEXT stored password "
                        "— re-save the credential in the UI so it is hashed (PBKDF2).")
@@ -189,3 +191,12 @@ class AuthState:
     def logout(self, token: str) -> None:
         with self._lock:
             self._sessions.pop(token, None)
+
+    def revoke_all_sessions(self) -> int:
+        """Invalidate every live session (e.g. after a credential rotation, so a
+        stolen/old cookie stops working the moment the password changes).
+        Returns the count revoked."""
+        with self._lock:
+            n = len(self._sessions)
+            self._sessions.clear()
+            return n

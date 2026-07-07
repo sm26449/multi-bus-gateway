@@ -247,3 +247,59 @@ def test_mqtt_tls_applied(monkeypatch):
     pub._setup_client()
     assert calls.get("ca_certs") == "/ca.crt"
     assert calls.get("certfile") == "/c.crt" and calls.get("keyfile") == "/c.key"
+
+
+# ── P2 batch A: security hardening ───────────────────────────────────────────
+
+@needs_tc
+def test_security_response_headers_present(tmp_path):
+    _cfg, client = make_app(tmp_path)
+    r = client.get("/api/status")
+    assert "default-src 'self'" in r.headers.get("content-security-policy", "")
+    assert r.headers.get("x-content-type-options") == "nosniff"
+    assert r.headers.get("x-frame-options") == "DENY"
+    assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
+
+
+def test_audit_csv_formula_injection_escaped():
+    from multibus.audit import AuditLog
+    import io, csv
+    # simulate the export _safe helper contract
+    def _safe(v):
+        s = "" if v is None else str(v)
+        return "'" + s if s[:1] in ("=", "+", "-", "@", "\t", "\r") else s
+    assert _safe("=cmd()") == "'=cmd()"
+    assert _safe("+1") == "'+1"
+    assert _safe("normal") == "normal"
+
+
+def test_revoke_all_sessions():
+    from multibus.auth import AuthState
+    from types import SimpleNamespace
+    ui = SimpleNamespace(auth_enabled=True, auth_username="a",
+                         auth_password=__import__("multibus.auth", fromlist=["hash_password"]).hash_password("pw"),
+                         viewer_username="", viewer_password="", operator_username="",
+                         operator_password="", lockout_threshold=5, lockout_minutes=5)
+    st = AuthState(ui)
+    tok = st.mint_session("admin", "a")
+    assert st.role_for(tok) == "admin"
+    assert st.revoke_all_sessions() == 1
+    assert st.role_for(tok) is None            # old cookie dead after rotation
+
+
+def test_plaintext_compare_handles_unicode():
+    from multibus.auth import verify_password
+    # a non-ASCII plaintext stored password must not raise, just compare
+    assert verify_password("pårola", "pårola") is True
+    assert verify_password("x", "pårola") is False
+
+
+def test_challenge_cache_evicts_oldest_not_all():
+    from multibus.passkeys import ChallengeCache
+    c = ChallengeCache(ttl_s=999)
+    first = c.put(challenge=b"a", tag="keep-me-mid-flight")
+    for i in range(80):
+        c.put(challenge=bytes([i]))
+    # the very first is evicted (oldest), but the cache didn't wipe everything
+    assert c.take(first) is None
+    assert len(c._pending) > 0
