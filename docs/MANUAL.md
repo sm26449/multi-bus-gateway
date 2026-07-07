@@ -690,6 +690,54 @@ wall — the CPU at a fast cadence is.
 meters** with realtime ≥ 1 s. Beyond that, scale *out* (a second Pi / host per
 bus), not *up* — the GIL can't be scaled away inside one process.
 
+
+## 18c. What consumers see when a source is lost
+
+The gateway's core promise: **it never reports absence as a plausible value.**
+When a device stops responding, a read fails, or a connection drops, no output
+ever receives an invented `0`/`false`/last-guess. Absence stays absence — but
+it *looks* different on each output, so a downstream system (Node-RED, Home
+Assistant, a PLC, Grafana) must read the right signal.
+
+### Per-output behaviour
+
+| Output | On source loss | How the consumer detects it |
+|--------|----------------|-----------------------------|
+| **MQTT** | value topics stop updating; the retained topic holds the LAST value | subscribe to `<prefix>/status` (retained) + the LWT — `offline` means stale; do NOT trust a value topic alone |
+| **InfluxDB** | no write → a **gap** in the series (never a flat-line of the old value) | `last()` + timestamp age, or a "no data" alert |
+| **Virtual meter** | your chosen policy: `legacy` holds last words · `fail` returns a Modbus exception · `sentinel` serves SunSpec NA (NaN / 0x8000 / 0xFFFF) · `hold` holds up to a cap then fails. If ALL sources are stale the server stops (connection refused, like an unplugged meter). | the exception / refused connection, and the in-band **quality block at 61440** (state + age) |
+| **HTTP push / output** | no new push (the last payload is not re-sent as fresh) | absence of an update; NaN/inf are rejected, never emitted as invalid JSON |
+
+### The one thing to configure downstream
+
+On **MQTT**, the retained *value* carries no per-value freshness stamp — the
+freshness signal lives on the `<prefix>/status` topic and the Last-Will. A
+consumer that reads only the value and ignores status can act on stale data.
+This is why a control loop should gate on freshness (e.g. Node-RED's
+`armed ∧ leader ∧ fresh-telemetry`), not merely on "I have a value". If you
+need in-band freshness **without** MQTT, give the virtual meter the `fail`
+policy and read the quality block at 61440.
+
+### How this compares to other equipment
+
+This behaviour follows the established standards rather than inventing its own:
+
+- **SunSpec** (the de-facto solar/meter model) defines the exact "not
+  accessible" sentinels — NaN for float, `0x8000`/`0xFFFF` for integers — that
+  the `sentinel` policy emits, so a SunSpec-aware consumer understands it
+  natively.
+- **Home Assistant / MQTT**: the `<prefix>/status` availability topic + Last
+  Will is the standard availability pattern the whole ecosystem consumes.
+- **Time-series (InfluxDB / Prometheus)**: a gap (no write) is the idiomatic,
+  correct representation of missing data — you never backfill a stale value.
+
+Where common industrial Modbus gateways default to silently *holding the last
+value with no staleness signal* — the dangerous footgun — this gateway offers
+that (`hold`) only as an explicit choice, alongside the safer `fail` (a
+meter-loss exception) and the in-band quality block. In short: nothing risky is
+reinvented; where the industry has a footgun, the correct alternative is
+provided.
+
 ## 19. Troubleshooting
 
 | Symptom | Check |

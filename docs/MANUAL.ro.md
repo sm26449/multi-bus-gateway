@@ -720,6 +720,57 @@ rapidă este.
 virtuale** cu realtime ≥ 1 s. Peste asta, scalează *lateral* (un al doilea Pi /
 host per bus), nu *pe verticală* — GIL-ul nu poate fi eliminat într-un proces.
 
+
+## 18c. Ce văd consumatorii când o sursă cade
+
+Promisiunea de bază a gateway-ului: **nu raportează niciodată absența ca o
+valoare plauzibilă.** Când un dispozitiv nu mai răspunde, o citire eșuează sau
+se pierde o conexiune, nicio ieșire nu primește un `0`/`false`/ultima-ghicire
+inventat. Absența rămâne absență — dar *arată* diferit pe fiecare ieșire, așa
+că un sistem din aval (Node-RED, Home Assistant, un PLC, Grafana) trebuie să
+citească semnalul corect.
+
+### Comportament pe fiecare ieșire
+
+| Ieșire | La pierderea sursei | Cum o detectează consumatorul |
+|--------|---------------------|-------------------------------|
+| **MQTT** | topicurile de valori nu se mai actualizează; topicul retained ține ULTIMA valoare | abonează-te la `<prefix>/status` (retained) + LWT — `offline` = stale; NU te baza doar pe topicul de valoare |
+| **InfluxDB** | nicio scriere → **gap** în serie (niciodată o linie plată cu valoarea veche) | `last()` + vârsta timestamp-ului, sau o alertă "no data" |
+| **Meter virtual** | politica aleasă: `legacy` ține ultimele cuvinte · `fail` întoarce o excepție Modbus · `sentinel` servește SunSpec NA (NaN / 0x8000 / 0xFFFF) · `hold` ține până la un cap apoi fail. Dacă TOATE sursele-s stale, serverul se oprește (connection refused, ca un meter scos din priză). | excepția / conexiunea refuzată, și **blocul de calitate in-band la 61440** (stare + vârstă) |
+| **HTTP push / output** | niciun push nou (ultimul payload nu e re-trimis ca proaspăt) | absența unui update; NaN/inf sunt respinse, niciodată emise ca JSON invalid |
+
+### Singurul lucru de configurat în aval
+
+Pe **MQTT**, *valoarea* retained nu poartă un marcaj de prospețime per-valoare —
+semnalul de prospețime stă pe topicul `<prefix>/status` și pe Last-Will. Un
+consumator care citește doar valoarea și ignoră status-ul poate acționa pe date
+vechi. De aceea o buclă de control ar trebui să condiționeze pe prospețime (ex.
+`armat ∧ lider ∧ telemetrie-proaspătă` în Node-RED), nu doar pe „am o valoare".
+Dacă ai nevoie de prospețime in-band **fără** MQTT, dă meterului virtual
+politica `fail` și citește blocul de calitate la 61440.
+
+### Cum se compară cu alte echipamente
+
+Acest comportament urmează standardele consacrate, nu inventează unul propriu:
+
+- **SunSpec** (modelul de-facto pentru solar/metere) definește exact
+  santinelele "not accessible" — NaN pentru float, `0x8000`/`0xFFFF` pentru
+  întregi — pe care le emite politica `sentinel`, deci un consumator
+  SunSpec-aware le înțelege nativ.
+- **Home Assistant / MQTT**: topicul de disponibilitate `<prefix>/status` +
+  Last Will este pattern-ul standard de availability pe care îl consumă tot
+  ecosistemul.
+- **Time-series (InfluxDB / Prometheus)**: un gap (nicio scriere) este
+  reprezentarea idiomatică și corectă a datelor lipsă — nu backfill-uiești
+  niciodată o valoare veche.
+
+Acolo unde gateway-urile Modbus industriale obișnuite au ca default *ținerea
+tăcută a ultimei valori fără semnal de staleness* — capcana periculoasă —
+acest gateway o oferă (`hold`) doar ca alegere explicită, alături de `fail`
+mai sigur (o excepție de meter-loss) și de blocul de calitate in-band. Pe
+scurt: nimic riscant nu e reinventat; acolo unde industria are un footgun, se
+oferă alternativa corectă.
+
 ## 19. Depanare
 
 | Simptom | Verifică |
