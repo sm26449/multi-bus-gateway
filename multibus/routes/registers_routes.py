@@ -9,7 +9,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, Response
 
 from ._models import RegisterBatchQuery, RegisterQuery, SelectedRegisterUpdate
 
@@ -45,6 +46,12 @@ def build(ctx) -> APIRouter:
             "thresholds": x.thresholds if hasattr(x, 'thresholds') else None,
         }
 
+    # Memoized catalog: rebuilding 4000+ entries + JSON-serializing ~1 MB on the
+    # event loop every call stalled it (~9 ms Intel / ~81 ms RPi-3) at every UI
+    # boot and device switch. Cache keyed on the template OBJECT identity, so a
+    # template_registry.reload() (new objects) auto-invalidates it.
+    _catalog_cache: Dict[str, tuple] = {}   # template_id -> (template_obj, catalog, etag)
+
     def _template_catalog(template_id: str) -> Dict:
         """Build the register catalog for a device from its TEMPLATE, in the
         exact shape the Registers page already parses
@@ -52,6 +59,9 @@ def build(ctx) -> APIRouter:
         t = template_registry.get(template_id)
         if t is None:
             return {"measurements": {}}
+        _cached = _catalog_cache.get(template_id)
+        if _cached is not None and _cached[0] is t:
+            return _cached[1]
         cats: Dict[str, Dict] = {}
         ordered = sorted(t.categories.items(), key=lambda kv: kv[1].get('order', 99))
         for cid, cmeta in ordered:
@@ -66,31 +76,52 @@ def build(ctx) -> APIRouter:
                 "register_type": getattr(x, 'register_type', 'holding'),
                 "poll_group": x.poll_group,
             })
-        return {"measurements": cats,
-                "device_template": {"id": t.id, "name": t.name,
-                                    "registers": len(t.registers)}}
+        catalog = {"measurements": cats,
+                   "device_template": {"id": t.id, "name": t.name,
+                                       "registers": len(t.registers)}}
+        etag = f'"{template_id}-{len(t.registers)}-{id(t) & 0xffffff:x}"'
+        _catalog_cache[template_id] = (t, catalog, etag)
+        return catalog
+
+    def _catalog_etag(template_id: str) -> str:
+        t = template_registry.get(template_id)
+        _cached = _catalog_cache.get(template_id)
+        if _cached is None or _cached[0] is not t:
+            _template_catalog(template_id)          # populate/refresh cache
+            _cached = _catalog_cache.get(template_id)
+        return _cached[2] if _cached else ""
 
     @r.get("/api/registers/all")
-    async def get_all_registers(device: str = Query(default="")):
+    async def get_all_registers(request: Request, device: str = Query(default="")):
         """Register catalog for the Registers page. EVERY device — including the
         primary — now draws its catalog from its device template (the uniform
         Tier 2 model: the map lives on the template, not a fixed file). The
         primary falls back to the legacy modbus_data.json only if its template
         can't be resolved, so the picker never regresses. Switching the catalog
         source does NOT touch selected_registers.json, so what is polled — and
-        therefore the MQTT/InfluxDB output — is byte-identical."""
+        therefore the MQTT/InfluxDB output — is byte-identical.
+
+        Served with an ETag: an unchanged catalog is a 304 (no 1 MB transfer),
+        and the body itself is memoized so a cache-miss doesn't rebuild it."""
+        _tpl = None
         if device:
             _i, dev_cfg, _c = registry.find(device)
             if dev_cfg is None:
                 raise HTTPException(status_code=404, detail="device not found")
             if not dev_cfg.primary:
-                return _template_catalog(dev_cfg.template)
-            prim = dev_cfg
+                _tpl = dev_cfg.template
+            elif dev_cfg.template and template_registry.get(dev_cfg.template) is not None:
+                _tpl = dev_cfg.template
         else:
             prim = next((d for d in config.devices if d.primary), None)
-        if prim is not None and prim.template and template_registry.get(prim.template) is not None:
-            return _template_catalog(prim.template)
-        return config.all_registers            # defensive fallback (template missing)
+            if prim is not None and prim.template and template_registry.get(prim.template) is not None:
+                _tpl = prim.template
+        if _tpl is None:
+            return config.all_registers        # defensive fallback (template missing)
+        etag = _catalog_etag(_tpl)
+        if etag and request.headers.get("if-none-match") == etag:
+            return Response(status_code=304)
+        return JSONResponse(_template_catalog(_tpl), headers={"ETag": etag} if etag else None)
 
     @r.get("/api/registers/selected")
     async def get_selected_registers(device: str = Query(default="")):

@@ -29,9 +29,21 @@ logger = logging.getLogger(__name__)
 _STATIC_ASSET_RE = re.compile(r'(/static/([^"\'?\s]+))\?v=[^"\'\s]*')
 
 
+_INDEX_CACHE = {"mtime": None, "html": None}
+
+
 def _render_index_html(path: str = "ui/templates/index.html") -> str:
     """Return the SPA shell with each static asset's ?v= cache-bust token set to
-    the asset's mtime (files are served from ui/ at /static/)."""
+    the asset's mtime (files are served from ui/ at /static/). The rendered HTML
+    is cached and only re-read+re-stamped when the template file changes — the
+    old path re-read the 138 KB file and ran the regex on EVERY request (page
+    load, SPA nav, unauth redirect)."""
+    try:
+        mt = os.path.getmtime(path)
+    except OSError:
+        mt = None
+    if mt is not None and _INDEX_CACHE["mtime"] == mt and _INDEX_CACHE["html"] is not None:
+        return _INDEX_CACHE["html"]
     html = open(path, encoding="utf-8").read()
 
     def _stamp(m):
@@ -42,7 +54,9 @@ def _render_index_html(path: str = "ui/templates/index.html") -> str:
             ver = 0
         return f"{m.group(1)}?v={ver}"
 
-    return _STATIC_ASSET_RE.sub(_stamp, html)
+    rendered = _STATIC_ASSET_RE.sub(_stamp, html)
+    _INDEX_CACHE.update(mtime=mt, html=rendered)
+    return rendered
 
 
 # Process start (approx = module import) for uptime, and last CPU sample for the

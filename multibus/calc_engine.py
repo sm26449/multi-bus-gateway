@@ -64,8 +64,13 @@ class CalcEngine:
                 poll_group=e.get('poll_group') or 'normal',
             )
             _ok, _err, refs = expressions.validate_expression(e.get('expr', ''))
+            # compile the AST ONCE here (not per poll) — the hot path reuses it
+            try:
+                _tree = expressions.compile_expression(e.get('expr', ''))
+            except Exception:  # noqa: BLE001 — invalid expr: evaluate() will surface it
+                _tree = None
             built.append({'expr': e.get('expr', ''), 'decimals': e.get('decimals'),
-                          'poll_group': reg.poll_group, '_reg': reg,
+                          'poll_group': reg.poll_group, '_reg': reg, '_tree': _tree,
                           '_refs': refs, '_state': {'prev': {}, 'ts': None}})
         self.store[device_id] = built
         return built
@@ -131,8 +136,14 @@ class CalcEngine:
             prevmap = st['prev']
             resolve.touched_ts = []                # collect input freshness this run
             try:
-                val = expressions.evaluate(e['expr'], resolve,
-                                           prev_resolve=prevmap.get, dt=dt)
+                # reuse the AST compiled at load() — no re-parse per poll
+                _tree = e.get('_tree')
+                if _tree is not None:
+                    val = expressions.evaluate_tree(_tree, resolve,
+                                                    prev_resolve=prevmap.get, dt=dt)
+                else:
+                    val = expressions.evaluate(e['expr'], resolve,
+                                               prev_resolve=prevmap.get, dt=dt)
                 ok = True
             except (expressions.MissingValue, expressions.ExpressionError):
                 ok = False                        # missing input / math error / first prev()

@@ -174,6 +174,21 @@ def evaluate(expr, resolve, *, prev_resolve=None, dt=0.0):
         tree = ast.parse(expr.strip(), mode='eval')
     except SyntaxError as e:
         raise ExpressionError(str(e))
+    return evaluate_tree(tree, resolve, prev_resolve=prev_resolve, dt=dt)
+
+
+def compile_expression(expr):
+    """Parse an expression to an AST once (reuse across evaluations). Returns the
+    tree or raises ExpressionError. Lets the hot poll path skip re-parsing every
+    calc register every cycle."""
+    try:
+        return ast.parse(expr.strip(), mode='eval')
+    except SyntaxError as e:
+        raise ExpressionError(str(e))
+
+
+def evaluate_tree(tree, resolve, *, prev_resolve=None, dt=0.0):
+    """Evaluate a PRE-PARSED expression tree (from compile_expression)."""
     ctx = {'resolve': resolve, 'prev': prev_resolve, 'dt': float(dt or 0.0)}
     try:
         return _eval(tree.body, ctx)
