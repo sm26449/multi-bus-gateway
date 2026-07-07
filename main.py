@@ -17,6 +17,18 @@ from multibus.influxdb_publisher import InfluxDBPublisher
 from multibus.api import create_api
 from multibus.virtual_meter_manager import VirtualMeterManager
 
+# Shrink the per-thread stack reservation from the 8 MB default to 512 KB
+# BEFORE any thread is spawned. The gateway's threads (pollers, vmeter servers,
+# reconnect loops) have shallow call stacks, so 512 KB is ample. This only
+# changes ADDRESS-SPACE reservation (VmData) — resident memory is unaffected —
+# but it keeps the virtual footprint sane at high thread counts (e.g. 59
+# threads: ~464 MB -> ~30 MB reserved), which matters under 32-bit userland or
+# strict overcommit. Wrapped: a platform that rejects the size just keeps 8 MB.
+try:
+    threading.stack_size(512 * 1024)
+except (ValueError, RuntimeError):
+    pass
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,

@@ -502,6 +502,17 @@ class Config:
         """Update just the poll-group intervals in a device's registers file
         (keeps the register selection). Works for any device — the primary uses
         the legacy file and its in-memory groups are refreshed too."""
+        # Reject a 0/negative interval up front with a clear error: it would
+        # spin the poll loop with no pause and hammer the bus. Sub-second is
+        # allowed (the ESS control loop needs 250 ms) but a real floor stands.
+        for name, g in (groups or {}).items():
+            try:
+                iv = float(g.get("interval", 5))
+            except (TypeError, ValueError):
+                raise ValueError(f"poll group {name!r}: interval must be a number")
+            if iv < 0.05:
+                raise ValueError(f"poll group {name!r}: interval must be >= 0.05 s "
+                                 f"(got {iv}) — 0 would flood the bus")
         path = self.device_registers_path(device_id)
         if path.exists():
             with open(path) as f:

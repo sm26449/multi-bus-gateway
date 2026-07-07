@@ -258,6 +258,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             allow_headers=["*"],
         )
 
+    # Compress responses over the LAN: the SPA payload and the 4000+-register
+    # catalog compress ~8-25x (988 KB catalog -> ~40 KB), saving bandwidth and
+    # transfer time — the CPU cost is on the response path, not the poll loop.
+    from fastapi.middleware.gzip import GZipMiddleware
+    app.add_middleware(GZipMiddleware, minimum_size=500, compresslevel=5)
+
     # Optional login/auth (off by default). auth_state manages sessions,
     # password hashing and per-IP lockout; middleware enforces it when enabled.
     from . import auth as _auth

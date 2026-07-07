@@ -322,6 +322,14 @@ class RegisterPoller(threading.Thread):
         self.device_id = device_id
         self._tag = f"[{device_id}] " if device_id else ""
         self.poll_group_name = name
+        # A 0/negative interval would spin the loop with no pause, hammering the
+        # bus (and the device) as fast as the transport allows. Clamp to a 50 ms
+        # floor as a last-line guard — the API rejects it earlier with a clear
+        # error, but any code path is safe here.
+        try:
+            interval = max(0.05, float(interval))
+        except (TypeError, ValueError):
+            interval = 5.0
         self.interval = interval
         self.registers = registers
         self.connection = connection

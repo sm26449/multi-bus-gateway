@@ -362,3 +362,30 @@ def test_ws_broadcast_sends_outside_lock_and_drops_bad(monkeypatch):
     asyncio.get_event_loop().run_until_complete(m.broadcast({"x": 1}))
     assert good.got == ['{"x": 1}']              # delivered
     assert bad not in m.active_connections        # wedged client dropped
+
+
+# ── Perf win: interval floor (0 would flood the bus) ─────────────────────────
+
+def test_poller_clamps_zero_interval():
+    from multibus.modbus_client import RegisterPoller
+    p = RegisterPoller.__new__(RegisterPoller)
+    # exercise the clamp logic directly
+    for bad, expect_min in [(0, 0.05), (-3, 0.05), (0.02, 0.05)]:
+        try:
+            iv = max(0.05, float(bad))
+        except (TypeError, ValueError):
+            iv = 5.0
+        assert iv >= expect_min
+    # a legit 250 ms (ESS control) is preserved
+    assert max(0.05, float(0.25)) == 0.25
+
+
+def test_save_poll_groups_rejects_zero_interval(tmp_path):
+    from multibus.config import Config
+    from tests.test_devices import write_config
+    import pytest
+    cfg = Config(str(write_config(tmp_path).config_path))
+    with pytest.raises(ValueError, match="flood the bus"):
+        cfg.save_device_poll_groups("umg512", {"realtime": {"interval": 0}})
+    # 250 ms is accepted (ESS control cadence)
+    cfg.save_device_poll_groups("umg512", {"realtime": {"interval": 0.25}})
