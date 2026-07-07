@@ -108,3 +108,14 @@ def test_http_output_survives_device_edit(tmp_path):
     payload["name"] = "EM24 renamed"
     assert client.put("/api/devices/em24", json=payload).status_code == 200
     assert Config(str(tmp_path / "config.yaml")).get_device("em24").http_output_enabled is True
+
+
+# ── P2: MQTT NaN never published (all mode too) + bounded HTTP read ──────────
+
+def test_mqtt_should_not_publish_nan_in_all_mode():
+    from multibus.mqtt_publisher import MQTTPublisher
+    from multibus.config import MQTTConfig
+    pub = MQTTPublisher(MQTTConfig(enabled=False), [], publish_mode="all")
+    assert pub._should_publish("t", float("nan")) is False
+    assert pub._should_publish("t", float("inf")) is False
+    assert pub._should_publish("t", 230.0) is True     # finite still publishes

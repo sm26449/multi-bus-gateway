@@ -367,7 +367,14 @@ class HttpClient:
                 _SameHostRedirect(allow_nonlan=False))
         req = urllib.request.Request(self.url, headers=self.headers)
         with opener.open(req, timeout=self.timeout) as r:  # noqa: S310 (LAN-guarded)
-            doc = json.loads(r.read().decode('utf-8', 'replace'))
+            # Bounded read: a misbehaving / hostile endpoint must not stream GBs
+            # into memory and OOM the gateway. A JSON telemetry payload is tiny;
+            # 8 MiB is a generous ceiling. One extra byte past the cap → reject.
+            _MAX = 8 * 1024 * 1024
+            raw = r.read(_MAX + 1)
+            if len(raw) > _MAX:
+                raise RuntimeError(f"response exceeds {_MAX} bytes — refusing to buffer")
+            doc = json.loads(raw.decode('utf-8', 'replace'))
         self.last_latency_ms = round((time.perf_counter() - _t0) * 1000, 1)
         return doc
 

@@ -342,3 +342,23 @@ def test_influx_reconnect_thread_clears_stop_before_alive_check():
     pub._reconnect_thread = _AliveThread()
     pub._start_reconnect_thread()
     assert not pub._stop_reconnect.is_set()            # cleared → alive thread resumes
+
+
+# ── P2: WS broadcast serializes once + sends outside the lock ─────────────────
+
+def test_ws_broadcast_sends_outside_lock_and_drops_bad(monkeypatch):
+    import asyncio
+    from multibus.api import WebSocketManager
+
+    class GoodWS:
+        def __init__(self): self.got = []
+        async def send_text(self, d): self.got.append(d)
+    class BadWS:
+        async def send_text(self, d): raise RuntimeError("wedged")
+
+    m = WebSocketManager()
+    good, bad = GoodWS(), BadWS()
+    m.active_connections = {good, bad}
+    asyncio.get_event_loop().run_until_complete(m.broadcast({"x": 1}))
+    assert good.got == ['{"x": 1}']              # delivered
+    assert bad not in m.active_connections        # wedged client dropped

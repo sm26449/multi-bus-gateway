@@ -271,6 +271,9 @@ class Config:
         # Original (pre-env) values of secrets overridden by env vars, so a save
         # writes the config value — never the env secret — to config.yaml.
         self._env_secret_shadow: Dict[str, str] = {}
+        # serializes config-file writes so two concurrent saves (FastAPI runs
+        # handlers in a threadpool) can't interleave their tmp/rename dance
+        self._file_lock = __import__("threading").Lock()
         self.alerts: Dict = {}                # optional `alerts:` block (off by default)
 
         self.load()
@@ -480,11 +483,12 @@ class Config:
             },
         }
         tmp = path.with_suffix(path.suffix + '.tmp')   # atomic: crash-safe write
-        with open(tmp, 'w') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-            f.flush()
-            os.fsync(f.fileno())               # durable before the rename
-        os.replace(tmp, path)
+        with self._file_lock:
+            with open(tmp, 'w') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())           # durable before the rename
+            os.replace(tmp, path)
         logger.info(f"device {device_id}: saved {len(registers)} selected registers")
 
     def device_registers_path(self, device_id: str) -> Path:

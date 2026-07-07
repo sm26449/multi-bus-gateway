@@ -291,12 +291,13 @@ class MQTTPublisher:
         Does NOT update cache — cache is updated after successful publish
         via _confirm_publish() to prevent data loss.
         """
+        # NaN guard FIRST — a NaN must never be published (it serializes to the
+        # non-numeric text "nan" that consumers can't parse), and NaN != NaN
+        # would also bypass change detection below.
+        if isinstance(value, float) and not math.isfinite(value):
+            return False
         if self.publish_mode == 'all':
             return True
-
-        # NaN guard: NaN != NaN is always True, would bypass change detection
-        if isinstance(value, float) and math.isnan(value):
-            return False
 
         with self.lock:
             if topic not in self.last_values:

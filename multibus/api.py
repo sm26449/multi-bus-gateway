@@ -16,7 +16,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Quer
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .mqtt_publisher import MQTTPublisher
 from .influxdb_publisher import InfluxDBPublisher
@@ -125,7 +125,7 @@ class MQTTConfigUpdate(BaseModel):
     password: Optional[str] = None
     topic_prefix: Optional[str] = None
     retain: Optional[bool] = None
-    qos: Optional[int] = None
+    qos: Optional[int] = Field(default=None, ge=0, le=2)   # MQTT qos is 0, 1 or 2
     publish_mode: Optional[str] = None
     ha_discovery_enabled: Optional[bool] = None
     ha_discovery_prefix: Optional[str] = None
@@ -170,20 +170,25 @@ class WebSocketManager:
 
     async def broadcast(self, message: Dict):
         """Broadcast message to all connected clients."""
-        if not self.active_connections:
-            return
-
-        data = json.dumps(message)
+        # Snapshot the connections under the lock, then send OUTSIDE it: a slow
+        # or wedged client's send_text must not hold the lock and stall
+        # connect/disconnect and every other broadcast. Each send is bounded by
+        # a timeout so one stuck socket can't block the whole fan-out.
         async with self.lock:
-            disconnected = set()
-            for connection in self.active_connections:
-                try:
-                    await connection.send_text(data)
-                except Exception:
-                    disconnected.add(connection)
-
-            for conn in disconnected:
-                self.active_connections.discard(conn)
+            conns = list(self.active_connections)
+        if not conns:
+            return
+        data = json.dumps(message)
+        disconnected = []
+        for connection in conns:
+            try:
+                await asyncio.wait_for(connection.send_text(data), timeout=5)
+            except Exception:  # noqa: BLE001 — timeout or send error → drop it
+                disconnected.append(connection)
+        if disconnected:
+            async with self.lock:
+                for conn in disconnected:
+                    self.active_connections.discard(conn)
 
 
 def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
@@ -2379,7 +2384,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         # safety net: the pre-import state is one click away if the backup is bad
         try:
             snapshot_store.create("pre-import",
-                                  user=getattr(request.state, "role", "") or "")
+                                  user=getattr(request.state, "user", "") or "")
         except Exception:  # noqa: BLE001
             logger.exception("pre-import snapshot failed")
         try:
@@ -2434,7 +2439,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     def create_snapshot(request: Request, payload: Dict = Body(default={})):
         """Take a manual snapshot of the current config bundle."""
         meta = snapshot_store.create("manual",
-                                     user=getattr(request.state, "role", "") or "",
+                                     user=getattr(request.state, "user", "") or "",
                                      note=str(payload.get("note", "") or ""))
         return {"status": "ok", "snapshot": meta}
 
@@ -2502,7 +2507,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             raise HTTPException(status_code=404, detail=f"unknown snapshot {sid!r}")
         try:
             snapshot_store.create("pre-restore",
-                                  user=getattr(request.state, "role", "") or "")
+                                  user=getattr(request.state, "user", "") or "")
         except Exception:  # noqa: BLE001
             logger.exception("pre-restore snapshot failed")
         try:
