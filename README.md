@@ -65,6 +65,10 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
   device-uri emulate; acesta poate.
 - 🔓 **Sursă deschisă, hardware de comodă** — îl inspectezi, îl forkezi, îi
   adaugi un protocol.
+- 🍓 **Frugal, măsurat pe hardware limitat** — ~90 MB RAM și câteva procente
+  CPU la o instalare tipică, fără scurgeri. Un **RPi 3 rulează confortabil
+  ~4–5 dispozitive + ~3 metere virtuale** (realtime ≥ 1 s), un Pi 4/5 mult mai
+  mult. Plicul de capacitate complet + profilul recomandat: [MANUAL §18b](docs/MANUAL.md#18b-running-on-constrained-hardware-raspberry-pi).
 
 ## Caracteristici (3.0.0)
 
