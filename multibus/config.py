@@ -168,6 +168,11 @@ class UIConfig:
     # bounds, diagnostics, discovery) but NO configuration changes
     operator_username: str = ""
     operator_password: str = ""
+    # Canonical UI URL: when set (e.g. https://mbus.diysolar.ro), the browser is
+    # steered here by default (TLS + passkeys). Empty = no redirect. The local
+    # IP stays reachable via ?local (client-side, so a down hostname can't lock
+    # the operator out).
+    canonical_url: str = ""
     # login-failure lockout (per client IP)
     lockout_threshold: int = 5      # failed attempts before lockout
     lockout_minutes: int = 5        # lockout duration
@@ -719,6 +724,7 @@ class Config:
                     viewer_password=auth.get('viewer_password', self.ui.viewer_password),
                     operator_username=auth.get('operator_username', self.ui.operator_username),
                     operator_password=auth.get('operator_password', self.ui.operator_password),
+                    canonical_url=u.get('canonical_url', self.ui.canonical_url),
                     lockout_threshold=auth.get('lockout_threshold', self.ui.lockout_threshold),
                     lockout_minutes=auth.get('lockout_minutes', self.ui.lockout_minutes),
                     tls_enabled=tls.get('enabled', self.ui.tls_enabled),
@@ -1091,6 +1097,7 @@ class Config:
                     'key': self.ui.tls_key,
                 },
                 'trusted_proxies': self.ui.trusted_proxies,
+                'canonical_url': self.ui.canonical_url,
             },
             'security': {
                 'allowlist': self.security.allowlist,

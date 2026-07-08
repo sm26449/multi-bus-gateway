@@ -790,6 +790,12 @@
                                 </div>
 
                                 <div class="settings-subsection">
+                                    <h4 data-i18n="security.canonical.title">Canonical address</h4>
+                                    <p class="field-hint" data-i18n="security.canonical.hint">When set, the browser is steered here by default (so TLS + passkeys are used). The local IP stays reachable — append <code>?local</code> to the address to bypass the redirect (e.g. if DNS/proxy is down). Empty = no redirect.</p>
+                                    <input type="text" id="cfgCanonicalUrl" class="input" placeholder="https://mbus.diysolar.ro">
+                                </div>
+
+                                <div class="settings-subsection">
                                     <h4 data-i18n="security.https.title">HTTPS (web UI)</h4>
                                     <label class="checkbox-label">
                                         <input type="checkbox" id="cfgUiTls" aria-label="Enable HTTPS">

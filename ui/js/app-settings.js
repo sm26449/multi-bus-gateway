@@ -197,6 +197,7 @@ Object.assign(JanitzaMonitor.prototype, {
             v('cfgAuthUser').value = ui.auth_username || '';
             v('cfgViewerUser').value = ui.viewer_username || '';
             v('cfgOperatorUser').value = ui.operator_username || '';
+            if (v('cfgCanonicalUrl')) v('cfgCanonicalUrl').value = ui.canonical_url || '';
             v('cfgLockoutN').value = ui.lockout_threshold || 5;
             v('cfgLockoutMin').value = ui.lockout_minutes || 5;
             v('cfgAuthPass').value = '';
@@ -238,6 +239,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 auth_username: v('cfgAuthUser').value.trim(),
                 viewer_username: v('cfgViewerUser').value.trim(),
                 operator_username: v('cfgOperatorUser').value.trim(),
+                canonical_url: (v('cfgCanonicalUrl') ? v('cfgCanonicalUrl').value.trim() : ''),
                 lockout_threshold: parseInt(v('cfgLockoutN').value) || 5,
                 lockout_minutes: parseInt(v('cfgLockoutMin').value) || 5,
             };

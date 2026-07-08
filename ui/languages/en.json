@@ -927,5 +927,7 @@
   "snap.diffFileRemoved": "file existed in the snapshot (a rollback brings it back)",
   "snap.diffTruncated": "List truncated.",
   "vmeter.qualityBlock": "In-band quality block (registers 61440–61447)",
-  "vmeter.qualityBlockHint": "Read-only block a Modbus consumer can poll to judge data quality: format version, state (1 ok / 2 degraded / 3 stale), fresh/stale/missing row counts, age of the newest fresh value (u32 s). All big-endian, no floats. Addresses between the meter map and 61440 still answer illegal-address."
+  "vmeter.qualityBlockHint": "Read-only block a Modbus consumer can poll to judge data quality: format version, state (1 ok / 2 degraded / 3 stale), fresh/stale/missing row counts, age of the newest fresh value (u32 s). All big-endian, no floats. Addresses between the meter map and 61440 still answer illegal-address.",
+  "security.canonical.title": "Canonical address",
+  "security.canonical.hint": "When set, the browser is steered here by default (so TLS + passkeys are used). The local IP stays reachable — append ?local to the address to bypass the redirect (e.g. if DNS/proxy is down). Empty = no redirect."
 }

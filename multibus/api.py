@@ -29,10 +29,29 @@ logger = logging.getLogger(__name__)
 _STATIC_ASSET_RE = re.compile(r'(/static/([^"\'?\s]+))\?v=[^"\'\s]*')
 
 
-_INDEX_CACHE = {"mtime": None, "html": None}
+_INDEX_CACHE = {"key": None, "html": None}
 
 
-def _render_index_html(path: str = "ui/templates/index.html") -> str:
+def _canonical_redirect_script(canonical_url: str) -> str:
+    """A tiny <head> script that steers the browser to the canonical HTTPS host
+    (so TLS + passkeys are the default) WITHOUT locking out the local IP: it is
+    client-side (the page loads first, so a down hostname is recoverable), and
+    two escape hatches keep the IP fallback usable — `?local` in the URL, or a
+    sticky `mbg-stay-local` flag it sets. A server-side redirect would strand
+    the operator if DNS/Traefik were down; this never can."""
+    if not canonical_url:
+        return ""
+    return ("<script>(function(){var C=" + json.dumps(canonical_url) + ";try{"
+            "var h=new URL(C).host;var p=new URLSearchParams(location.search);"
+            "if(p.has('local')){try{localStorage.setItem('mbg-stay-local','1')}catch(e){}return;}"
+            "if(localStorage.getItem('mbg-stay-local')==='1')return;"
+            "if(location.host===h)return;"
+            "location.replace(C.replace(/\\/$/,'')+location.pathname+location.search+location.hash);"
+            "}catch(e){}})();</script>")
+
+
+def _render_index_html(path: str = "ui/templates/index.html",
+                       canonical_url: str = "") -> str:
     """Return the SPA shell with each static asset's ?v= cache-bust token set to
     the asset's mtime (files are served from ui/ at /static/). The rendered HTML
     is cached and only re-read+re-stamped when the template file changes — the
@@ -42,7 +61,8 @@ def _render_index_html(path: str = "ui/templates/index.html") -> str:
         mt = os.path.getmtime(path)
     except OSError:
         mt = None
-    if mt is not None and _INDEX_CACHE["mtime"] == mt and _INDEX_CACHE["html"] is not None:
+    key = (mt, canonical_url)
+    if mt is not None and _INDEX_CACHE["key"] == key and _INDEX_CACHE["html"] is not None:
         return _INDEX_CACHE["html"]
     html = open(path, encoding="utf-8").read()
 
@@ -55,7 +75,12 @@ def _render_index_html(path: str = "ui/templates/index.html") -> str:
         return f"{m.group(1)}?v={ver}"
 
     rendered = _STATIC_ASSET_RE.sub(_stamp, html)
-    _INDEX_CACHE.update(mtime=mt, html=rendered)
+    # inject the canonical redirect as the FIRST thing in <head> so it runs
+    # before the heavy JS loads (no flash of the app on the wrong host)
+    script = _canonical_redirect_script(canonical_url)
+    if script:
+        rendered = rendered.replace("<head>", "<head>" + script, 1)
+    _INDEX_CACHE.update(key=key, html=rendered)
     return rendered
 
 
@@ -456,7 +481,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             # unauthenticated: serve the SPA shell for navigations, 401 for API
             if path.startswith("/api/") or path == "/ws":
                 return JSONResponse({"detail": "login required"}, status_code=401)
-            return HTMLResponse(_render_index_html())
+            return HTMLResponse(_render_index_html(canonical_url=config.ui.canonical_url))
         # identity lands on request.state BEFORE any deny, so the audit trail
         # records WHO was refused, not an anonymous dash
         request.state.role = role
@@ -648,7 +673,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     @app.get("/")
     async def root():
         """Serve main UI (with mtime-derived asset cache-bust tokens)."""
-        return HTMLResponse(_render_index_html())
+        return HTMLResponse(_render_index_html(canonical_url=config.ui.canonical_url))
 
     # /api/status(+resources) → routes/status_routes.py
 
@@ -1999,6 +2024,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             "auth_username": config.ui.auth_username,
             "viewer_username": config.ui.viewer_username,
             "operator_username": config.ui.operator_username,
+            "canonical_url": config.ui.canonical_url,
             "lockout_threshold": config.ui.lockout_threshold,
             "lockout_minutes": config.ui.lockout_minutes,
             "has_viewer": bool(config.ui.viewer_username),
@@ -2037,6 +2063,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 changes["viewer_password"] = _auth.hash_password(str(payload["viewer_password"]))
             if "operator_username" in payload:
                 changes["operator_username"] = str(payload["operator_username"]).strip()
+            if "canonical_url" in payload:
+                _cu = str(payload["canonical_url"]).strip()
+                if _cu and not (_cu.startswith("http://") or _cu.startswith("https://")):
+                    raise ValueError("canonical_url must start with http:// or https://")
+                changes["canonical_url"] = _cu
             if payload.get("operator_password"):
                 changes["operator_password"] = _auth.hash_password(str(payload["operator_password"]))
             if payload.get("lockout_threshold"):

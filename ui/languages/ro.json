@@ -927,5 +927,7 @@
   "snap.diffFileRemoved": "fișier existent în snapshot (un rollback îl readuce)",
   "snap.diffTruncated": "Listă trunchiată.",
   "vmeter.qualityBlock": "Bloc de calitate in-band (registrele 61440–61447)",
-  "vmeter.qualityBlockHint": "Bloc read-only pe care un consumator Modbus îl poate citi ca să judece calitatea datelor: versiune format, stare (1 ok / 2 degradat / 3 stale), numărul de rânduri fresh/stale/lipsă, vârsta celei mai noi valori fresh (u32 s). Totul big-endian, fără float-uri. Adresele dintre harta meter-ului și 61440 răspund în continuare illegal-address."
+  "vmeter.qualityBlockHint": "Bloc read-only pe care un consumator Modbus îl poate citi ca să judece calitatea datelor: versiune format, stare (1 ok / 2 degradat / 3 stale), numărul de rânduri fresh/stale/lipsă, vârsta celei mai noi valori fresh (u32 s). Totul big-endian, fără float-uri. Adresele dintre harta meter-ului și 61440 răspund în continuare illegal-address.",
+  "security.canonical.title": "Adresă canonică",
+  "security.canonical.hint": "Când e setată, browserul e direcționat aici implicit (ca să folosească TLS + passkeys). IP-ul local rămâne accesibil — adaugă ?local la adresă ca să ocolești redirect-ul (ex. dacă DNS/proxy e jos). Gol = fără redirect."
 }
