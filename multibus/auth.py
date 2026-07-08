@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 _ALGO = "pbkdf2_sha256"
 _ITERATIONS = 600_000              # OWASP 2023 floor for PBKDF2-HMAC-SHA256
-SESSION_TTL_S = 12 * 3600          # 12h sliding session
+SESSION_TTL_S = 7 * 24 * 3600      # 7-day sliding session (slides on each request)
 COOKIE_NAME = "janitza_session"
 
 
