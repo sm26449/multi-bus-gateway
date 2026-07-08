@@ -81,7 +81,7 @@ map). Highest value first:
 
 | # | Product | ~€ | Why |
 |---|---------|----|----|
-| G1 | **Sonoff Zigbee 3.0 USB Dongle Plus (E/P)** | 25 | zigbee2mqtt coordinator — unlocks the whole Zigbee sensor class cheaply. |
+| G1 | **Sonoff Zigbee 3.0 USB Dongle Plus — "P" (CC2652P)** | 25 | The reference zigbee2mqtt coordinator: TI CC2652P, widest z2m device support (3000+), external antenna. The no-surprises choice for "test anything". The "E" (Silabs EFR32MG21) also works and adds future Thread/Matter, but "P" is the safest for pure Zigbee/z2m today. Put it on a **USB extension cable** (avoid USB-3 RF interference). |
 | G2 | **Sonoff SNZB-02 (temp/hum)** + **SNZB-04 (door)** + a Zigbee plug | 8+8+12 | The cheapest sensor/actuator spread once a coordinator exists. |
 
 ---
