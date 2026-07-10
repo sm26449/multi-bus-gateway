@@ -83,6 +83,7 @@ device-template catalog, composite virtual meters with staleness policies
 and an in-band quality block (61440, convention v1), calculated registers,
 REST push, diagnostics page (frame-level bus monitor, register probe,
 SunSpec walk, error taxonomy), MQTT topic browse + json_path picker,
-config snapshots/rollback/last-known-good, audit trail,
+config snapshots/rollback/semantic-diff/last-known-good, audit trail,
 admin/operator/viewer roles, passkeys (WebAuthn), /metrics (Prometheus),
-reverse-proxy support (ui.trusted_proxies).
+reverse-proxy support (ui.trusted_proxies), built-in HTTPS, MQTT TLS
+(mutual), IP allowlist, and a gated Modbus write path with dead-man leases.
