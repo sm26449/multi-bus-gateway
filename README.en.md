@@ -14,7 +14,7 @@
 [![Container](https://img.shields.io/badge/container-ghcr.io-2496ED?logo=docker&logoColor=white)](https://github.com/sm26449/multi-bus-gateway/pkgs/container/multi-bus-gateway)
 ![Modbus → MQTT](https://img.shields.io/badge/Modbus-MQTT-6f42c1)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-autodiscovery-41BDF5?logo=homeassistant&logoColor=white)
-[![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
 > **A software-defined protocol gateway — acquire, verify, monitor and
 > route field data. Retrofit, don't replace.**
@@ -376,16 +376,16 @@ provenance, see [docs/device-catalog.md](docs/device-catalog.md).
 
 ## License
 
-**PolyForm Noncommercial License 1.0.0** — free for personal and other
-**noncommercial** use; commercial use requires a separate license.
+**GNU Affero General Public License v3.0 (AGPL-3.0)** — free and open-source
+software.
 
 Copyright (c) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
 
-You may use, copy, modify, and share this software **for any noncommercial
-purpose** — personal, hobby, research, education, or non-profit.
-**Commercial use is not permitted** under this license; contact the author
-for a commercial license. Full terms in [LICENSE](LICENSE) ·
-<https://polyformproject.org/licenses/noncommercial/1.0.0/>
+You may use, study, modify, and distribute this software, **including
+commercially**. The AGPL condition: if you distribute modified versions — or
+offer them as a **network service** (SaaS) — you must make the **complete
+source code** available to those users, under the same license. Full terms in
+[LICENSE](LICENSE) · <https://www.gnu.org/licenses/agpl-3.0.html>
 
 ---
 

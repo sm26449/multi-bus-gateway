@@ -18,7 +18,7 @@
 [![Container](https://img.shields.io/badge/container-ghcr.io-2496ED?logo=docker&logoColor=white)](https://github.com/sm26449/multi-bus-gateway/pkgs/container/multi-bus-gateway)
 ![Modbus → MQTT](https://img.shields.io/badge/Modbus-MQTT-6f42c1)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-autodiscovery-41BDF5?logo=homeassistant&logoColor=white)
-[![Licenta: PolyForm Noncommercial](https://img.shields.io/badge/licen%C8%9B%C4%83-PolyForm%20Noncommercial-blue)](LICENSE)
+[![Licenta: AGPL v3](https://img.shields.io/badge/licen%C8%9B%C4%83-AGPL%20v3-blue.svg)](LICENSE)
 
 > **Gateway de protocol software — achiziție, verificare, monitorizare și
 > rutare de date. Retrofit, nu înlocuire.**
@@ -373,16 +373,17 @@ proveniență verificabilă, vezi [docs/device-catalog.md](docs/device-catalog.m
 
 ## License
 
-**PolyForm Noncommercial License 1.0.0** — gratuit pentru uz personal și
-alt uz **necomercial**; uzul comercial cere o licență separată.
+**GNU Affero General Public License v3.0 (AGPL-3.0)** — software liber și
+open source.
 
 Copyright (c) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
 
-Poți folosi, copia, modifica și distribui acest software **în orice scop
-necomercial** — personal, hobby, cercetare, educație, non-profit. **Uzul
-comercial nu este permis** sub această licență; contactează autorul pentru o
-licență comercială. Termeni compleți în [LICENSE](LICENSE) ·
-<https://polyformproject.org/licenses/noncommercial/1.0.0/>
+Poți folosi, studia, modifica și distribui acest software, **inclusiv
+comercial**. Condiția AGPL: dacă distribui versiuni modificate — sau le
+oferi ca **serviciu în rețea** (SaaS) — trebuie să pui la dispoziția
+utilizatorilor **codul sursă complet**, sub aceeași licență. Termeni
+compleți în [LICENSE](LICENSE) ·
+<https://www.gnu.org/licenses/agpl-3.0.html>
 
 ---
 
