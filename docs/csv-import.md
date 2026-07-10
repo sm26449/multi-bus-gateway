@@ -22,6 +22,7 @@ required:
 | `category` | no | `group`, `cat` | grouping for the UI |
 | `poll_group` | no | `poll`, `rate` | `realtime` / `normal` / `slow` |
 | `access` | no | `rw`, `mode` | `RW`/`WR` → marks writable (informative) |
+| `register_type` | no | `regtype`, `fc`, `table`, `block` | `holding` (FC3, default) or `input` (aliases `input`/`ir`/`fc4`/`4` → FC4) |
 | `json_path` | yes* | `path`, `json` | for HTTP/JSON devices (no Modbus address) |
 
 \* Provide **`address`** for Modbus devices, or **`json_path`** for HTTP/JSON
@@ -63,7 +64,8 @@ a CSV), and communities publish maps for common meters/inverters (Eastron SDM,
 Carlo Gavazzi, Schneider, ABB, SolarEdge/Huawei SunSpec, …). For SunSpec
 int+scale-factor models, bake the fixed scale into the `scale` column.
 
-> Note: the reader currently issues **FC3 (holding registers)**. Devices whose
-> measurements live in **input registers (FC4)** or **coils** are on the roadmap
-> (audit item P1) — importing their map is fine, but reads land once FC4 support
-> ships.
+> Note: the reader issues **FC3 (holding registers)** by default. For devices
+> whose measurements live in **input registers (FC4)** — e.g. the bundled
+> Eastron SDM120/SDM630 maps — set `register_type` to `input` (or `fc4`) on
+> those rows and the poller reads them with FC4. Coil/discrete reads (FC1/FC2)
+> exist in the Modbus driver but aren't selectable from this CSV column.

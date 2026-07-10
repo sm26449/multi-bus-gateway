@@ -15,7 +15,7 @@ default on a trusted LAN):
    (POST/PUT/PATCH/DELETE) must send `X-API-Key: <key>`. The two read-only
    query POSTs (`/api/query/register`, `/api/query/batch`) are exempt.
 3. **Login** (`ui.auth.enabled`) — session-cookie auth (`janitza_session`,
-   HttpOnly, SameSite=Lax, 12 h sliding TTL). Passwords are PBKDF2-SHA256
+   HttpOnly, SameSite=Lax, 7-day sliding TTL). Passwords are PBKDF2-SHA256
    (600 000 iterations). Login is rate-limited per client IP
    (`lockout_threshold` / `lockout_minutes`). Passkey (WebAuthn) login is an
    alternative to the password.

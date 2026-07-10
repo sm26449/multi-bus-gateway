@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.0.0 — sessions, canonical address & illustrated guide (2026-07-10)
+
+Post-hardening follow-ups within 3.0.0:
+- **7-day sliding sessions** (was 12 h) — the session cookie renews on each
+  request, so day-to-day operators aren't re-prompted for login constantly.
+- **Canonical-address redirect** (`ui.canonical_url`) — a client-side steer
+  onto the canonical HTTPS hostname so cookies, passkeys and HSTS bind to one
+  origin; a `?local` escape hatch (sticky `mbg-stay-local` flag) keeps the raw
+  IP reachable when DNS or the proxy is down.
+- **Illustrated UI guide** (`docs/GHID-UI.md`) — a page-by-page walkthrough
+  with per-page screenshots captured from the live production instance.
+- Docs: MANUAL §18c (what consumers see when a source is lost), an R&D
+  integration test plan & procurement list, and a pinned Zigbee coordinator
+  recommendation.
+
 ## 3.0.0 — hardening & performance pass (2026-07-07)
 
 Pre-release hardening of 3.0.0: a nine-domain senior architecture review and a

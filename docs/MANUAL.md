@@ -552,7 +552,7 @@ Passwords are hashed (PBKDF2-SHA256, 600k iterations); leave a password
 field blank on save to keep the current one. **Enabling login refuses the
 default admin/admin** — set a real password first. Failed logins are locked
 out per IP (`lockout_threshold` / `lockout_minutes`, defaults 5 / 5 min).
-Sessions are HttpOnly cookies, 12 h sliding, in-memory — a container restart
+Sessions are HttpOnly cookies, 7-day sliding, in-memory — a container restart
 logs everyone out. The audit trail is admin-only.
 
 ### 16.2 Passkeys (WebAuthn)
@@ -583,6 +583,15 @@ Requirements and pitfalls:
   session cookies wouldn't be marked Secure. Empty (default) = trust
   nobody. Minimal Traefik idea: route `gateway.example.com` → `:8080`, and
   add the gateway container's network IP to `trusted_proxies`.
+- **Canonical address** (`ui.canonical_url`): once the box is reachable by a
+  proper hostname over HTTPS, set this (e.g. `https://gateway.lan`). The UI
+  then injects a tiny client-side redirect that steers any visitor who opened
+  it by raw IP or plain HTTP onto the canonical origin — so cookies, passkeys
+  and HSTS all bind to the one hostname. It's a browser-side steer, not a
+  server redirect, so the IP is never *blocked*: append **`?local`** to the URL
+  to stay on the IP (it sets a sticky `mbg-stay-local` flag in that browser),
+  which is the escape hatch when DNS/the proxy is down and you must reach the
+  box directly.
 
 ### 16.4 IP allowlist
 

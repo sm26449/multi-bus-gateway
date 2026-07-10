@@ -48,7 +48,8 @@ Fronius și orice PLC/SCADA văd fiecare meterul pe care îl așteaptă. Totul
 🏗️ **[Arhitectură (diagrame)](docs/architecture.md)** ·
 🔌 **[Referință API](docs/API.md)** ·
 📡 **[Spec meter virtual](docs/virtual-meter-spec.md)** ·
-🗂️ **[Catalog de dispozitive](docs/device-catalog.md)**
+🗂️ **[Catalog de dispozitive](docs/device-catalog.md)** ·
+🖼️ **[Ghid vizual UI](docs/GHID-UI.md)**
 
 ## De ce software, nu o cutie?
 
@@ -68,7 +69,7 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
 - 🍓 **Frugal, măsurat pe hardware limitat** — ~90 MB RAM și câteva procente
   CPU la o instalare tipică, fără scurgeri. Un **RPi 3 rulează confortabil
   ~4–5 dispozitive + ~3 metere virtuale** (realtime ≥ 1 s), un Pi 4/5 mult mai
-  mult. Plicul de capacitate complet + profilul recomandat: [MANUAL §18b](docs/MANUAL.md#18b-running-on-constrained-hardware-raspberry-pi).
+  mult. Plicul de capacitate complet + profilul recomandat: [MANUAL §18b](docs/MANUAL.ro.md#18b-rulare-pe-hardware-limitat-raspberry-pi).
 
 ## Caracteristici (3.0.0)
 
@@ -146,7 +147,8 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
   peste HTTPS).
 - **Audit trail** JSONL rotit (login-uri, scrieri, exporturi; payload-uri
   redactate), **cheie API** (`X-API-Key`), **allowlist de IP-uri**,
-  `ui.trusted_proxies` pentru reverse proxy (Traefik), HTTPS încorporat.
+  `ui.trusted_proxies` pentru reverse proxy (Traefik), HTTPS încorporat,
+  **redirect spre adresa canonică** (`ui.canonical_url`, portiță `?local`).
 - **Scrieri Modbus gated** — oprite implicit, allowlist din template cu
   `write_min`/`write_max`, **lease-uri dead-man crash-safe** (revert automat
   la `write_safe`), dispozitivul primar mereu read-only.
@@ -288,10 +290,11 @@ Implicit, appliance-ul e gândit pentru un **LAN de încredere** — totul e
 deschis local și fiecare strat de apărare e opt-in:
 
 - **Login + roluri** (admin/operator/viewer), lockout per IP, **passkeys
-  WebAuthn**, sesiuni HttpOnly.
+  WebAuthn**, sesiuni HttpOnly glisante 7 zile.
 - **Cheie API** (`API_KEY` → `X-API-Key` pe modificări), **allowlist de
   IP-uri**, **HTTPS** încorporat sau prin reverse proxy cu
-  `ui.trusted_proxies` (Traefik).
+  `ui.trusted_proxies` (Traefik), **adresă canonică** (`ui.canonical_url`)
+  cu portița `?local`.
 - **Scrieri Modbus** oprite implicit și, chiar activate, permise doar pe
   registre declarate writable în template, cu limite și lease-uri dead-man;
   **audit trail** pentru tot.

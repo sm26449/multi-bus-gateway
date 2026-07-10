@@ -44,7 +44,8 @@ in one container, on hardware you own.
 🏗️ **[Architecture (diagrams)](docs/architecture.md)** ·
 🔌 **[API Reference](docs/API.md)** ·
 📡 **[Virtual meter spec](docs/virtual-meter-spec.md)** ·
-🗂️ **[Device catalog](docs/device-catalog.md)**
+🗂️ **[Device catalog](docs/device-catalog.md)** ·
+🖼️ **[Visual UI guide](docs/GHID-UI.md)** (RO notes)
 
 ## Why software, not a box?
 
@@ -61,6 +62,10 @@ all the same. No vendor lock-in, no per-box cost.
   emulated devices; this one can.
 - 🔓 **Open source, commodity hardware** — inspect it, fork it, add a
   protocol.
+- 🍓 **Frugal, measured on constrained hardware** — ~90 MB RAM and a few
+  percent CPU on a typical install, no leaks. An **RPi 3 comfortably runs
+  ~4–5 devices + ~3 virtual meters** (realtime ≥ 1 s), a Pi 4/5 far more.
+  Full capacity envelope + recommended profile: [MANUAL §18b](docs/MANUAL.md#18b-running-on-constrained-hardware-raspberry-pi).
 
 ## Features (3.0.0)
 
@@ -141,7 +146,8 @@ all the same. No vendor lock-in, no per-box cost.
   hostname over HTTPS).
 - **Audit trail** (rotated JSONL; logins, writes, exports; redacted
   payloads), **API key** (`X-API-Key`), **IP allowlist**,
-  `ui.trusted_proxies` for reverse proxies (Traefik), built-in HTTPS.
+  `ui.trusted_proxies` for reverse proxies (Traefik), built-in HTTPS,
+  **canonical-address redirect** (`ui.canonical_url`, `?local` escape hatch).
 - **Gated Modbus writes** — off by default; template allowlist with
   `write_min`/`write_max`, **crash-safe dead-man leases** (auto-revert to
   `write_safe`), the primary device always read-only.
@@ -287,10 +293,11 @@ By default the appliance targets a **trusted LAN** — everything is open
 locally and every defense layer is opt-in:
 
 - **Login + roles** (admin/operator/viewer), per-IP lockout, **WebAuthn
-  passkeys**, HttpOnly sessions.
+  passkeys**, HttpOnly sessions (7-day sliding).
 - **API key** (`API_KEY` → `X-API-Key` on mutations), **IP allowlist**,
   built-in **HTTPS** or a reverse proxy with `ui.trusted_proxies`
-  (Traefik).
+  (Traefik), **canonical address** (`ui.canonical_url`) with a `?local`
+  escape hatch.
 - **Modbus writes** off by default and, even when enabled, only on
   registers declared writable in the template, with bounds and dead-man
   leases; an **audit trail** for everything.

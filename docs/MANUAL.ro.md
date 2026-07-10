@@ -575,7 +575,7 @@ parolă gol la salvare ca să o păstrezi pe cea curentă. **Activarea
 login-ului refuză admin/admin implicit** — setează întâi o parolă reală.
 Login-urile eșuate se blochează per IP (`lockout_threshold` /
 `lockout_minutes`, implicit 5 / 5 min). Sesiunile sunt cookie-uri HttpOnly,
-12 h glisante, în memorie — un restart de container deloghează pe toată
+glisante 7 zile, în memorie — un restart de container deloghează pe toată
 lumea. Audit trail-ul e doar pentru admin.
 
 ### 16.2 Passkey-uri (WebAuthn)
@@ -609,6 +609,15 @@ capcane:
   Gol (implicit) = nu ai încredere în nimeni. Schiță minimă Traefik: rutează
   `gateway.example.com` → `:8080` și adaugă IP-ul de rețea al containerului
   gateway-ului în `trusted_proxies`.
+- **Adresa canonică** (`ui.canonical_url`): odată ce cutia e accesibilă
+  printr-un hostname real peste HTTPS, setează asta (de ex.
+  `https://gateway.lan`). UI-ul injectează atunci un mic redirect client-side
+  care duce orice vizitator ce a deschis-o pe IP brut sau HTTP simplu către
+  originea canonică — așa cookie-urile, passkey-urile și HSTS se leagă toate de
+  un singur hostname. E o redirecționare din browser, nu din server, deci IP-ul
+  nu e niciodată *blocat*: adaugă **`?local`** la URL ca să rămâi pe IP (setează
+  un flag sticky `mbg-stay-local` în acel browser) — portița când DNS-ul/proxy-ul
+  e picat și trebuie să ajungi direct la cutie.
 
 ### 16.4 Allowlist de IP-uri
 
