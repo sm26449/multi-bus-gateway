@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional, List, Union
 
 import paho.mqtt.client as mqtt
 
+from . import __version__
 from .config import MQTTConfig, SelectedRegister
 
 import logging
@@ -521,7 +522,7 @@ class MQTTPublisher:
             "name": self.config.ha_device_name,
             "manufacturer": "Janitza electronics GmbH",
             "model": "UMG 512-PRO",
-            "sw_version": "3.0.0-dev",
+            "sw_version": __version__,
         }
 
     def _build_ha_sensor_config(self, register: SelectedRegister, device_info: Dict) -> Dict:

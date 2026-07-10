@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from . import __version__
 from .mqtt_publisher import MQTTPublisher
 from .influxdb_publisher import InfluxDBPublisher
 
@@ -271,7 +272,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     app = FastAPI(
         title="Multi-Bus Gateway",
         description="Multi-protocol acquisition gateway (Modbus/HTTP/MQTT in — MQTT/InfluxDB/virtual meters out)",
-        version="3.0.0-dev",
+        version=__version__,
         lifespan=lifespan
     )
 

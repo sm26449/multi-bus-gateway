@@ -1,4 +1,4 @@
-"""Janitza UMG 512-PRO Monitor Package."""
+"""Multi-Bus Gateway package."""
 
 __version__ = "3.0.0"
 __author__ = "sm26449"
