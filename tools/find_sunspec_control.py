@@ -1,4 +1,20 @@
 #!/usr/bin/env python3
+# Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
+# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
 """Find a SunSpec inverter's power-limit control register (model 123).
 
 read_sunspec.py decodes a *meter* (models 213/203) at a fixed offset. An
