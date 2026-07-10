@@ -1,11 +1,13 @@
 # Ghid vizual al interfeței — Multi-Bus Gateway
 
 Un tur ilustrat al fiecărei pagini, sub-pagini și tab din interfața web, cu note
-explicative pentru operator/integrator. Capturile sunt făcute pe o instanță cu
-date reale (un Janitza UMG 512-PRO + un Fronius Smart Meter). Bara de sus e
-identică peste tot: navigarea între pagini, indicatorii de stare (dispozitive /
-MQTT / InfluxDB / vmeter — verde = ok), selectorul de limbă și comutatorul de
-temă (clar/întunecat).
+explicative pentru operator/integrator. Capturile sunt făcute pe **instanța de
+producție** (mbus.diysolar.ro), cu date reale: un **Janitza UMG 512-PRO** (Modbus
+TCP, 60 măsurători) și un **Fronius Meter** (Solar API / HTTP, 16 măsurători),
+plus două metere virtuale servite mai departe către Victron și Fronius
+DataManager. Bara de sus e identică peste tot: navigarea între pagini,
+indicatorii de stare (dispozitive / MQTT / InfluxDB / vmeter — verde = ok),
+selectorul de limbă și comutatorul de temă (clar/întunecat).
 
 ---
 
@@ -185,10 +187,13 @@ E panoul de la care pornești securitatea când cutia iese din LAN-ul de încred
 
 ![Audit Trail](img/guide/15-settings-security-audit.png)
 
-**Jurnalul de audit** (partea de jos a paginii de securitate, doar admin): cine a
-schimbat ce, când, de la ce IP — cu payload-ul redactat. Filtrabil, exportabil
-CSV. Include login-uri (ok/greșit/lockout), scrieri pe dispozitive, exporturi de
+**Jurnalul de audit** (partea de jos a paginii de securitate): cine a schimbat
+ce, când, de la ce IP — cu payload-ul redactat. Filtrabil, exportabil CSV.
+Include login-uri (ok/greșit/lockout), scrieri pe dispozitive, exporturi de
 secrete. Fiecare refuz (403) apare pe numele contului care l-a încercat.
+**Doar rolul admin** poate citi conținutul: captura de aici e vederea unui
+*operator*, unde tabelul afișează „The audit trail requires the admin role" —
+adică exact gate-ul de rol în acțiune.
 
 ---
 
@@ -234,5 +239,7 @@ topicul din ce publică brokerul, nu-l tastezi orb). Pasul 2 alege template-ul
 - **Limbă**: EN + RO incluse; se adaugă altele copiind un fișier din
   `ui/languages/`.
 
-*Capturi generate pe versiunea 3.0.0. Când UI-ul se schimbă vizibil,
-re-generează-le rulând instanța de manual (auth off) și scriptul de captură.*
+*Capturi generate pe versiunea 3.0.0, din producție (mbus.diysolar.ro). Când
+UI-ul se schimbă vizibil, re-generează-le fie logat pe producție (script
+Playwright cu login), fie pe o instanță efemeră cu auth off — și rulează scriptul
+de captură.*
