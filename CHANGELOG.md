@@ -1,6 +1,12 @@
 # Changelog
 
-## 3.0.0 — relicensed to AGPL-3.0 (2026-07-10)
+## 3.0.0
+
+The 3.0.0 line — successor to the Janitza UMG 512 monitor under the
+**Multi-Bus Gateway** name (same engine, new identity). Dated entries below,
+newest first.
+
+### 2026-07-10 — relicensed to AGPL-3.0
 
 - **License change**: the project is now **GNU Affero General Public License
   v3.0** (was PolyForm Noncommercial 1.0.0). It is free and open-source under
@@ -12,7 +18,7 @@
   to every first-party source file (90 files). README badges and license
   sections (EN + RO) updated. No code behavior change.
 
-## 3.0.0 — sessions, canonical address & illustrated guide (2026-07-10)
+### 2026-07-10 — sessions, canonical address & illustrated guide
 
 Post-hardening follow-ups within 3.0.0:
 - **7-day sliding sessions** (was 12 h) — the session cookie renews on each
@@ -27,13 +33,13 @@ Post-hardening follow-ups within 3.0.0:
   integration test plan & procurement list, and a pinned Zigbee coordinator
   recommendation.
 
-## 3.0.0 — hardening & performance pass (2026-07-07)
+### 2026-07-07 — hardening & performance pass
 
 Pre-release hardening of 3.0.0: a nine-domain senior architecture review and a
 seven-domain performance audit (both adversarially verified), then fixes.
 Output remains byte-identical; 503 tests pass.
 
-### Correctness & safety (from the architecture review)
+#### Correctness & safety (from the architecture review)
 - **Virtual meters are read-only**: writes are refused with a Modbus exception
   so a consumer cannot inject a value (e.g. a false grid reading into an ESS
   control loop).
@@ -59,7 +65,7 @@ Output remains byte-identical; 503 tests pass.
   tests most-specific first (VA is no longer voltage, varh no longer reactive
   power); poison replay chunks (4xx) are dropped instead of blocking the buffer.
 
-### Performance / constrained hardware (from the perf audit)
+#### Performance / constrained hardware (from the perf audit)
 - GZip on responses (register catalog ~988 KB → ~40 KB over the LAN).
 - `threading.stack_size(512K)` before spawning threads (virtual footprint at
   40 threads ~320 → ~32 MB).
@@ -74,7 +80,7 @@ Output remains byte-identical; 503 tests pass.
   an RPi 3 comfortably runs ~4–5 devices + ~3 virtual meters at realtime ≥ 1 s;
   the single GIL at a fast cadence — not RAM — is the only wall.
 
-## 3.0.0 — 2026-07-06
+### 2026-07-06 — initial release under the Multi-Bus Gateway name
 
 First release under the **Multi-Bus Gateway** name (successor of the
 Janitza UMG 512 monitor; same engine, new identity). Highlights vs 2.7.0:
