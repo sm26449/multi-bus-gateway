@@ -225,14 +225,14 @@ stateDiagram-v2
         state "fail" as F
         state "sentinel" as S
         state "hold" as H
-        L : row keeps last words —<br/>freshness judged once per instance;<br/>all-stale ⇒ server stops responding
-        F : any read touching the row ⇒<br/>Modbus exception (no partial truth)
+        L : row keeps last words —<br/>freshness judged once per instance ·<br/>all-stale then server stops responding
+        F : any read touching the row gives<br/>a Modbus exception (no partial truth)
         S : row served as SunSpec N/A —<br/>float→NaN, int16→0x8000, uint16→0xFFFF…
         H : last value held up to max_hold_s,<br/>then behaves like fail
     }
 
     Stale --> P
-    P --> [*] : server stays up while ≥1 source is fresh<br/>(policy modes); all dead ⇒ socket closes so the<br/>consumer's own meter-loss fail-safe engages
+    P --> [*] : server stays up while ≥1 source is fresh<br/>(policy modes) · all dead then socket closes so the<br/>consumer's own meter-loss fail-safe engages
 ```
 
 The rationale is a single rule: **absence is not encodable as a
