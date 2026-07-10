@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.0.0 — relicensed to AGPL-3.0 (2026-07-10)
+
+- **License change**: the project is now **GNU Affero General Public License
+  v3.0** (was PolyForm Noncommercial 1.0.0). It is free and open-source under
+  the AGPL — commercial use is allowed, but distributing a modified version, or
+  offering it as a **network/SaaS service**, requires making the **complete
+  source code** available to those users under the same license. The
+  paid-commercial-license model no longer applies.
+- `LICENSE` is the verbatim AGPL-3.0 text; the full FSF notice header was added
+  to every first-party source file (90 files). README badges and license
+  sections (EN + RO) updated. No code behavior change.
+
 ## 3.0.0 — sessions, canonical address & illustrated guide (2026-07-10)
 
 Post-hardening follow-ups within 3.0.0:
