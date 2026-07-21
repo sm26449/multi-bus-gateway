@@ -9,6 +9,10 @@
             "unit": "V",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "voltage/l1_n"
@@ -26,7 +30,7 @@
                 "widget": "gauge",
                 "min": 0,
                 "max": 300,
-                "color": "#3b82f6",
+                "color": "var(--phase-l1)",
                 "wide": false,
                 "dashboard_order": 2
             },
@@ -46,6 +50,10 @@
             "unit": "V",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "voltage/l2_n"
@@ -63,7 +71,7 @@
                 "widget": "gauge",
                 "min": 0,
                 "max": 300,
-                "color": "#22c55e",
+                "color": "var(--phase-l2)",
                 "wide": false,
                 "dashboard_order": 3
             },
@@ -83,6 +91,10 @@
             "unit": "V",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "voltage/l3_n"
@@ -100,7 +112,7 @@
                 "widget": "gauge",
                 "min": 0,
                 "max": 300,
-                "color": "#eab308",
+                "color": "var(--phase-l3)",
                 "wide": false,
                 "dashboard_order": 4
             },
@@ -120,6 +132,10 @@
             "unit": "W",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "power/active/total"
@@ -137,7 +153,8 @@
                 "widget": "chart",
                 "chart_type": "line",
                 "wide": false,
-                "dashboard_order": 5
+                "dashboard_order": 5,
+                "color": "#12a3b2"
             },
             "thresholds": null
         },
@@ -149,6 +166,10 @@
             "unit": "Hz",
             "data_type": "float",
             "poll_group": "normal",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "frequency"
@@ -163,7 +184,8 @@
                 "widget": "value",
                 "decimals": 2,
                 "wide": false,
-                "dashboard_order": 6
+                "dashboard_order": 6,
+                "color": "var(--accent)"
             },
             "thresholds": null
         },
@@ -175,6 +197,10 @@
             "unit": "Wh",
             "data_type": "float",
             "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "energy/active/total"
@@ -193,7 +219,8 @@
                 "decimals": 0,
                 "format": "kWh",
                 "wide": false,
-                "dashboard_order": 14
+                "dashboard_order": 14,
+                "color": "#d29922"
             },
             "thresholds": null
         },
@@ -205,6 +232,10 @@
             "unit": "V",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "voltage/voltage_l1l2"
@@ -222,7 +253,7 @@
                 "widget": "value",
                 "wide": false,
                 "dashboard_order": 7,
-                "color": "#3b82f6"
+                "color": "var(--phase-l1)"
             },
             "thresholds": {
                 "enabled": true,
@@ -240,6 +271,10 @@
             "unit": "V",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "voltage/voltage_l2l3"
@@ -257,7 +292,7 @@
                 "widget": "value",
                 "wide": false,
                 "dashboard_order": 8,
-                "color": "#3b82f6"
+                "color": "var(--phase-l2)"
             },
             "thresholds": {
                 "enabled": true,
@@ -275,6 +310,10 @@
             "unit": "V",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "voltage/voltage_l3l1"
@@ -292,7 +331,7 @@
                 "widget": "value",
                 "wide": false,
                 "dashboard_order": 9,
-                "color": "#3b82f6"
+                "color": "var(--phase-l3)"
             },
             "thresholds": {
                 "enabled": true,
@@ -310,6 +349,10 @@
             "unit": "A",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "current/vector_sum_in_i1_i2_i3"
@@ -326,7 +369,7 @@
                 "widget": "value",
                 "wide": false,
                 "dashboard_order": 15,
-                "color": "#3b82f6"
+                "color": "var(--accent)"
             },
             "thresholds": {
                 "enabled": true,
@@ -344,6 +387,10 @@
             "unit": "%",
             "data_type": "float",
             "poll_group": "normal",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "quality/unsymmetrical_voltage"
@@ -356,7 +403,7 @@
             "ui": {
                 "show_on_dashboard": true,
                 "widget": "value",
-                "color": "#3b82f6",
+                "color": "var(--accent)",
                 "wide": false,
                 "dashboard_order": 16
             },
@@ -376,6 +423,10 @@
             "unit": "%",
             "data_type": "float",
             "poll_group": "normal",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "quality/unsymmetrical_current"
@@ -388,7 +439,7 @@
             "ui": {
                 "show_on_dashboard": true,
                 "widget": "value",
-                "color": "#3b82f6",
+                "color": "var(--accent)",
                 "wide": false,
                 "dashboard_order": 17
             },
@@ -408,6 +459,10 @@
             "unit": "A",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "current/apparent_current_l1"
@@ -423,7 +478,7 @@
             "ui": {
                 "show_on_dashboard": true,
                 "widget": "chart",
-                "color": "#3b82f6",
+                "color": "var(--phase-l1)",
                 "wide": false,
                 "dashboard_order": 10
             },
@@ -443,6 +498,10 @@
             "unit": "A",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "current/apparent_current_l2"
@@ -458,7 +517,7 @@
             "ui": {
                 "show_on_dashboard": true,
                 "widget": "chart",
-                "color": "#3b82f6",
+                "color": "var(--phase-l2)",
                 "wide": false,
                 "dashboard_order": 11
             },
@@ -478,6 +537,10 @@
             "unit": "A",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "current/apparent_current_l3"
@@ -493,7 +556,7 @@
             "ui": {
                 "show_on_dashboard": true,
                 "widget": "chart",
-                "color": "#3b82f6",
+                "color": "var(--phase-l3)",
                 "wide": false,
                 "dashboard_order": 12
             },
@@ -513,6 +576,10 @@
             "unit": "var",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "power/reactive_power_l1_fundamental_comp"
@@ -528,7 +595,7 @@
             "ui": {
                 "show_on_dashboard": true,
                 "widget": "chart",
-                "color": "#3b82f6",
+                "color": "var(--phase-l1)",
                 "wide": false,
                 "dashboard_order": 18
             },
@@ -548,6 +615,10 @@
             "unit": "var",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "power/reactive_power_l2_fundamental_comp"
@@ -563,7 +634,7 @@
             "ui": {
                 "show_on_dashboard": true,
                 "widget": "chart",
-                "color": "#3b82f6",
+                "color": "var(--phase-l2)",
                 "wide": false,
                 "dashboard_order": 19
             },
@@ -583,6 +654,10 @@
             "unit": "var",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "power/reactive_power_l3_fundamental_comp"
@@ -598,7 +673,7 @@
             "ui": {
                 "show_on_dashboard": true,
                 "widget": "chart",
-                "color": "#3b82f6",
+                "color": "var(--phase-l3)",
                 "wide": false,
                 "dashboard_order": 20
             },
@@ -618,6 +693,10 @@
             "unit": "VA",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "power/apparent_power_l1"
@@ -633,7 +712,7 @@
             "ui": {
                 "show_on_dashboard": true,
                 "widget": "chart",
-                "color": "#3b82f6",
+                "color": "var(--phase-l1)",
                 "wide": false,
                 "dashboard_order": 21
             },
@@ -653,6 +732,10 @@
             "unit": "VA",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "power/apparent_power_l2"
@@ -668,7 +751,7 @@
             "ui": {
                 "show_on_dashboard": true,
                 "widget": "chart",
-                "color": "#3b82f6",
+                "color": "var(--phase-l2)",
                 "wide": false,
                 "dashboard_order": 22
             },
@@ -688,6 +771,10 @@
             "unit": "VA",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "power/apparent_power_l3"
@@ -703,7 +790,7 @@
             "ui": {
                 "show_on_dashboard": true,
                 "widget": "chart",
-                "color": "#3b82f6",
+                "color": "var(--phase-l3)",
                 "wide": false,
                 "dashboard_order": 23
             },
@@ -723,6 +810,10 @@
             "unit": "VA",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "power/sum_s_s1_s2_s3"
@@ -737,16 +828,16 @@
             "ui": {
                 "show_on_dashboard": true,
                 "widget": "value",
-                "color": "#3b82f6",
+                "color": "var(--accent)",
                 "wide": false,
-                "dashboard_order": 0
+                "dashboard_order": 1
             },
             "thresholds": {
                 "enabled": true,
                 "dangerLow": null,
                 "warningLow": null,
-                "warningHigh": 90.0,
-                "dangerHigh": 100.0
+                "warningHigh": 90000.0,
+                "dangerHigh": 100000.0
             }
         },
         {
@@ -757,6 +848,10 @@
             "unit": "W",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "power/sum_p_p1_p2_p3"
@@ -771,16 +866,16 @@
             "ui": {
                 "show_on_dashboard": true,
                 "widget": "value",
-                "color": "#3b82f6",
+                "color": "#12a3b2",
                 "wide": false,
-                "dashboard_order": 1
+                "dashboard_order": 0
             },
             "thresholds": {
                 "enabled": true,
                 "dangerLow": null,
                 "warningLow": null,
-                "warningHigh": 90.0,
-                "dangerHigh": 100.0
+                "warningHigh": 90000.0,
+                "dangerHigh": 100000.0
             }
         },
         {
@@ -791,6 +886,10 @@
             "unit": "var",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "power/mains_frequency_reactive_power_sum_q_q1_q2_q3"
@@ -806,7 +905,7 @@
             "ui": {
                 "show_on_dashboard": true,
                 "widget": "value",
-                "color": "#3b82f6",
+                "color": "var(--accent)",
                 "wide": false,
                 "dashboard_order": 24
             },
@@ -826,6 +925,10 @@
             "unit": "W",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "power/active/l1"
@@ -841,7 +944,7 @@
             "ui": {
                 "show_on_dashboard": true,
                 "widget": "chart",
-                "color": "#3b82f6",
+                "color": "var(--phase-l1)",
                 "wide": false,
                 "dashboard_order": 25
             },
@@ -855,6 +958,10 @@
             "unit": "W",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "power/active/l2"
@@ -870,7 +977,7 @@
             "ui": {
                 "show_on_dashboard": true,
                 "widget": "chart",
-                "color": "#22c55e",
+                "color": "var(--phase-l2)",
                 "wide": false,
                 "dashboard_order": 26
             },
@@ -884,6 +991,10 @@
             "unit": "W",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "power/active/l3"
@@ -899,7 +1010,7 @@
             "ui": {
                 "show_on_dashboard": true,
                 "widget": "chart",
-                "color": "#eab308",
+                "color": "var(--phase-l3)",
                 "wide": false,
                 "dashboard_order": 27
             },
@@ -913,6 +1024,10 @@
             "unit": "",
             "data_type": "float",
             "poll_group": "normal",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "power_factor/l1"
@@ -928,7 +1043,7 @@
                 "show_on_dashboard": true,
                 "widget": "value",
                 "decimals": 3,
-                "color": "#3b82f6",
+                "color": "var(--accent)",
                 "wide": false,
                 "dashboard_order": 28
             },
@@ -942,6 +1057,10 @@
             "unit": "",
             "data_type": "float",
             "poll_group": "normal",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "power_factor/l2"
@@ -957,7 +1076,7 @@
                 "show_on_dashboard": true,
                 "widget": "value",
                 "decimals": 3,
-                "color": "#22c55e",
+                "color": "var(--accent)",
                 "wide": false,
                 "dashboard_order": 29
             },
@@ -971,6 +1090,10 @@
             "unit": "",
             "data_type": "float",
             "poll_group": "normal",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "power_factor/l3"
@@ -986,7 +1109,7 @@
                 "show_on_dashboard": true,
                 "widget": "value",
                 "decimals": 3,
-                "color": "#eab308",
+                "color": "var(--accent)",
                 "wide": false,
                 "dashboard_order": 30
             },
@@ -1000,6 +1123,10 @@
             "unit": "%",
             "data_type": "float",
             "poll_group": "normal",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "thd/voltage/l1"
@@ -1016,7 +1143,7 @@
                 "show_on_dashboard": true,
                 "widget": "value",
                 "decimals": 1,
-                "color": "#3b82f6",
+                "color": "var(--accent)",
                 "wide": false,
                 "dashboard_order": 31
             },
@@ -1036,6 +1163,10 @@
             "unit": "%",
             "data_type": "float",
             "poll_group": "normal",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "thd/voltage/l2"
@@ -1052,7 +1183,7 @@
                 "show_on_dashboard": true,
                 "widget": "value",
                 "decimals": 1,
-                "color": "#22c55e",
+                "color": "var(--accent)",
                 "wide": false,
                 "dashboard_order": 32
             },
@@ -1072,6 +1203,10 @@
             "unit": "%",
             "data_type": "float",
             "poll_group": "normal",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "thd/voltage/l3"
@@ -1088,7 +1223,7 @@
                 "show_on_dashboard": true,
                 "widget": "value",
                 "decimals": 1,
-                "color": "#eab308",
+                "color": "var(--accent)",
                 "wide": false,
                 "dashboard_order": 33
             },
@@ -1108,6 +1243,10 @@
             "unit": "%",
             "data_type": "float",
             "poll_group": "normal",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "thd/current/l1"
@@ -1124,7 +1263,7 @@
                 "show_on_dashboard": true,
                 "widget": "value",
                 "decimals": 1,
-                "color": "#3b82f6",
+                "color": "var(--accent)",
                 "wide": false,
                 "dashboard_order": 34
             },
@@ -1144,6 +1283,10 @@
             "unit": "%",
             "data_type": "float",
             "poll_group": "normal",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "thd/current/l2"
@@ -1160,7 +1303,7 @@
                 "show_on_dashboard": true,
                 "widget": "value",
                 "decimals": 1,
-                "color": "#22c55e",
+                "color": "var(--accent)",
                 "wide": false,
                 "dashboard_order": 35
             },
@@ -1180,6 +1323,10 @@
             "unit": "%",
             "data_type": "float",
             "poll_group": "normal",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "thd/current/l3"
@@ -1196,7 +1343,7 @@
                 "show_on_dashboard": true,
                 "widget": "value",
                 "decimals": 1,
-                "color": "#eab308",
+                "color": "var(--accent)",
                 "wide": false,
                 "dashboard_order": 36
             },
@@ -1216,6 +1363,10 @@
             "unit": "A",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "current/apparent_current_l4"
@@ -1230,7 +1381,7 @@
             "ui": {
                 "show_on_dashboard": true,
                 "widget": "chart",
-                "color": "#3b82f6",
+                "color": "var(--accent)",
                 "wide": false,
                 "dashboard_order": 13
             },
@@ -1250,6 +1401,10 @@
             "unit": "°C",
             "data_type": "float",
             "poll_group": "normal",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "config/internal_temperature"
@@ -1262,7 +1417,9 @@
             "ui": {
                 "show_on_dashboard": true,
                 "widget": "chart",
-                "color": "#3b82f6"
+                "color": "#f97316",
+                "wide": false,
+                "dashboard_order": 59
             },
             "thresholds": {
                 "enabled": false,
@@ -1280,6 +1437,10 @@
             "unit": "",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "power_factor/total"
@@ -1296,9 +1457,9 @@
                 "widget": "value",
                 "min": -1,
                 "max": 1,
-                "color": "#14b8a6",
+                "color": "var(--accent)",
                 "wide": false,
-                "dashboard_order": 50
+                "dashboard_order": 37
             },
             "thresholds": {
                 "enabled": true,
@@ -1316,6 +1477,10 @@
             "unit": "",
             "data_type": "float",
             "poll_group": "realtime",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "power_factor/cos_phi_total"
@@ -1335,10 +1500,14 @@
                 "max": 1,
                 "color": "#06b6d4",
                 "wide": false,
-                "dashboard_order": 51
+                "dashboard_order": 38
             },
             "thresholds": {
-                "enabled": false
+                "enabled": false,
+                "dangerLow": null,
+                "warningLow": null,
+                "warningHigh": null,
+                "dangerHigh": null
             }
         },
         {
@@ -1349,6 +1518,10 @@
             "unit": "Hz",
             "data_type": "float",
             "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "frequency/min"
@@ -1367,7 +1540,7 @@
                 "max": 51,
                 "color": "#a855f7",
                 "wide": false,
-                "dashboard_order": 52
+                "dashboard_order": 39
             },
             "thresholds": {
                 "enabled": true,
@@ -1385,6 +1558,10 @@
             "unit": "Hz",
             "data_type": "float",
             "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "frequency/max"
@@ -1403,7 +1580,7 @@
                 "max": 51,
                 "color": "#a855f7",
                 "wide": false,
-                "dashboard_order": 53
+                "dashboard_order": 40
             },
             "thresholds": {
                 "enabled": true,
@@ -1421,6 +1598,10 @@
             "unit": "",
             "data_type": "float",
             "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "quality/flicker_pst/l1"
@@ -1440,12 +1621,12 @@
                 "max": 5,
                 "color": "#f59e0b",
                 "wide": false,
-                "dashboard_order": 54
+                "dashboard_order": 41
             },
             "thresholds": {
                 "enabled": true,
-                "dangerLow": -1,
-                "warningLow": -1,
+                "dangerLow": -1.0,
+                "warningLow": -1.0,
                 "warningHigh": 1.0,
                 "dangerHigh": 2.0
             }
@@ -1458,6 +1639,10 @@
             "unit": "",
             "data_type": "float",
             "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "quality/flicker_pst/l2"
@@ -1477,12 +1662,12 @@
                 "max": 5,
                 "color": "#f59e0b",
                 "wide": false,
-                "dashboard_order": 55
+                "dashboard_order": 42
             },
             "thresholds": {
                 "enabled": true,
-                "dangerLow": -1,
-                "warningLow": -1,
+                "dangerLow": -1.0,
+                "warningLow": -1.0,
                 "warningHigh": 1.0,
                 "dangerHigh": 2.0
             }
@@ -1495,6 +1680,10 @@
             "unit": "",
             "data_type": "float",
             "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "quality/flicker_pst/l3"
@@ -1514,12 +1703,12 @@
                 "max": 5,
                 "color": "#f59e0b",
                 "wide": false,
-                "dashboard_order": 56
+                "dashboard_order": 43
             },
             "thresholds": {
                 "enabled": true,
-                "dangerLow": -1,
-                "warningLow": -1,
+                "dangerLow": -1.0,
+                "warningLow": -1.0,
                 "warningHigh": 1.0,
                 "dangerHigh": 2.0
             }
@@ -1532,6 +1721,10 @@
             "unit": "",
             "data_type": "float",
             "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "quality/phase_sequence"
@@ -1550,15 +1743,28 @@
                 "max": 1,
                 "color": "#64748b",
                 "wide": false,
-                "dashboard_order": 57
+                "dashboard_order": 44
             },
             "thresholds": {
-                "enabled": false
+                "enabled": false,
+                "dangerLow": null,
+                "warningLow": null,
+                "warningHigh": null,
+                "dangerHigh": null
             }
         },
         {
+            "address": 6496,
+            "name": "_QH[4]",
+            "description": "",
+            "label": "Energie Reactiva Totala",
+            "unit": "varh",
             "data_type": "float",
             "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "energy/reactive/total"
@@ -1577,18 +1783,22 @@
                 "decimals": 1,
                 "format": "kVArh",
                 "wide": false,
-                "dashboard_order": 100
+                "dashboard_order": 47
             },
-            "thresholds": null,
-            "address": 6496,
-            "name": "_QH[4]",
-            "description": "",
-            "label": "Energie Reactiva Totala",
-            "unit": "varh"
+            "thresholds": null
         },
         {
+            "address": 19100,
+            "name": "_G_IQH_SUML13",
+            "description": "",
+            "label": "Energie Reactiva Inductiva",
+            "unit": "varh",
             "data_type": "float",
             "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "energy/reactive/inductive"
@@ -1608,18 +1818,22 @@
                 "decimals": 1,
                 "format": "kVArh",
                 "wide": false,
-                "dashboard_order": 101
+                "dashboard_order": 48
             },
-            "thresholds": null,
-            "address": 19100,
-            "name": "_G_IQH_SUML13",
-            "description": "",
-            "label": "Energie Reactiva Inductiva",
-            "unit": "varh"
+            "thresholds": null
         },
         {
+            "address": 19108,
+            "name": "_G_CQH_SUML13",
+            "description": "",
+            "label": "Energie Reactiva Capacitiva",
+            "unit": "varh",
             "data_type": "float",
             "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "energy/reactive/capacitive"
@@ -1639,18 +1853,22 @@
                 "decimals": 1,
                 "format": "kVArh",
                 "wide": false,
-                "dashboard_order": 102
+                "dashboard_order": 49
             },
-            "thresholds": null,
-            "address": 19108,
-            "name": "_G_CQH_SUML13",
-            "description": "",
-            "label": "Energie Reactiva Capacitiva",
-            "unit": "varh"
+            "thresholds": null
         },
         {
+            "address": 6472,
+            "name": "_WH_S[4]",
+            "description": "",
+            "label": "Energie Aparenta Totala",
+            "unit": "VAh",
             "data_type": "float",
             "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "energy/apparent/total"
@@ -1669,18 +1887,22 @@
                 "decimals": 1,
                 "format": "kVAh",
                 "wide": false,
-                "dashboard_order": 103
+                "dashboard_order": 50
             },
-            "thresholds": null,
-            "address": 6472,
-            "name": "_WH_S[4]",
-            "description": "",
-            "label": "Energie Aparenta Totala",
-            "unit": "VAh"
+            "thresholds": null
         },
         {
+            "address": 6508,
+            "name": "_WH_V[4]",
+            "description": "",
+            "label": "Energie Activa Consumata (Import)",
+            "unit": "Wh",
             "data_type": "float",
             "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "energy/active/consumed"
@@ -1700,18 +1922,22 @@
                 "decimals": 1,
                 "format": "kWh",
                 "wide": false,
-                "dashboard_order": 104
+                "dashboard_order": 51
             },
-            "thresholds": null,
-            "address": 6508,
-            "name": "_WH_V[4]",
-            "description": "",
-            "label": "Energie Activa Consumata (Import)",
-            "unit": "Wh"
+            "thresholds": null
         },
         {
+            "address": 6520,
+            "name": "_WH_Z[4]",
+            "description": "",
+            "label": "Energie Activa Livrata (Export)",
+            "unit": "Wh",
             "data_type": "float",
             "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
             "mqtt": {
                 "enabled": true,
                 "topic": "energy/active/delivered"
@@ -1731,28 +1957,531 @@
                 "decimals": 1,
                 "format": "kWh",
                 "wide": false,
-                "dashboard_order": 105
+                "dashboard_order": 55
             },
-            "thresholds": null,
-            "address": 6520,
-            "name": "_WH_Z[4]",
+            "thresholds": null
+        },
+        {
+            "address": 6500,
+            "name": "_WH_V[0]",
             "description": "",
-            "label": "Energie Activa Livrata (Export)",
-            "unit": "Wh"
+            "label": "Energie Activa Consumata L1 (Import)",
+            "unit": "Wh",
+            "data_type": "float",
+            "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
+            "mqtt": {
+                "enabled": false,
+                "topic": "energy/active/consumed"
+            },
+            "influxdb": {
+                "enabled": false,
+                "measurement": "energy",
+                "tags": {
+                    "type": "active",
+                    "aggregate": "sum",
+                    "direction": "consumed"
+                }
+            },
+            "ui": {
+                "show_on_dashboard": false,
+                "widget": "value",
+                "decimals": 1,
+                "format": "kWh",
+                "wide": false,
+                "dashboard_order": 52
+            },
+            "thresholds": null
+        },
+        {
+            "address": 6502,
+            "name": "_WH_V[1]",
+            "description": "",
+            "label": "Energie Activa Consumata L2 (Import)",
+            "unit": "Wh",
+            "data_type": "float",
+            "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
+            "mqtt": {
+                "enabled": false,
+                "topic": "energy/active/consumed"
+            },
+            "influxdb": {
+                "enabled": false,
+                "measurement": "energy",
+                "tags": {
+                    "type": "active",
+                    "aggregate": "sum",
+                    "direction": "consumed"
+                }
+            },
+            "ui": {
+                "show_on_dashboard": false,
+                "widget": "value",
+                "decimals": 1,
+                "format": "kWh",
+                "wide": false,
+                "dashboard_order": 53
+            },
+            "thresholds": null
+        },
+        {
+            "address": 6504,
+            "name": "_WH_V[2]",
+            "description": "",
+            "label": "Energie Activa Consumata L3 (Import)",
+            "unit": "Wh",
+            "data_type": "float",
+            "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
+            "mqtt": {
+                "enabled": false,
+                "topic": "energy/active/consumed"
+            },
+            "influxdb": {
+                "enabled": false,
+                "measurement": "energy",
+                "tags": {
+                    "type": "active",
+                    "aggregate": "sum",
+                    "direction": "consumed"
+                }
+            },
+            "ui": {
+                "show_on_dashboard": false,
+                "widget": "value",
+                "decimals": 1,
+                "format": "kWh",
+                "wide": false,
+                "dashboard_order": 54
+            },
+            "thresholds": null
+        },
+        {
+            "address": 6512,
+            "name": "_WH_Z[0]",
+            "description": "",
+            "label": "Energie Activa Livrata L1 (Export)",
+            "unit": "Wh",
+            "data_type": "float",
+            "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
+            "mqtt": {
+                "enabled": false,
+                "topic": "energy/active/delivered"
+            },
+            "influxdb": {
+                "enabled": false,
+                "measurement": "energy",
+                "tags": {
+                    "type": "active",
+                    "aggregate": "sum",
+                    "direction": "delivered"
+                }
+            },
+            "ui": {
+                "show_on_dashboard": false,
+                "widget": "value",
+                "decimals": 1,
+                "format": "kWh",
+                "wide": false,
+                "dashboard_order": 56
+            },
+            "thresholds": null
+        },
+        {
+            "address": 6514,
+            "name": "_WH_Z[1]",
+            "description": "",
+            "label": "Energie Activa Livrata L2 (Export)",
+            "unit": "Wh",
+            "data_type": "float",
+            "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
+            "mqtt": {
+                "enabled": false,
+                "topic": "energy/active/delivered"
+            },
+            "influxdb": {
+                "enabled": false,
+                "measurement": "energy",
+                "tags": {
+                    "type": "active",
+                    "aggregate": "sum",
+                    "direction": "delivered"
+                }
+            },
+            "ui": {
+                "show_on_dashboard": false,
+                "widget": "value",
+                "decimals": 1,
+                "format": "kWh",
+                "wide": false,
+                "dashboard_order": 57
+            },
+            "thresholds": null
+        },
+        {
+            "address": 6516,
+            "name": "_WH_Z[2]",
+            "description": "",
+            "label": "Energie Activa Livrata L3 (Export)",
+            "unit": "Wh",
+            "data_type": "float",
+            "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
+            "mqtt": {
+                "enabled": false,
+                "topic": "energy/active/delivered"
+            },
+            "influxdb": {
+                "enabled": false,
+                "measurement": "energy",
+                "tags": {
+                    "type": "active",
+                    "aggregate": "sum",
+                    "direction": "delivered"
+                }
+            },
+            "ui": {
+                "show_on_dashboard": false,
+                "widget": "value",
+                "decimals": 1,
+                "format": "kWh",
+                "wide": false,
+                "dashboard_order": 58
+            },
+            "thresholds": null
+        },
+        {
+            "address": 6580,
+            "name": "_IQH[4]",
+            "description": "Reactive energy L1..L3, inductive (consumed)",
+            "label": "Reactive energy L1..L3, inductive (consumed)",
+            "unit": "varh",
+            "data_type": "float",
+            "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
+            "mqtt": {
+                "enabled": true,
+                "topic": "energy/iqh4"
+            },
+            "influxdb": {
+                "enabled": true,
+                "measurement": "energy",
+                "tags": {
+                    "type": "reactive"
+                }
+            },
+            "ui": {
+                "show_on_dashboard": false,
+                "widget": "value",
+                "color": "#888",
+                "wide": false,
+                "dashboard_order": 45
+            },
+            "thresholds": {
+                "enabled": false,
+                "dangerLow": null,
+                "warningLow": null,
+                "warningHigh": null,
+                "dangerHigh": null
+            }
+        },
+        {
+            "address": 6592,
+            "name": "_CQH[4]",
+            "description": "Reactive energy L1..L3, capacitive (produced)",
+            "label": "Reactive energy L1..L3, capacitive (produced)",
+            "unit": "varh",
+            "data_type": "float",
+            "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
+            "mqtt": {
+                "enabled": true,
+                "topic": "energy/cqh4"
+            },
+            "influxdb": {
+                "enabled": true,
+                "measurement": "energy",
+                "tags": {
+                    "type": "reactive"
+                }
+            },
+            "ui": {
+                "show_on_dashboard": false,
+                "widget": "value",
+                "color": "#888",
+                "wide": false,
+                "dashboard_order": 46
+            },
+            "thresholds": {
+                "enabled": false,
+                "dangerLow": null,
+                "warningLow": null,
+                "warningHigh": null,
+                "dangerHigh": null
+            }
+        },
+        {
+            "address": 4549,
+            "name": "_ULN_MIN[0]",
+            "description": "Tensiune L1-N Min (drag)",
+            "label": "Tensiune L1-N Min (drag)",
+            "unit": "V",
+            "data_type": "float",
+            "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
+            "mqtt": {
+                "enabled": true,
+                "topic": "voltage/l1_n_min"
+            },
+            "influxdb": {
+                "enabled": true,
+                "measurement": "voltage",
+                "tags": {
+                    "type": "min",
+                    "phase": "l1"
+                }
+            },
+            "ui": {
+                "show_on_dashboard": false,
+                "widget": "value",
+                "decimals": 1,
+                "wide": false,
+                "dashboard_order": 60,
+                "color": "#ef4444"
+            },
+            "thresholds": {
+                "enabled": true,
+                "dangerLow": 195.0,
+                "warningLow": 216.0,
+                "warningHigh": 253.0,
+                "dangerHigh": 260.0
+            }
+        },
+        {
+            "address": 4551,
+            "name": "_ULN_MIN[1]",
+            "description": "Tensiune L2-N Min (drag)",
+            "label": "Tensiune L2-N Min (drag)",
+            "unit": "V",
+            "data_type": "float",
+            "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
+            "mqtt": {
+                "enabled": true,
+                "topic": "voltage/l2_n_min"
+            },
+            "influxdb": {
+                "enabled": true,
+                "measurement": "voltage",
+                "tags": {
+                    "type": "min",
+                    "phase": "l2"
+                }
+            },
+            "ui": {
+                "show_on_dashboard": false,
+                "widget": "value",
+                "decimals": 1,
+                "wide": false,
+                "dashboard_order": 60,
+                "color": "#ef4444"
+            },
+            "thresholds": {
+                "enabled": true,
+                "dangerLow": 195.0,
+                "warningLow": 216.0,
+                "warningHigh": 253.0,
+                "dangerHigh": 260.0
+            }
+        },
+        {
+            "address": 4553,
+            "name": "_ULN_MIN[2]",
+            "description": "Tensiune L3-N Min (drag)",
+            "label": "Tensiune L3-N Min (drag)",
+            "unit": "V",
+            "data_type": "float",
+            "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
+            "mqtt": {
+                "enabled": true,
+                "topic": "voltage/l3_n_min"
+            },
+            "influxdb": {
+                "enabled": true,
+                "measurement": "voltage",
+                "tags": {
+                    "type": "min",
+                    "phase": "l3"
+                }
+            },
+            "ui": {
+                "show_on_dashboard": false,
+                "widget": "value",
+                "decimals": 1,
+                "wide": false,
+                "dashboard_order": 60,
+                "color": "#ef4444"
+            },
+            "thresholds": {
+                "enabled": true,
+                "dangerLow": 195.0,
+                "warningLow": 216.0,
+                "warningHigh": 253.0,
+                "dangerHigh": 260.0
+            }
+        },
+        {
+            "address": 5242,
+            "name": "_ULN_MIN_T[0]",
+            "description": "Ora minim L1-N (UTC)",
+            "label": "Ora minim L1-N (UTC)",
+            "unit": "s",
+            "data_type": "uint32",
+            "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
+            "mqtt": {
+                "enabled": true,
+                "topic": "voltage/l1_n_min_time"
+            },
+            "influxdb": {
+                "enabled": true,
+                "measurement": "voltage",
+                "tags": {
+                    "type": "min_time",
+                    "phase": "l1"
+                }
+            },
+            "ui": {
+                "show_on_dashboard": false,
+                "widget": "value",
+                "decimals": 1,
+                "wide": false,
+                "dashboard_order": 60,
+                "color": "#ef4444"
+            },
+            "thresholds": null
+        },
+        {
+            "address": 5244,
+            "name": "_ULN_MIN_T[1]",
+            "description": "Ora minim L2-N (UTC)",
+            "label": "Ora minim L2-N (UTC)",
+            "unit": "s",
+            "data_type": "uint32",
+            "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
+            "mqtt": {
+                "enabled": true,
+                "topic": "voltage/l2_n_min_time"
+            },
+            "influxdb": {
+                "enabled": true,
+                "measurement": "voltage",
+                "tags": {
+                    "type": "min_time",
+                    "phase": "l2"
+                }
+            },
+            "ui": {
+                "show_on_dashboard": false,
+                "widget": "value",
+                "decimals": 1,
+                "wide": false,
+                "dashboard_order": 60,
+                "color": "#ef4444"
+            },
+            "thresholds": null
+        },
+        {
+            "address": 5246,
+            "name": "_ULN_MIN_T[2]",
+            "description": "Ora minim L3-N (UTC)",
+            "label": "Ora minim L3-N (UTC)",
+            "unit": "s",
+            "data_type": "uint32",
+            "poll_group": "slow",
+            "json_path": "",
+            "topic": "",
+            "scale": 1.0,
+            "register_type": "holding",
+            "mqtt": {
+                "enabled": true,
+                "topic": "voltage/l3_n_min_time"
+            },
+            "influxdb": {
+                "enabled": true,
+                "measurement": "voltage",
+                "tags": {
+                    "type": "min_time",
+                    "phase": "l3"
+                }
+            },
+            "ui": {
+                "show_on_dashboard": false,
+                "widget": "value",
+                "decimals": 1,
+                "wide": false,
+                "dashboard_order": 60,
+                "color": "#ef4444"
+            },
+            "thresholds": null
         }
     ],
     "poll_groups": {
         "realtime": {
-            "interval": 1,
-            "description": "Real-time values (voltage, current, power)"
+            "interval": 0.25,
+            "description": "Valori real-time (tensiune, curent, putere)"
         },
         "normal": {
             "interval": 5,
-            "description": "Standard measurements"
+            "description": "Masuratori standard"
         },
         "slow": {
             "interval": 60,
-            "description": "Energy counters, statistics"
+            "description": "Contoare energie, statistici"
         }
     }
 }
