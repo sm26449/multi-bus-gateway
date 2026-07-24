@@ -262,6 +262,48 @@ def test_esphome_block_preserved_without_api(tmp_path):
     assert Config(str(tmp_path / "config.yaml")).esphome["url"] == "http://fake:6052"
 
 
+def test_esphome_env_seeds_fresh_deploy(tmp_path, monkeypatch):
+    """Zero-config: ESPHOME_URL alone (no esphome: block yet) enables the
+    Builder — this is what the bundled compose service relies on."""
+    monkeypatch.setenv("ESPHOME_URL", "http://esphome:6052")
+    cfg = write_config(tmp_path)                       # no esphome: block
+    assert cfg.esphome == {"url": "http://esphome:6052", "enabled": True}
+
+
+def test_esphome_env_respects_saved_user_choice(tmp_path, monkeypatch):
+    """Once a block exists, the UI's enabled/disabled choice wins over the
+    seed URL; only an explicit ESPHOME_ENABLED forces it."""
+    monkeypatch.setenv("ESPHOME_URL", "http://esphome:6052")
+    off = "esphome:\n  enabled: false\n  url: http://esphome:6052\n"
+    cfg = write_config(tmp_path, extra_yaml=off)
+    assert cfg.esphome["enabled"] is False             # user choice sticks
+
+    monkeypatch.setenv("ESPHOME_ENABLED", "true")
+    cfg = Config(str(tmp_path / "config.yaml"))
+    assert cfg.esphome["enabled"] is True              # explicit override
+
+
+def test_esphome_env_password_never_written_to_yaml(tmp_path, monkeypatch):
+    monkeypatch.setenv("ESPHOME_URL", "http://esphome:6052")
+    monkeypatch.setenv("ESPHOME_PASSWORD", "env-secret")
+    cfg = write_config(tmp_path)
+    assert cfg.esphome["password"] == "env-secret"     # live client uses it
+    cfg.save_yaml_config()
+    text = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    assert "env-secret" not in text
+    # and a config-file password survives the shadow round-trip
+    monkeypatch.delenv("ESPHOME_PASSWORD")
+    monkeypatch.delenv("ESPHOME_URL")
+    yml = "esphome:\n  enabled: true\n  url: http://x:6052\n  password: cfg-pass\n"
+    cfg = write_config(tmp_path, extra_yaml=yml)
+    monkeypatch.setenv("ESPHOME_PASSWORD", "env-secret")
+    cfg = Config(str(tmp_path / "config.yaml"))
+    assert cfg.esphome["password"] == "env-secret"
+    cfg.save_yaml_config()
+    text = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    assert "cfg-pass" in text and "env-secret" not in text
+
+
 # ---------------------------------------------------------------------------
 # generator + adopt chain
 # ---------------------------------------------------------------------------

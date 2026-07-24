@@ -1002,5 +1002,9 @@
   "builder.saveProfile": "Save as profile",
   "builder.customHw": "(custom hardware)",
   "builder.profileNameQ": "Profile name (e.g. LilyGO T-CAN485):",
-  "builder.profileSaved": "Hardware profile saved."
+  "builder.profileSaved": "Hardware profile saved.",
+  "builder.notBuilt": "not built yet",
+  "builder.seenOnNet": "seen on the network",
+  "builder.notSeen": "not seen on the network yet",
+  "builder.urlHint": "As reachable from the gateway container — the bundled compose service is http://esphome:6052."
 }

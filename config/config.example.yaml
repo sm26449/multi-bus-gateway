@@ -129,17 +129,23 @@ alerts:
     latency: true         # sustained high read latency
     buffer: true          # InfluxDB buffer backlog or dropped points
 
-# Device Builder (optional, off by default). Points the gateway at an external
-# ESPHome dashboard (the stock esphome/esphome container) so ESP32/ESP8266
-# node firmware can be authored, compiled and flashed OTA from this UI. The
-# integration is network-only — no shared volume needed. YAML content and
+# Device Builder — authoring/compiling/flashing ESP32/ESP8266 node firmware
+# from the UI, with an ESPHome dashboard as the build engine. The bundled
+# docker-compose ships that service and seeds this block via ESPHOME_URL, so
+# on a fresh deploy the Builder just works — you normally never edit this.
+# The integration is network-only (no shared volume); YAML content and
 # build/flash streams are admin-only while auth is enabled.
+#
+# Env seeding: ESPHOME_URL enables the feature when this block is absent;
+# once you save a choice in the UI it sticks. ESPHOME_USERNAME /
+# ESPHOME_PASSWORD override at runtime (the password never lands in this
+# file); ESPHOME_ENABLED=true|false forces the switch on every start.
 esphome:
   enabled: false
   # ESPHome dashboard URL as reachable FROM THIS CONTAINER, e.g. the compose
   # service name (http://esphome:6052) or a LAN address.
   url: "http://esphome:6052"
-  # Only if the dashboard itself runs with --username/--password:
+  # Only if the dashboard itself runs with a login (USERNAME/PASSWORD envs):
   username: ""
   password: ""
   # HTTP timeout for dashboard calls (compile/flash streams are unaffected).

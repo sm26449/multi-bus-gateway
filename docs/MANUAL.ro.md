@@ -441,16 +441,15 @@ Compilarea o face un container **ESPHome** standard, pe hardware-ul tău;
 gateway-ul îl comandă prin API, deci nu are nevoie de volume partajate sau
 dependențe noi. Nimic nu iese din rețeaua ta.
 
-**Pornire (o singură dată):**
-
-```bash
-# dacă nu ai deja un ESPHome:
-docker compose --profile esphome up -d
-```
-
-Apoi în UI: **Builder → Settings** → bifează *Enable*, URL
-`http://esphome:6052` → Save. Bannerul verde cu versiunea ESPHome confirmă
-conexiunea.
+**Pornire: zero configurare.** `docker compose up -d` pornește și serviciul
+ESPHome inclus, iar gateway-ul se leagă singur de el (`ESPHOME_URL` e
+pre-completat în compose). Deschizi tab-ul **Builder** și bannerul verde cu
+versiunea ESPHome e deja acolo. Dashboard-ul ESPHome nu e expus pe LAN —
+totul trece printr-o singură interfață, cu un singur login și un singur
+audit trail. (Ai deja un ESPHome în altă parte? Schimbă URL-ul din
+Builder → ⚙, sau setează `ESPHOME_URL` în `.env`. Vrei și login pe
+dashboard-ul ESPHome? `ESPHOME_DASHBOARD_USERNAME/PASSWORD` în `.env` le
+setează pe ambele capete deodată.)
 
 **Fluxul complet, de la template la date live:**
 

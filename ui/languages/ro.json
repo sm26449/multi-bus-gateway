@@ -1002,5 +1002,9 @@
   "builder.saveProfile": "Salvează ca profil",
   "builder.customHw": "(hardware personalizat)",
   "builder.profileNameQ": "Nume profil (ex. LilyGO T-CAN485):",
-  "builder.profileSaved": "Profil hardware salvat."
+  "builder.profileSaved": "Profil hardware salvat.",
+  "builder.notBuilt": "necompilat încă",
+  "builder.seenOnNet": "văzut în rețea",
+  "builder.notSeen": "nevăzut încă în rețea",
+  "builder.urlHint": "Cum e accesibil din containerul gateway-ului — serviciul inclus în compose este http://esphome:6052."
 }

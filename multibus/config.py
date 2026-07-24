@@ -933,6 +933,30 @@ class Config:
         if os.getenv('UI_PORT'):
             self.ui.port = int(os.getenv('UI_PORT'))
 
+        # ESPHome / Device Builder. ESPHOME_URL doubles as the zero-config
+        # seed: on a FRESH deploy (no esphome: block in config.yaml yet) its
+        # presence enables the Builder outright — compose ships the esphome
+        # service and points us at it, so everything works out of the box.
+        # Once a block exists (any UI save), the user's enabled/disabled
+        # choice wins unless ESPHOME_ENABLED explicitly overrides it.
+        if any(os.getenv(k) for k in ('ESPHOME_URL', 'ESPHOME_ENABLED',
+                                      'ESPHOME_USERNAME', 'ESPHOME_PASSWORD')):
+            e = dict(self.esphome or {})
+            seeded = not e
+            if os.getenv('ESPHOME_URL'):
+                e['url'] = os.getenv('ESPHOME_URL')
+            if os.getenv('ESPHOME_USERNAME'):
+                e['username'] = os.getenv('ESPHOME_USERNAME')
+            if os.getenv('ESPHOME_PASSWORD'):
+                self._env_secret_shadow['esphome.password'] = str(
+                    e.get('password', '') or '')
+                e['password'] = os.getenv('ESPHOME_PASSWORD')
+            if os.getenv('ESPHOME_ENABLED'):
+                e['enabled'] = os.getenv('ESPHOME_ENABLED').lower() == 'true'
+            elif seeded and e.get('url'):
+                e['enabled'] = True
+            self.esphome = e
+
     def save_selected_registers(self, registers: List[Dict]):
         """Save selected registers to file."""
         data = {
@@ -1157,9 +1181,15 @@ class Config:
         if self.alerts:
             data['alerts'] = self.alerts
 
-        # Preserve the optional esphome block for the same reason.
+        # Preserve the optional esphome block for the same reason. The stored
+        # password is the config one — never an ESPHOME_PASSWORD env secret.
         if self.esphome:
-            data['esphome'] = self.esphome
+            e = dict(self.esphome)
+            if 'esphome.password' in self._env_secret_shadow:
+                e['password'] = self._env_secret_shadow['esphome.password']
+                if not e['password']:
+                    e.pop('password', None)
+            data['esphome'] = e
 
         # Ensure config directory exists
         self.config_path.parent.mkdir(parents=True, exist_ok=True)

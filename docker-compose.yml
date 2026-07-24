@@ -46,30 +46,46 @@ services:
       - UI_PORT
       # Security — optional API key required for state-changing requests (empty = open)
       - API_KEY
+      # Device Builder (ESPHome). ESPHOME_URL seeds the feature on a fresh
+      # deploy — the bundled esphome service below makes it work with zero
+      # configuration. Turning the Builder off in the UI sticks; set
+      # ESPHOME_ENABLED explicitly only to force it either way on every start.
+      - ESPHOME_URL=${ESPHOME_URL:-http://esphome:6052}
+      # - ESPHOME_ENABLED=true
+      - ESPHOME_USERNAME=${ESPHOME_DASHBOARD_USERNAME:-}
+      - ESPHOME_PASSWORD=${ESPHOME_DASHBOARD_PASSWORD:-}
     networks:
       - monitoring
       - pv-stack-network
 
-  # Optional: ESPHome — the build engine behind the Device Builder section.
-  # Start it with:  docker compose --profile esphome up -d
-  # then enable the Builder in the UI (Builder -> Settings) with
-  # url http://esphome:6052. Everything runs over the network — the gateway
-  # needs no shared volume and no extra dependencies.
+  # ESPHome — the build engine behind the Device Builder section. Ships with
+  # the stack so firmware authoring works OUT OF THE BOX: the gateway finds it
+  # at http://esphome:6052 (see ESPHOME_URL above) and proxies everything —
+  # nodes, builds, flashing, logs — through its own UI and audit trail.
+  #
+  #   * No published port on purpose: one interface, one login. If you also
+  #     want the raw ESPHome dashboard on the LAN, uncomment `ports:` below
+  #     (and consider ESPHOME_DASHBOARD_USERNAME/PASSWORD).
+  #   * Don't need the Builder at all? `docker compose up -d multi-bus-gateway`
+  #     starts the gateway alone, or set ESPHOME_ENABLED=false in .env — the
+  #     section stays hidden-but-configurable either way.
   esphome:
     image: ghcr.io/esphome/esphome:latest
     container_name: esphome
     restart: unless-stopped
-    ports:
-      - "6052:6052"
+    # ports:
+    #   - "6052:6052"
     volumes:
       - esphome-config:/config
     environment:
       - TZ=${TZ:-Europe/Bucharest}
+      # Optional login on the ESPHome dashboard itself. The gateway picks the
+      # same values up automatically (they feed ESPHOME_USERNAME/PASSWORD).
+      - USERNAME=${ESPHOME_DASHBOARD_USERNAME:-}
+      - PASSWORD=${ESPHOME_DASHBOARD_PASSWORD:-}
     command: dashboard /config
     networks:
       - monitoring
-    profiles:
-      - esphome
 
   # Optional: InfluxDB for local storage
   influxdb:
