@@ -296,6 +296,10 @@ class Config:
         # handlers in a threadpool) can't interleave their tmp/rename dance
         self._file_lock = __import__("threading").Lock()
         self.alerts: Dict = {}                # optional `alerts:` block (off by default)
+        # Optional `esphome:` block (off by default) — the Device Builder
+        # section talks to an external ESPHome dashboard over its HTTP/WS API.
+        # Kept as a raw dict: {enabled, url, username, password, timeout_s}.
+        self.esphome: Dict = {}
 
         self.load()
 
@@ -786,6 +790,10 @@ class Config:
             # the AlertManager reads it. See multibus/alerts.py.
             self.alerts = data.get('alerts', {}) or {}
 
+            # Optional ESPHome integration (Device Builder). Raw dict — the
+            # builder routes read it at request time. See multibus/esphome_client.py.
+            self.esphome = data.get('esphome', {}) or {}
+
             logger.info(f"Loaded config from {self.config_path}")
             self._load_failed = False
 
@@ -1148,6 +1156,10 @@ class Config:
         # rewrite this file; without this a save would silently drop alerting).
         if self.alerts:
             data['alerts'] = self.alerts
+
+        # Preserve the optional esphome block for the same reason.
+        if self.esphome:
+            data['esphome'] = self.esphome
 
         # Ensure config directory exists
         self.config_path.parent.mkdir(parents=True, exist_ok=True)

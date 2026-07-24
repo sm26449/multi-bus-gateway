@@ -63,6 +63,11 @@
                     <i class="bi bi-hdd-network" aria-hidden="true"></i>
                     <span data-i18n="nav.vmeters">Virtual Meters</span>
                 </button>
+                <button class="nav-tab" data-page="builder" role="tab"
+                        id="tab-builder" aria-controls="builderPage" aria-selected="false">
+                    <i class="bi bi-cpu" aria-hidden="true"></i>
+                    <span data-i18n="nav.builder">Builder</span>
+                </button>
                 <button class="nav-tab" data-page="diagnostics" role="tab"
                         id="tab-diagnostics" aria-controls="diagnosticsPage" aria-selected="false">
                     <i class="bi bi-ethernet" aria-hidden="true"></i>
@@ -1011,6 +1016,21 @@
                 <div id="vmetersContent" style="padding:0 20px 24px;"></div>
             </div>
 
+            <!-- Device Builder Page (ESPHome-backed node firmware authoring) -->
+            <div class="page" id="builderPage" role="tabpanel" aria-labelledby="tab-builder" tabindex="0">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:16px 20px;gap:16px;">
+                    <div>
+                        <h2 style="margin:0;"><i class="bi bi-cpu"></i> <span data-i18n="builder.title">Device Builder</span></h2>
+                        <p style="margin:6px 0 0;color:var(--text-secondary);font-size:13px;max-width:720px;" data-i18n="builder.subtitle">
+                            Author, compile and flash ESP32/ESP8266 node firmware — remote RS485/BLE readers that publish
+                            back to this gateway over MQTT. Compilation runs on your own ESPHome container; nothing
+                            leaves your network.</p>
+                    </div>
+                    <button class="btn" id="builderRefreshBtn"><i class="bi bi-arrow-clockwise"></i> <span data-i18n="common.refresh">Refresh</span></button>
+                </div>
+                <div id="builderContent" style="padding:0 20px 24px;"></div>
+            </div>
+
             <!-- Templates Page (device maps + meter emulations) -->
             <div class="page" id="templatesPage" role="tabpanel" aria-labelledby="tab-templates" tabindex="0">
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:16px 20px;gap:16px;">
@@ -1161,6 +1181,61 @@
     </div>
 
     <!-- Virtual Meter Template Editor Modal -->
+    <!-- Device Builder: node YAML editor -->
+    <div class="modal" id="builderEditorModal">
+        <div class="modal-content" style="max-width:960px;width:96%;">
+            <div class="modal-header">
+                <h3><i class="bi bi-cpu"></i> <span id="builderEdTitle">Node</span></h3>
+                <button class="modal-close" aria-label="Close" onclick="app.closeModal('builderEditorModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label data-i18n="builder.filename">Filename</label>
+                    <input type="text" id="builderEdName" placeholder="my-node.yaml" style="width:280px;font-family:monospace;">
+                </div>
+                <textarea id="builderEdText" spellcheck="false" wrap="off"
+                          style="width:100%;height:52vh;font-family:monospace;font-size:13px;white-space:pre;"></textarea>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="app.closeModal('builderEditorModal')" data-i18n="common.cancel">Cancel</button>
+                <button class="btn" id="builderEdValidateBtn"><i class="bi bi-check2-circle"></i> <span data-i18n="builder.saveValidate">Save &amp; validate</span></button>
+                <button class="btn btn-primary" id="builderEdSaveBtn"><i class="bi bi-save"></i> <span data-i18n="common.save">Save</span></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Device Builder: live command console (compile / flash / logs) -->
+    <div class="modal" id="builderConsoleModal">
+        <div class="modal-content" style="max-width:960px;width:96%;">
+            <div class="modal-header">
+                <h3><i class="bi bi-terminal"></i> <span id="builderConTitle">Console</span>
+                    <span id="builderConStatus" class="sink-pill" style="margin-left:10px;"></span></h3>
+                <button class="modal-close" aria-label="Close" onclick="app._builderCloseWs(); app.closeModal('builderConsoleModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <pre id="builderConOut" style="height:56vh;overflow:auto;background:#101418;color:#d7dee6;
+                     padding:12px;border-radius:6px;font-size:12px;line-height:1.5;margin:0;"></pre>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="app._builderCloseWs(); app.closeModal('builderConsoleModal')" data-i18n="common.close">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Device Builder: build artifacts -->
+    <div class="modal" id="builderDownloadsModal">
+        <div class="modal-content" style="max-width:640px;">
+            <div class="modal-header">
+                <h3><i class="bi bi-download"></i> <span data-i18n="builder.binaries">Binaries</span></h3>
+                <button class="modal-close" aria-label="Close" onclick="app.closeModal('builderDownloadsModal')">&times;</button>
+            </div>
+            <div class="modal-body" id="builderDlBody"></div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="app.closeModal('builderDownloadsModal')" data-i18n="common.close">Close</button>
+            </div>
+        </div>
+    </div>
+
     <div class="modal" id="vmTemplateModal">
         <div class="modal-content" style="max-width:960px;width:96%;">
             <div class="modal-header">
@@ -1876,6 +1951,7 @@
     <script src="/static/js/app-registers.js?v=0"></script>
     <script src="/static/js/app-templates.js?v=0"></script>
     <script src="/static/js/app-vmeters.js?v=0"></script>
+    <script src="/static/js/app-builder.js?v=0"></script>
     <script src="/static/js/app-history.js?v=0"></script>
     <script src="/static/js/app-monitor.js?v=0"></script>
     <script src="/static/js/app-devices.js?v=0"></script>

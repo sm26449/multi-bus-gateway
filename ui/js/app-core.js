@@ -490,6 +490,8 @@ Object.assign(JanitzaMonitor.prototype, {
         if (page !== 'status' && this._stopStatusPoll) this._stopStatusPoll();
         // stop the bus-monitor live poll when leaving Diagnostics
         if (page !== 'diagnostics' && this._stopDiagPoll) this._stopDiagPoll();
+        // close a running builder console stream when leaving Builder
+        if (page !== 'builder' && this._builderCloseWs) this._builderCloseWs();
 
         // The register-editing context (device selector) only follows the
         // registers/config pages; anywhere else snaps back to device #1 so the
@@ -518,6 +520,8 @@ Object.assign(JanitzaMonitor.prototype, {
             this.initEnergyPage();
         } else if (page === 'vmeters') {
             this.renderVirtualMeters();
+        } else if (page === 'builder') {
+            this.renderBuilder();
         } else if (page === 'templates') {
             this.renderTemplateManager();
         } else if (page === 'status') {

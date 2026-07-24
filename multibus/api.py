@@ -2677,10 +2677,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # MUTABLE: /api/config/apply rebinds them (nonlocal) and mirrors the new
     # object here, so routers reading ctx.<publisher> at request time always
     # see the live one. Everything else is a stable singleton.
-    from .routes import (ApiCtx, auth_routes, calculated, device_templates,
-                         diagnostics, discovery_routes, energy, general_config,
-                         languages, metrics, registers_routes, status_routes,
-                         system, values_routes, vmeters)
+    from .routes import (ApiCtx, auth_routes, builder_routes, calculated,
+                         device_templates, diagnostics, discovery_routes,
+                         energy, general_config, languages, metrics,
+                         registers_routes, status_routes, system,
+                         values_routes, vmeters)
     ctx = ApiCtx(
         app=app, config=config, registry=registry, calc_engine=calc_engine,
         event_log=event_log, alert_mgr=alert_mgr,
@@ -2690,11 +2691,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         modbus_client=modbus_client, ws_manager=ws_manager,
         mqtt_publisher=mqtt_publisher, influxdb_publisher=influxdb_publisher,
         audit_log=audit_log,
+        ip_allowed=_ip_allowed,   # WS routes enforce the allowlist themselves
     )
     app.state.ctx = ctx
-    for _mod in (calculated, device_templates, diagnostics, discovery_routes,
-                 energy, general_config, languages, metrics, registers_routes,
-                 status_routes, system, auth_routes, values_routes, vmeters):
+    for _mod in (builder_routes, calculated, device_templates, diagnostics,
+                 discovery_routes, energy, general_config, languages, metrics,
+                 registers_routes, status_routes, system, auth_routes,
+                 values_routes, vmeters):
         app.include_router(_mod.build(ctx))
     app.include_router(auth_routes.build_passkeys(ctx))
 

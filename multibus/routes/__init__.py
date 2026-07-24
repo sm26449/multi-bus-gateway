@@ -51,6 +51,8 @@ class ApiCtx:
       mqtt_publisher     MQTTPublisher|None — MUTABLE: rebound by /api/config/apply
       influxdb_publisher InfluxDBPublisher|None — MUTABLE: rebound by /api/config/apply
       audit_log          AuditLog — append-only who-changed-what trail
+      ip_allowed         callable(str)->bool — the api.py allowlist check;
+                         WS routes must call it (HTTP middleware skips WS scopes)
     """
 
     def __init__(self, **kw):
