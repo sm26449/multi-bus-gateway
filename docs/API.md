@@ -1,4 +1,4 @@
-# REST API Reference — Multi-Bus Gateway 3.0.0
+# REST API Reference — Multi-Bus Gateway 3.1.0
 
 Generated from the route definitions in `multibus/api.py` and `multibus/routes/`.
 Base URL: `http://<gateway>:8080` (default port; `ui.port` / `UI_PORT`).
@@ -127,6 +127,32 @@ viewer session ends when its cookie expires or is cleared client-side.
 | GET | `/api/device-templates/{id}/export` | Download as JSON (round-trips through upload) | viewer |
 | POST | `/api/device-templates/upload` | Validated save; 409 on id conflict unless `overwrite: true` | admin |
 | POST | `/api/device-templates/import-csv` | Convert a CSV register map into a template **preview** (save via upload) | admin |
+
+## Device Builder (ESPHome integration)
+
+All routes 503 until `esphome.enabled` + `esphome.url` are configured
+(Builder → Settings). Node YAML can embed Wi-Fi/OTA credentials, so YAML
+reads/writes, artifacts and command streams are **admin**-only while auth is
+enabled; dashboard errors surface as 502 with the reason.
+
+| Method | Path | Description | Role |
+|---|---|---|---|
+| GET | `/api/builder/status` | Feature switch + dashboard reachability/version | viewer |
+| GET | `/api/builder/settings` | The `esphome:` block, password redacted | viewer |
+| POST | `/api/builder/settings` | Persist URL/credentials (empty password = keep stored) | admin |
+| GET | `/api/builder/nodes` | Node list: `configured` + mDNS `importable` | viewer |
+| GET | `/api/builder/nodes/{name}/config` | Node YAML (raw) | admin |
+| PUT | `/api/builder/nodes/{name}/config` | Save YAML; 409 unless `overwrite: true` | admin |
+| DELETE | `/api/builder/nodes/{name}` | Archive on the dashboard (recoverable there) | admin |
+| GET | `/api/builder/nodes/{name}/downloads` | Build artifact list | admin |
+| GET | `/api/builder/nodes/{name}/download?file=` | Proxy one artifact (e.g. `firmware.factory.bin`) | admin |
+| GET | `/api/builder/nodes/{name}/manifest` | esp-web-tools manifest for the browser USB flasher | admin |
+| POST | `/api/builder/generate` | Template → firmware YAML + PAIRED template & device payload (pure preview) | admin |
+| POST | `/api/builder/secrets/ensure` | Append MISSING secrets.yaml keys (never overwrites, values never logged) | admin |
+| GET | `/api/builder/profiles` | Hardware profiles (built-ins + user) | viewer |
+| POST | `/api/builder/profiles` | Save a user profile | admin |
+| DELETE | `/api/builder/profiles/{id}` | Delete a user profile (built-ins protected) | admin |
+| WS | `/api/builder/stream/{command}?configuration=` | Live relay of `compile` / `validate` / `upload` / `run` / `logs` / `clean` / `update-all` — frames `{event: line\|exit\|error}` | admin |
 
 ## Discovery
 

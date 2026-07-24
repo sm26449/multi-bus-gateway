@@ -35,6 +35,10 @@ in one container, on hardware you own.
   staleness policies and an in-band quality block.
 - 🛠️ **Operator-grade UI** — discovery wizard, frame-level diagnostics,
   config snapshots with rollback, roles and an audit trail.
+- 📟 **Device Builder (remote ESP32 nodes)** — generate, compile and flash
+  ESPHome firmware for far-away RS485 readers straight from the UI (builds
+  on your own ESPHome container, browser USB flashing, OTA, automatic
+  adoption as an MQTT device — zero double configuration).
 
 > **Deliberate scope:** it is a **protocol gateway**, not an
 > energy/reporting application — cost, tariffs, billing and analytics stay

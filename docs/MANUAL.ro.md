@@ -27,6 +27,7 @@ Documente însoțitoare:
 9. [InfluxDB & Grafana](#9-influxdb--grafana)
 10. [REST push & feed-ul HTTP/JSON](#10-rest-push--feed-ul-httpjson)
 11. [Metere virtuale — pas cu pas](#11-metere-virtuale--pas-cu-pas)
+11b. [Device Builder — noduri ESP32 remote (ESPHome)](#11b-device-builder--noduri-esp32-remote-esphome)
 12. [Alerte & webhook-uri](#12-alerte--webhook-uri)
 13. [Diagnostice](#13-diagnostice)
 14. [Scrieri Modbus & lease-uri dead-man](#14-scrieri-modbus--lease-uri-dead-man)
@@ -428,6 +429,63 @@ joase); ștergerea unui dispozitiv sursă e blocată cât timp un meter îl
 folosește.
 
 ---
+
+## 11b. Device Builder — noduri ESP32 remote (ESPHome)
+
+Ai un contor pe RS485 într-o altă clădire sau la alt site, fără cablu de
+rețea până la el? Secțiunea **Builder** îți construiește firmware pentru un
+nod ESP32/ESP8266 care citește contorul prin Modbus RTU și publică valorile
+prin MQTT înapoi în gateway — totul din interfață, fără toolchain instalat.
+
+Compilarea o face un container **ESPHome** standard, pe hardware-ul tău;
+gateway-ul îl comandă prin API, deci nu are nevoie de volume partajate sau
+dependențe noi. Nimic nu iese din rețeaua ta.
+
+**Pornire (o singură dată):**
+
+```bash
+# dacă nu ai deja un ESPHome:
+docker compose --profile esphome up -d
+```
+
+Apoi în UI: **Builder → Settings** → bifează *Enable*, URL
+`http://esphome:6052` → Save. Bannerul verde cu versiunea ESPHome confirmă
+conexiunea.
+
+**Fluxul complet, de la template la date live:**
+
+1. **Generate from template** — alegi un template Modbus (ex. Eastron
+   SDM630), subsetul de registre, profilul hardware (placă + pini UART/DE-RE)
+   și adresa Modbus a contorului. Broker-ul MQTT se moștenește automat de la
+   gateway.
+2. **Preview** — primești YAML-ul complet (uart/modbus/modbus_controller cu
+   tipurile de date, ordinea de octeți și scalarea corecte; valorile pleacă
+   în unități inginerești pe topicuri explicite per registru).
+3. **Save + Adopt as device** — un singur click salvează firmware-ul pe
+   dashboard-ul ESPHome, completează cheile lipsă din `secrets.yaml`
+   (placeholder `CHANGE_ME` pentru Wi-Fi/OTA) **și creează automat perechea
+   din gateway**: un template MQTT + un dispozitiv mqtt-in cu exact aceleași
+   topicuri. Zero configurare dublă.
+4. Completezi `secrets.yaml` (butonul de editare acceptă și secrets.yaml),
+   apoi **Build** — loguri live în consolă.
+5. **Primul flash: prin USB, direct din browser** (butonul *USB*; necesită
+   Chrome/Edge și HTTPS sau localhost — esp-web-tools e servit local, fără
+   cloud). Același dialog configurează Wi-Fi prin cablu (Improv). Ulterior:
+   **Flash OTA** din aceeași pagină.
+6. Nodul pornește, publică, iar dispozitivul pereche din gateway prinde
+   valorile automat — le vezi în Dashboard/Monitor, cu staleness LWT inclus.
+
+**De reținut:**
+
+- Fără auth activat, totul e deschis (LAN de încredere, ca restul
+  aplicației); cu auth, YAML-ul nodurilor, build-urile și flash-ul sunt
+  **doar admin**, iar totul intră în audit log.
+- **Update all** recompilează și actualizează OTA toate nodurile cu firmware
+  vechi (după un upgrade de ESPHome, de exemplu).
+- Profilurile hardware (pini/placă) se salvează și se refolosesc între
+  noduri; două profile generice sunt incluse.
+- Ștergerea unui nod îl **arhivează** pe dashboard-ul ESPHome — nimic nu se
+  pierde definitiv.
 
 ## 12. Alerte & webhook-uri
 

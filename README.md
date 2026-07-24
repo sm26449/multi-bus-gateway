@@ -39,6 +39,10 @@ Fronius și orice PLC/SCADA văd fiecare meterul pe care îl așteaptă. Totul
   politici explicite de staleness și bloc de calitate in-band.
 - 🛠️ **UI de operator** — wizard cu discovery, diagnostice la nivel de
   cadru, snapshot-uri de configurație cu rollback, roluri și audit.
+- 📟 **Device Builder (noduri ESP32 remote)** — generează, compilează și
+  flash-uiește firmware ESPHome pentru cititoare RS485 aflate la distanță,
+  direct din UI (build pe containerul tău ESPHome, flash USB din browser,
+  OTA, adopție automată ca dispozitiv MQTT — zero configurare dublă).
 
 > **Scop asumat:** e un **gateway de protocol**, nu o aplicație de
 > energie/raportare — costuri, tarife, facturare și analize rămân treaba

@@ -1,5 +1,40 @@
 # Changelog
 
+## 3.1.0
+
+### 2026-07-24 — Device Builder (ESPHome-backed node firmware)
+
+A new **Builder** section turns the gateway into a firmware authoring point
+for remote ESP32/ESP8266 nodes — RS485/Modbus readers at other sites that
+publish back over MQTT. An external, stock **ESPHome** container does the
+compiling; the gateway drives it entirely over its HTTP/WS API (no shared
+volume, no new Python dependencies), so enabling the feature is one URL in
+Builder → Settings. Off by default; everything degrades gracefully without it.
+
+- **Node management** — list (incl. mDNS-discovered adoptables), import
+  YAML, editor with server-side validation, live-log console for
+  compile / OTA flash / device logs (WebSocket relay), artifact downloads.
+- **Generate from template** — the differentiator: pick any Modbus device
+  template + register subset and get firmware YAML (uart/modbus/
+  modbus_controller with correct value types, byte order, scale folded into
+  filters, poll groups → update_interval/skip_updates) publishing scalars to
+  explicit per-register topics.
+- **One-click Adopt** — the same wizard also creates the PAIRED gateway
+  side: a user device-template and an MQTT-input device with byte-identical
+  topics, so data flows in with zero double configuration.
+- **USB web flasher** — first-time flashing from the browser via a locally
+  vendored esp-web-tools (no CDN/cloud), with Improv Wi-Fi provisioning over
+  the same cable (`improv_serial:` is part of every generated firmware).
+- **Hardware profiles** — shareable board/pin presets for the wizard
+  (`config/builder_profiles.json`), plus two safe built-ins.
+- **Fleet** — "Update all" streams ESPHome's rebuild+OTA of every outdated
+  node through the same console.
+- **Security** — YAML content and command streams are admin-only under
+  auth; every state change and stream lands in the audit log; secrets are
+  redacted everywhere (the secrets.yaml helper only ever appends missing
+  keys and never logs values).
+- Compose ships an optional `esphome` service (`--profile esphome`).
+
 ## 3.0.0
 
 The 3.0.0 line — successor to the Janitza UMG 512 monitor under the

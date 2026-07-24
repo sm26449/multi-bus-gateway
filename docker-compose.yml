@@ -50,6 +50,27 @@ services:
       - monitoring
       - pv-stack-network
 
+  # Optional: ESPHome — the build engine behind the Device Builder section.
+  # Start it with:  docker compose --profile esphome up -d
+  # then enable the Builder in the UI (Builder -> Settings) with
+  # url http://esphome:6052. Everything runs over the network — the gateway
+  # needs no shared volume and no extra dependencies.
+  esphome:
+    image: ghcr.io/esphome/esphome:latest
+    container_name: esphome
+    restart: unless-stopped
+    ports:
+      - "6052:6052"
+    volumes:
+      - esphome-config:/config
+    environment:
+      - TZ=${TZ:-Europe/Bucharest}
+    command: dashboard /config
+    networks:
+      - monitoring
+    profiles:
+      - esphome
+
   # Optional: InfluxDB for local storage
   influxdb:
     image: influxdb:2.7
@@ -98,3 +119,4 @@ volumes:
   influxdb-data:
   influxdb-config:
   grafana-data:
+  esphome-config:
