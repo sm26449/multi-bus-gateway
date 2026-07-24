@@ -1258,6 +1258,11 @@
                             <div class="form-group"><label data-i18n="builder.unitId">Modbus unit ID</label>
                                 <input type="number" id="bgUnitId" value="1" min="1" max="247" style="width:80px;"></div>
                         </div>
+                        <div class="form-group" style="display:flex;gap:8px;align-items:flex-end;">
+                            <div style="flex:1;"><label data-i18n="builder.hwProfile">Hardware profile</label>
+                                <select id="bgProfile" style="width:100%;"></select></div>
+                            <button class="btn btn-sm" id="bgProfileSave" title="Save the fields below as a reusable profile" data-i18n="builder.saveProfile">Save as profile</button>
+                        </div>
                         <fieldset style="border:1px solid var(--border-color);border-radius:6px;padding:8px 12px;margin:0 0 10px;">
                             <legend style="font-size:12px;padding:0 6px;">RS485 / UART</legend>
                             <div style="display:flex;gap:10px;flex-wrap:wrap;">
@@ -1292,6 +1297,20 @@
                 <button class="btn btn-ghost" onclick="app.closeModal('builderGenModal')" data-i18n="common.cancel">Cancel</button>
                 <button class="btn" id="bgSaveBtn"><i class="bi bi-save"></i> <span data-i18n="builder.saveOnly">Save YAML to ESPHome</span></button>
                 <button class="btn btn-primary" id="bgAdoptBtn"><i class="bi bi-link-45deg"></i> <span data-i18n="builder.saveAdopt">Save + Adopt as device</span></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Device Builder: USB web flasher (esp-web-tools, served locally) -->
+    <div class="modal" id="builderFlashModal">
+        <div class="modal-content" style="max-width:600px;">
+            <div class="modal-header">
+                <h3><i class="bi bi-usb-plug"></i> <span data-i18n="builder.flashUsb">Flash via USB</span></h3>
+                <button class="modal-close" aria-label="Close" onclick="app.closeModal('builderFlashModal')">&times;</button>
+            </div>
+            <div class="modal-body" id="builderFlashBody"></div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="app.closeModal('builderFlashModal')" data-i18n="common.close">Close</button>
             </div>
         </div>
     </div>

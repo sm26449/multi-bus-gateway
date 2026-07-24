@@ -987,5 +987,20 @@
   "builder.adopted": "Node saved and adopted — fill secrets.yaml, build, flash, and data flows in.",
   "builder.genSaved": "Node YAML saved on the ESPHome dashboard.",
   "common.all": "All",
-  "common.none": "None"
+  "common.none": "None",
+  "builder.flashUsb": "Flash via USB",
+  "builder.flashUsbTip": "First-time flash over USB, from this browser (WebSerial)",
+  "builder.flashUsbHelp": "Connect the board over USB, then click Install. After flashing, the same dialog can provision Wi-Fi over the cable (Improv).",
+  "builder.install": "Install",
+  "builder.noWebSerial": "This browser/context has no WebSerial. Use Chrome/Edge over HTTPS (or http://localhost), or download the factory binary from \"Binaries\" and flash it with any esptool.",
+  "builder.noWebSerial2": "WebSerial not available in this browser.",
+  "builder.notAllowed": "Not allowed in an insecure context — open the UI over HTTPS.",
+  "builder.updateAll": "Update all",
+  "builder.updateAllTip": "Rebuild and OTA every node whose firmware is out of date",
+  "builder.updateAllQ": "Rebuild and OTA-update every node now?",
+  "builder.hwProfile": "Hardware profile",
+  "builder.saveProfile": "Save as profile",
+  "builder.customHw": "(custom hardware)",
+  "builder.profileNameQ": "Profile name (e.g. LilyGO T-CAN485):",
+  "builder.profileSaved": "Hardware profile saved."
 }

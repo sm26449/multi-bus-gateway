@@ -244,6 +244,109 @@ def build(ctx) -> APIRouter:
             content=data, media_type="application/octet-stream",
             headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
+    # ---- web flasher manifest (esp-web-tools, vendored locally) ------------------
+
+    _CHIP_FAMILIES = {
+        "esp8266": "ESP8266", "esp32": "ESP32", "esp32s2": "ESP32-S2",
+        "esp32s3": "ESP32-S3", "esp32c3": "ESP32-C3", "esp32c6": "ESP32-C6",
+        "esp32h2": "ESP32-H2", "esp32c2": "ESP32-C2", "esp32p4": "ESP32-P4",
+    }
+
+    @r.get("/api/builder/nodes/{name}/manifest")
+    def flash_manifest(name: str, request: Request):
+        """esp-web-tools manifest for the browser USB flasher. The part path
+        is RELATIVE, so it resolves to this node's own download endpoint."""
+        _require_admin(request)
+        _check_name(name)
+        cli = _client()
+        entry = next((d for d in _wrap(cli.devices)["configured"]
+                      if d.get("configuration") == name), None)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="node not found")
+        plat = re.sub(r"[^a-z0-9]", "",
+                      str(entry.get("target_platform", "") or "").lower())
+        chip = _CHIP_FAMILIES.get(plat)
+        if chip is None:
+            raise HTTPException(status_code=422, detail=(
+                f"unsupported platform {entry.get('target_platform')!r} — "
+                "build the node first, then retry"))
+        return {
+            "name": entry.get("friendly_name") or entry.get("name") or name,
+            "version": str(entry.get("current_version", "") or ""),
+            "new_install_prompt_erase": True,
+            "builds": [{"chipFamily": chip, "parts": [
+                {"path": "download?file=firmware.factory.bin", "offset": 0}]}],
+        }
+
+    # ---- hardware profiles (shareable board/pin presets for the wizard) ----------
+
+    _BUILTIN_PROFILES = [
+        {"id": "esp32-generic-uart2", "name": "ESP32 generic — RS485 on UART2",
+         "builtin": True, "platform": "esp32", "board": "esp32dev",
+         "tx_pin": "GPIO17", "rx_pin": "GPIO16", "flow_control_pin": "",
+         "baud_rate": 9600, "parity": "NONE", "stop_bits": 1},
+        {"id": "esp8266-d1mini", "name": "ESP8266 D1 mini — RS485 on UART0",
+         "builtin": True, "platform": "esp8266", "board": "d1_mini",
+         "tx_pin": "GPIO1", "rx_pin": "GPIO3", "flow_control_pin": "",
+         "baud_rate": 9600, "parity": "NONE", "stop_bits": 1},
+    ]
+
+    def _profiles_path():
+        return config.config_path.parent / "builder_profiles.json"
+
+    def _load_profiles() -> list:
+        import json
+        p = _profiles_path()
+        if not p.exists():
+            return []
+        try:
+            return list(json.loads(p.read_text(encoding="utf-8")) or [])
+        except (OSError, ValueError):
+            logger.warning("builder_profiles.json unreadable — starting empty")
+            return []
+
+    def _save_profiles(items: list) -> None:
+        import json
+        import os
+        p = _profiles_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(items, indent=2, ensure_ascii=False) + "\n",
+                       encoding="utf-8")
+        os.replace(tmp, p)
+
+    @r.get("/api/builder/profiles")
+    def list_profiles():
+        return {"profiles": _BUILTIN_PROFILES + _load_profiles()}
+
+    @r.post("/api/builder/profiles")
+    def save_profile(request: Request, payload: Dict = Body(...)):
+        pid = re.sub(r"[^a-z0-9-]", "-", str(payload.get("id", "") or
+                                             payload.get("name", "")).lower()).strip("-")
+        if not pid or any(b["id"] == pid for b in _BUILTIN_PROFILES):
+            raise HTTPException(status_code=422, detail={"errors": [
+                "profile id/name missing or shadows a built-in"]})
+        prof = {"id": pid, "builtin": False}
+        for k, dflt in (("name", pid), ("platform", "esp32"), ("board", ""),
+                        ("tx_pin", ""), ("rx_pin", ""), ("flow_control_pin", ""),
+                        ("baud_rate", 9600), ("parity", "NONE"), ("stop_bits", 1)):
+            prof[k] = payload.get(k, dflt)
+        items = [x for x in _load_profiles() if x.get("id") != pid] + [prof]
+        _save_profiles(items)
+        _audit(request, "builder profile save", pid)
+        return {"status": "saved", "profile": prof}
+
+    @r.delete("/api/builder/profiles/{pid}")
+    def delete_profile(pid: str, request: Request):
+        items = _load_profiles()
+        keep = [x for x in items if x.get("id") != pid]
+        if len(keep) == len(items):
+            raise HTTPException(status_code=404, detail="profile not found "
+                                "(built-ins cannot be deleted)")
+        _save_profiles(keep)
+        _audit(request, "builder profile delete", pid)
+        return {"status": "deleted"}
+
     # ---- generator (template → firmware YAML + paired device) --------------------
 
     @r.post("/api/builder/generate")
@@ -332,7 +435,12 @@ def build(ctx) -> APIRouter:
 
         name = websocket.query_params.get("configuration", "")
         port = websocket.query_params.get("port", "OTA")
-        if command not in WS_COMMANDS or not _NAME_RE.match(name) or ".." in name:
+        if command == "update-all":
+            name = ""                       # fleet-wide: no configuration
+        elif not _NAME_RE.match(name) or ".." in name:
+            await websocket.close(code=1008)
+            return
+        if command not in WS_COMMANDS:
             await websocket.close(code=1008)
             return
         if not _enabled():

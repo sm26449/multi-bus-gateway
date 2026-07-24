@@ -987,5 +987,20 @@
   "builder.adopted": "Nod salvat și adoptat — completează secrets.yaml, compilează, flash-uiește și datele curg.",
   "builder.genSaved": "YAML-ul nodului a fost salvat pe dashboard-ul ESPHome.",
   "common.all": "Toate",
-  "common.none": "Niciunul"
+  "common.none": "Niciunul",
+  "builder.flashUsb": "Flash prin USB",
+  "builder.flashUsbTip": "Primul flash, prin USB, direct din browser (WebSerial)",
+  "builder.flashUsbHelp": "Conectează placa prin USB, apoi apasă Instalează. După flash, același dialog poate configura Wi-Fi prin cablu (Improv).",
+  "builder.install": "Instalează",
+  "builder.noWebSerial": "Acest browser/context nu are WebSerial. Folosește Chrome/Edge prin HTTPS (sau http://localhost), ori descarcă binarul factory din „Binare” și flash-uiește-l cu orice esptool.",
+  "builder.noWebSerial2": "WebSerial nu este disponibil în acest browser.",
+  "builder.notAllowed": "Nepermis în context nesecurizat — deschide interfața prin HTTPS.",
+  "builder.updateAll": "Actualizează tot",
+  "builder.updateAllTip": "Recompilează și actualizează OTA fiecare nod cu firmware vechi",
+  "builder.updateAllQ": "Recompilezi și actualizezi OTA toate nodurile acum?",
+  "builder.hwProfile": "Profil hardware",
+  "builder.saveProfile": "Salvează ca profil",
+  "builder.customHw": "(hardware personalizat)",
+  "builder.profileNameQ": "Nume profil (ex. LilyGO T-CAN485):",
+  "builder.profileSaved": "Profil hardware salvat."
 }

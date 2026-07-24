@@ -56,6 +56,7 @@ class FakeDashboard:
     def __init__(self):
         self.base = "http://fake:6052"
         self.files = {}                 # name -> yaml text
+        self.platforms = {}             # name -> target_platform
         self.archived = []
         self.fail = False               # flip to simulate unreachable
 
@@ -70,7 +71,9 @@ class FakeDashboard:
     def devices(self):
         self._check()
         return {"configured": [
-            {"name": n.rsplit(".", 1)[0], "configuration": n}
+            {"name": n.rsplit(".", 1)[0], "configuration": n,
+             "target_platform": self.platforms.get(n, "ESP32"),
+             "current_version": "2026.5.3"}
             for n in sorted(self.files)], "importable": []}
 
     def get_config(self, name):
@@ -357,6 +360,70 @@ def test_secrets_ensure_appends_missing_only(tmp_path, fake):
     # bad key names refused
     assert client.post("/api/builder/secrets/ensure",
                        json={"keys": {"bad key!": "x"}}).status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# web-flasher manifest + hardware profiles + fleet update (phase 3)
+# ---------------------------------------------------------------------------
+
+@needs_tc
+def test_flash_manifest_maps_chip_family(tmp_path, fake):
+    _, client = make_app(tmp_path, extra_yaml=ESPHOME_YAML)
+    fake.files["n1.yaml"] = "esphome: {}\n"
+    fake.platforms["n1.yaml"] = "ESP32-S3"      # dashboards report variants
+
+    m = client.get("/api/builder/nodes/n1.yaml/manifest").json()
+    assert m["builds"][0]["chipFamily"] == "ESP32-S3"
+    # relative part path → resolves under this node's own endpoint
+    assert m["builds"][0]["parts"][0] == {
+        "path": "download?file=firmware.factory.bin", "offset": 0}
+    assert m["new_install_prompt_erase"] is True
+
+    assert client.get("/api/builder/nodes/nope.yaml/manifest").status_code == 404
+    fake.platforms["n1.yaml"] = "RTL87XX"       # non-ESP → clear 422
+    assert client.get("/api/builder/nodes/n1.yaml/manifest").status_code == 422
+
+
+@needs_tc
+def test_hardware_profiles_crud(tmp_path, fake):
+    _, client = make_app(tmp_path, extra_yaml=ESPHOME_YAML)
+    ps = client.get("/api/builder/profiles").json()["profiles"]
+    builtin_ids = {p["id"] for p in ps if p["builtin"]}
+    assert "esp32-generic-uart2" in builtin_ids
+
+    rsp = client.post("/api/builder/profiles", json={
+        "name": "LilyGO T-CAN485", "platform": "esp32", "board": "esp32dev",
+        "tx_pin": "GPIO22", "rx_pin": "GPIO21", "flow_control_pin": "GPIO17",
+        "baud_rate": 19200})
+    assert rsp.status_code == 200
+    pid = rsp.json()["profile"]["id"]
+    assert pid == "lilygo-t-can485"
+
+    ps = client.get("/api/builder/profiles").json()["profiles"]
+    mine = next(p for p in ps if p["id"] == pid)
+    assert mine["tx_pin"] == "GPIO22" and mine["builtin"] is False
+    # persisted on disk next to config.yaml
+    assert (tmp_path / "builder_profiles.json").exists()
+
+    # built-ins cannot be shadowed or deleted
+    assert client.post("/api/builder/profiles",
+                       json={"name": "esp32 generic uart2"}).status_code == 422
+    assert client.delete("/api/builder/profiles/esp32-generic-uart2").status_code == 404
+    assert client.delete(f"/api/builder/profiles/{pid}").status_code == 200
+    assert client.delete(f"/api/builder/profiles/{pid}").status_code == 404
+
+
+@needs_tc
+def test_update_all_stream(tmp_path, fake):
+    _, client = make_app(tmp_path, extra_yaml=ESPHOME_YAML)
+    with client.websocket_connect("/api/builder/stream/update-all") as ws:
+        msgs = [ws.receive_json() for _ in range(3)]
+    assert msgs[-1] == {"event": "exit", "code": 0}
+
+
+def test_generated_yaml_includes_improv_serial():
+    from tests.test_esphome_generator import gen
+    assert "improv_serial:" in gen()["yaml"]
 
 
 # ---------------------------------------------------------------------------

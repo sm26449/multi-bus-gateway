@@ -43,6 +43,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <button class="btn btn-primary" id="builderGenBtn"><i class="bi bi-magic"></i> ${this.t('builder.generate', 'Generate from template')}</button>
                 <button class="btn" id="builderNewBtn"><i class="bi bi-plus-lg"></i> ${this.t('builder.newNode', 'New node')}</button>
                 <button class="btn" id="builderImportBtn"><i class="bi bi-upload"></i> ${this.t('builder.importYaml', 'Import YAML')}</button>
+                <button class="btn" id="builderUpdateAllBtn" title="${this.t('builder.updateAllTip', 'Rebuild and OTA every node whose firmware is out of date')}"><i class="bi bi-arrow-repeat"></i> ${this.t('builder.updateAll', 'Update all')}</button>
                 <button class="btn btn-ghost" id="builderSettingsBtn"><i class="bi bi-gear"></i> ${this.t('common.settings', 'Settings')}</button>
             </div>
             <div id="builderSettingsPanel" style="display:none;max-width:680px;margin-bottom:14px;" class="card">
@@ -57,6 +58,10 @@ Object.assign(JanitzaMonitor.prototype, {
         document.getElementById('builderNewBtn').addEventListener('click', () => this.openBuilderEditor(''));
         document.getElementById('builderImportBtn').addEventListener('click', () => this._builderImportYaml());
         document.getElementById('builderGenBtn').addEventListener('click', () => this.openBuilderGenerator());
+        document.getElementById('builderUpdateAllBtn').addEventListener('click', () => {
+            if (confirm(this.t('builder.updateAllQ', 'Rebuild and OTA-update every node now?')))
+                this.openBuilderConsole('update-all', '');
+        });
         if (st.reachable) this._renderBuilderNodes();
     },
 
@@ -98,6 +103,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <button class="btn btn-sm" data-act="upload" data-name="${name}"><i class="bi bi-broadcast-pin"></i> ${this.t('builder.flashOta', 'Flash OTA')}</button>
                 <button class="btn btn-sm" data-act="logs" data-name="${name}"><i class="bi bi-terminal"></i> ${this.t('builder.logs', 'Logs')}</button>
                 <button class="btn btn-sm" data-act="downloads" data-name="${name}"><i class="bi bi-download"></i> ${this.t('builder.binaries', 'Binaries')}</button>
+                <button class="btn btn-sm" data-act="flash-usb" data-name="${name}" title="${this.t('builder.flashUsbTip', 'First-time flash over USB, from this browser (WebSerial)')}"><i class="bi bi-usb-plug"></i> USB</button>
                 <button class="btn btn-sm btn-ghost" data-act="delete" data-name="${name}" title="${this.t('builder.deleteTip', 'Archive on the ESPHome dashboard (recoverable there)')}"><i class="bi bi-trash"></i></button>
             </div>`;
         }).join('');
@@ -116,6 +122,7 @@ Object.assign(JanitzaMonitor.prototype, {
             else if (act === 'upload') this.openBuilderConsole('upload', name);
             else if (act === 'logs') this.openBuilderConsole('logs', name);
             else if (act === 'downloads') this._builderShowDownloads(name);
+            else if (act === 'flash-usb') this.openBuilderFlasher(name);
             else if (act === 'delete') this._builderDeleteNode(name);
         }));
     },
@@ -287,8 +294,10 @@ Object.assign(JanitzaMonitor.prototype, {
                          validate: this.t('builder.validate', 'Validate'),
                          upload: this.t('builder.flashOta', 'Flash OTA'),
                          logs: this.t('builder.logs', 'Logs'),
+                         'update-all': this.t('builder.updateAll', 'Update all'),
                          clean: 'Clean' };
-        document.getElementById('builderConTitle').textContent = `${titles[command] || command} — ${name}`;
+        document.getElementById('builderConTitle').textContent =
+            (titles[command] || command) + (name ? ` — ${name}` : '');
         const out = document.getElementById('builderConOut');
         out.textContent = '';
         const status = document.getElementById('builderConStatus');
@@ -336,6 +345,34 @@ Object.assign(JanitzaMonitor.prototype, {
         }
     },
 
+    // ---- USB web flasher (esp-web-tools, vendored — no CDN, no cloud) ----------
+
+    async openBuilderFlasher(name) {
+        const body = document.getElementById('builderFlashBody');
+        if (!('serial' in navigator)) {
+            body.innerHTML = `<p style="color:#b9770e;max-width:520px;">${this.t('builder.noWebSerial',
+                'This browser/context has no WebSerial. Use Chrome/Edge over HTTPS (or http://localhost), or download the factory binary from "Binaries" and flash it with any esptool.')}</p>`;
+            this.openModal('builderFlashModal');
+            return;
+        }
+        if (!this._espWebToolsLoaded) {
+            const s = document.createElement('script');
+            s.type = 'module';
+            s.src = '/static/vendor/esp-web-tools/install-button.js';
+            document.head.appendChild(s);
+            this._espWebToolsLoaded = true;
+        }
+        body.innerHTML = `
+            <p style="max-width:520px;">${this.t('builder.flashUsbHelp',
+                'Connect the board over USB, then click Install. After flashing, the same dialog can provision Wi-Fi over the cable (Improv).')}</p>
+            <esp-web-install-button manifest="/api/builder/nodes/${encodeURIComponent(name)}/manifest">
+                <button class="btn btn-primary" slot="activate"><i class="bi bi-usb-plug"></i> ${this.t('builder.install', 'Install')}</button>
+                <span slot="unsupported" style="color:#b9770e;">${this.t('builder.noWebSerial2', 'WebSerial not available in this browser.')}</span>
+                <span slot="not-allowed" style="color:#c0392b;">${this.t('builder.notAllowed', 'Not allowed in an insecure context — open the UI over HTTPS.')}</span>
+            </esp-web-install-button>`;
+        this.openModal('builderFlashModal');
+    },
+
     // ---- generator wizard (template → node firmware + paired device) ----------
 
     async openBuilderGenerator() {
@@ -344,6 +381,7 @@ Object.assign(JanitzaMonitor.prototype, {
             templates = (await (await fetch('/api/device-templates')).json()).templates
                 .filter(t => t.transport === 'modbus');
         } catch (e) { /* empty list renders a message */ }
+        this._bgLoadProfiles();
         const sel = document.getElementById('bgTemplate');
         sel.innerHTML = templates.length
             ? templates.map(t => `<option value="${this._esc(t.id)}">${this._esc(t.name)} (${t.registers})</option>`).join('')
@@ -389,6 +427,41 @@ Object.assign(JanitzaMonitor.prototype, {
         document.querySelectorAll('#bgRegList .bg-reg').forEach(el => {
             if (el.style.display !== 'none') el.querySelector('input').checked = on;
         });
+    },
+
+    async _bgLoadProfiles() {
+        const sel = document.getElementById('bgProfile');
+        let profiles = [];
+        try {
+            profiles = (await (await fetch('/api/builder/profiles')).json()).profiles || [];
+        } catch (e) { /* dropdown stays empty */ }
+        this._bgProfiles = profiles;
+        sel.innerHTML = `<option value="">${this.t('builder.customHw', '(custom hardware)')}</option>`
+            + profiles.map(p => `<option value="${this._esc(p.id)}">${this._esc(p.name)}${p.builtin ? '' : ' *'}</option>`).join('');
+        sel.onchange = () => {
+            const p = this._bgProfiles.find(x => x.id === sel.value);
+            if (!p) return;
+            document.getElementById('bgPlatform').value = p.platform || 'esp32';
+            document.getElementById('bgBoard').value = p.board || '';
+            document.getElementById('bgTx').value = p.tx_pin || '';
+            document.getElementById('bgRx').value = p.rx_pin || '';
+            document.getElementById('bgFlow').value = p.flow_control_pin || '';
+            document.getElementById('bgBaud').value = String(p.baud_rate || 9600);
+            document.getElementById('bgParity').value = p.parity || 'NONE';
+            document.getElementById('bgStop').value = String(p.stop_bits || 1);
+        };
+        document.getElementById('bgProfileSave').onclick = async () => {
+            const name = prompt(this.t('builder.profileNameQ', 'Profile name (e.g. LilyGO T-CAN485):'));
+            if (!name) return;
+            const v = id => document.getElementById(id).value.trim();
+            const rsp = await fetch('/api/builder/profiles', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, platform: v('bgPlatform'), board: v('bgBoard'),
+                    tx_pin: v('bgTx'), rx_pin: v('bgRx'), flow_control_pin: v('bgFlow'),
+                    baud_rate: parseInt(v('bgBaud') || '9600', 10),
+                    parity: v('bgParity'), stop_bits: parseInt(v('bgStop') || '1', 10) }) });
+            if (rsp.ok) { this.showToast('success', 'Builder', this.t('builder.profileSaved', 'Hardware profile saved.')); this._bgLoadProfiles(); }
+        };
     },
 
     _bgPayload() {

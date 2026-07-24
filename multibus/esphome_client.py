@@ -47,8 +47,10 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # spawn-style WS commands the dashboard exposes (whitelist — anything else 404s
-# there anyway, but we refuse it before opening a socket).
-WS_COMMANDS = ("compile", "validate", "upload", "run", "logs", "clean")
+# there anyway, but we refuse it before opening a socket). "update-all"
+# rebuilds+OTAs every node in the config dir and takes no configuration.
+WS_COMMANDS = ("compile", "validate", "upload", "run", "logs", "clean",
+               "update-all")
 
 # Commands that require a "port" in the spawn message (OTA or a serial path).
 PORT_COMMANDS = ("upload", "run", "logs")
@@ -215,7 +217,9 @@ class EsphomeDashboard:
         if command not in WS_COMMANDS:
             raise EsphomeError(f"unknown ESPHome command: {command}")
         import websockets  # lazy: ships with uvicorn[standard]
-        spawn: Dict[str, Any] = {"type": "spawn", "configuration": configuration}
+        spawn: Dict[str, Any] = {"type": "spawn"}
+        if command != "update-all":
+            spawn["configuration"] = configuration
         if command in PORT_COMMANDS:
             spawn["port"] = port or "OTA"
         if extra:
