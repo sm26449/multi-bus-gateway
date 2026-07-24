@@ -244,6 +244,60 @@ def build(ctx) -> APIRouter:
             content=data, media_type="application/octet-stream",
             headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
+    # ---- generator (template → firmware YAML + paired device) --------------------
+
+    @r.post("/api/builder/generate")
+    def generate_node_yaml(request: Request, payload: Dict = Body(...)):
+        """Transpile a gateway device template (register subset) into ESPHome
+        node YAML + the PAIRED gateway artifacts (user template & device
+        payload with byte-identical topics). Pure preview — saves nothing;
+        the UI chains the existing save endpoints on 'Adopt'."""
+        _require_admin(request)
+        from ..esphome_generator import generate_node
+        tpl_id = str(payload.get("template_id", "") or "")
+        tpl = ctx.template_registry.get(tpl_id)
+        if tpl is None:
+            raise HTTPException(status_code=404, detail="template not found")
+        from ..device_template import template_transport
+        if template_transport(tpl) != "modbus":
+            raise HTTPException(status_code=422, detail={"errors": [
+                "only Modbus device templates can be transpiled to an RS485 "
+                "node (MQTT/HTTP templates already reach the gateway directly)"]})
+        mqtt_defaults = {
+            "broker": config.mqtt.broker if config.mqtt.enabled else "",
+            "port": config.mqtt.port, "username": config.mqtt.username,
+            "password": config.mqtt.password,
+        }
+        try:
+            out = generate_node(payload, tpl, config.poll_groups, mqtt_defaults)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+        return out
+
+    @r.post("/api/builder/secrets/ensure")
+    def ensure_secrets(request: Request, payload: Dict = Body(...)):
+        """Append MISSING keys to the dashboard's secrets.yaml (existing lines
+        are never rewritten). Values may be null → 'CHANGE_ME' placeholder."""
+        _require_admin(request)
+        from ..esphome_generator import merge_secrets
+        needed = payload.get("keys") or {}
+        if not isinstance(needed, dict) or not needed:
+            raise HTTPException(status_code=422, detail={"errors": ["keys{} required"]})
+        if any(not re.match(r"^[A-Za-z0-9_]{1,64}$", k) for k in needed):
+            raise HTTPException(status_code=422, detail={"errors": ["invalid key name"]})
+        cli = _client()
+        try:
+            existing = cli.get_config("secrets.yaml")
+        except EsphomeError:
+            existing = ""
+        merged, added = merge_secrets(existing, {
+            k: (str(v) if v is not None else None) for k, v in needed.items()})
+        if added:
+            _wrap(lambda: cli.save_config("secrets.yaml", merged))
+        _audit(request, "esphome secrets ensure", "secrets.yaml",
+               detail={"added": added})       # key NAMES only — never values
+        return {"status": "ok", "added": added}
+
     # ---- command stream (compile / validate / upload / run / logs / clean) -------
 
     @r.websocket("/api/builder/stream/{command}")

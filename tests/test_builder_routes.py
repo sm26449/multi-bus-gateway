@@ -260,6 +260,106 @@ def test_esphome_block_preserved_without_api(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# generator + adopt chain
+# ---------------------------------------------------------------------------
+
+GEN_PAYLOAD = {
+    "template_id": "eastron_sdm630",
+    "node": {"name": "hala-sdm630"},
+    "uart": {"tx_pin": "GPIO17", "rx_pin": "GPIO16"},
+    "modbus": {"unit_id": 2},
+    "mqtt": {},
+    "registers": ["V_L1", "Import_kWh"],
+}
+
+
+@needs_tc
+def test_generate_from_builtin_template(tmp_path, fake):
+    _, client = make_app(tmp_path, extra_yaml=ESPHOME_YAML)
+    rsp = client.post("/api/builder/generate", json=GEN_PAYLOAD)
+    assert rsp.status_code == 200, rsp.text
+    out = rsp.json()
+    assert out["node_yaml_name"] == "hala-sdm630.yaml"
+    # broker inherited from the gateway's own MQTT config (write_config)
+    assert 'broker: "mosquitto"' in out["yaml"]
+    assert len(out["topics"]) == 2
+    # paired artifacts are directly consumable by the existing endpoints
+    tpl = out["device_template"]["device_template"]
+    assert tpl["id"] == "esphome_hala_sdm630"
+    assert tpl["protocol"]["transports"] == ["mqtt"]
+    from multibus.device_template import validate_template
+    assert validate_template(out["device_template"]) == []
+    assert out["device_payload"]["connection"]["topic"] == "esphome/hala-sdm630/#"
+
+
+@needs_tc
+def test_generate_validation_and_gating(tmp_path, fake):
+    _, client = make_app(tmp_path, extra_yaml=ESPHOME_YAML)
+    # unknown template
+    rsp = client.post("/api/builder/generate",
+                      json={**GEN_PAYLOAD, "template_id": "nope"})
+    assert rsp.status_code == 404
+    # MQTT template refused (nothing to transpile)
+    rsp = client.post("/api/builder/generate",
+                      json={**GEN_PAYLOAD, "template_id": "zigbee2mqtt_sensor"})
+    assert rsp.status_code == 422
+    # generator ValueError → 422 with message
+    rsp = client.post("/api/builder/generate",
+                      json={**GEN_PAYLOAD, "node": {"name": "Bad Name"}})
+    assert rsp.status_code == 422
+    assert "mDNS-safe" in rsp.json()["detail"]["errors"][0]
+
+
+@needs_tc
+def test_adopt_chain_creates_paired_device(tmp_path, fake, monkeypatch):
+    """The full Adopt flow the UI drives: generate → save YAML on the
+    dashboard → upload paired template → create the mqtt-in device."""
+    import multibus.device_template as dt
+    monkeypatch.setattr(dt, 'USER_DIR', tmp_path / 'device_templates')
+    _, client = make_app(tmp_path, extra_yaml=ESPHOME_YAML)
+
+    out = client.post("/api/builder/generate", json=GEN_PAYLOAD).json()
+    assert client.put(f"/api/builder/nodes/{out['node_yaml_name']}/config",
+                      json={"content": out["yaml"]}).status_code == 200
+    assert client.post("/api/device-templates/upload",
+                       json={"template": out["device_template"]}).status_code == 200
+    rsp = client.post("/api/devices", json=out["device_payload"])
+    assert rsp.status_code == 200, rsp.text
+
+    # the device exists, uses the paired template, and auto-seeded registers
+    # carry the firmware's exact topics with no json_path and scale 1
+    devs = {d["id"]: d for d in client.get("/api/devices").json()["devices"]}
+    assert "hala-sdm630" in devs
+    assert devs["hala-sdm630"]["template"] == "esphome_hala_sdm630"
+    regs = client.get("/api/registers/selected",
+                      params={"device": "hala-sdm630"}).json()["registers"]
+    by_name = {r["name"]: r for r in regs}
+    assert set(by_name) == {"V_L1", "Import_kWh"}
+    assert by_name["V_L1"]["topic"] == "esphome/hala-sdm630/V_L1/state"
+    assert not by_name["V_L1"].get("json_path")
+    assert float(by_name["V_L1"].get("scale", 1) or 1) == 1.0
+
+
+@needs_tc
+def test_secrets_ensure_appends_missing_only(tmp_path, fake):
+    _, client = make_app(tmp_path, extra_yaml=ESPHOME_YAML)
+    fake.files["secrets.yaml"] = 'wifi_ssid: "MyNet"\n'
+    rsp = client.post("/api/builder/secrets/ensure", json={"keys": {
+        "wifi_ssid": None, "wifi_password": None, "mqtt_password": "s3"}})
+    assert rsp.status_code == 200
+    assert rsp.json()["added"] == ["mqtt_password", "wifi_password"]
+    body = fake.files["secrets.yaml"]
+    assert 'wifi_ssid: "MyNet"' in body and 'mqtt_password: "s3"' in body
+    # idempotent second call
+    rsp = client.post("/api/builder/secrets/ensure",
+                      json={"keys": {"wifi_password": None}})
+    assert rsp.json()["added"] == []
+    # bad key names refused
+    assert client.post("/api/builder/secrets/ensure",
+                       json={"keys": {"bad key!": "x"}}).status_code == 422
+
+
+# ---------------------------------------------------------------------------
 # command stream (WS proxy)
 # ---------------------------------------------------------------------------
 

@@ -40,6 +40,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
                 ${banner}
                 <span style="flex:1;"></span>
+                <button class="btn btn-primary" id="builderGenBtn"><i class="bi bi-magic"></i> ${this.t('builder.generate', 'Generate from template')}</button>
                 <button class="btn" id="builderNewBtn"><i class="bi bi-plus-lg"></i> ${this.t('builder.newNode', 'New node')}</button>
                 <button class="btn" id="builderImportBtn"><i class="bi bi-upload"></i> ${this.t('builder.importYaml', 'Import YAML')}</button>
                 <button class="btn btn-ghost" id="builderSettingsBtn"><i class="bi bi-gear"></i> ${this.t('common.settings', 'Settings')}</button>
@@ -55,6 +56,7 @@ Object.assign(JanitzaMonitor.prototype, {
         });
         document.getElementById('builderNewBtn').addEventListener('click', () => this.openBuilderEditor(''));
         document.getElementById('builderImportBtn').addEventListener('click', () => this._builderImportYaml());
+        document.getElementById('builderGenBtn').addEventListener('click', () => this.openBuilderGenerator());
         if (st.reachable) this._renderBuilderNodes();
     },
 
@@ -331,6 +333,153 @@ Object.assign(JanitzaMonitor.prototype, {
         if (this._builderWs) {
             try { this._builderWs.close(); } catch (e) { /* already closed */ }
             this._builderWs = null;
+        }
+    },
+
+    // ---- generator wizard (template → node firmware + paired device) ----------
+
+    async openBuilderGenerator() {
+        let templates = [];
+        try {
+            templates = (await (await fetch('/api/device-templates')).json()).templates
+                .filter(t => t.transport === 'modbus');
+        } catch (e) { /* empty list renders a message */ }
+        const sel = document.getElementById('bgTemplate');
+        sel.innerHTML = templates.length
+            ? templates.map(t => `<option value="${this._esc(t.id)}">${this._esc(t.name)} (${t.registers})</option>`).join('')
+            : `<option value="">${this.t('builder.noModbusTpl', 'No Modbus templates available')}</option>`;
+        sel.onchange = () => this._bgLoadRegisters(sel.value);
+        document.getElementById('bgRegFilter').oninput = () => this._bgFilterRegisters();
+        document.getElementById('bgSelAll').onclick = () => this._bgToggleAll(true);
+        document.getElementById('bgSelNone').onclick = () => this._bgToggleAll(false);
+        document.getElementById('bgGenerateBtn').onclick = () => this._bgGenerate();
+        document.getElementById('bgSaveBtn').onclick = () => this._bgSave(false);
+        document.getElementById('bgAdoptBtn').onclick = () => this._bgSave(true);
+        document.getElementById('bgPreviewWrap').style.display = 'none';
+        this._bgResult = null;
+        if (templates.length) this._bgLoadRegisters(templates[0].id);
+        this.openModal('builderGenModal');
+    },
+
+    async _bgLoadRegisters(tplId) {
+        const box = document.getElementById('bgRegList');
+        box.innerHTML = '…';
+        if (!tplId) { box.innerHTML = ''; return; }
+        const d = await (await fetch(`/api/device-templates/${encodeURIComponent(tplId)}`)).json();
+        const regs = (d.device_template && d.device_template.registers) || [];
+        this._bgRegs = regs;
+        box.innerHTML = regs.map((r, i) => {
+            const preselect = regs.length <= 40 || (r.defaults && Object.keys(r.defaults).length);
+            return `<label class="bg-reg" style="display:flex;gap:6px;align-items:center;font-size:12px;padding:1px 0;">
+                <input type="checkbox" data-reg="${this._esc(r.name)}" ${preselect ? 'checked' : ''}>
+                <code>${this._esc(r.name)}</code>
+                <span style="color:var(--text-secondary);">${this._esc(r.label || '')} ${r.unit ? '[' + this._esc(r.unit) + ']' : ''} @${r.address}</span>
+            </label>`;
+        }).join('');
+    },
+
+    _bgFilterRegisters() {
+        const q = document.getElementById('bgRegFilter').value.toLowerCase();
+        document.querySelectorAll('#bgRegList .bg-reg').forEach(el => {
+            el.style.display = !q || el.textContent.toLowerCase().includes(q) ? '' : 'none';
+        });
+    },
+
+    _bgToggleAll(on) {
+        document.querySelectorAll('#bgRegList .bg-reg').forEach(el => {
+            if (el.style.display !== 'none') el.querySelector('input').checked = on;
+        });
+    },
+
+    _bgPayload() {
+        const v = id => document.getElementById(id).value.trim();
+        const registers = [...document.querySelectorAll('#bgRegList input:checked')]
+            .map(i => i.dataset.reg);
+        return {
+            template_id: document.getElementById('bgTemplate').value,
+            registers,
+            node: { name: v('bgName'), friendly_name: v('bgFriendly'),
+                    platform: v('bgPlatform'), board: v('bgBoard') },
+            uart: { tx_pin: v('bgTx'), rx_pin: v('bgRx'),
+                    flow_control_pin: v('bgFlow'),
+                    baud_rate: parseInt(v('bgBaud') || '9600', 10),
+                    parity: v('bgParity'), stop_bits: parseInt(v('bgStop') || '1', 10) },
+            modbus: { unit_id: parseInt(v('bgUnitId') || '1', 10) },
+            mqtt: { broker: v('bgBroker'), topic_prefix: v('bgPrefix') },
+        };
+    },
+
+    async _bgGenerate() {
+        const msg = document.getElementById('bgMsg');
+        msg.textContent = '';
+        const rsp = await fetch('/api/builder/generate', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(this._bgPayload()) });
+        const d = await rsp.json().catch(() => ({}));
+        if (!rsp.ok) {
+            const errs = (d.detail && d.detail.errors) ? d.detail.errors.join('; ') : (d.detail || rsp.status);
+            msg.innerHTML = `<span style="color:#c0392b;">${this._esc(String(errs))}</span>`;
+            return;
+        }
+        this._bgResult = d;
+        document.getElementById('bgPreviewWrap').style.display = '';
+        document.getElementById('bgYaml').value = d.yaml;
+        const warn = (d.warnings || []).map(w => `<li>${this._esc(w)}</li>`).join('');
+        document.getElementById('bgWarnings').innerHTML = warn
+            ? `<ul style="color:#b9770e;margin:6px 0;">${warn}</ul>` : '';
+        msg.innerHTML = `<span style="color:var(--text-secondary);">${d.topics.length} ${this.t('builder.topicsReady', 'MQTT topics — review the YAML, then save.')}</span>`;
+    },
+
+    async _bgSave(adopt) {
+        const d = this._bgResult;
+        if (!d) return;
+        const msg = document.getElementById('bgMsg');
+        const step = async (label, fn) => {
+            msg.textContent = label + '…';
+            const rsp = await fn();
+            if (!rsp.ok && rsp.status !== 409) {
+                const e = await rsp.json().catch(() => ({}));
+                const errs = (e.detail && e.detail.errors) ? e.detail.errors.join('; ') : (e.detail || rsp.status);
+                throw new Error(`${label}: ${errs}`);
+            }
+            return rsp;
+        };
+        try {
+            // 1) firmware YAML onto the dashboard (ask before overwriting)
+            let rsp = await step(this.t('builder.savingYaml', 'Saving node YAML'), () =>
+                fetch(`/api/builder/nodes/${encodeURIComponent(d.node_yaml_name)}/config`, {
+                    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: d.yaml }) }));
+            if (rsp.status === 409) {
+                if (!confirm(this.t('builder.overwriteQ', 'Node YAML already exists on the dashboard. Overwrite?'))) return;
+                await step(this.t('builder.savingYaml', 'Saving node YAML'), () =>
+                    fetch(`/api/builder/nodes/${encodeURIComponent(d.node_yaml_name)}/config`, {
+                        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ content: d.yaml, overwrite: true }) }));
+            }
+            // 2) required secrets get placeholders/values (never overwrites)
+            await step(this.t('builder.ensuringSecrets', 'Ensuring secrets.yaml keys'), () =>
+                fetch('/api/builder/secrets/ensure', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ keys: d.secrets }) }));
+            if (adopt) {
+                // 3) paired template + 4) mqtt-in device (existing endpoints)
+                await step(this.t('builder.savingTpl', 'Uploading paired template'), () =>
+                    fetch('/api/device-templates/upload', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ template: d.device_template, overwrite: true }) }));
+                await step(this.t('builder.creatingDev', 'Creating gateway device'), () =>
+                    fetch('/api/devices', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(d.device_payload) }));
+            }
+            this.closeModal('builderGenModal');
+            this.showToast('success', 'Builder', adopt
+                ? this.t('builder.adopted', 'Node saved and adopted — fill secrets.yaml, build, flash, and data flows in.')
+                : this.t('builder.genSaved', 'Node YAML saved on the ESPHome dashboard.'));
+            this._renderBuilderNodes();
+        } catch (e) {
+            msg.innerHTML = `<span style="color:#c0392b;">${this._esc(String(e.message || e))}</span>`;
         }
     },
 });
