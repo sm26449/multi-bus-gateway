@@ -117,6 +117,7 @@ def fake(monkeypatch):
     dash = FakeDashboard()
     monkeypatch.setattr(builder_routes, "from_config", lambda cfg: dash)
     monkeypatch.setattr(builder_routes, "_clients", {})
+    monkeypatch.setattr(builder_routes, "_status_cache", {})
     return dash
 
 
@@ -128,21 +129,38 @@ def fake(monkeypatch):
 def test_builder_disabled_by_default(tmp_path):
     _, client = make_app(tmp_path)
     st = client.get("/api/builder/status").json()
-    assert st == {"enabled": False, "reachable": False, "version": "", "url": ""}
+    assert st == {"enabled": False, "reachable": False, "version": "",
+                  "url": "", "node_count": 0}
     assert client.get("/api/builder/nodes").status_code == 503
 
 
 @needs_tc
-def test_builder_status_reachable_and_down(tmp_path, fake):
+def test_builder_status_reachable_cached_and_down(tmp_path, fake):
     _, client = make_app(tmp_path, extra_yaml=ESPHOME_YAML)
+    fake.files["a.yaml"] = "esphome: {}\n"
     st = client.get("/api/builder/status").json()
     assert st["enabled"] and st["reachable"] and st["version"] == "2026.5.3"
+    assert st["node_count"] == 1
 
+    # cached: flipping the backend down does NOT change the answer within TTL
     fake.fail = True
+    assert client.get("/api/builder/status").json()["reachable"] is True
+    # ...but a node mutation invalidates the cache
+    builder_routes._status_cache.clear()
     st = client.get("/api/builder/status").json()
     assert st["enabled"] and not st["reachable"] and "unreachable" in st["error"]
     # EsphomeError on a data route maps to 502 (bad gateway), not a crash
     assert client.get("/api/builder/nodes").status_code == 502
+
+
+@needs_tc
+def test_status_cache_invalidated_by_node_changes(tmp_path, fake):
+    _, client = make_app(tmp_path, extra_yaml=ESPHOME_YAML)
+    assert client.get("/api/builder/status").json()["node_count"] == 0
+    client.put("/api/builder/nodes/n1.yaml/config", json={"content": "x: 1\n"})
+    assert client.get("/api/builder/status").json()["node_count"] == 1
+    client.delete("/api/builder/nodes/n1.yaml")
+    assert client.get("/api/builder/status").json()["node_count"] == 0
 
 
 # ---------------------------------------------------------------------------

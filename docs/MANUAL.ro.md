@@ -443,11 +443,13 @@ dependențe noi. Nimic nu iese din rețeaua ta.
 
 **Pornire: zero configurare.** `docker compose up -d` pornește și serviciul
 ESPHome inclus, iar gateway-ul se leagă singur de el (`ESPHOME_URL` e
-pre-completat în compose). Deschizi tab-ul **Builder** și bannerul verde cu
-versiunea ESPHome e deja acolo. Dashboard-ul ESPHome nu e expus pe LAN —
+pre-completat în compose). Cardul **Device Builder** te așteaptă în pagina
+**Devices**, sub lista de dispozitive, cu bannerul verde și versiunea ESPHome
+deja afișate; butonul **Deploy new device** din toolbar te duce direct în
+wizard. Dashboard-ul ESPHome nu e expus pe LAN —
 totul trece printr-o singură interfață, cu un singur login și un singur
 audit trail. (Ai deja un ESPHome în altă parte? Schimbă URL-ul din
-Builder → ⚙, sau setează `ESPHOME_URL` în `.env`. Vrei și login pe
+Devices → Device Builder → ⚙, sau setează `ESPHOME_URL` în `.env`. Vrei și login pe
 dashboard-ul ESPHome? `ESPHOME_DASHBOARD_USERNAME/PASSWORD` în `.env` le
 setează pe ambele capete deodată.)
 

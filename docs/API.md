@@ -131,7 +131,7 @@ viewer session ends when its cookie expires or is cleared client-side.
 ## Device Builder (ESPHome integration)
 
 All routes 503 until `esphome.enabled` + `esphome.url` are configured
-(Builder → Settings). Node YAML can embed Wi-Fi/OTA credentials, so YAML
+(Devices → Device Builder → ⚙). Node YAML can embed Wi-Fi/OTA credentials, so YAML
 reads/writes, artifacts and command streams are **admin**-only while auth is
 enabled; dashboard errors surface as 502 with the reason.
 

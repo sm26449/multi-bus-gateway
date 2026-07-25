@@ -57,6 +57,12 @@ _MAX_YAML = 512 * 1024
 # cookie is reused instead of re-authenticating every request
 _clients: Dict[tuple, EsphomeDashboard] = {}
 
+# /api/builder/status is polled by the Status page every few seconds; the
+# answer needs two dashboard round-trips, so it is cached briefly. Keyed by
+# URL; cleared on settings save.
+_STATUS_TTL_S = 15.0
+_status_cache: Dict[str, tuple] = {}      # url -> (monotonic_ts, payload)
+
 
 def build(ctx) -> APIRouter:
     r = APIRouter(tags=["builder"])
@@ -155,6 +161,7 @@ def build(ctx) -> APIRouter:
             "password": password, "timeout_s": timeout_s}
         config.save_yaml_config()
         _clients.clear()               # drop cached sessions on any change
+        _status_cache.clear()          # and the cached reachability verdict
         _audit(request, "esphome settings save", url,
                detail={"enabled": enabled})
         return {"status": "ok", "applies": "live"}
@@ -163,18 +170,27 @@ def build(ctx) -> APIRouter:
 
     @r.get("/api/builder/status")
     def builder_status():
-        """Feature switch + dashboard reachability (drives the UI banner)."""
+        """Feature switch + dashboard reachability + node count. Cached for
+        a few seconds — the Status page polls this alongside /api/status and
+        must never pay dashboard round-trips per refresh."""
         if not _enabled():
             return {"enabled": False, "reachable": False, "version": "",
-                    "url": ""}
+                    "url": "", "node_count": 0}
         cli = _client()
+        import time
+        hit = _status_cache.get(cli.base)
+        if hit and time.monotonic() - hit[0] < _STATUS_TTL_S:
+            return hit[1]
         try:
-            version = cli.version()
-            return {"enabled": True, "reachable": True, "version": version,
-                    "url": cli.base}
+            payload = {"enabled": True, "reachable": True,
+                       "version": cli.version(),
+                       "node_count": len(cli.devices()["configured"]),
+                       "url": cli.base}
         except EsphomeError as e:
-            return {"enabled": True, "reachable": False, "version": "",
-                    "url": cli.base, "error": str(e)}
+            payload = {"enabled": True, "reachable": False, "version": "",
+                       "node_count": 0, "url": cli.base, "error": str(e)}
+        _status_cache[cli.base] = (time.monotonic(), payload)
+        return payload
 
     @r.get("/api/builder/nodes")
     def list_nodes():
@@ -211,6 +227,7 @@ def build(ctx) -> APIRouter:
             except EsphomeError:
                 pass                       # not found → create is fine
         _wrap(lambda: cli.save_config(name, content))
+        _status_cache.clear()          # node_count may have changed
         _audit(request, "esphome yaml save", name,
                detail={"bytes": len(content)})
         return {"status": "saved", "name": name}
@@ -221,6 +238,7 @@ def build(ctx) -> APIRouter:
         _require_admin(request)
         _check_name(name)
         _wrap(lambda: _client().archive(name))
+        _status_cache.clear()          # node_count changed
         _audit(request, "esphome node archive", name)
         return {"status": "archived", "name": name}
 

@@ -930,10 +930,8 @@
   "vmeter.qualityBlockHint": "Bloc read-only pe care un consumator Modbus îl poate citi ca să judece calitatea datelor: versiune format, stare (1 ok / 2 degradat / 3 stale), numărul de rânduri fresh/stale/lipsă, vârsta celei mai noi valori fresh (u32 s). Totul big-endian, fără float-uri. Adresele dintre harta meter-ului și 61440 răspund în continuare illegal-address.",
   "security.canonical.title": "Adresă canonică",
   "security.canonical.hint": "Când e setată, browserul e direcționat aici implicit (ca să folosească TLS + passkeys). IP-ul local rămâne accesibil — adaugă ?local la adresă ca să ocolești redirect-ul (ex. dacă DNS/proxy e jos). Gol = fără redirect.",
-  "nav.builder": "Builder",
   "builder.title": "Device Builder",
   "builder.subtitle": "Creează, compilează și flash-uiește firmware pentru noduri ESP32/ESP8266 — cititoare RS485/BLE remote care publică înapoi în acest gateway prin MQTT. Compilarea rulează pe containerul tău ESPHome; nimic nu iese din rețea.",
-  "builder.introOff": "Creează, compilează și flash-uiește firmware pentru noduri ESP32/ESP8266 din această interfață, folosind un dashboard ESPHome extern ca motor de build. Configurează adresa containerului ESPHome pentru a activa.",
   "builder.settingsTitle": "Conexiune ESPHome",
   "builder.enable": "Activează Device Builder",
   "builder.user": "Utilizator (opțional)",
@@ -1006,5 +1004,9 @@
   "builder.notBuilt": "necompilat încă",
   "builder.seenOnNet": "văzut în rețea",
   "builder.notSeen": "nevăzut încă în rețea",
-  "builder.urlHint": "Cum e accesibil din containerul gateway-ului — serviciul inclus în compose este http://esphome:6052."
+  "builder.urlHint": "Cum e accesibil din containerul gateway-ului — serviciul inclus în compose este http://esphome:6052.",
+  "builder.deployNew": "Deploy device nou",
+  "tip.deployNode": "Construiește firmware pentru un cititor RS485 ESP32/ESP8266 remote și adoptă-l ca device",
+  "builder.nodes": "noduri",
+  "builder.configureFirst": "Conectează întâi Builder-ul la o instanță ESPHome (setările de mai jos)."
 }

@@ -930,10 +930,8 @@
   "vmeter.qualityBlockHint": "Read-only block a Modbus consumer can poll to judge data quality: format version, state (1 ok / 2 degraded / 3 stale), fresh/stale/missing row counts, age of the newest fresh value (u32 s). All big-endian, no floats. Addresses between the meter map and 61440 still answer illegal-address.",
   "security.canonical.title": "Canonical address",
   "security.canonical.hint": "When set, the browser is steered here by default (so TLS + passkeys are used). The local IP stays reachable — append ?local to the address to bypass the redirect (e.g. if DNS/proxy is down). Empty = no redirect.",
-  "nav.builder": "Builder",
   "builder.title": "Device Builder",
   "builder.subtitle": "Author, compile and flash ESP32/ESP8266 node firmware — remote RS485/BLE readers that publish back to this gateway over MQTT. Compilation runs on your own ESPHome container; nothing leaves your network.",
-  "builder.introOff": "Author, compile and flash ESP32/ESP8266 node firmware from this UI, using an external ESPHome dashboard as the build engine. Point the gateway at your ESPHome container to enable it.",
   "builder.settingsTitle": "ESPHome connection",
   "builder.enable": "Enable the Device Builder",
   "builder.user": "Username (optional)",
@@ -1006,5 +1004,9 @@
   "builder.notBuilt": "not built yet",
   "builder.seenOnNet": "seen on the network",
   "builder.notSeen": "not seen on the network yet",
-  "builder.urlHint": "As reachable from the gateway container — the bundled compose service is http://esphome:6052."
+  "builder.urlHint": "As reachable from the gateway container — the bundled compose service is http://esphome:6052.",
+  "builder.deployNew": "Deploy new device",
+  "tip.deployNode": "Build firmware for a remote ESP32/ESP8266 RS485 reader and adopt it as a device",
+  "builder.nodes": "nodes",
+  "builder.configureFirst": "Connect the Builder to an ESPHome instance first (settings below)."
 }

@@ -22,12 +22,7 @@ Object.assign(JanitzaMonitor.prototype, {
         }
         this._builderStatus = st;
         if (!st.enabled) {
-            el.innerHTML = `
-                <div style="max-width:680px;">
-                    <p style="margin:0 0 14px;color:var(--text-secondary);font-size:13px;">${this.t('builder.introOff',
-                        'Author, compile and flash ESP32/ESP8266 node firmware from this UI, using an external ESPHome dashboard as the build engine. Point the gateway at your ESPHome container to enable it.')}</p>
-                    ${this._builderSettingsFormHtml()}
-                </div>`;
+            el.innerHTML = `<div style="max-width:680px;">${this._builderSettingsFormHtml()}</div>`;
             this._wireBuilderSettings();
             return;
         }
@@ -361,6 +356,22 @@ Object.assign(JanitzaMonitor.prototype, {
             try { this._builderWs.close(); } catch (e) { /* already closed */ }
             this._builderWs = null;
         }
+    },
+
+    // "Deploy new device" in the Devices toolbar: straight into the generator
+    // when the Builder is ready, otherwise land the user on its settings.
+    openBuilderDeploy() {
+        const st = this._builderStatus;
+        if (st && st.enabled && st.reachable) {
+            this.openBuilderGenerator();
+            return;
+        }
+        const card = document.getElementById('builderCard');
+        if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const panel = document.getElementById('builderSettingsPanel');
+        if (panel) panel.style.display = '';
+        this.showToast('info', 'Builder', this.t('builder.configureFirst',
+            'Connect the Builder to an ESPHome instance first (settings below).'));
     },
 
     // ---- USB web flasher (esp-web-tools, vendored — no CDN, no cloud) ----------

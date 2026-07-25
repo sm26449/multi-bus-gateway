@@ -37,14 +37,16 @@ Object.assign(JanitzaMonitor.prototype, {
     async renderStatus() {
         const host = document.getElementById('statusContent');
         if (!host) return;
-        let st, vm, res, evLog, al;
+        let st, vm, res, evLog, al, bst;
         try {
-            [st, vm, res, evLog, al] = await Promise.all([
+            [st, vm, res, evLog, al, bst] = await Promise.all([
                 fetch('/api/status').then(r => r.json()),
                 fetch('/api/virtual-meters').then(r => r.json()).catch(() => ({ instances: [] })),
                 fetch('/api/status/resources').then(r => r.ok ? r.json() : null).catch(() => null),
                 fetch('/api/events?limit=40').then(r => r.ok ? r.json() : null).catch(() => null),
                 fetch('/api/alerts?limit=1').then(r => r.ok ? r.json() : null).catch(() => null),
+                // server-side cached (15s) — costs nothing per refresh
+                fetch('/api/builder/status').then(r => r.ok ? r.json() : null).catch(() => null),
             ]);
         } catch (e) { host.innerHTML = `<p style="color:#c0392b;">${this.t('msg.loadStatus', "Could not load status.")}</p>`; return; }
 
@@ -118,6 +120,9 @@ Object.assign(JanitzaMonitor.prototype, {
                 ${sinkRow('bi-broadcast', 'MQTT', mqtt.enabled, mqtt.connected, `${(mqttRate ?? 0).toFixed(1)}/s`)}
                 ${sinkRow('bi-database', 'InfluxDB', influx.enabled, influx.connected, `${(influxRate ?? 0).toFixed(1)}/s${influx.buffer_points ? ` · ⚠ ${influx.buffer_points} ${t('status.buffered', 'buffered')}` : ''}`)}
                 ${sinkRow('bi-hdd-network', `${t('nav.vmeters', 'Virtual Meters')}`, insts.length > 0, insts.every(i => !i.enabled || i.running), `${insts.length} · ${vmConns} ${t('status.clients', 'clients')} · ${vmReq.toFixed(1)}/s`)}
+                ${bst && bst.enabled ? sinkRow('bi-magic', t('builder.title', 'Device Builder'), true, bst.reachable,
+                    bst.reachable ? `ESPHome ${esc(bst.version)} · ${bst.node_count} ${t('builder.nodes', 'nodes')}`
+                                  : t('builder.unreachable', 'unreachable')) : ''}
             </div></div>`;
 
         // ── sparklines ──

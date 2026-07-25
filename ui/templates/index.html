@@ -63,11 +63,6 @@
                     <i class="bi bi-hdd-network" aria-hidden="true"></i>
                     <span data-i18n="nav.vmeters">Virtual Meters</span>
                 </button>
-                <button class="nav-tab" data-page="builder" role="tab"
-                        id="tab-builder" aria-controls="builderPage" aria-selected="false">
-                    <i class="bi bi-cpu" aria-hidden="true"></i>
-                    <span data-i18n="nav.builder">Builder</span>
-                </button>
                 <button class="nav-tab" data-page="diagnostics" role="tab"
                         id="tab-diagnostics" aria-controls="diagnosticsPage" aria-selected="false">
                     <i class="bi bi-ethernet" aria-hidden="true"></i>
@@ -306,6 +301,8 @@
                                 <div style="display:flex;gap:8px;">
                                     <button class="btn btn-ghost btn-sm" onclick="app.openDiscoverModal()" data-i18n-title="tip.scan" title="Scan the network for devices you can add">
                                         <i class="bi bi-search"></i> <span data-i18n="devices.discover">Discover devices</span></button>
+                                    <button class="btn btn-ghost btn-sm" onclick="app.openBuilderDeploy()" data-i18n-title="tip.deployNode" title="Build firmware for a remote ESP32/ESP8266 RS485 reader and adopt it as a device">
+                                        <i class="bi bi-magic"></i> <span data-i18n="builder.deployNew">Deploy new device</span></button>
                                     <button class="btn btn-primary btn-sm" onclick="app.openDeviceWizard()">
                                         <i class="bi bi-plus-lg"></i> <span data-i18n="devices.add">Add Device</span>
                                     </button>
@@ -313,6 +310,23 @@
                             </div>
                             <div class="settings-card-body">
                                 <div id="devicesList" class="devices-list"></div>
+                            </div>
+                        </div>
+
+                        <!-- Device Builder (ESPHome-backed node firmware) — lives with
+                             the devices it ultimately creates -->
+                        <div class="settings-card devices-card" id="builderCard" style="margin-top:16px;">
+                            <div class="settings-card-header">
+                                <h3><i class="bi bi-magic"></i> <span data-i18n="builder.title">Device Builder</span></h3>
+                                <button class="btn btn-ghost btn-sm" id="builderRefreshBtn" data-i18n-title="common.refresh" title="Refresh">
+                                    <i class="bi bi-arrow-clockwise"></i></button>
+                            </div>
+                            <div class="settings-card-body">
+                                <p style="margin:0 0 12px;color:var(--text-secondary);font-size:12.5px;max-width:720px;" data-i18n="builder.subtitle">
+                                    Author, compile and flash ESP32/ESP8266 node firmware — remote RS485/BLE readers that publish
+                                    back to this gateway over MQTT. Compilation runs on your own ESPHome container; nothing
+                                    leaves your network.</p>
+                                <div id="builderContent"></div>
                             </div>
                         </div>
                     </div>
@@ -1014,21 +1028,6 @@
                     <button class="btn" id="vmRefreshBtn"><i class="bi bi-arrow-clockwise"></i> <span data-i18n="common.refresh">Refresh</span></button>
                 </div>
                 <div id="vmetersContent" style="padding:0 20px 24px;"></div>
-            </div>
-
-            <!-- Device Builder Page (ESPHome-backed node firmware authoring) -->
-            <div class="page" id="builderPage" role="tabpanel" aria-labelledby="tab-builder" tabindex="0">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:16px 20px;gap:16px;">
-                    <div>
-                        <h2 style="margin:0;"><i class="bi bi-cpu"></i> <span data-i18n="builder.title">Device Builder</span></h2>
-                        <p style="margin:6px 0 0;color:var(--text-secondary);font-size:13px;max-width:720px;" data-i18n="builder.subtitle">
-                            Author, compile and flash ESP32/ESP8266 node firmware — remote RS485/BLE readers that publish
-                            back to this gateway over MQTT. Compilation runs on your own ESPHome container; nothing
-                            leaves your network.</p>
-                    </div>
-                    <button class="btn" id="builderRefreshBtn"><i class="bi bi-arrow-clockwise"></i> <span data-i18n="common.refresh">Refresh</span></button>
-                </div>
-                <div id="builderContent" style="padding:0 20px 24px;"></div>
             </div>
 
             <!-- Templates Page (device maps + meter emulations) -->

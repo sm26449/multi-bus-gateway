@@ -4,12 +4,12 @@
 
 ### 2026-07-24 — Device Builder (ESPHome-backed node firmware)
 
-A new **Builder** section turns the gateway into a firmware authoring point
+A new **Device Builder** card on the Devices page turns the gateway into a firmware authoring point
 for remote ESP32/ESP8266 nodes — RS485/Modbus readers at other sites that
 publish back over MQTT. An external, stock **ESPHome** container does the
 compiling; the gateway drives it entirely over its HTTP/WS API (no shared
 volume, no new Python dependencies), so enabling the feature is one URL in
-Builder → Settings. Off by default; everything degrades gracefully without it.
+Devices → Device Builder. Off by default; everything degrades gracefully without it.
 
 - **Node management** — list (incl. mDNS-discovered adoptables), import
   YAML, editor with server-side validation, live-log console for
