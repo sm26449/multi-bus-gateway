@@ -482,6 +482,19 @@ setează pe ambele capete deodată.)
 6. Nodul pornește, publică, iar dispozitivul pereche din gateway prinde
    valorile automat — le vezi în Dashboard/Monitor, cu staleness LWT inclus.
 
+**Ce acoperă generatorul azi (și ce nu, încă):**
+
+| Interfață nod | Stare | Note |
+|---|---|---|
+| **RS485 / Modbus RTU** | ✅ complet | uart + modbus + modbus_controller din orice template Modbus; validat de ESPHome („Configuration is valid!") |
+| **MQTT northbound** | ✅ complet | topicuri explicite per registru + LWT; perechea mqtt-in se creează la Adopt |
+| **BLE (senzori)** | ⚠️ parțial | gateway-ul consumă BLE prin MQTT (template `ble_theengs_sensor`); generatorul nu emite încă profiluri `esp32_ble_tracker` |
+| **CAN bus** | ⏳ planificat | ESPHome are `canbus` (TWAI intern ESP32 / MCP2515), dar CAN e orientat pe frame-uri+semnale, nu pe registre — cere o extensie de schemă de template (id frame, biți, scalare), în design |
+
+Un YAML importat manual poate folosi ORICE componentă ESPHome (inclusiv
+canbus/BLE) încă de azi — limitele de mai sus privesc doar **generatorul**
+automat din template-uri.
+
 **De reținut:**
 
 - Fără auth activat, totul e deschis (LAN de încredere, ca restul
