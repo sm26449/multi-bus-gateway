@@ -1607,6 +1607,7 @@
                     <label class="form-label" for="discoverMethod" data-i18n="devices.discoverMethod">Discovery method</label>
                     <select id="discoverMethod" class="input" onchange="app._syncDiscoverMethod()">
                         <option value="modbus">Modbus TCP scan</option>
+                        <option value="esphome">ESPHome nodes (native API)</option>
                         <option value="fronius">Fronius Solar API (DataManager)</option>
                     </select>
                 </div>
@@ -1625,6 +1626,15 @@
                             <input type="number" id="discoverUnit" class="input" value="1" min="0" max="255"></div>
                     </div>
                     <span class="field-hint" data-i18n="devices.discoverModbusHint">Scans a private LAN range on the Modbus port for devices that answer. Read-only.</span>
+                </div>
+                <div id="discoverEsphomeGroup" style="display:none;">
+                    <div class="form-row">
+                        <div class="form-group flex-2"><label class="form-label" for="discoverEspCidr" data-i18n="devices.discoverCidr">Network (CIDR)</label>
+                            <input type="text" id="discoverEspCidr" class="input" placeholder="192.168.1.0/24"></div>
+                        <div class="form-group" style="max-width:100px"><label class="form-label" for="discoverEspPort" data-i18n="devices.discoverPort">Port</label>
+                            <input type="number" id="discoverEspPort" class="input" value="6053"></div>
+                    </div>
+                    <span class="field-hint" data-i18n="devices.discoverEsphomeHint">Sweeps the LAN for ESPHome devices on the native-API port and asks each for its identity. Works from inside Docker (mDNS does not) — nodes broadcasting an adoption package can be imported into the Builder directly.</span>
                 </div>
                 <div>
                     <button class="btn btn-secondary btn-sm" onclick="app.runDiscover(this)">

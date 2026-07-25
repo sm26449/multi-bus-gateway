@@ -133,8 +133,14 @@ Object.assign(JanitzaMonitor.prototype, {
         const method = document.getElementById('discoverMethod')?.value || 'modbus';
         const fg = document.getElementById('discoverHostGroup');
         const mg = document.getElementById('discoverModbusGroup');
+        const eg = document.getElementById('discoverEsphomeGroup');
         if (fg) fg.style.display = method === 'fronius' ? '' : 'none';
         if (mg) mg.style.display = method === 'modbus' ? '' : 'none';
+        if (eg) eg.style.display = method === 'esphome' ? '' : 'none';
+        // the ESPHome sweep reuses the Modbus CIDR guess
+        const src = document.getElementById('discoverCidr');
+        const dst = document.getElementById('discoverEspCidr');
+        if (method === 'esphome' && src && dst && !dst.value) dst.value = src.value;
     },
 
     async runDiscover(btn) {
@@ -159,6 +165,23 @@ Object.assign(JanitzaMonitor.prototype, {
                 const d = await r.json();
                 if (!r.ok) { err(d.detail?.errors?.join(' · ') || 'scan failed'); return; }
                 this._renderModbusScan(d);
+            } else if (method === 'esphome') {
+                const cidr = (document.getElementById('discoverEspCidr')?.value || '').trim();
+                if (!cidr) { err(this.t('devices.discoverNoCidr', 'Enter a network range (CIDR) to scan.')); return; }
+                busy();
+                const [r, imp] = await Promise.all([
+                    fetch('/api/discover/esphome', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            cidr,
+                            port: parseInt(document.getElementById('discoverEspPort')?.value) || 6053,
+                        }) }),
+                    // dashboard's own mDNS view — importable nodes get an Import action
+                    fetch('/api/builder/nodes').then(x => x.ok ? x.json() : null).catch(() => null),
+                ]);
+                const d = await r.json();
+                if (!r.ok) { err(d.detail?.errors?.join(' · ') || 'scan failed'); return; }
+                this._renderEsphomeScan(d, imp);
             } else {
                 const host = (document.getElementById('discoverHost')?.value || '').trim();
                 if (!host) { err(this.t('devices.discoverNoHost', 'Enter a host / IP to scan.')); return; }

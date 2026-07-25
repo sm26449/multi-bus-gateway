@@ -113,14 +113,20 @@ Object.assign(JanitzaMonitor.prototype, {
         const imp = importable.length ? `
             <div class="card-header" style="margin:18px 0 8px;border:none;background:none;padding:0;">
                 ${this.t('builder.discovered', 'Discovered on the network (adoptable)')}</div>
-            ${importable.map(n => `<div class="device-row" style="cursor:default;">
+            ${importable.map((n, i) => `<div class="device-row" style="cursor:default;">
                 <span class="status-dot" style="--dot:var(--warning,#f59e0b)"></span>
                 <div class="device-row-main">
                     <div class="device-row-title">${this._esc(n.name || '')}</div>
-                    <div class="device-row-sub">${this._esc(n.friendly_name || '')} ${this._esc(n.network || '')}</div>
+                    <div class="device-row-sub">${this._esc(n.friendly_name || '')} ${this._esc(n.project_name || '')} ${this._esc(n.network || '')}</div>
+                </div>
+                <div class="device-row-actions">
+                    <button class="btn btn-ghost btn-sm" data-imp="${i}" title="${this.t('builder.importTip', 'Adopt onto the ESPHome dashboard — it becomes a managed node (build/OTA from here)')}">
+                        <i class="bi bi-box-arrow-in-down"></i> ${this.t('builder.import', 'Import')}</button>
                 </div>
             </div>`).join('')}` : '';
         el.innerHTML = rows + imp;
+        el.querySelectorAll('button[data-imp]').forEach(b => b.addEventListener('click', () =>
+            this._builderImportNode(importable[parseInt(b.dataset.imp, 10)], b)));
         el.querySelectorAll('button[data-act]').forEach(b => b.addEventListener('click', () => {
             const name = b.dataset.name, act = b.dataset.act;
             if (act === 'edit') this.openBuilderEditor(name);
@@ -356,6 +362,67 @@ Object.assign(JanitzaMonitor.prototype, {
             try { this._builderWs.close(); } catch (e) { /* already closed */ }
             this._builderWs = null;
         }
+    },
+
+    // Adopt an mDNS-importable node onto the dashboard (shared by the Builder
+    // card list and the ESPHome discovery results).
+    async _builderImportNode(entry, btn) {
+        if (!entry) return;
+        if (btn) { btn.disabled = true; }
+        const rsp = await fetch('/api/builder/import', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: entry.name, friendly_name: entry.friendly_name || '',
+                project_name: entry.project_name || '',
+                package_import_url: entry.package_import_url || '',
+            }) });
+        const d = await rsp.json().catch(() => ({}));
+        if (btn) { btn.disabled = false; }
+        if (rsp.ok) {
+            this.showToast('success', 'Builder',
+                `${d.configuration} ${this.t('builder.imported', 'imported — it is now a managed node.')}`);
+            this._renderBuilderNodes();
+        } else {
+            const msg = (d.detail && d.detail.errors) ? d.detail.errors.join('; ') : (d.detail || rsp.status);
+            this.showToast('error', 'Builder', this._esc(String(msg)));
+        }
+    },
+
+    // ESPHome LAN sweep results (Discover devices modal). `nodesInfo` is the
+    // dashboard view: configured → "managed" chip, importable → Import action.
+    _renderEsphomeScan(d, nodesInfo) {
+        const box = document.getElementById('discoverResult');
+        if (!box) return;
+        const results = d.results || [];
+        if (!results.length) {
+            box.innerHTML = `<div class="settings-card" style="padding:12px;color:var(--text-secondary);">${this.t('devices.scanNone', 'No devices answered on')} ${d.scanned} ${this.t('devices.scanHosts', 'hosts.')}</div>`;
+            return;
+        }
+        const managed = new Set(((nodesInfo && nodesInfo.configured) || []).map(n => n.name));
+        const importable = ((nodesInfo && nodesInfo.importable) || []);
+        const impByName = Object.fromEntries(importable.map((n, i) => [n.name, i]));
+        box.innerHTML = `<div class="settings-card" style="padding:6px 12px;">` + results.map(r => {
+            const name = r.name || this.t('builder.espUnknown', 'ESPHome device');
+            const chips = [];
+            if (r.encrypted) chips.push(`<span class="dev-chip" title="${this.t('builder.encryptedTip', 'Native API uses encryption — identity not readable, but the device is ESPHome')}">${this.t('builder.encrypted', 'encrypted API')}</span>`);
+            if (managed.has(r.name)) chips.push(`<span class="dev-chip">${this.t('builder.managed', 'managed here')}</span>`);
+            const impIdx = impByName[r.name];
+            const action = impIdx !== undefined
+                ? `<button class="btn btn-ghost btn-sm" data-scan-imp="${impIdx}"><i class="bi bi-box-arrow-in-down"></i> ${this.t('builder.import', 'Import')}</button>`
+                : (managed.has(r.name) || r.encrypted ? ''
+                   : `<span class="field-hint">${this.t('builder.espForeign', 'not adoptable — connect it via MQTT or reflash with the Builder')}</span>`);
+            return `<div class="device-row" style="cursor:default;">
+                <span class="status-dot" style="--dot:var(--success,#22c55e)"></span>
+                <div class="device-row-main">
+                    <div class="device-row-title">${this._esc(name)} ${chips.join(' ')}</div>
+                    <div class="device-row-sub">${this._esc(r.host)}:${r.port}${r.api_version ? ` · API ${this._esc(r.api_version)}` : ''}${r.server_info ? ` · ${this._esc(r.server_info)}` : ''}</div>
+                </div>
+                <div class="device-row-actions">${action}</div>
+            </div>`;
+        }).join('') + `</div>
+        <div class="field-hint" style="margin-top:6px;">${d.scanned} ${this.t('devices.scanHosts', 'hosts.')} · ${d.elapsed_s}s</div>`;
+        box.querySelectorAll('button[data-scan-imp]').forEach(b => b.addEventListener('click', () =>
+            this._builderImportNode(importable[parseInt(b.dataset.scanImp, 10)], b)));
     },
 
     // "Deploy new device" in the Devices toolbar: straight into the generator

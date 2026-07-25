@@ -423,6 +423,34 @@ def test_secrets_ensure_appends_missing_only(tmp_path, fake):
 
 
 # ---------------------------------------------------------------------------
+# mDNS-importable adoption proxy
+# ---------------------------------------------------------------------------
+
+@needs_tc
+def test_import_node_proxies_and_validates(tmp_path, fake):
+    _, client = make_app(tmp_path, extra_yaml=ESPHOME_YAML)
+    fake.import_calls = []
+    def _imp(args):
+        fake.import_calls.append(args)
+        return f"{args['name']}.yaml"
+    fake.import_node = _imp
+
+    entry = {"name": "garage-node", "friendly_name": "Garage",
+             "project_name": "esphome.web", "package_import_url":
+             "github://esphome/example-configs/esphome-web/esp32.yaml@main"}
+    rsp = client.post("/api/builder/import", json=entry)
+    assert rsp.status_code == 200
+    assert rsp.json()["configuration"] == "garage-node.yaml"
+    assert fake.import_calls[0]["project_name"] == "esphome.web"
+
+    # bad mDNS name / missing package info → 422 before any dashboard call
+    assert client.post("/api/builder/import",
+                       json={**entry, "name": "Bad Name"}).status_code == 422
+    assert client.post("/api/builder/import",
+                       json={"name": "ok-node"}).status_code == 422
+
+
+# ---------------------------------------------------------------------------
 # web-flasher manifest + hardware profiles + fleet update (phase 3)
 # ---------------------------------------------------------------------------
 

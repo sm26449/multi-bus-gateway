@@ -83,6 +83,26 @@ def build(ctx) -> APIRouter:
         results = await asyncio.to_thread(discovery.scan_tcp, hosts, port, unit, timeout)
         return {"scanned": len(hosts), "results": results}
 
+    @r.post("/api/discover/esphome")
+    async def discover_esphome(payload: Dict = Body(...)):
+        """Sweep a private CIDR on the ESPHome native-API port (6053). mDNS
+        can't cross the Docker bridge, but a unicast TCP sweep can: each
+        responder is asked for its identity with a plaintext HelloRequest
+        (answered pre-auth); encrypted-API nodes are still detected and
+        flagged. Read-only, LAN-restricted, same bounds as the Modbus scan."""
+        from .. import discovery
+        cidr = str(payload.get('cidr', '') or '').strip()
+        try:
+            port = int(payload.get('port', discovery.ESPHOME_API_PORT))
+            timeout = min(3.0, max(0.1, float(payload.get('timeout', 0.5))))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail={"errors": ["port/timeout must be numbers"]})
+        try:
+            hosts = discovery.hosts_from_cidr(cidr, allow_nonlan=config.security.allow_nonlan_http_devices)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+        return await asyncio.to_thread(discovery.scan_esphome, hosts, port, timeout)
+
     @r.post("/api/discover/modbus/units")
     async def discover_modbus_units(payload: Dict = Body(...)):
         """Sweep unit/slave ids on ONE endpoint (TCP host or RTU serial line)."""

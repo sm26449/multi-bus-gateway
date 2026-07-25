@@ -180,6 +180,27 @@ class EsphomeDashboard:
         if status != 200:
             raise EsphomeError(f"ESPHome unarchive {configuration} -> HTTP {status}")
 
+    def import_node(self, args: Dict[str, Any]) -> str:
+        """Adopt an mDNS-importable node: the dashboard writes a minimal YAML
+        wrapping the device's advertised package. Returns the new file name.
+        Args mirror the dashboard's /import: name, friendly_name?,
+        project_name, package_import_url, encryption?."""
+        status, data = self._request(
+            "POST", "/import", body=json.dumps(args).encode("utf-8"),
+            content_type="application/json")
+        if status == 500 and b"exists" in data:
+            raise EsphomeError(f"{args.get('name')}: a YAML for this node "
+                               "already exists on the dashboard")
+        if status == 422:
+            raise EsphomeError("ESPHome rejected the package URL for "
+                               f"{args.get('name')} (not an allowed source)")
+        if status != 200:
+            raise EsphomeError(f"ESPHome import -> HTTP {status}")
+        try:
+            return str(json.loads(data.decode("utf-8", "replace"))["configuration"])
+        except (json.JSONDecodeError, KeyError):
+            return f"{args.get('name')}.yaml"
+
     def downloads(self, configuration: str) -> List[Dict[str, Any]]:
         """Artifact list after a build: [{title, description, file, download}]."""
         out = self._get_json("/downloads", {"configuration": configuration})

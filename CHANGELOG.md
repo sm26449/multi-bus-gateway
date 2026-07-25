@@ -33,7 +33,13 @@ Devices → Device Builder. Off by default; everything degrades gracefully witho
   auth; every state change and stream lands in the audit log; secrets are
   redacted everywhere (the secrets.yaml helper only ever appends missing
   keys and never logs values).
-- Compose ships an optional `esphome` service (`--profile esphome`).
+- Compose ships the `esphome` build-engine service by default (dashboard
+  port unpublished — the gateway proxies everything); `ESPHOME_URL` seeds
+  the feature on a fresh deploy, so it works with zero configuration.
+- **LAN discovery for ESPHome nodes** — Discover devices gains an "ESPHome
+  nodes (native API)" sweep: unicast probing of port 6053 with a pre-auth
+  plaintext hello for identity (Docker-friendly — no mDNS required);
+  adoptable nodes can be imported into the Builder in one click.
 
 ## 3.0.0
 

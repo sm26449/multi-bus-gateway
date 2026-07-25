@@ -1008,5 +1008,14 @@
   "builder.deployNew": "Deploy new device",
   "tip.deployNode": "Build firmware for a remote ESP32/ESP8266 RS485 reader and adopt it as a device",
   "builder.nodes": "nodes",
-  "builder.configureFirst": "Connect the Builder to an ESPHome instance first (settings below)."
+  "builder.configureFirst": "Connect the Builder to an ESPHome instance first (settings below).",
+  "devices.discoverEsphomeHint": "Sweeps the LAN for ESPHome devices on the native-API port and asks each for its identity. Works from inside Docker (mDNS does not) — nodes broadcasting an adoption package can be imported into the Builder directly.",
+  "builder.import": "Import",
+  "builder.importTip": "Adopt onto the ESPHome dashboard — it becomes a managed node (build/OTA from here)",
+  "builder.imported": "imported — it is now a managed node.",
+  "builder.espUnknown": "ESPHome device",
+  "builder.encrypted": "encrypted API",
+  "builder.encryptedTip": "Native API uses encryption — identity not readable, but the device is ESPHome",
+  "builder.managed": "managed here",
+  "builder.espForeign": "not adoptable — connect it via MQTT or reflash with the Builder"
 }

@@ -447,3 +447,108 @@ def mqtt_sample(broker: str, port: int = 1883, username: str = "",
                 "error": f"no message on {topic!r} within {timeout_s:g}s — "
                          "nothing retained and nobody published; try while the device is sending"}
     return {"ok": True, **got}
+
+
+# ---------------------------------------------------------------------------
+# ESPHome node discovery (native API, TCP 6053)
+#
+# mDNS does not cross a Docker bridge network, so the reliable way to find
+# ESPHome devices from inside the container is an active unicast sweep of the
+# native-API port — the same LAN-restricted CIDR mechanics as scan_tcp. For
+# identity we speak the plaintext framing of the native API: a HelloRequest
+# is answered with name + server info BEFORE any authentication, and a
+# noise-encrypted device reveals itself by the 0x01 frame indicator.
+# ---------------------------------------------------------------------------
+
+ESPHOME_API_PORT = 6053
+
+
+def _pb_fields(buf: bytes) -> dict:
+    """Minimal protobuf walk: {field_no: int|bytes}. Only what a HelloResponse
+    needs (varint + length-delimited, single-byte lengths)."""
+    out, i = {}, 0
+    try:
+        while i < len(buf):
+            tag = buf[i]; i += 1
+            field, wt = tag >> 3, tag & 7
+            if wt == 0:                        # varint
+                v = sh = 0
+                while True:
+                    b = buf[i]; i += 1
+                    v |= (b & 0x7F) << sh; sh += 7
+                    if not b & 0x80:
+                        break
+                out[field] = v
+            elif wt == 2:                      # length-delimited
+                ln = buf[i]; i += 1
+                out[field] = bytes(buf[i:i + ln]); i += ln
+            else:                              # unexpected wire type — stop
+                break
+    except IndexError:
+        pass                                   # truncated → keep what parsed
+    return out
+
+
+def _esphome_hello(host: str, port: int, timeout: float):
+    """Probe one host. None = port closed; else a result dict. A device with
+    API encryption answers the plaintext hello with a 0x01 indicator (noise)
+    or drops the connection — still a positive detection."""
+    try:
+        s = socket.create_connection((host, port), timeout=timeout)
+    except OSError:
+        return None
+    res = {"host": host, "port": port, "name": "", "server_info": "",
+           "api_version": "", "encrypted": False}
+    try:
+        s.settimeout(timeout)
+        client = b"multi-bus-gateway"
+        payload = b"\x0a" + bytes([len(client)]) + client   # HelloRequest.client_info
+        s.sendall(b"\x00" + bytes([len(payload)]) + b"\x01" + payload)
+        head = s.recv(3)
+        if not head:
+            res["encrypted"] = True            # closed on plaintext → noise-only
+            return res
+        if head[0] == 0x01:
+            res["encrypted"] = True            # noise frame indicator
+            return res
+        if head[0] != 0x00:
+            return res                          # something else on this port
+        size, mtype = head[1], head[2]
+        body = b""
+        while len(body) < size:
+            chunk = s.recv(size - len(body))
+            if not chunk:
+                break
+            body += chunk
+        if mtype == 2:                          # HelloResponse
+            f = _pb_fields(body)
+            res["server_info"] = f.get(3, b"").decode("utf-8", "replace") if isinstance(f.get(3), bytes) else ""
+            res["name"] = f.get(4, b"").decode("utf-8", "replace") if isinstance(f.get(4), bytes) else ""
+            if isinstance(f.get(1), int):
+                res["api_version"] = f"{f.get(1)}.{f.get(2, 0)}"
+    except OSError:
+        res["encrypted"] = True                 # reset mid-hello → treat as protected
+    finally:
+        try:
+            s.close()
+        except OSError:
+            pass
+    return res
+
+
+def scan_esphome(hosts, port: int = ESPHOME_API_PORT, timeout: float = 0.5,
+                 workers: int = 64):
+    """Probe every host concurrently; return ESPHome responders."""
+    t0 = time.time()
+    results = []
+
+    def one(h):
+        r = _esphome_hello(h, port, timeout)
+        if r is not None:
+            results.append(r)
+
+    with ThreadPoolExecutor(max_workers=min(workers, max(1, len(hosts)))) as ex:
+        list(ex.map(one, hosts))
+    results.sort(key=lambda r: tuple(int(x) for x in r["host"].split(".")))
+    return {"scanned": len(hosts), "results": results,
+            "elapsed_s": round(time.time() - t0, 2)}

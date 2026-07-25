@@ -198,6 +198,31 @@ def build(ctx) -> APIRouter:
         so it stays readable for every role."""
         return _wrap(lambda: _client().devices())
 
+    @r.post("/api/builder/import")
+    def import_node(request: Request, payload: Dict = Body(...)):
+        """Adopt an mDNS-importable ESPHome node onto the dashboard (it then
+        appears as a managed node: build/OTA/logs from here). The entry comes
+        from the `importable` list; we forward its identity to /import."""
+        _require_admin(request)
+        name = str(payload.get("name", "") or "").strip()
+        if not re.match(r"^[a-z0-9-]{1,63}$", name):
+            raise HTTPException(status_code=422, detail={"errors": [
+                "name must be the node's mDNS name (lowercase, digits, hyphens)"]})
+        args = {"name": name,
+                "friendly_name": payload.get("friendly_name") or None,
+                "project_name": str(payload.get("project_name", "") or ""),
+                "package_import_url": str(payload.get("package_import_url", "") or ""),
+                "encryption": bool(payload.get("encryption", False))}
+        if not args["project_name"] or not args["package_import_url"]:
+            raise HTTPException(status_code=422, detail={"errors": [
+                "project_name and package_import_url are required — pick the "
+                "node from the importable list, which carries both"]})
+        configuration = _wrap(lambda: _client().import_node(args))
+        _status_cache.clear()          # node_count changed
+        _audit(request, "esphome node import", configuration,
+               detail={"project": args["project_name"]})
+        return {"status": "imported", "configuration": configuration}
+
     # ---- YAML CRUD --------------------------------------------------------------
 
     @r.get("/api/builder/nodes/{name}/config")

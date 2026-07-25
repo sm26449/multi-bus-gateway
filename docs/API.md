@@ -147,6 +147,7 @@ enabled; dashboard errors surface as 502 with the reason.
 | GET | `/api/builder/nodes/{name}/downloads` | Build artifact list | admin |
 | GET | `/api/builder/nodes/{name}/download?file=` | Proxy one artifact (e.g. `firmware.factory.bin`) | admin |
 | GET | `/api/builder/nodes/{name}/manifest` | esp-web-tools manifest for the browser USB flasher | admin |
+| POST | `/api/builder/import` | Adopt an mDNS-importable node onto the dashboard (from the `importable` list) | admin |
 | POST | `/api/builder/generate` | Template → firmware YAML + PAIRED template & device payload (pure preview) | admin |
 | POST | `/api/builder/secrets/ensure` | Append MISSING secrets.yaml keys (never overwrites, values never logged) | admin |
 | GET | `/api/builder/profiles` | Hardware profiles (built-ins + user) | viewer |
@@ -159,6 +160,7 @@ enabled; dashboard errors surface as 502 with the reason.
 | Method | Path | Description | Role |
 |---|---|---|---|
 | POST | `/api/discover/modbus/scan` | Scan a private CIDR on a port (default 502) for Modbus devices; read-only, LAN-restricted | operator |
+| POST | `/api/discover/esphome` | Sweep a private CIDR on the ESPHome native-API port (6053); identity via pre-auth plaintext hello, encrypted-API nodes flagged. Docker-friendly (unicast, no mDNS needed) | operator |
 | POST | `/api/discover/modbus/units` | Sweep unit/slave IDs on one endpoint (TCP host or RTU serial line) | operator |
 | POST | `/api/discover/sunspec` | Walk the SunSpec model chain on one endpoint (SunS marker + declared models, identity included; read-only FC3) | operator |
 | POST | `/api/discover/mqtt/browse` | Collect a broker's topics with payload previews (retained tree + live listen window) | operator |

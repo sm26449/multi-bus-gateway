@@ -1008,5 +1008,14 @@
   "builder.deployNew": "Deploy device nou",
   "tip.deployNode": "Construiește firmware pentru un cititor RS485 ESP32/ESP8266 remote și adoptă-l ca device",
   "builder.nodes": "noduri",
-  "builder.configureFirst": "Conectează întâi Builder-ul la o instanță ESPHome (setările de mai jos)."
+  "builder.configureFirst": "Conectează întâi Builder-ul la o instanță ESPHome (setările de mai jos).",
+  "devices.discoverEsphomeHint": "Parcurge LAN-ul după dispozitive ESPHome pe portul API-ului nativ și cere identitatea fiecăruia. Funcționează din Docker (mDNS nu) — nodurile care anunță un pachet de adopție pot fi importate direct în Builder.",
+  "builder.import": "Importă",
+  "builder.importTip": "Adoptă pe dashboard-ul ESPHome — devine nod administrat (build/OTA de aici)",
+  "builder.imported": "importat — acum e nod administrat.",
+  "builder.espUnknown": "dispozitiv ESPHome",
+  "builder.encrypted": "API criptat",
+  "builder.encryptedTip": "API-ul nativ e criptat — identitatea nu se poate citi, dar dispozitivul e ESPHome",
+  "builder.managed": "administrat aici",
+  "builder.espForeign": "neadoptabil — conectează-l prin MQTT sau reflash-uiește cu Builder-ul"
 }

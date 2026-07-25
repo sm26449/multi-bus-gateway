@@ -150,6 +150,12 @@ Devices → *Discover devices*:
 - **Scanare SunSpec** — parcurge lanțul de modele SunSpec (marker-ul `SunS`
   la 40000/50000/0, apoi fiecare model declarat, inclusiv blocul de
   identitate). Primul pas natural pentru hardware Fronius/SolarEdge/Huawei.
+- **Scanare ESPHome** — parcurge LAN-ul pe portul API-ului nativ (6053) și
+  cere identitatea fiecărui nod (nume, versiune; nodurile cu API criptat sunt
+  totuși detectate). Funcționează din Docker — scanarea e unicast, deci nu
+  depinde de mDNS/multicast, care nu trece de bridge-ul Docker. Nodurile care
+  își anunță pachetul de adopție pot fi **importate direct** în Device
+  Builder (devin noduri administrate: build/OTA de aici).
 - **Răsfoire topicuri MQTT** — se conectează la un broker și arată topicurile
   care vorbesc, cu preview de payload (topicurile retained apar instant; o
   fereastră scurtă de ascultare prinde publisher-ii live), ca să alegi un
