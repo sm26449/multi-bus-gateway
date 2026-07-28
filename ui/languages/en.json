@@ -1017,5 +1017,6 @@
   "builder.encrypted": "encrypted API",
   "builder.encryptedTip": "Native API uses encryption — identity not readable, but the device is ESPHome",
   "builder.managed": "managed here",
-  "builder.espForeign": "not adoptable — connect it via MQTT or reflash with the Builder"
+  "builder.espForeign": "not adoptable — connect it via MQTT or reflash with the Builder",
+  "status.upSinceTip": "time in the current health state (connection uptime)"
 }

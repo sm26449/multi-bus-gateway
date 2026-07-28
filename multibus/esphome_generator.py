@@ -253,6 +253,27 @@ def generate_node(payload: Dict[str, Any], template, poll_groups: Dict,
         raise ValueError("no usable registers after type mapping: "
                          + "; ".join(warnings[-3:]))
 
+    # Every node also reports its own uptime (seconds since boot) — the one
+    # diagnostic no external meter register can provide; same topic contract.
+    uptime_topic = f"{prefix}/Uptime/state"
+    sensors.append("\n".join([
+        "  - platform: uptime",
+        "    name: \"Uptime\"",
+        "    id: reg_uptime",
+        f"    state_topic: {_yq(uptime_topic)}",
+        "    update_interval: 60s",
+    ]))
+    topics.append(uptime_topic)
+    used_addrs = {r["address"] for r in paired_rows}
+    uptime_addr = 65535
+    while uptime_addr in used_addrs:
+        uptime_addr -= 1
+    paired_rows.append({
+        "address": uptime_addr, "name": "Uptime", "label": "Node uptime",
+        "unit": "s", "data_type": "float", "poll_group": "slow",
+        "category": "diagnostic", "topic": uptime_topic, "scale": 1.0,
+        "defaults": {}})
+
     # ---- firmware YAML -------------------------------------------------------------
     secrets = {"wifi_ssid": None, "wifi_password": None, "ota_password": None}
     mqtt_lines = [f"mqtt:",

@@ -345,7 +345,7 @@ def test_generate_from_builtin_template(tmp_path, fake):
     assert out["node_yaml_name"] == "hala-sdm630.yaml"
     # broker inherited from the gateway's own MQTT config (write_config)
     assert 'broker: "mosquitto"' in out["yaml"]
-    assert len(out["topics"]) == 2
+    assert len(out["topics"]) == 3   # 2 registers + node uptime
     # paired artifacts are directly consumable by the existing endpoints
     tpl = out["device_template"]["device_template"]
     assert tpl["id"] == "esphome_hala_sdm630"
@@ -397,7 +397,7 @@ def test_adopt_chain_creates_paired_device(tmp_path, fake, monkeypatch):
     regs = client.get("/api/registers/selected",
                       params={"device": "hala-sdm630"}).json()["registers"]
     by_name = {r["name"]: r for r in regs}
-    assert set(by_name) == {"V_L1", "Import_kWh"}
+    assert set(by_name) == {"V_L1", "Import_kWh", "Uptime"}
     assert by_name["V_L1"]["topic"] == "esphome/hala-sdm630/V_L1/state"
     assert not by_name["V_L1"].get("json_path")
     assert float(by_name["V_L1"].get("scale", 1) or 1) == 1.0

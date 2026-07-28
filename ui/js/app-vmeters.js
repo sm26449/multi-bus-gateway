@@ -1,6 +1,16 @@
 // vmeters domain — augments JanitzaMonitor.prototype
 Object.assign(JanitzaMonitor.prototype, {
 
+    // "3h ago" for event timestamps — a bare "stopped" pill read as CURRENT
+    // state when it was really this morning's history (live confusion, 28.07)
+    _relTime(ts) {
+        const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+        if (s < 90) return `${s}s ago`;
+        if (s < 5400) return `${Math.round(s / 60)}m ago`;
+        if (s < 129600) return `${Math.round(s / 3600)}h ago`;
+        return `${Math.round(s / 86400)}d ago`;
+    },
+
     async renderVirtualMeters() {
         const el = document.getElementById('vmetersContent');
         if (!el) return;
@@ -81,7 +91,7 @@ Object.assign(JanitzaMonitor.prototype, {
                   <div><div style="color:var(--text-secondary);font-size:11.5px;">${this.t('lbl.freshness', "Freshness")}</div>stale after <b>${m.stale_after_s ?? 15}s</b> · <b>${this._fmtInterval(m.update_interval_s ?? 1)}</b> refresh</div>
                   ${m.errors ? `<div style="color:#c0392b;"><div style="font-size:11.5px;">${this.t('lbl.errors', "Errors")}</div><b>${m.errors}</b></div>` : ''}
                 </div>
-                ${m.last_error ? `<div style="color:#c77700;font-size:12.5px;margin-bottom:10px;" title="${this._esc(m.last_error.message || '')}"><i class="bi bi-exclamation-triangle"></i> ${this._esc(m.last_error.kind || '')}</div>` : ''}
+                ${m.last_error ? `<div style="color:#c77700;font-size:12.5px;margin-bottom:10px;" title="${this._esc(m.last_error.message || '')}"><i class="bi bi-exclamation-triangle"></i> ${this._esc(m.last_error.kind || '')}${m.last_error.ts ? ` <span style="color:var(--text-secondary);">· ${this._relTime(m.last_error.ts)}</span>` : ''}</div>` : ''}
                 <div style="font-size:12.5px;margin-bottom:14px;">
                   <div style="color:var(--text-secondary);margin-bottom:4px;"><i class="bi bi-plug"></i> Connections (${conns.length})</div>
                   <table>${connRows}</table></div>

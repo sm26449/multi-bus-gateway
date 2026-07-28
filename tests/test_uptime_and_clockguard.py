@@ -1,0 +1,107 @@
+# Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
+# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+"""Clock-step immunity + per-device connection uptime.
+
+Born from a live incident (2026-07-28): installing chrony stepped the host
+clock +138s and both virtual meters fail-safe-stopped over perfectly fresh
+data. The guard detects wall-vs-monotonic drift changes and holds the stale
+stop for one window; up_since_s is measured on the monotonic clock."""
+from unittest.mock import MagicMock
+
+import pytest
+
+from multibus import virtual_meter as vm
+
+from tests.test_devices import write_config
+from tests.test_devices_api import needs_tc
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    t = {"wall": 1000.0, "mono": 500.0}
+    monkeypatch.setattr(vm.time, "time", lambda: t["wall"])
+    monkeypatch.setattr(vm.time, "monotonic", lambda: t["mono"])
+    return t
+
+
+def test_clock_guard_ignores_normal_time_flow(clock):
+    g = vm.VirtualMeter.ClockStepGuard(15)
+    assert g.tick() is False                      # first sample: baseline
+    for _ in range(10):
+        clock["wall"] += 1.0
+        clock["mono"] += 1.0
+        assert g.tick() is False                  # drift unchanged
+    assert g.in_grace is False
+
+
+def test_clock_guard_detects_forward_step_and_grace_expires(clock):
+    g = vm.VirtualMeter.ClockStepGuard(15)
+    g.tick()
+    clock["wall"] += 138.36                       # the chrony incident, replayed
+    assert g.tick() is True
+    assert g.last_step_s == pytest.approx(138.36)
+    assert g.in_grace is True
+    clock["mono"] += 14.9                         # inside the window
+    assert g.in_grace is True
+    clock["mono"] += 0.2                          # window over
+    assert g.in_grace is False
+
+
+def test_clock_guard_detects_backward_step(clock):
+    g = vm.VirtualMeter.ClockStepGuard(15)
+    g.tick()
+    clock["wall"] -= 30.0
+    assert g.tick() is True and g.last_step_s == pytest.approx(-30.0)
+    assert g.in_grace is True
+
+
+def test_supervisor_skips_stale_stop_during_grace():
+    """The stop branch is gated on `not clock_guard.in_grace` — pin that the
+    wiring exists (the guard logic itself is unit-tested above)."""
+    import inspect
+    src = inspect.getsource(vm.VirtualMeter._supervise)
+    assert "clock_guard.tick()" in src
+    assert "not clock_guard.in_grace" in src
+
+
+# ---------------------------------------------------------------------------
+# /api/status: up_since_s per device
+# ---------------------------------------------------------------------------
+
+@needs_tc
+def test_up_since_tracks_health_transitions(tmp_path):
+    from fastapi.testclient import TestClient
+    from multibus.api import create_api
+    cfg = write_config(tmp_path)
+    client = MagicMock()
+    client.get_stats.return_value = {"connected": True}
+    client.data_health.return_value = {"status": "ok"}
+    app, _ = create_api(cfg, None, None, None,
+                        devices=[(cfg.devices[0], client)])
+    tc = TestClient(app, raise_server_exceptions=False)
+
+    d = tc.get("/api/status").json()["devices"][0]
+    assert d["up_since_s"] == 0                    # first sighting
+    d = tc.get("/api/status").json()["devices"][0]
+    assert d["up_since_s"] >= 0                    # same health → keeps counting
+
+    client.data_health.return_value = {"status": "down"}
+    d = tc.get("/api/status").json()["devices"][0]
+    assert d["up_since_s"] == 0                    # transition resets the clock
+    client.data_health.return_value = {"status": "ok"}
+    d = tc.get("/api/status").json()["devices"][0]
+    assert d["up_since_s"] == 0                    # recovery starts a new count

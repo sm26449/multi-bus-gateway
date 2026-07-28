@@ -1017,5 +1017,6 @@
   "builder.encrypted": "API criptat",
   "builder.encryptedTip": "API-ul nativ e criptat — identitatea nu se poate citi, dar dispozitivul e ESPHome",
   "builder.managed": "administrat aici",
-  "builder.espForeign": "neadoptabil — conectează-l prin MQTT sau reflash-uiește cu Builder-ul"
+  "builder.espForeign": "neadoptabil — conectează-l prin MQTT sau reflash-uiește cu Builder-ul",
+  "status.upSinceTip": "timp în starea de sănătate curentă (uptime-ul conexiunii)"
 }

@@ -107,7 +107,7 @@ Object.assign(JanitzaMonitor.prototype, {
         // ── data pipeline ──
         const srcRows = devices.map(d => `<div style="display:flex;align-items:center;gap:8px;margin:5px 0;font-size:12.5px;">
             ${dot(hColor[d.data_health] || OFF)}<b>${esc(d.name || d.id)}</b>
-            <span style="color:var(--text-secondary);margin-left:auto;font-variant-numeric:tabular-nums;">${(d.poll_rate ?? 0).toFixed ? (d.poll_rate ?? 0).toFixed(1) : d.poll_rate}/s · ${d.staleness_age_s != null ? d.staleness_age_s + 's' : '—'}</span></div>`).join('') || `<span class="field-hint">${t('status.noDevices', 'no devices')}</span>`;
+            <span style="color:var(--text-secondary);margin-left:auto;font-variant-numeric:tabular-nums;">${(d.poll_rate ?? 0).toFixed ? (d.poll_rate ?? 0).toFixed(1) : d.poll_rate}/s · ${d.staleness_age_s != null ? d.staleness_age_s + 's' : '—'}${d.up_since_s != null ? ` · <span title="${t('status.upSinceTip', 'time in the current health state (connection uptime)')}">↑${upt(d.up_since_s)}</span>` : ''}</span></div>`).join('') || `<span class="field-hint">${t('status.noDevices', 'no devices')}</span>`;
         const vmReq = insts.reduce((a, i) => a + (i.req_rate || 0), 0);
         const vmConns = insts.reduce((a, i) => a + (i.conn_count || 0), 0);
         const sinkRow = (icon, name, on, connected, right) => `<div style="display:flex;align-items:center;gap:8px;margin:5px 0;font-size:12.5px;">

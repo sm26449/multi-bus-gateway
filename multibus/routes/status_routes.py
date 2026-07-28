@@ -21,6 +21,8 @@ Moved verbatim from create_api(). Publishers are read from ctx at request time
 """
 from __future__ import annotations
 
+from typing import Dict, Optional
+
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
@@ -29,6 +31,21 @@ def build(ctx) -> APIRouter:
     r = APIRouter(tags=["status"])
     config, registry = ctx.config, ctx.registry
     modbus_client, ws_manager, last_update = ctx.modbus_client, ctx.ws_manager, ctx.last_update
+
+    # Connection-uptime tracking: device id -> (last health, monotonic since).
+    # Sampled on each /api/status call (the page polls every few seconds) and
+    # measured on the MONOTONIC clock, so an NTP step cannot fake or wipe it.
+    # In-memory by design: a gateway restart legitimately resets "up for".
+    _health_since: Dict[str, tuple] = {}
+
+    def _up_since_s(dev_id: str, health: str) -> Optional[int]:
+        import time as _t
+        now = _t.monotonic()
+        prev = _health_since.get(dev_id)
+        if prev is None or prev[0] != health:
+            _health_since[dev_id] = (health, now)
+            return 0
+        return int(now - prev[1])
 
     @r.get("/api/status")
     async def get_status():
@@ -64,6 +81,8 @@ def build(ctx) -> APIRouter:
                         "last_latency_ms": stats.get("last_latency_ms"),
                         "data_health": client.data_health().get("status"),
                     })
+                    entry["up_since_s"] = _up_since_s(
+                        dev_cfg.id, str(entry.get("data_health") or ""))
                 else:
                     entry.update({"connected": False,
                                   "data_health": "idle",

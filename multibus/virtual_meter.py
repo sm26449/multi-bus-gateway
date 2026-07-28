@@ -691,6 +691,40 @@ class VirtualMeter:
             self._block.setValues(addr, words)       # one call per value = no word-tearing
 
     # ── supervisor ─────────────────────────────────────────────────────────
+
+    class ClockStepGuard:
+        """Detects wall-clock steps (NTP/chrony) so staleness math — which
+        compares wall-clock store timestamps against time.time() — cannot
+        fail-safe-stop a meter over a time jump. Seen live 2026-07-28: a
+        chrony install stepped the clock +138s and both meters briefly
+        dropped their consumers over perfectly fresh data. After a detected
+        step the stop-on-stale action pauses for one stale window; REAL
+        staleness still stops the meter, at most one window later."""
+
+        STEP_THRESHOLD_S = 5.0
+
+        def __init__(self, grace_s: float):
+            self.grace_s = float(grace_s)
+            self._drift_prev = None
+            self._grace_until = 0.0
+            self.last_step_s = 0.0
+
+        def tick(self) -> bool:
+            """Call once per supervisor pass; True when a step was detected
+            on THIS tick (caller logs it once)."""
+            drift = time.time() - time.monotonic()
+            stepped = (self._drift_prev is not None
+                       and abs(drift - self._drift_prev) >= self.STEP_THRESHOLD_S)
+            if stepped:
+                self.last_step_s = drift - self._drift_prev
+                self._grace_until = time.monotonic() + self.grace_s
+            self._drift_prev = drift
+            return stepped
+
+        @property
+        def in_grace(self) -> bool:
+            return time.monotonic() < self._grace_until
+
     def _supervise(self) -> None:
         """Reliability core, runs every update_interval_s:
         - fresh data + server down/crashed -> (re)start it (uptime guard)
@@ -703,8 +737,15 @@ class VirtualMeter:
         probe_fails = 0
         tick = 0
         port = int(self.t.transport.get("port", 1502))
+        clock_guard = self.ClockStepGuard(self.stale_after_s)
         while not self._stop.is_set():
             try:
+                if clock_guard.tick():
+                    msg = (f"system clock stepped {clock_guard.last_step_s:+.1f}s — "
+                           f"holding the stale fail-safe for {self.stale_after_s:.0f}s "
+                           "(data itself never stopped)")
+                    self.stats.record_event("warn", "clock_step", msg)
+                    logger.warning("virtual meter %s: %s", self.t.id, msg)
                 newest = self._rebuild_block()
                 # legacy: one instance-level freshness judgement. Policy modes:
                 # _rebuild_block already judged per register — newest is the
@@ -746,7 +787,7 @@ class VirtualMeter:
                                     self._stop_server("alive but not serving (~30s) — force-restarting")
                                     probe_fails = 0
                 else:
-                    if self._alive():
+                    if self._alive() and not clock_guard.in_grace:
                         stale_for = (time.time() - newest) if newest else None
                         reason = (f"source stale >{self.stale_after_s:.0f}s "
                                   f"(last fresh {stale_for:.0f}s ago) — stopped responding"

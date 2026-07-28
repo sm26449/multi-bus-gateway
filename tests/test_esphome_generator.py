@@ -77,7 +77,7 @@ def test_yaml_parses_with_secret_tag():
     doc = pyyaml.load(gen()["yaml"], Loader=L)
     assert doc["esphome"]["name"] == "hall-meter"
     assert doc["modbus_controller"][0]["address"] == 3
-    assert len(doc["sensor"]) == 3
+    assert len(doc["sensor"]) == 4   # 3 registers + node uptime
     assert doc["wifi"]["ssid"] == "!secret wifi_ssid"
 
 
@@ -141,7 +141,8 @@ def test_scale_becomes_multiply_filter_and_little_endian_variants():
 def test_register_subset_and_unknown_names():
     p = dict(BASIC_PAYLOAD, registers=["V_L1"])
     out = gen(p)
-    assert len(out["topics"]) == 1 and "V_L1" in out["topics"][0]
+    assert len(out["topics"]) == 2 and "V_L1" in out["topics"][0]   # +uptime
+    assert out["topics"][-1].endswith("/Uptime/state")
     with pytest.raises(ValueError, match="unknown register"):
         gen(dict(BASIC_PAYLOAD, registers=["Nope"]))
 
