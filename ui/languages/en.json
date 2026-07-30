@@ -1018,5 +1018,14 @@
   "builder.encryptedTip": "Native API uses encryption — identity not readable, but the device is ESPHome",
   "builder.managed": "managed here",
   "builder.espForeign": "not adoptable — connect it via MQTT or reflash with the Builder",
-  "status.upSinceTip": "time in the current health state (connection uptime)"
+  "status.upSinceTip": "time in the current health state (connection uptime)",
+  "devices.restorable": "Deleted devices (restorable)",
+  "devices.restorableHint": "Settings kept when these were deleted. Restore rebuilds the exact device; Forget drops them for good.",
+  "devices.restore": "Restore",
+  "devices.restored": "Device restored",
+  "devices.forget": "Forget",
+  "devices.forgetTip": "Delete these kept settings permanently",
+  "devices.forgetConfirm": "Permanently delete the kept settings for this device?",
+  "devices.forgotten": "Settings forgotten",
+  "devices.deletedOn": "deleted"
 }

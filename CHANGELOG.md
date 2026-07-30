@@ -31,6 +31,16 @@ Output stays byte-identical on the data path; 569 tests pass.
   quality age clamps at 0 across a backward clock step; generated-YAML
   scalar quoting escapes newlines/tabs.
 
+**Devices — restore a deleted device**
+- Deleting a non-primary device now keeps its FULL definition (a tombstone:
+  connection + template + routing, beside the register selection), not just a
+  stray registers file. A "Deleted devices (restorable)" card on the Devices
+  page lists them with one-click **Restore** (rebuilds the exact device) and
+  **Forget** (drops the kept settings for good — no more orphan dirs).
+- Fixed a latent mismatch: re-adding an id whose kept registers belong to a
+  DIFFERENT template now re-seeds from the assigned template instead of
+  decoding against the wrong map.
+
 **Ops & UI**
 - Standalone `docker compose up -d` works on a fresh host (the external
   stack network moved to `docker-compose.override.yml.example`).

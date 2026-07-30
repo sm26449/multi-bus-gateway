@@ -61,6 +61,7 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!el) return;
         const devices = await this._fetchDevices(true);
         this._renderRegDeviceSelectors();
+        this._renderRestorableDevices();          // deleted-but-restorable list
         if (!devices.length) {
             el.innerHTML = `<span class="field-hint">${this.t('devices.none', 'No devices configured.')}</span>`;
             return;
@@ -106,6 +107,68 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="device-row-actions">${actions.join('')}</div>
             </div>`;
         }).join('');
+    },
+
+    // Deleted devices whose settings were kept — restore rebuilds the exact
+    // device (connection + template + register selection), forget drops it.
+    async _renderRestorableDevices() {
+        const box = document.getElementById('restorableDevices');
+        if (!box) return;
+        let items = [];
+        try {
+            items = (await (await fetch('/api/devices/restorable')).json()).devices || [];
+        } catch (e) { box.innerHTML = ''; return; }
+        if (!items.length) { box.innerHTML = ''; return; }
+        const when = ts => ts ? new Date(ts * 1000).toLocaleDateString() : '';
+        box.innerHTML = `
+            <div class="settings-card devices-card" style="margin-top:16px;">
+                <div class="settings-card-header">
+                    <h3><i class="bi bi-arrow-counterclockwise"></i> ${this.t('devices.restorable', 'Deleted devices (restorable)')}</h3>
+                </div>
+                <div class="settings-card-body">
+                    <p class="field-hint" style="margin:0 0 10px;">${this.t('devices.restorableHint',
+                        'Settings kept when these were deleted. Restore rebuilds the exact device; Forget drops them for good.')}</p>
+                    ${items.map(d => `
+                    <div class="device-row" style="cursor:default;">
+                        <span class="status-dot" style="--dot:var(--text-secondary,#8a94a0)"></span>
+                        <div class="device-row-main">
+                            <div class="device-row-title">${this._esc(d.name)} <span class="dev-chip">${this._esc(d.id)}</span></div>
+                            <div class="device-row-sub">${this._esc(d.protocol || '')} · ${this._esc(d.template || '—')} · ${d.registers} ${this.t('devices.regsSelected', 'measurements')}${d.deleted_ts ? ` · ${this.t('devices.deletedOn', 'deleted')} ${when(d.deleted_ts)}` : ''}</div>
+                        </div>
+                        <div class="device-row-actions">
+                            <button class="btn btn-sm" data-restore="${this._esc(d.id)}"><i class="bi bi-arrow-counterclockwise"></i> ${this.t('devices.restore', 'Restore')}</button>
+                            <button class="btn btn-ghost btn-sm" data-forget="${this._esc(d.id)}" title="${this.t('devices.forgetTip', 'Delete these kept settings permanently')}" aria-label="${this.t('devices.forget', 'Forget')}"><i class="bi bi-trash"></i></button>
+                        </div>
+                    </div>`).join('')}
+                </div>
+            </div>`;
+        box.querySelectorAll('button[data-restore]').forEach(b =>
+            b.addEventListener('click', () => this._restoreDevice(b.dataset.restore)));
+        box.querySelectorAll('button[data-forget]').forEach(b =>
+            b.addEventListener('click', () => this._forgetDevice(b.dataset.forget)));
+    },
+
+    async _restoreDevice(id) {
+        const rsp = await fetch(`/api/devices/${encodeURIComponent(id)}/restore`, { method: 'POST' });
+        const d = await rsp.json().catch(() => ({}));
+        if (rsp.ok) {
+            this.showToast('success', this.t('devices.restored', 'Device restored'), this._esc(id));
+            this.renderDevicesList();
+        } else {
+            this.showToast('error', 'Restore', this._esc(String((d.detail && d.detail.errors) ? d.detail.errors.join('; ') : (d.detail || rsp.status))));
+        }
+    },
+
+    async _forgetDevice(id) {
+        if (!confirm(this.t('devices.forgetConfirm', 'Permanently delete the kept settings for this device?') + `\n${id}`)) return;
+        const rsp = await fetch(`/api/devices/restorable/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        if (rsp.ok) {
+            this.showToast('success', this.t('devices.forgotten', 'Settings forgotten'), this._esc(id));
+            this._renderRestorableDevices();
+        } else {
+            const d = await rsp.json().catch(() => ({}));
+            this.showToast('error', 'Forget', this._esc(String(d.detail || rsp.status)));
+        }
     },
 
     // ── Device discovery (generic; Fronius Solar API is the first method) ──

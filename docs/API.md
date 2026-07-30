@@ -66,6 +66,9 @@ viewer session ends when its cookie expires or is cleared client-side.
 | POST | `/api/devices` | Create a device: validate → persist → auto-select template registers → ensure Influx bucket → hot-start poller + HA discovery | admin |
 | PUT | `/api/devices/{id}` | Update a device (stop poller, persist, restart). Primary editable too; routing identity (topic prefix / bucket / tag) stays fixed | admin |
 | DELETE | `/api/devices/{id}` | Delete a non-primary device (register file kept on disk; blocked while a virtual meter sources it; clears retained HA discovery) | admin |
+| GET | `/api/devices/restorable` | Deleted devices whose settings were kept (id no longer active) | viewer |
+| POST | `/api/devices/{id}/restore` | Rebuild a deleted device from its kept tombstone (connection + template + registers) | admin |
+| DELETE | `/api/devices/restorable/{id}` | Permanently forget a deleted device's kept settings | admin |
 | POST | `/api/devices/test` | Ad-hoc connection probe for a not-yet-saved device (TCP/RTU/HTTP/MQTT) | operator |
 | POST | `/api/devices/{id}/test` | Probe a saved device (uses its first selected register address) | operator |
 | GET | `/api/devices/{id}/poll-groups` | Current poll-group intervals | viewer |

@@ -1260,12 +1260,20 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         Skips if it already has a selection or has no template."""
         if not dev_cfg.template or dev_cfg.primary:
             return
-        existing, _g = config.load_device_registers(dev_cfg)
-        if existing:
-            return
         tpl = template_registry.get(dev_cfg.template)
         if tpl is None or not tpl.registers:
             return
+        existing, _g = config.load_device_registers(dev_cfg)
+        if existing:
+            # A kept file from a PREVIOUS device at this id may belong to a
+            # different template — reusing it would decode against the wrong
+            # map. Keep it only if it still fits (any selected name is in the
+            # assigned template); otherwise fall through and re-seed.
+            tpl_names = {r.name for r in tpl.registers}
+            if any(getattr(r, 'name', None) in tpl_names for r in existing):
+                return
+            logger.warning(f"device {dev_cfg.id}: kept registers don't match "
+                           f"template {tpl.id} — re-seeding from the template")
         # Curated templates mark a recommended subset via per-register `defaults`
         # (the Janitza map has 58 of 4126) — seed only those. A template without
         # defaults is seeded whole, but capped so a huge map can't flood
@@ -1320,6 +1328,50 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         logger.info(f"device {dev_cfg.id}: created "
                     f"({dev_cfg.protocol}, template={dev_cfg.template or '—'})")
         return {"status": "created", "device": _device_entry(dev_cfg, client)}
+
+    @app.get("/api/devices/restorable")
+    def list_restorable_devices():
+        """Deleted devices whose full definition was kept (id no longer active).
+        Restoring one rebuilds the exact device — connection, template AND its
+        register selection — instead of starting from scratch."""
+        return {"devices": config.list_deleted_devices()}
+
+    @app.post("/api/devices/{device_id}/restore")
+    def restore_device(device_id: str):
+        """Re-create a previously deleted device from its kept tombstone. Its
+        selected-registers file (kept on disk) is loaded by the poller, so the
+        measurement selection returns intact."""
+        if any(d.id == device_id for d in config.devices):
+            raise HTTPException(status_code=409, detail={"errors": [
+                f"device '{device_id}' already exists"]})
+        raw = config.load_deleted_device(device_id)
+        if raw is None:
+            raise HTTPException(status_code=404, detail="no restorable device with that id")
+        try:
+            dev_cfg = config.upsert_raw_device(raw)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+        # registers file is already on disk → _autoselect skips (keeps the
+        # user's exact selection); only seeds if the file was lost.
+        _autoselect_template_registers(dev_cfg)
+        _ensure_device_bucket(dev_cfg)
+        client = _start_device_client(dev_cfg)
+        registry.add(dev_cfg, client)
+        _sync_device_discovery()
+        logger.info(f"device {device_id}: restored from tombstone")
+        return {"status": "restored", "device": _device_entry(dev_cfg, client)}
+
+    @app.delete("/api/devices/restorable/{device_id}")
+    def forget_restorable_device(device_id: str):
+        """Permanently drop a deleted device's kept settings (tombstone +
+        registers). Irreversible; refuses to touch an active device."""
+        try:
+            ok = config.forget_deleted_device(device_id)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+        if not ok:
+            raise HTTPException(status_code=404, detail="nothing to forget for that id")
+        return {"status": "forgotten", "id": device_id}
 
     def _update_primary_device(payload: Dict):
         """Edit device #1 in place: connection → config.modbus, HA flag →

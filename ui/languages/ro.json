@@ -1018,5 +1018,14 @@
   "builder.encryptedTip": "API-ul nativ e criptat — identitatea nu se poate citi, dar dispozitivul e ESPHome",
   "builder.managed": "administrat aici",
   "builder.espForeign": "neadoptabil — conectează-l prin MQTT sau reflash-uiește cu Builder-ul",
-  "status.upSinceTip": "timp în starea de sănătate curentă (uptime-ul conexiunii)"
+  "status.upSinceTip": "timp în starea de sănătate curentă (uptime-ul conexiunii)",
+  "devices.restorable": "Dispozitive șterse (restaurabile)",
+  "devices.restorableHint": "Setările au fost păstrate la ștergere. Restaurează reface dispozitivul exact; Uită le șterge definitiv.",
+  "devices.restore": "Restaurează",
+  "devices.restored": "Dispozitiv restaurat",
+  "devices.forget": "Uită",
+  "devices.forgetTip": "Șterge definitiv aceste setări păstrate",
+  "devices.forgetConfirm": "Ștergi definitiv setările păstrate pentru acest dispozitiv?",
+  "devices.forgotten": "Setări uitate",
+  "devices.deletedOn": "șters"
 }
