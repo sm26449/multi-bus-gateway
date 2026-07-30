@@ -626,10 +626,16 @@ class Config:
 
     def device_registers_path(self, device_id: str) -> Path:
         """Where a device's selected-registers file lives. Device #1 keeps the
-        legacy path (unchanged installs); others get config/devices/<id>/."""
+        legacy path (unchanged installs); others get config/devices/<id>/.
+
+        The id is validated as a single safe path segment here — this is the
+        chokepoint every register read/write and the energy endpoints flow
+        through, so a crafted ``device`` param (``..``, ``../../tmp/x``) can
+        never escape config/devices/ regardless of the caller's own checks."""
         if device_id == PRIMARY_DEVICE_ID:
             return self.registers_path
-        return self.config_path.parent / 'devices' / device_id / 'selected_registers.json'
+        return (self.config_path.parent / 'devices'
+                / self._safe_device_id(device_id) / 'selected_registers.json')
 
     def save_device_poll_groups(self, device_id: str, groups: Dict[str, Dict]) -> None:
         """Update just the poll-group intervals in a device's registers file

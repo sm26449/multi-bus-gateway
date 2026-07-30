@@ -186,10 +186,15 @@ class CalcEngine:
             # lexicographically in the same order as time, so min() is correct.
             _in_ts = [t for t in resolve.touched_ts if t]
             _result_ts = min(_in_ts) if _in_ts else datetime.now().isoformat()
+            # numeric freshness clock inherits the OLDEST contributing input's
+            # time; None when no input carried one → the vmeter fails closed
+            # rather than treating a fabricated now() as fresh.
+            _in_num = [datetime.fromisoformat(t).timestamp() for t in _in_ts]
             values_store[reg.address] = {
                 'value': val, 'name': reg.name, 'label': reg.label,
                 'unit': reg.unit, 'poll_group': reg.poll_group,
                 'timestamp': _result_ts, 'calculated': True,
+                'ts': min(_in_num) if _in_num else None,
             }
             batch[reg.address] = {'value': val, 'register': reg}
         if not batch:

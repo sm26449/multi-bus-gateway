@@ -108,11 +108,16 @@ def test_golden_primary_publisher_args_and_store(tmp_path):
     assert pg == "realtime" and d is data
     assert kw == {"bucket": None, "device_tag": None, "device_id": ""}
 
-    # store shape: exactly these keys, ISO timestamp
+    # store shape: exactly these keys, ISO timestamp. 'ts' (numeric freshness
+    # clock, None when the driver gave no measurement time) was added in the
+    # 2026-08 freshness-laundering fix — an intentional additive change so the
+    # vmeter can fail closed on a missing time instead of trusting a display
+    # timestamp that fell back to now().
     item = app.state.current_values[19000]
-    assert set(item) == {"value", "name", "label", "unit", "poll_group", "timestamp"}
+    assert set(item) == {"value", "name", "label", "unit", "poll_group", "timestamp", "ts"}
     assert item["value"] == 231.5 and item["name"] == "_ULN1"
     assert item["poll_group"] == "realtime" and ISO_TS.match(item["timestamp"])
+    assert item["ts"] is None             # batch() injects no driver ts → fails closed
     # device_values[primary] is an ALIAS of current_values (api.py wires the
     # primary store into the per-device map so store_for(primary) works) — the
     # same dict object, not a copy and not a separate store.

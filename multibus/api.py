@@ -608,8 +608,14 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     'label': item.get('register').label if item.get('register') else '',
                     'unit': item.get('register').unit if item.get('register') else '',
                     'poll_group': poll_group,
+                    # 'timestamp' is the ISO DISPLAY time (falls back to now for
+                    # a rare untimestamped value); 'ts' is the NUMERIC freshness
+                    # clock the vmeter reads — None when the driver gave no
+                    # measurement time, so a missing time fails CLOSED (stale)
+                    # instead of being laundered into "fresh".
                     'timestamp': (datetime.fromtimestamp(_ts).isoformat()
                                   if _ts else datetime.now().isoformat()),
+                    'ts': _ts if _ts else None,
                 }
 
             last_update['timestamp'] = datetime.now().isoformat()

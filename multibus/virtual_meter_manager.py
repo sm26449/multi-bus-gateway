@@ -56,6 +56,13 @@ def _lookup(store: dict, name: str) -> Optional[tuple]:
         value = info.get("value")
         if value is None:
             return None
+        # Prefer the NUMERIC freshness clock ('ts') — it is None when the driver
+        # gave no measurement time, so a missing time fails closed (not-fresh)
+        # instead of trusting a display timestamp that may have been laundered
+        # into now(). Fall back to parsing the ISO 'timestamp' for any legacy
+        # store entry that predates the 'ts' field.
+        if "ts" in info:
+            return value, info["ts"]           # numeric or None
         ts = info.get("timestamp")
         if not ts:
             return value, None                 # no timestamp → don't fabricate freshness

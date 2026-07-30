@@ -1,5 +1,28 @@
 # Changelog
 
+## 3.1.6
+
+### 2026-08-01 — two P1s from the thorough audit round
+
+- **Path traversal → arbitrary file write via the Energy endpoint (P1).**
+  `POST /api/energy/fields?device=<id>` fed the id straight into
+  `device_registers_path`, which joined it raw — `?device=../../../tmp/x`
+  wrote a JSON file outside the config tree (unauthenticated on the
+  trusted-LAN default). The 3.1.3 `_safe_device_id` guard covered the
+  tombstone callers but NOT this path. Fixed at the chokepoint:
+  `device_registers_path` now validates the id as a single safe segment
+  (protecting all seven callers), and the energy endpoints 404 an unknown
+  device.
+- **Missing-timestamp staleness laundering (P1).** A value with no driver
+  measurement time had its store timestamp fabricated as `now()` (in both the
+  poller store-write and the calculated-register path), which the vmeter then
+  read as fresh — defeating the fail-safe. The store now carries a separate
+  numeric freshness clock `ts` (None when the driver gave no time; calculated
+  registers inherit the oldest input's), and the vmeter reads it and fails
+  closed on None. Display timestamps are unchanged.
+
+590 tests pass.
+
 ## 3.1.5
 
 ### 2026-08-01 — freshness guard: the 'hold' policy site too

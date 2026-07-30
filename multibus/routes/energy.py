@@ -83,6 +83,9 @@ def build(ctx) -> APIRouter:
     async def set_energy_fields(payload: Dict = Body(...), device: str = Query(default="")):
         """Save which cumulative counters the Energy tab totals for this device."""
         did = _energy_device(device)
+        # the device must exist — never let an arbitrary id become a write path
+        if not any(d.id == did for d in config.devices):
+            raise HTTPException(status_code=404, detail="device not found")
         fields = payload.get("fields") if isinstance(payload, dict) else payload
         if not isinstance(fields, list):
             raise HTTPException(status_code=422, detail={"errors": ["fields must be a list"]})
