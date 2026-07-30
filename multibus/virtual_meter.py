@@ -458,7 +458,9 @@ class VirtualMeter:
             quality["stale" if (words is not None or reg.addr in self._last_good) else "missing"] += 1
             if self.on_stale == "hold":
                 held = self._last_good.get(reg.addr)
-                if held and (now - held[1]) <= self.max_hold_s:
+                # same future-timestamp guard: a held stamp from before a
+                # backward clock step must not extend the hold past max_hold_s
+                if held and self._is_fresh(now, held[1], self.max_hold_s):
                     out.append((reg.addr, held[0]))   # bounded hold
                     continue
             _mark_unavailable(reg)

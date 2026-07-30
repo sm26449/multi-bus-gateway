@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.1.5
+
+### 2026-08-01 — freshness guard: the 'hold' policy site too
+
+A third independent audit (reviewing the 3.1.3 tree) confirmed the 3.1.4
+future-timestamp fix and found one data-serving site it had missed: the
+`hold` staleness policy served a last-good value while `now - held_ts <=
+max_hold_s`, which a backward clock step turns negative — extending the hold
+by the step size. That branch now uses the same `_is_fresh` guard
+(`0 <= now - held_ts <= max_hold_s`), so a held stamp from before a backward
+step can't stretch the hold. The audit also verified 3.1.4's other freshness
+sites, tombstone/`_safe_device_id` path safety and the 0600 files as healthy.
+587 tests pass.
+
 ## 3.1.4
 
 ### 2026-08-01 — freshness future-timestamp guard (ESS-critical)

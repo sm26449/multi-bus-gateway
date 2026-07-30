@@ -220,3 +220,17 @@ def test_all_freshness_sites_reject_future_ts():
               vm.VirtualMeter.json_view, vm.VirtualMeter.health_state):
         src = inspect.getsource(m)
         assert "_is_fresh(" in src, m.__name__
+
+
+def test_hold_policy_respects_future_ts_guard():
+    """The 'hold' policy serves last-good within max_hold_s — a held stamp
+    from before a backward clock step (future ts) must NOT extend the hold."""
+    F = vm.VirtualMeter._is_fresh
+    now, max_hold = 1000.0, 10.0
+    assert F(now, 995.0, max_hold) is True         # held 5s ago, within hold
+    assert F(now, 985.0, max_hold) is False        # held 15s ago, hold expired
+    assert F(now, 1120.0, max_hold) is False        # held ts 120s in FUTURE → no hold
+    # and the _rebuild_block hold branch actually uses the guard
+    import inspect
+    src = inspect.getsource(vm.VirtualMeter._rebuild_block)
+    assert 'self._is_fresh(now, held[1]' in src
