@@ -990,8 +990,8 @@ class VirtualMeterManager:
                 state, age, last_err = "down", None, None
             else:
                 state = vm.health_state()
-                lf = vm._last_fresh_ts
-                age = round(now - lf, 1) if lf else None
+                lf = vm._last_fresh_ts             # MONOTONIC → age on the mono clock
+                age = round(time.monotonic() - lf, 1) if lf else None
                 last_err = vm.stats.last_error()
             meters.append({"id": tid, "state": state, "freshness_age_s": age,
                            "port": inst.get("port"), "last_error": last_err})

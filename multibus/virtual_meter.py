@@ -902,9 +902,12 @@ class VirtualMeter:
             if val is not None and self._is_fresh(now, ts, bound):
                 entry.update({"value": val, "quality": "good", "age_s": age})
             elif val is not None:
+                # ts is MONOTONIC — derive the absolute wall time from the age
+                # (wall_now − age) for a human-readable last_ts
+                _lts = (datetime.fromtimestamp(time.time() - age).isoformat()
+                        if ts else None)
                 entry.update({"value": None, "quality": "stale", "age_s": age,
-                              "last_value": val,
-                              "last_ts": datetime.fromtimestamp(ts).isoformat() if ts else None})
+                              "last_value": val, "last_ts": _lts})
                 stale_fields.append(key)
             else:
                 entry.update({"value": None, "quality": "missing", "age_s": None})
@@ -991,15 +994,20 @@ class VirtualMeter:
     def status(self) -> dict:
         now = time.time()
         conns = self.connections()
-        lf = self._last_fresh_ts
+        lf = self._last_fresh_ts               # MONOTONIC (step-immune freshness)
+        # age is a monotonic duration; the absolute last-fresh wall time is
+        # derived from it (now_wall − age), since lf itself is not wall time
+        _age = round(time.monotonic() - lf, 1) if lf else None
+        _last_fresh_wall = (now - _age) if _age is not None else None
         return {"id": self.t.id, "name": self.t.name, "running": self._running,
                 "state": self.health_state(),
                 "bind": self.t.transport.get("bind", "0.0.0.0"),
                 "port": self.t.transport.get("port"),
                 "unit_id": self.t.transport.get("unit_id", 1),
                 "registers": len(self.t.registers),
-                "last_fresh": datetime.fromtimestamp(lf).isoformat() if lf else None,
-                "freshness_age_s": round(now - lf, 1) if lf else None,
+                "last_fresh": (datetime.fromtimestamp(_last_fresh_wall).isoformat()
+                               if _last_fresh_wall is not None else None),
+                "freshness_age_s": _age,
                 "uptime_s": int(now - self._started_ts) if self._started_ts else None,
                 "connections": conns, "conn_count": len(conns),
                 # flat CSV of connected client IPs — lets a monitor (alertd)

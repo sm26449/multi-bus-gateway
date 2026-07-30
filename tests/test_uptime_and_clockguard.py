@@ -268,3 +268,20 @@ def test_freshness_is_immune_to_wall_clock_steps(monkeypatch):
     m._rebuild_block()
     # genuinely stale on the monotonic clock, regardless of the wall chaos
     assert m._quality.get("stale", 0) >= 1 or m._quality.get("missing", 0) >= 1
+
+
+def test_status_age_is_small_not_wall_timestamp():
+    """Regression: with monotonic _last_fresh_ts, the reported freshness_age_s
+    must be a small DURATION, never a ~1.7e9 wall-clock epoch."""
+    from multibus.virtual_meter import VirtualMeter, Template, RegisterDef
+    import time as _t
+    m = VirtualMeter(Template(id="t", name="t", kind="flat",
+                              transport={"port": 1502},
+                              registers=[RegisterDef(addr=0, type="uint16")]),
+                     lambda n: None)
+    m._last_fresh_ts = _t.monotonic() - 3.0     # fresh 3s ago (monotonic)
+    st = m.status()
+    assert st["freshness_age_s"] is not None
+    assert 0 <= st["freshness_age_s"] < 60      # a small age, NOT 1.7e9
+    # last_fresh renders as a plausible RECENT wall time (this year), not 1970
+    assert st["last_fresh"].startswith("20")
