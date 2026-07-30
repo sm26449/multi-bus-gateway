@@ -49,27 +49,20 @@ _VALID_TYPES = ["int16", "uint16", "int32", "uint32", "int64", "uint64",
 
 
 def _lookup(store: dict, name: str) -> Optional[tuple]:
-    """(value, unix_ts) for a register NAME in one live cache, else None."""
+    """(value, MONOTONIC_ts) for a register NAME in one live cache, else None.
+
+    The freshness clock is the driver's MONOTONIC stamp ('mono') — immune to
+    any wall-clock/NTP step. It is None when the driver gave no measurement
+    time (or on a legacy store entry that predates the field), so freshness
+    fails CLOSED (not-fresh) rather than trusting a wall time that a clock step
+    could distort. The vmeter compares this against time.monotonic()."""
     for info in list(store.values()):          # snapshot vs concurrent poller writes
         if not isinstance(info, dict) or info.get("name") != name:
             continue
         value = info.get("value")
         if value is None:
             return None
-        # Prefer the NUMERIC freshness clock ('ts') — it is None when the driver
-        # gave no measurement time, so a missing time fails closed (not-fresh)
-        # instead of trusting a display timestamp that may have been laundered
-        # into now(). Fall back to parsing the ISO 'timestamp' for any legacy
-        # store entry that predates the 'ts' field.
-        if "ts" in info:
-            return value, info["ts"]           # numeric or None
-        ts = info.get("timestamp")
-        if not ts:
-            return value, None                 # no timestamp → don't fabricate freshness
-        try:
-            return value, datetime.fromisoformat(ts).timestamp()
-        except Exception:  # noqa: BLE001
-            return value, None                 # unparseable → treat as not-fresh (fail-safe)
+        return value, info.get("mono")         # monotonic seconds, or None → not fresh
     return None
 
 

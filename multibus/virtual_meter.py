@@ -426,7 +426,7 @@ class VirtualMeter:
                 self._regs_out = out
             return newest
 
-        now = self._clock_guard.freshness_now()
+        now = time.monotonic()   # freshness on the MONOTONIC clock (mono stamps)
         out = []
         unavail: list[tuple[int, int]] = []
         quality = {"fresh": 0, "stale": 0, "missing": 0}
@@ -485,7 +485,7 @@ class VirtualMeter:
             state = 2
         else:
             state = 3
-        age = (int(min(max(0.0, self._clock_guard.freshness_now() - newest_fresh_ts), 0xFFFFFFFE))
+        age = (int(min(max(0.0, time.monotonic() - newest_fresh_ts), 0xFFFFFFFE))
                if newest_fresh_ts else 0xFFFFFFFF)
         return [1, state, q["fresh"] & 0xffff, q["stale"] & 0xffff,
                 q["missing"] & 0xffff, total & 0xffff,
@@ -793,7 +793,7 @@ class VirtualMeter:
                 # _rebuild_block already judged per register — newest is the
                 # newest FRESH ts, so any fresh row keeps the server up.
                 fresh = ((newest > 0) if self.on_stale != "legacy"
-                         else self._is_fresh(self._clock_guard.freshness_now(),
+                         else self._is_fresh(time.monotonic(),
                                              newest, self.stale_after_s))
                 self._policy_fresh = fresh            # health_state's policy-mode signal
                 if fresh:
@@ -870,7 +870,7 @@ class VirtualMeter:
           age_s per row; a stale row carries last_value/last_ts SEPARATELY.
         ``complete`` is False when any live row is not good.
         """
-        now = self._clock_guard.freshness_now()
+        now = time.monotonic()   # freshness on the MONOTONIC clock (mono stamps)
         values: dict[str, dict] = {}
         stale_fields: list[str] = []
         for reg in self.t.registers:
@@ -983,7 +983,7 @@ class VirtualMeter:
                 return "stale"
             return "ok" if self._alive() else "down"
         lf = self._last_fresh_ts
-        fresh = self._is_fresh(self._clock_guard.freshness_now(), lf, self.stale_after_s)
+        fresh = self._is_fresh(time.monotonic(), lf, self.stale_after_s)
         if not fresh:
             return "stale"
         return "ok" if self._alive() else "down"

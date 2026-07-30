@@ -174,14 +174,14 @@ def test_short_stale_window_gets_floored_grace():
     assert g.grace_s >= 5.0                          # floored so it can ride a step
 
 
-def test_rebuild_block_uses_guard_clock():
-    """The per-register freshness in _rebuild_block reads freshness_now(),
-    not raw time.time() — the whole verdict is step-immune."""
+def test_rebuild_block_uses_monotonic_clock():
+    """Freshness is judged on the MONOTONIC clock (driver 'mono' stamps vs
+    time.monotonic()) — step-immune by construction, not via wall rebasing."""
     import inspect
     src = inspect.getsource(vm.VirtualMeter._rebuild_block)
-    assert "self._clock_guard.freshness_now()" in src
+    assert "time.monotonic()" in src
     q = inspect.getsource(vm.VirtualMeter._quality_words)
-    assert "self._clock_guard.freshness_now()" in q
+    assert "time.monotonic()" in q
 
 
 # ---------------------------------------------------------------------------
@@ -234,3 +234,37 @@ def test_hold_policy_respects_future_ts_guard():
     import inspect
     src = inspect.getsource(vm.VirtualMeter._rebuild_block)
     assert 'self._is_fresh(now, held[1]' in src
+
+
+# ---------------------------------------------------------------------------
+# Monotonic freshness — the DEFINITIVE clock-step immunity (3.3.0)
+# ---------------------------------------------------------------------------
+
+def test_freshness_is_immune_to_wall_clock_steps(monkeypatch):
+    """Freshness now compares the driver's monotonic stamp against
+    time.monotonic() — a wall-clock (time.time) jump of any size, in any
+    direction, has ZERO effect on the verdict. This is the definitive fix for
+    the whole clock-step class."""
+    from multibus.virtual_meter import VirtualMeter
+
+    mono = {"t": 1000.0}
+    monkeypatch.setattr(vm.time, "monotonic", lambda: mono["t"])
+    # a wildly lying wall clock — must not matter at all
+    monkeypatch.setattr(vm.time, "time", lambda: 5.0e9)
+
+    fed_mono = 995.0                     # value stamped 5s ago (monotonic)
+    m = VirtualMeter(vm.Template(id="t", name="t", kind="flat",
+                                 transport={"port": 1502},
+                                 registers=[vm.RegisterDef(addr=0, type="uint16",
+                                            source_kind="live", source="A")]),
+                     lambda n: (10.0, fed_mono) if n == "A" else None,
+                     stale_after_s=15.0, on_stale="fail")   # 'fail' populates _quality
+    m._rebuild_block()
+    assert m._quality.get("fresh", 0) == 1                  # fresh at 5s (monotonic)
+
+    # advance ONLY monotonic well past the bound; wall clock still lying
+    mono["t"] = 1020.0                   # now the value is 25s old (> 15s)
+    monkeypatch.setattr(vm.time, "time", lambda: 1.0)   # wall jumps backward too
+    m._rebuild_block()
+    # genuinely stale on the monotonic clock, regardless of the wall chaos
+    assert m._quality.get("stale", 0) >= 1 or m._quality.get("missing", 0) >= 1

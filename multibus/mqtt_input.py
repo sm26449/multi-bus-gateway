@@ -79,6 +79,7 @@ class MqttInputClient:
         self.messages = 0
         self.updates = 0
         self.last_msg_ts: Optional[float] = None
+        self.last_msg_mono: Optional[float] = None
         self._client = None
         self._by_topic = self._index()
 
@@ -137,6 +138,7 @@ class MqttInputClient:
             return
         self.messages += 1
         self.last_msg_ts = time.time()
+        self.last_msg_mono = time.monotonic()
         raw = msg.payload.decode('utf-8', 'replace') if msg.payload else ''
         try:
             doc = json.loads(raw)
@@ -159,7 +161,7 @@ class MqttInputClient:
             _sc = getattr(r, 'scale', 1.0) or 1.0
             if _sc != 1.0:
                 val = val / _sc
-            data[r.address] = {'value': val, 'register': r, 'ts': self.last_msg_ts}
+            data[r.address] = {'value': val, 'register': r, 'ts': self.last_msg_ts, 'mono': self.last_msg_mono}
         if data and self.publish_callback:
             self.updates += len(data)
             self.publish_callback('mqtt', data)

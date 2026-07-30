@@ -107,7 +107,7 @@ class CalcEngine:
             for it in list(store.values()):
                 nm = it.get('name')
                 if nm:
-                    out[nm] = (it.get('value'), it.get('timestamp'))
+                    out[nm] = (it.get('value'), it.get('timestamp'), it.get('mono'))
             return out
         this_map = _index(this_store)
         others: Dict[str, Dict] = {}
@@ -122,11 +122,14 @@ class CalcEngine:
                 pair = this_map.get(name)
             if pair is None:
                 return None
-            value, ts = pair
+            value, ts, mono = pair
             if ts is not None:
                 resolve.touched_ts.append(ts)
+            if mono is not None:
+                resolve.touched_mono.append(mono)
             return value
         resolve.touched_ts = []
+        resolve.touched_mono = []
         return resolve
 
     def run(self, calc_key, poll_group, values_store, *, topic_prefix,
@@ -151,6 +154,7 @@ class CalcEngine:
             dt = (now - st['ts']) if st['ts'] is not None else 0.0
             prevmap = st['prev']
             resolve.touched_ts = []                # collect input freshness this run
+            resolve.touched_mono = []
             try:
                 # reuse the AST compiled at load() — no re-parse per poll
                 _tree = e.get('_tree')
@@ -190,11 +194,13 @@ class CalcEngine:
             # time; None when no input carried one → the vmeter fails closed
             # rather than treating a fabricated now() as fresh.
             _in_num = [datetime.fromisoformat(t).timestamp() for t in _in_ts]
+            _in_mono = list(getattr(resolve, 'touched_mono', []))
             values_store[reg.address] = {
                 'value': val, 'name': reg.name, 'label': reg.label,
                 'unit': reg.unit, 'poll_group': reg.poll_group,
                 'timestamp': _result_ts, 'calculated': True,
                 'ts': min(_in_num) if _in_num else None,
+                'mono': min(_in_mono) if _in_mono else None,
             }
             batch[reg.address] = {'value': val, 'register': reg}
         if not batch:

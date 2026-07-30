@@ -440,6 +440,7 @@ class RegisterPoller(threading.Thread):
         for group in self._read_groups:
             gtype = group.get('register_type', 'holding')
             read_ts = time.time()   # measurement time — travels with the value
+            read_mono = time.monotonic()  # monotonic pair for step-immune freshness
 
             # coils (FC1) / discrete inputs (FC2): bits, one per address
             if gtype in ('coil', 'discrete'):
@@ -451,7 +452,8 @@ class RegisterPoller(threading.Thread):
                     off = reg.address - group['start']
                     if 0 <= off < len(bits):
                         results[reg.address] = {'value': 1 if bits[off] else 0,
-                                                'register': reg, 'ts': read_ts}
+                                                'register': reg, 'ts': read_ts,
+                                                'mono': read_mono}
                 continue
 
             raw_data = self.connection.read_registers(
@@ -480,6 +482,7 @@ class RegisterPoller(threading.Thread):
                             'value': value,
                             'register': reg,
                             'ts': read_ts,
+                            'mono': read_mono,
                         }
 
         return results

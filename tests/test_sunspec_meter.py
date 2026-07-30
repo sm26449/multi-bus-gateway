@@ -30,7 +30,7 @@ def test_sunspec_conformance():
            '_G_FREQ': 50.01, '_G_P_SUM3': -20000.0, '_PLN[0]': -6659.0,
            '_PLN[1]': -6716.0, '_PLN[2]': -6656.0,
            '_WH_Z[4]': 27922776.0, '_WH_V[4]': 88052.0}
-    now = time.time()
+    now = time.monotonic()
     vm = VirtualMeter(t, lambda n: (fed[n], now) if n in fed else None,
                       stale_after_s=60, update_interval_s=0.3)
     vm.start()

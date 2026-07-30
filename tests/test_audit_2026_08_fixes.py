@@ -165,7 +165,8 @@ def test_discover_esphome_port_range(tmp_path):
 def test_json_view_uses_guarded_clock():
     import inspect
     from multibus.virtual_meter import VirtualMeter
-    assert "self._clock_guard.freshness_now()" in inspect.getsource(VirtualMeter.json_view)
+    # freshness moved to the MONOTONIC clock (step-immune) — json_view uses it too
+    assert "time.monotonic()" in inspect.getsource(VirtualMeter.json_view)
 
 
 def test_identity_files_tightened_on_load(tmp_path):

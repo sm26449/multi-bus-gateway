@@ -114,7 +114,7 @@ def test_golden_primary_publisher_args_and_store(tmp_path):
     # vmeter can fail closed on a missing time instead of trusting a display
     # timestamp that fell back to now().
     item = app.state.current_values[19000]
-    assert set(item) == {"value", "name", "label", "unit", "poll_group", "timestamp", "ts"}
+    assert set(item) == {"value", "name", "label", "unit", "poll_group", "timestamp", "ts", "mono"}
     assert item["value"] == 231.5 and item["name"] == "_ULN1"
     assert item["poll_group"] == "realtime" and ISO_TS.match(item["timestamp"])
     assert item["ts"] is None             # batch() injects no driver ts → fails closed

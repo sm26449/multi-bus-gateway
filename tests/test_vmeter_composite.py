@@ -57,17 +57,15 @@ def f32(words):
 # ── provider: multi-store resolution ─────────────────────────────────────────
 
 def make_stores(now):
-    prim = {1: {"name": "P", "value": 100.0,
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now))}}
-    dev2 = {1: {"name": "temp", "value": 21.5,
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now))},
-            2: {"name": "a.b", "value": 7.0,     # register name that CONTAINS a dot
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now))}}
+    _iso = "2026-01-01T00:00:00"   # display only; freshness reads 'mono'
+    prim = {1: {"name": "P", "value": 100.0, "timestamp": _iso, "mono": now}}
+    dev2 = {1: {"name": "temp", "value": 21.5, "timestamp": _iso, "mono": now},
+            2: {"name": "a.b", "value": 7.0, "timestamp": _iso, "mono": now}}
     return prim, dev2
 
 
 def test_multi_provider_resolution():
-    now = time.time()
+    now = time.monotonic()
     prim, dev2 = make_stores(now)
     p = make_multi_provider(prim, {"ble1": dev2}, prim, "umg512",
                             bounds_for=lambda d: 60.0 if d == "ble1" else None)
@@ -85,7 +83,7 @@ def test_multi_provider_resolution():
 # ── legacy semantics pinned (golden) ─────────────────────────────────────────
 
 def test_legacy_gap_keeps_last_words_and_instance_watchdog():
-    now = time.time()
+    now = time.monotonic()
     vals = {"A": (10.0, now)}
     vm = VirtualMeter(T([live(0, "A")]), lambda n: vals.get(n),
                       stale_after_s=15, on_stale="legacy")
@@ -100,7 +98,7 @@ def test_legacy_gap_keeps_last_words_and_instance_watchdog():
 
 
 def test_legacy_sum_gap_on_missing_member():
-    now = time.time()
+    now = time.monotonic()
     vals = {"A": (1.0, now), "B": (2.0, now - 999)}
     reg = RegisterDef(addr=0, type="float", source_kind="sum", source=["A", "B"])
     vm = VirtualMeter(T([reg]), lambda n: vals.get(n), on_stale="legacy")
@@ -113,7 +111,7 @@ def test_legacy_sum_gap_on_missing_member():
 # ── policy: fail ──────────────────────────────────────────────────────────────
 
 def test_fail_marks_span_unavailable_and_recovers():
-    now = time.time()
+    now = time.monotonic()
     vals = {"A": (10.0, now), "B": (20.0, now - 120)}     # B stale
     vm = VirtualMeter(T([live(0, "A"), live(2, "B")]),
                       lambda n: vals.get(n), stale_after_s=15, on_stale="fail")
@@ -122,7 +120,7 @@ def test_fail_marks_span_unavailable_and_recovers():
     assert vm._unavail_spans == [(2, 4)]             # stale float spans 2 registers
     assert newest == now                             # any-fresh → server stays up
     assert vm._quality == {"fresh": 1, "stale": 1, "missing": 0}
-    vals["B"] = (20.0, time.time())                  # source recovers
+    vals["B"] = (20.0, time.monotonic())                  # source recovers
     vm._rebuild_block()
     assert vm._unavail_spans == []
     assert f32(words_at(vm, 2)) == 20.0
@@ -136,7 +134,7 @@ def test_fail_all_stale_stops_server_signal():
 
 
 def test_per_row_bound_overrides_instance():
-    now = time.time()
+    now = time.monotonic()
     vals = {"SLOW": (5.0, now - 40)}                 # 40s old
     # instance bound 15s would call it stale; the row allows 60s (BLE-style)
     vm = VirtualMeter(T([live(0, "SLOW", stale=60)]), lambda n: vals.get(n),
@@ -147,7 +145,7 @@ def test_per_row_bound_overrides_instance():
 
 
 def test_source_bound_from_provider_used():
-    now = time.time()
+    now = time.monotonic()
     # provider supplies a 60s bound (the source device's own threshold)
     vm = VirtualMeter(T([live(0, "X")]), lambda n: (5.0, now - 40, 60.0),
                       stale_after_s=15, on_stale="fail")
@@ -157,7 +155,7 @@ def test_source_bound_from_provider_used():
 # ── policy: sentinel ─────────────────────────────────────────────────────────
 
 def test_sentinel_words_by_type():
-    now = time.time()
+    now = time.monotonic()
     vals = {"F": (1.0, now - 999), "I": (2.0, now - 999), "U": (3.0, now - 999)}
     vm = VirtualMeter(T([live(0, "F", "float"), live(2, "I", "int16"),
                          live(3, "U", "uint16")]),
@@ -179,7 +177,7 @@ def test_sentinel_never_zero():
 # ── policy: hold ─────────────────────────────────────────────────────────────
 
 def test_hold_serves_last_value_within_cap_then_fails():
-    now = time.time()
+    now = time.monotonic()
     vals = {"A": (10.0, now)}
     vm = VirtualMeter(T([live(0, "A")]), lambda n: vals.get(n),
                       stale_after_s=1, on_stale="hold", max_hold_s=3600)
@@ -201,7 +199,7 @@ def test_hold_serves_last_value_within_cap_then_fails():
 # ── sum in policy modes ──────────────────────────────────────────────────────
 
 def test_policy_sum_uses_worst_member_and_never_partial():
-    now = time.time()
+    now = time.monotonic()
     vals = {"A": (1.0, now), "B": (2.0, now - 120)}
     reg = RegisterDef(addr=0, type="float", source_kind="sum", source=["A", "B"])
     vm = VirtualMeter(T([reg]), lambda n: vals.get(n),
@@ -228,7 +226,7 @@ def test_const_rows_always_served():
 
 def test_fail_policy_on_the_wire():
     from pymodbus.client import ModbusTcpClient
-    now = time.time()
+    now = time.monotonic()
     vals = {"OK": (42.5, now), "DEAD": (7.0, now - 999)}
     t = Template(id="wire", name="wire-test", transport={"port": 19998, "unit_id": 1},
                  registers=[live(0, "OK"), live(2, "DEAD")])
@@ -293,7 +291,7 @@ def test_delete_guard_blocks_device_referenced_by_composite(tmp_path):
 # ── JSON view (Phase 3): same convention, HTTP shape ─────────────────────────
 
 def test_json_view_good_stale_missing():
-    now = time.time()
+    now = time.monotonic()
     vals = {"OK": (42.5, now), "OLD": (7.0, now - 120)}
     vm = VirtualMeter(T([live(0, "OK"), live(2, "OLD"), live(4, "GONE"),
                          RegisterDef(addr=6, type="uint16", source_kind="const", source=1651)]),
@@ -311,7 +309,7 @@ def test_json_view_good_stale_missing():
 
 
 def test_json_view_all_good_complete():
-    now = time.time()
+    now = time.monotonic()
     vm = VirtualMeter(T([live(0, "A")]), lambda n: (1.5, now),
                       stale_after_s=15, on_stale="sentinel")
     j = vm.json_view()
@@ -320,7 +318,7 @@ def test_json_view_all_good_complete():
 
 
 def test_json_view_sum_worst_member():
-    now = time.time()
+    now = time.monotonic()
     vals = {"A": (1.0, now), "B": (2.0, now - 999)}
     reg = RegisterDef(addr=0, type="float", source_kind="sum", source=["A", "B"])
     vm = VirtualMeter(T([reg]), lambda n: vals.get(n), stale_after_s=15, on_stale="fail")
@@ -339,7 +337,7 @@ def _provider(values):
 
 def test_quality_block_words_fresh_and_stale():
     from multibus.virtual_meter import QUALITY_BASE
-    now = time.time()
+    now = time.monotonic()
     vals = {"a": (50.0, now), "b": (50.0, now)}
     vm = VirtualMeter(T([live(100, "a"), live(102, "b")]),
                       _provider(vals), on_stale="fail", quality_block=True)

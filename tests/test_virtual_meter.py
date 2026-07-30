@@ -32,7 +32,7 @@ def test_em24_conformance():
            '_WH_Z[4]': 27913246.0, '_G_ULN[0]': 239.1, '_G_ULN[1]': 238.2,
            '_G_ULN[2]': 238.0, '_ILN[0]': 27.96, '_ILN[1]': 28.3, '_ILN[2]': 28.1,
            '_PLN[0]': -6659.0, '_PLN[1]': -6716.0, '_PLN[2]': -6656.0}
-    now = time.time()
+    now = time.monotonic()
     vm = VirtualMeter(t, lambda n: (fed[n], now) if n in fed else None,
                       stale_after_s=60, update_interval_s=0.3)
     vm.start()

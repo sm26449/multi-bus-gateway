@@ -1,5 +1,33 @@
 # Changelog
 
+## 3.3.0
+
+### 2026-07-31 — monotonic freshness + serialized device mutations
+
+Two structural hardenings that close whole classes of finding for good.
+
+**Monotonic freshness clock (definitive clock-step fix).** Every driver now
+stamps a monotonic timestamp (`mono`) alongside the wall measurement time;
+the store and calculated registers carry it (calc inherits the oldest input's,
+None when none), and the virtual meter judges freshness as
+`time.monotonic() - mono <= bound` at every site — the Modbus block, the
+quality-block age, the supervisor's legacy stop, `json_view` and
+`health_state`. Because `time.monotonic()` is unaffected by wall-clock/NTP
+steps, freshness is now IMMUNE to a step of any size in either direction by
+construction — no rebasing, no grace window needed for correctness. A value
+with no monotonic stamp fails closed (not-fresh). The wall `ts`/`timestamp`
+fields are unchanged (display/InfluxDB). The ClockStepGuard remains only to
+log a `clock_step` diagnostic event; it no longer gates the freshness verdict.
+
+**Serialized device mutations.** create/update/delete/restore each do a
+check-then-act across validate → persist → client-swap → registry; they now
+run under one lock (via a signature-preserving decorator), so two concurrent
+requests can't orphan a client's poller threads or leave 2× pollers
+double-publishing every value.
+
+598 tests pass, incl. an adversarial test that lies about the wall clock and
+proves the freshness verdict depends only on the monotonic clock.
+
 ## 3.2.0
 
 ### 2026-07-31 — Lot F: audit hardening (P2 + P3 batch)

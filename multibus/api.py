@@ -623,6 +623,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     'timestamp': (datetime.fromtimestamp(_ts).isoformat()
                                   if _ts else datetime.now().isoformat()),
                     'ts': _ts if _ts else None,
+                    # monotonic stamp for STEP-IMMUNE freshness (the vmeter reads
+                    # this, not the wall clock). None → the vmeter fails closed.
+                    'mono': item.get('mono'),
                 }
 
             last_update['timestamp'] = datetime.now().isoformat()
@@ -1335,7 +1338,25 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                          args=(dev_cfg.influxdb_bucket,), daemon=True,
                          name=f"Bucket-{dev_cfg.id}").start()
 
+    # Serialize device mutations: create/update/delete/restore each do a
+    # check-then-act across validate → persist → client-swap → registry. Two
+    # concurrent requests (a double-clicked Apply, two admins) would otherwise
+    # orphan a client's live poller threads or leave 2× pollers publishing
+    # every value twice. functools.wraps keeps the handler's real signature so
+    # FastAPI still resolves path/body params (it follows __wrapped__).
+    _device_mutation_lock = threading.Lock()
+
+    def _serialized_mutation(fn):
+        import functools
+
+        @functools.wraps(fn)
+        def _w(*a, **kw):
+            with _device_mutation_lock:
+                return fn(*a, **kw)
+        return _w
+
     @app.post("/api/devices")
+    @_serialized_mutation
     def create_device(payload: Dict = Body(...)):
         """Create a device: validate → persist → auto-select its template
         registers + ensure its InfluxDB bucket → hot-start its poller and
@@ -1362,6 +1383,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         return {"devices": config.list_deleted_devices()}
 
     @app.post("/api/devices/{device_id}/restore")
+    @_serialized_mutation
     def restore_device(device_id: str):
         """Re-create a previously deleted device from its kept tombstone. Its
         selected-registers file (kept on disk) is loaded by the poller, so the
@@ -1463,6 +1485,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         return {"status": "updated", "device": _device_entry(prim, modbus_client)}
 
     @app.put("/api/devices/{device_id}")
+    @_serialized_mutation
     def update_device(device_id: str, payload: Dict = Body(...)):
         """Update a device: stop its poller, persist, restart. The primary
         (UMG512) is editable too — its connection maps to the flat Modbus
@@ -1807,6 +1830,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         return {"status": "ok", "device": device_id, "poll_groups": clean}
 
     @app.delete("/api/devices/{device_id}")
+    @_serialized_mutation
     def delete_device(device_id: str):
         """Delete a non-primary device (its selected-registers file is kept
         on disk for safety)."""

@@ -283,6 +283,7 @@ class _JsonPoller(threading.Thread):
                     self.poll_group_name, len(self.registers), self.interval)
         while self.running:
             t0 = time.time()
+            t0_mono = time.monotonic()
             try:
                 doc = self._fetch()
                 if not self.running:            # stopped while blocked in the fetch
@@ -304,7 +305,7 @@ class _JsonPoller(threading.Thread):
                         _sc = getattr(reg, 'scale', 1.0) or 1.0
                         if _sc != 1.0:
                             val = val / _sc
-                        data[reg.address] = {'value': val, 'register': reg, 'ts': t0}
+                        data[reg.address] = {'value': val, 'register': reg, 'ts': t0, 'mono': t0_mono}
                     if data and self.publish_callback:
                         self.publish_callback(self.poll_group_name, data)
                     self._owner._note_success(len(data))
