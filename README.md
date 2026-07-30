@@ -75,7 +75,7 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
   ~4–5 dispozitive + ~3 metere virtuale** (realtime ≥ 1 s), un Pi 4/5 mult mai
   mult. Plicul de capacitate complet + profilul recomandat: [MANUAL §18b](docs/MANUAL.ro.md#18b-rulare-pe-hardware-limitat-raspberry-pi).
 
-## Caracteristici (3.0.0)
+## Caracteristici
 
 **Southbound (achiziție)**
 - **Modbus TCP** și **Modbus RTU master** (serial RS-485), cu citiri batch,
@@ -92,7 +92,11 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
   export + **import CSV** ([ghid](docs/csv-import.md)).
 - **Wizard cu discovery** — scanare CIDR pe portul Modbus, sweep de unit-ID
   (TCP și RTU), **SunSpec model walk**, răsfoire de topicuri MQTT cu preview,
-  Fronius Solar API discover; „Use" pre-completează wizard-ul.
+  Fronius Solar API discover, **scanare noduri ESPHome** (API nativ 6053,
+  merge din Docker fără mDNS); „Use" pre-completează wizard-ul.
+- **Restaurarea unui dispozitiv șters** — ștergerea păstrează definiția
+  completă; un card „Deleted devices" oferă restore cu un click (conexiune +
+  template + registre) sau „forget" definitiv.
 
 **Măsurători**
 - Registre selectate per dispozitiv, **grupuri de poll**
@@ -129,6 +133,17 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
   decode pe interval de adrese, watchdog de prospețime (sursă stale → serverul
   tace, fail-safe-ul consumatorului preia).
 
+**Device Builder — noduri ESP32/ESP8266 remote (ESPHome)**
+- **Generează firmware dintr-un template** — alegi un template Modbus +
+  registre și primești YAML complet pentru un nod care citește contorul pe
+  RS485 și publică MQTT înapoi în gateway; build/OTA pe containerul tău
+  ESPHome (inclus în compose, zero-config).
+- **Adopt cu un click** — creează automat și device-ul mqtt-in pereche, cu
+  topicuri byte-identice — datele curg fără configurare dublă.
+- **Flash USB din browser** (esp-web-tools vendored, fără cloud) + Improv
+  Wi-Fi; **import mDNS**; profiluri hardware refolosibile; **Update all**
+  (rebuild + OTA în masă) — totul printr-o singură interfață și audit trail.
+
 **Diagnostice (punere în funcțiune)**
 - **Bus monitor** la nivel de cadru — hex TX/RX, decodare, latență,
   **fiecare retry ca intrare separată**; ring RAM-only, oprit implicit.
@@ -141,8 +156,12 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
   **diff semantic** între snapshot-uri, **rollback** reversibil,
   **last-known-good boot seatbelt** (un config.yaml stricat e restaurat
   automat la boot).
-- **Backup export/import ZIP** — secretele eliminate implicit; import cu
-  merge (secretele supraviețuiesc).
+- **Backup export/import ZIP** — secretele eliminate implicit (inclusiv
+  parola ESPHome și token-urile din webhook); include registre per dispozitiv,
+  template-uri, metere virtuale, profiluri hardware și presetări calculate;
+  passkeys doar în backup-ul cu secrete. Import cu merge (secretele
+  supraviețuiesc). Fișierele de identitate (`passkeys.json`, `audit.jsonl`)
+  sunt create `0600`.
 
 **Securitate (totul opt-in, implicit LAN de încredere)**
 - **Login** cu sesiuni + lockout per IP; **roluri admin / operator / viewer**

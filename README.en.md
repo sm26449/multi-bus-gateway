@@ -71,7 +71,7 @@ all the same. No vendor lock-in, no per-box cost.
   ~4–5 devices + ~3 virtual meters** (realtime ≥ 1 s), a Pi 4/5 far more.
   Full capacity envelope + recommended profile: [MANUAL §18b](docs/MANUAL.md#18b-running-on-constrained-hardware-raspberry-pi).
 
-## Features (3.0.0)
+## Features
 
 **Southbound (acquisition)**
 - **Modbus TCP** and **Modbus RTU master** (RS-485 serial), with batched
@@ -90,8 +90,12 @@ all the same. No vendor lock-in, no per-box cost.
   In-UI editor + upload + export + **CSV import**
   ([guide](docs/csv-import.md)).
 - **Discovery wizard** — CIDR scan on the Modbus port, unit-ID sweep (TCP
-  and RTU), **SunSpec model walk**, MQTT topic browse with payload
-  previews, Fronius Solar API discover; "Use" prefills the wizard.
+  and RTU), **SunSpec model walk**, MQTT topic browse with payload previews,
+  Fronius Solar API discover, **ESPHome node scan** (native API 6053, works
+  from Docker without mDNS); "Use" prefills the wizard.
+- **Restore a deleted device** — deleting keeps the full definition; a
+  "Deleted devices" card offers one-click restore (connection + template +
+  registers) or permanent "forget".
 
 **Measurements**
 - Per-device selected registers, **poll groups**
@@ -128,6 +132,17 @@ all the same. No vendor lock-in, no per-box cost.
   freshness watchdog (stale source → the server goes silent so the
   consumer's fail-safe engages).
 
+**Device Builder — remote ESP32/ESP8266 nodes (ESPHome)**
+- **Generate firmware from a template** — pick a Modbus template + registers
+  and get complete YAML for a node that reads the meter over RS485 and
+  publishes MQTT back to the gateway; build/OTA on your own ESPHome container
+  (bundled in compose, zero-config).
+- **One-click Adopt** — also creates the paired mqtt-in device with
+  byte-identical topics — data flows with no double configuration.
+- **Browser USB flashing** (vendored esp-web-tools, no cloud) + Improv Wi-Fi;
+  **mDNS import**; reusable hardware profiles; **Update all** (bulk rebuild +
+  OTA) — all through one interface and audit trail.
+
 **Diagnostics (commissioning)**
 - Frame-level **bus monitor** — TX/RX hex, decode, latency, **each retry as
   its own entry**; RAM-only ring, disabled by default.
@@ -140,7 +155,11 @@ all the same. No vendor lock-in, no per-box cost.
   **semantic diff** between snapshots, reversible **rollback**, and a
   **last-known-good boot seatbelt** (a broken config.yaml is restored
   automatically at boot).
-- **Backup export/import ZIP** — secrets stripped by default; merging
+- **Backup export/import ZIP** — secrets stripped by default (incl. the
+  ESPHome password and webhook tokens); includes per-device registers,
+  templates, virtual meters, hardware profiles and calculated presets;
+  passkeys only in a secret-bearing backup. Identity files (`passkeys.json`,
+  `audit.jsonl`) are created `0600`. Import merges
   import (secrets survive the round-trip).
 
 **Security (all opt-in; trusted-LAN by default)**
