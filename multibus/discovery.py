@@ -532,7 +532,7 @@ def _esphome_hello(host: str, port: int, timeout: float):
             if not chunk:
                 break
             body += chunk
-        if mtype == 2:                          # HelloResponse
+        if mtype == 2 and len(body) == size:    # a COMPLETE HelloResponse
             f = _pb_fields(body)
             res["server_info"] = f.get(3, b"").decode("utf-8", "replace") if isinstance(f.get(3), bytes) else ""
             res["name"] = f.get(4, b"").decode("utf-8", "replace") if isinstance(f.get(4), bytes) else ""

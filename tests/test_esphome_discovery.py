@@ -174,3 +174,15 @@ def test_scan_soft_fails_one_bad_host(monkeypatch):
     out = disc.scan_esphome(["127.0.0.2", "127.0.0.1"], port=6053, timeout=0.1)
     # the good host still comes back; the bad one is dropped, not fatal
     assert [r["host"] for r in out["results"]] == ["127.0.0.1"]
+
+
+def test_truncated_hello_body_not_parsed():
+    """A frame that claims size N but delivers fewer bytes must NOT be decoded
+    as a valid device (no false-positive name from a partial body)."""
+    def behave(c):
+        # header says 40-byte HelloResponse, then only 4 bytes + close
+        c.sendall(b"\x00\x28\x02" + b"\x22\x02hi")
+    port, th = serve_once(behave)
+    r = _esphome_hello("127.0.0.1", port, timeout=2.0)
+    th.join(3)
+    assert r is not None and r["name"] == ""   # incomplete → no name extracted

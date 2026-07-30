@@ -84,7 +84,11 @@ class AuditLog:
             with self._lock:
                 self._rotate_if_needed(len(line) + 1)
                 self.path.parent.mkdir(parents=True, exist_ok=True)
-                with open(self.path, "a", encoding="utf-8") as f:
+                # audit trail carries identities/IPs/actions — keep it 0600
+                # (mode applies only when this call creates the file).
+                fd = os.open(str(self.path),
+                             os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+                with os.fdopen(fd, "a", encoding="utf-8") as f:
                     f.write(line + "\n")
         except Exception:  # noqa: BLE001
             logger.exception("audit append failed")

@@ -335,6 +335,12 @@ class VirtualMeter:
         self._conn_seen: dict[str, float] = {}  # connection ident -> first-seen ts (uptime)
         self._conn_lock = threading.Lock()      # guards _conn_seen across threads
         self.stats = VMeterStats()              # in-RAM query log + counters
+        # Freshness clock: a wall-clock step (NTP/chrony) would otherwise make
+        # perfectly fresh rows look stale for one window. The guard rebases the
+        # comparison clock during its grace; _rebuild_block/_quality_words read
+        # freshness_now() so the whole freshness verdict — not just the
+        # instance-level stop — is immune to the jump. Ticked by _supervise.
+        self._clock_guard = self.ClockStepGuard(self.stale_after_s)
 
     # ── value resolution + encoding ────────────────────────────────────────
     @staticmethod
@@ -411,7 +417,7 @@ class VirtualMeter:
                 self._regs_out = out
             return newest
 
-        now = time.time()
+        now = self._clock_guard.freshness_now()
         out = []
         unavail: list[tuple[int, int]] = []
         quality = {"fresh": 0, "stale": 0, "missing": 0}
@@ -468,7 +474,7 @@ class VirtualMeter:
             state = 2
         else:
             state = 3
-        age = (int(min(max(0.0, time.time() - newest_fresh_ts), 0xFFFFFFFE))
+        age = (int(min(max(0.0, self._clock_guard.freshness_now() - newest_fresh_ts), 0xFFFFFFFE))
                if newest_fresh_ts else 0xFFFFFFFF)
         return [1, state, q["fresh"] & 0xffff, q["stale"] & 0xffff,
                 q["missing"] & 0xffff, total & 0xffff,
@@ -704,26 +710,39 @@ class VirtualMeter:
         STEP_THRESHOLD_S = 5.0
 
         def __init__(self, grace_s: float):
-            self.grace_s = float(grace_s)
+            # a very short window (a 250ms meter) still deserves enough grace to
+            # ride out a step tick — floor it so freshness never flaps
+            self.grace_s = max(float(grace_s), 5.0)
             self._drift_prev = None
             self._grace_until = 0.0
             self.last_step_s = 0.0
+            self._offset = 0.0        # wall-clock correction applied during grace
 
         def tick(self) -> bool:
             """Call once per supervisor pass; True when a step was detected
             on THIS tick (caller logs it once)."""
-            drift = time.time() - time.monotonic()
+            now_mono = time.monotonic()
+            if now_mono >= self._grace_until:     # grace expired → drop correction
+                self._offset = 0.0
+            drift = time.time() - now_mono
             stepped = (self._drift_prev is not None
                        and abs(drift - self._drift_prev) >= self.STEP_THRESHOLD_S)
             if stepped:
                 self.last_step_s = drift - self._drift_prev
-                self._grace_until = time.monotonic() + self.grace_s
+                self._offset += self.last_step_s  # accumulate across steps in a window
+                self._grace_until = now_mono + self.grace_s
             self._drift_prev = drift
             return stepped
 
         @property
         def in_grace(self) -> bool:
             return time.monotonic() < self._grace_until
+
+        def freshness_now(self) -> float:
+            """Wall clock to compare stored timestamps against. During a
+            clock-step grace it is rebased by the detected step so a jump does
+            not falsely age data that was fresh a moment ago."""
+            return time.time() - (self._offset if self.in_grace else 0.0)
 
     def _supervise(self) -> None:
         """Reliability core, runs every update_interval_s:
@@ -737,7 +756,7 @@ class VirtualMeter:
         probe_fails = 0
         tick = 0
         port = int(self.t.transport.get("port", 1502))
-        clock_guard = self.ClockStepGuard(self.stale_after_s)
+        clock_guard = self._clock_guard
         while not self._stop.is_set():
             try:
                 if clock_guard.tick():

@@ -29,6 +29,7 @@ services:
       # - MODBUS_HOST
       # - MODBUS_PORT
       # - MODBUS_UNIT_ID
+      # - MODBUS_STALE_AFTER_S   # seconds before the primary source reads stale
       # - MQTT_ENABLED
       # - MQTT_BROKER
       # - MQTT_PORT

@@ -118,7 +118,10 @@ class PasskeyStore:
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".json.tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
+        # WebAuthn credential metadata is identity material — 0600 from the
+        # start (os.open with the mode avoids the open→chmod race).
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump({"credentials": self._creds}, f, indent=1)
             f.flush()
             os.fsync(f.fileno())

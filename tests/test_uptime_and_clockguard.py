@@ -135,3 +135,50 @@ def test_snapshot_bundle_includes_new_artifacts(tmp_path):
     assert (out / "builder_profiles.json").exists()
     assert (out / "passkeys.json").exists()
     assert (out / "templates" / "my_vm.yaml").exists()
+
+
+# ---------------------------------------------------------------------------
+# LOT D — freshness clock is step-immune, not just the stop action
+# ---------------------------------------------------------------------------
+
+def test_freshness_now_rebases_during_grace(clock):
+    g = vm.VirtualMeter.ClockStepGuard(15)
+    g.tick()
+    base = g.freshness_now()
+    assert base == clock["wall"]                    # no step → raw wall clock
+    clock["wall"] += 138.36                         # the incident
+    g.tick()
+    # during grace the freshness clock is rebased to the PRE-step wall time,
+    # so a sample stored a moment ago is NOT falsely aged
+    assert abs(g.freshness_now() - base) < 0.001
+    # once grace ends, it tracks the (new) wall clock again
+    clock["mono"] += g.grace_s + 0.1
+    assert g.freshness_now() == clock["wall"]
+
+
+def test_freshness_now_accumulates_multiple_steps(clock):
+    """Two steps inside one window both get removed; real elapsed time (both
+    clocks advancing together) is preserved, not cancelled."""
+    g = vm.VirtualMeter.ClockStepGuard(15)
+    g.tick()
+    base = g.freshness_now()
+    clock["wall"] += 100.0; g.tick()                # step 1: +100
+    clock["wall"] += 1.0; clock["mono"] += 1.0      # 1s of NORMAL time passes
+    clock["wall"] += 50.0;  g.tick()                # step 2: +50, still in grace
+    # net wall jump is +151, but 1s was real → freshness clock = base + 1
+    assert abs(g.freshness_now() - (base + 1.0)) < 0.001
+
+
+def test_short_stale_window_gets_floored_grace():
+    g = vm.VirtualMeter.ClockStepGuard(0.25)        # a 250ms meter
+    assert g.grace_s >= 5.0                          # floored so it can ride a step
+
+
+def test_rebuild_block_uses_guard_clock():
+    """The per-register freshness in _rebuild_block reads freshness_now(),
+    not raw time.time() — the whole verdict is step-immune."""
+    import inspect
+    src = inspect.getsource(vm.VirtualMeter._rebuild_block)
+    assert "self._clock_guard.freshness_now()" in src
+    q = inspect.getsource(vm.VirtualMeter._quality_words)
+    assert "self._clock_guard.freshness_now()" in q

@@ -1,4 +1,4 @@
-# REST API Reference — Multi-Bus Gateway 3.1.1
+# REST API Reference — Multi-Bus Gateway 3.1.2
 
 Generated from the route definitions in `multibus/api.py` and `multibus/routes/`.
 Base URL: `http://<gateway>:8080` (default port; `ui.port` / `UI_PORT`).

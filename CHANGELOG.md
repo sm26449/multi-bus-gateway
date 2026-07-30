@@ -1,5 +1,34 @@
 # Changelog
 
+## 3.1.2
+
+### 2026-07-31 — second audit pass (verified fixes)
+
+Another cross-checked audit (external models + in-code verification; false
+positives rejected). Six genuinely-valid fixes; 581 tests pass.
+
+- **Virtual-meter freshness is now fully clock-step immune** — the earlier
+  guard only held the instance-level *stop*; the per-register freshness in
+  `_rebuild_block` and the quality-block age still used raw wall-clock, so a
+  jump could momentarily mark fresh rows stale or report a false age. The
+  guard now exposes a rebased `freshness_now()` used across the whole verdict;
+  the grace window is floored at 5 s so a sub-second meter still rides a step.
+- **`passkeys.json` and `audit.jsonl` are created 0600** (identity material,
+  matching how `config.yaml` is already handled).
+- **Generated-YAML quoting escapes ALL control characters** (incl. NUL/DEL),
+  not just newlines/tabs — a hostile label can't break out of the scalar.
+- **ESPHome discovery rejects a truncated HelloResponse** (requires the full
+  declared body) — no false-positive from a partial frame.
+- **`MODBUS_STALE_AFTER_S`** documented in `.env.example` and compose.
+- **Builder UI**: status fetch checks `response.ok` (a real HTTP error no
+  longer renders as the "disabled" form), and settings labels are associated
+  with their inputs (`for`/`id`).
+
+Rejected as non-issues after verification: influx buffer in backups (runtime
+state, by design), passkeys in the sanitized export (already correct — it
+travels only with secret-bearing backups), ESPHome URL SSRF (admin-only,
+consistent with the app's trusted-LAN model).
+
 ## 3.1.1
 
 ### 2026-07-30 — audit hardening pass (security · backup · reliability)

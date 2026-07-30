@@ -73,11 +73,20 @@ def safe_topic_name(name: str) -> str:
 
 def _yq(s: str) -> str:
     """Quote a YAML scalar defensively (labels/units may hold anything).
-    Newlines and control chars would break a double-quoted scalar, so they are
-    escaped to their YAML/JSON forms rather than emitted literally."""
+    Backslash/quote escaped, then EVERY control char (incl. NUL, and DEL)
+    rendered as a \\xNN / \\n / \\r / \\t escape so a hostile field can never
+    break out of the double-quoted scalar."""
     out = str(s).replace('\\', '\\\\').replace('"', '\\"')
-    out = out.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
-    return '"' + out + '"'
+    _named = {'\n': '\\n', '\r': '\\r', '\t': '\\t'}
+    res = []
+    for ch in out:
+        if ch in _named:
+            res.append(_named[ch])
+        elif ord(ch) < 0x20 or ord(ch) == 0x7f:
+            res.append('\\x%02X' % ord(ch))
+        else:
+            res.append(ch)
+    return '"' + ''.join(res) + '"'
 
 
 def _fmt_multiply(scale: float) -> str:

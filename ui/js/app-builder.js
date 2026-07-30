@@ -15,9 +15,11 @@ Object.assign(JanitzaMonitor.prototype, {
         }
         let st;
         try {
-            st = await (await fetch('/api/builder/status')).json();
+            const rsp = await fetch('/api/builder/status');
+            if (!rsp.ok) throw new Error(`HTTP ${rsp.status}`);
+            st = await rsp.json();
         } catch (e) {
-            el.innerHTML = `<p style="color:var(--danger,#ef4444);">${this.t('builder.loadFail', 'Could not load builder status.')}</p>`;
+            el.innerHTML = `<p style="color:var(--danger,#ef4444);">${this.t('builder.loadFail', 'Could not load builder status.')} <span style="color:var(--text-secondary);">(${this._esc(String(e.message || e))})</span></p>`;
             return;
         }
         this._builderStatus = st;
@@ -150,13 +152,13 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="card-body">
                     <div class="form-group"><label class="checkbox-label">
                         <input type="checkbox" id="bsEnabled"> ${this.t('builder.enable', 'Enable the Device Builder')}</label></div>
-                    <div class="form-group"><label>URL</label>
+                    <div class="form-group"><label for="bsUrl">URL</label>
                         <input type="text" id="bsUrl" placeholder="http://esphome:6052" style="width:100%;">
                         <div class="field-hint">${this.t('builder.urlHint', 'As reachable from the gateway container — the bundled compose service is http://esphome:6052.')}</div></div>
                     <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                        <div class="form-group" style="flex:1;min-width:160px;"><label>${this.t('builder.user', 'Username (optional)')}</label>
+                        <div class="form-group" style="flex:1;min-width:160px;"><label for="bsUser">${this.t('builder.user', 'Username (optional)')}</label>
                             <input type="text" id="bsUser" autocomplete="off" style="width:100%;"></div>
-                        <div class="form-group" style="flex:1;min-width:160px;"><label>${this.t('builder.pass', 'Password (optional)')}</label>
+                        <div class="form-group" style="flex:1;min-width:160px;"><label for="bsPass">${this.t('builder.pass', 'Password (optional)')}</label>
                             <input type="password" id="bsPass" autocomplete="new-password" style="width:100%;"></div>
                     </div>
                     <button class="btn btn-primary btn-sm" id="bsSaveBtn"><i class="bi bi-save"></i> ${this.t('common.save', 'Save')}</button>

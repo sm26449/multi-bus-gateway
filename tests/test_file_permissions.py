@@ -14,21 +14,25 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-"""Multi-Bus Gateway package."""
+"""Identity-bearing files (passkeys, audit) are created 0600."""
+import os
+import stat
 
-__version__ = "3.1.2"
-__author__ = "sm26449"
 
-from .config import Config
-from .modbus_client import ModbusClient
-from .mqtt_publisher import MQTTPublisher
-from .influxdb_publisher import InfluxDBPublisher
-from .register_parser import RegisterParser
+def test_passkeys_file_is_0600(tmp_path):
+    from multibus.passkeys import PasskeyStore
+    p = tmp_path / "passkeys.json"
+    store = PasskeyStore(str(p))
+    store._creds = [{"id": "x"}]
+    store._save()
+    mode = stat.S_IMODE(os.stat(p).st_mode)
+    assert mode == 0o600, oct(mode)
 
-__all__ = [
-    "Config",
-    "ModbusClient",
-    "MQTTPublisher",
-    "InfluxDBPublisher",
-    "RegisterParser",
-]
+
+def test_audit_file_is_0600(tmp_path):
+    from multibus.audit import AuditLog
+    p = tmp_path / "audit.jsonl"
+    log = AuditLog(str(p))
+    log.append(user="admin", ip="10.0.0.1", action="test", target="x")
+    mode = stat.S_IMODE(os.stat(p).st_mode)
+    assert mode == 0o600, oct(mode)
