@@ -498,6 +498,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             # unauthenticated: serve the SPA shell for navigations, 401 for API
             if path.startswith("/api/") or path == "/ws":
                 return JSONResponse({"detail": "login required"}, status_code=401)
+            # honor the IP allowlist here too — a non-allowlisted client must not
+            # even get the UI shell (the allowlist middleware runs inside this
+            # one, so without this check the shell would leak past it)
+            _peer = request.client.host if request.client else ""
+            if _allow_networks() and not _ip_allowed(_peer):
+                return JSONResponse({"detail": "forbidden (IP not in allowlist)"},
+                                    status_code=403)
             return HTMLResponse(_render_index_html(canonical_url=config.ui.canonical_url))
         # identity lands on request.state BEFORE any deny, so the audit trail
         # records WHO was refused, not an anonymous dash
@@ -847,7 +854,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     async def _snapshot_trigger(request: Request, call_next):
         response = await call_next(request)
         try:
-            if (request.method in ("POST", "PUT", "DELETE")
+            if (request.method in ("POST", "PUT", "PATCH", "DELETE")
                     and response.status_code < 400):
                 p = request.url.path
                 if p.startswith(_SNAP_PREFIXES) and not any(x in p for x in _SNAP_EXCLUDE):
@@ -874,7 +881,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     async def _audit_mw(request: Request, call_next):
         body_summary = None
         p = request.url.path
-        auditable = (request.method in ("POST", "PUT", "DELETE")
+        auditable = (request.method in ("POST", "PUT", "PATCH", "DELETE")
                      and p.startswith("/api/")
                      and not any(p.startswith(x) or x in p for x in _AUDIT_SKIP)
                      and "/test" not in p and "/payload-sample" not in p)
@@ -1194,6 +1201,18 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             },
         }
         entry['rest_push'] = _rest_push_public(dev_cfg)
+        if redact:
+            # The same credential can ride in more than one URL copy — the
+            # summary's http_url, the rest sink url, and the rest_push url all
+            # re-emit it. Redact every copy for a viewer (connection.url above
+            # was only one of them).
+            from .redact import redact_url
+            if entry.get('http_url'):
+                entry['http_url'] = redact_url(entry['http_url'])
+            if entry['sinks']['rest'].get('url'):
+                entry['sinks']['rest']['url'] = redact_url(entry['sinks']['rest']['url'])
+            if isinstance(entry.get('rest_push'), dict) and entry['rest_push'].get('url'):
+                entry['rest_push']['url'] = redact_url(entry['rest_push']['url'])
         if client:
             stats = client.get_stats()
             connected = stats.get('connected')
@@ -1356,6 +1375,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
         if raw is None:
             raise HTTPException(status_code=404, detail="no restorable device with that id")
+        # re-validate the tombstone through the same SSRF/LAN + protocol/port
+        # checks create_device enforces (raises 422 on failure) — a planted or
+        # edited tombstone must not reactivate a definition that create would
+        # reject. Returns the normalized raw dict.
+        raw = _validate_device_payload(raw)
         try:
             dev_cfg = config.upsert_raw_device(raw)
         except ValueError as e:

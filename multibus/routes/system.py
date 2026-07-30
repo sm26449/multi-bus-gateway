@@ -108,14 +108,20 @@ def build(ctx) -> APIRouter:
         return alert_mgr.test(msg)
 
     @r.get("/api/config/alerts")
-    async def get_alerts_config():
+    async def get_alerts_config(request: Request):
         """Alert/webhook config for the Settings panel. Header VALUES are masked
-        (they may hold an API key); the URL/body are returned as-is."""
+        (they may hold an API key). The webhook URL can carry a token in its
+        query/userinfo, so it is redacted for non-admin roles (the admin sees
+        the real URL to edit it)."""
         a = config.alerts or {}
+        _webhook = a.get("webhook_url", "") or ""
+        if _webhook and getattr(request.state, "role", None) not in (None, "admin"):
+            from ..redact import redact_url
+            _webhook = redact_url(_webhook)
         return {
             "enabled": bool(a.get("enabled", False)),
             "mqtt": bool(a.get("mqtt", True)),
-            "webhook_url": a.get("webhook_url", "") or "",
+            "webhook_url": _webhook,
             "webhook_headers": {k: _HDR_MASK for k in (a.get("webhook_headers") or {})},
             "webhook_body": a.get("webhook_body", None),
             "min_interval_s": a.get("min_interval_s", 300),

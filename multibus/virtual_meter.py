@@ -720,12 +720,19 @@ class VirtualMeter:
 
         STEP_THRESHOLD_S = 5.0
 
+        # A clock that keeps stepping (chrony correction loop, broken VM TSC)
+        # must NOT be able to hold the fail-safe suppressed forever. Cap the
+        # TOTAL time the stop can be held across back-to-back steps; past it,
+        # real staleness stops the meter even mid-correction-storm.
+        MAX_TOTAL_GRACE_MULT = 3          # ~3 stale windows of cumulative grace
+
         def __init__(self, grace_s: float):
             # a very short window (a 250ms meter) still deserves enough grace to
             # ride out a step tick — floor it so freshness never flaps
             self.grace_s = max(float(grace_s), 5.0)
             self._drift_prev = None
             self._grace_until = 0.0
+            self._grace_ceiling = 0.0     # monotonic time past which grace won't extend
             self.last_step_s = 0.0
             self._offset = 0.0        # wall-clock correction applied during grace
 
@@ -735,13 +742,18 @@ class VirtualMeter:
             now_mono = time.monotonic()
             if now_mono >= self._grace_until:     # grace expired → drop correction
                 self._offset = 0.0
+                self._grace_ceiling = 0.0         # and reset the anti-storm cap
             drift = time.time() - now_mono
             stepped = (self._drift_prev is not None
                        and abs(drift - self._drift_prev) >= self.STEP_THRESHOLD_S)
             if stepped:
                 self.last_step_s = drift - self._drift_prev
                 self._offset += self.last_step_s  # accumulate across steps in a window
-                self._grace_until = now_mono + self.grace_s
+                if self._grace_ceiling == 0.0:    # first step of a burst sets the cap
+                    self._grace_ceiling = now_mono + self.grace_s * self.MAX_TOTAL_GRACE_MULT
+                # extend grace, but never past the ceiling — a stepping-loop
+                # clock can't suppress the fail-safe indefinitely
+                self._grace_until = min(now_mono + self.grace_s, self._grace_ceiling)
             self._drift_prev = drift
             return stepped
 
@@ -786,7 +798,10 @@ class VirtualMeter:
                 self._policy_fresh = fresh            # health_state's policy-mode signal
                 if fresh:
                     self._last_fresh_ts = newest
-                    if not self._alive():             # down OR crashed → (re)start
+                    # a stop() may have landed after the while-check — never
+                    # (re)start a server the manager just retired, or it orphans
+                    # an unsupervised listener on the port
+                    if not self._alive() and not self._stop.is_set():
                         if self._running and not (self._server_thread and self._server_thread.is_alive()):
                             logger.warning("virtual meter %s server thread died — restarting", self.t.id)
                             self.stats.record_event("error", "crash",
@@ -839,6 +854,12 @@ class VirtualMeter:
 
     def stop(self) -> None:
         self._stop.set()
+        # join the supervisor BEFORE tearing the server down, so an in-flight
+        # tick can't (re)start a listener after we stop it — that would leave an
+        # orphaned, unsupervised server on the port serving a frozen block.
+        sup = self._sup_thread
+        if sup and sup.is_alive() and sup is not threading.current_thread():
+            sup.join(timeout=max(2.0, self.update_interval_s * 4))
         self._stop_server()
 
     def json_view(self) -> dict:
@@ -849,7 +870,7 @@ class VirtualMeter:
           age_s per row; a stale row carries last_value/last_ts SEPARATELY.
         ``complete`` is False when any live row is not good.
         """
-        now = time.time()
+        now = self._clock_guard.freshness_now()
         values: dict[str, dict] = {}
         stale_fields: list[str] = []
         for reg in self.t.registers:

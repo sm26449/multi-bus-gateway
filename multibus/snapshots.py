@@ -48,6 +48,44 @@ _LKG_ZIP = "lkg.zip"
 _LKG_META = "lkg.json"
 
 
+def _merge_devices(live_list, incoming_list):
+    """Merge the devices[] list per id: the incoming list is authoritative for
+    the device SET, but each device's stripped secret fields (connection
+    password/headers, rest_push headers) are refilled from the matching live
+    device when the incoming value is absent or empty."""
+    live_by_id = {d.get("id"): d for d in live_list if isinstance(d, dict)}
+    out = []
+    for dev in incoming_list:
+        if not isinstance(dev, dict):
+            out.append(dev)
+            continue
+        live = live_by_id.get(dev.get("id"))
+        if live:
+            for sect, keys in (("connection", ("password", "headers")),
+                               ("rest_push", ("headers",))):
+                l_s, i_s = live.get(sect), dev.get(sect)
+                if isinstance(l_s, dict) and isinstance(i_s, dict):
+                    for key in keys:
+                        if not i_s.get(key) and l_s.get(key):
+                            i_s[key] = l_s[key]
+        out.append(dev)
+    return out
+
+
+def _reinject_stripped_secrets(merged, live):
+    """Restore secrets a sanitized export blanked at the top level (only the
+    alerts.webhook_url token today — device secrets are handled per-id in
+    _merge_devices)."""
+    m_al, l_al = merged.get("alerts"), live.get("alerts")
+    if isinstance(m_al, dict) and isinstance(l_al, dict):
+        m_url, l_url = m_al.get("webhook_url", ""), l_al.get("webhook_url", "")
+        # the export strips the query/userinfo; if the live URL is the same
+        # endpoint with more (a token), the imported bare form loses it — keep
+        # the live one so the webhook still authenticates.
+        if l_url and m_url and l_url.startswith(m_url) and l_url != m_url:
+            m_al["webhook_url"] = l_url
+
+
 def write_bundle_files(zf: zipfile.ZipFile, *, cfg_dir: Path, user_tpl_dir: Path,
                        registers_path_for, replace_config: bool) -> Dict:
     """Write a bundle's files into the config dir (shared by backup import and
@@ -65,9 +103,13 @@ def write_bundle_files(zf: zipfile.ZipFile, *, cfg_dir: Path, user_tpl_dir: Path
 
     def _atomic(path: Path, data) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        mode = "wb" if isinstance(data, (bytes, bytearray)) else "w"
+        binary = isinstance(data, (bytes, bytearray))
         tmp = path.with_suffix(path.suffix + ".tmp")
-        with open(tmp, mode) as f:
+        # 0600: restored files land in the private config dir and some
+        # (config.yaml, passkeys.json) carry secrets — a restore must not
+        # downgrade them to world-readable.
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb" if binary else "w") as f:
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
@@ -86,12 +128,18 @@ def write_bundle_files(zf: zipfile.ZipFile, *, cfg_dir: Path, user_tpl_dir: Path
 
                 def _deep_merge(base, over):
                     for k, v in over.items():
-                        if isinstance(v, dict) and isinstance(base.get(k), dict):
+                        if k == "devices" and isinstance(v, list):
+                            base[k] = _merge_devices(base.get(k) or [], v)
+                        elif isinstance(v, dict) and isinstance(base.get(k), dict):
                             _deep_merge(base[k], v)
                         else:
                             base[k] = v
                     return base
                 merged = _deep_merge(live, incoming)
+                # a sanitized export strips per-device connection.password /
+                # headers and the alerts.webhook_url token — re-inject the live
+                # values so a merge-import keeps them, as the docstring promises
+                _reinject_stripped_secrets(merged, live)
             _atomic(cfg_path, _yaml.dump(merged, default_flow_style=False,
                                          allow_unicode=True, sort_keys=False))
             summary["config"] = True
@@ -114,6 +162,19 @@ def write_bundle_files(zf: zipfile.ZipFile, *, cfg_dir: Path, user_tpl_dir: Path
             summary["extras"] += 1
     return summary
 
+
+
+def _write_bytes_0600(path: Path, data: bytes) -> None:
+    """Atomically write a snapshot ZIP at 0600 — it embeds config.yaml with
+    secrets (0600 elsewhere), so it must not sit world-readable in
+    config/snapshots/."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
 
 class SnapshotStore:
     """Bounded, indexed snapshot directory under <config>/snapshots/."""
@@ -208,9 +269,7 @@ class SnapshotStore:
             self._seq += 1
             sid = time.strftime("%Y%m%d-%H%M%S", time.localtime(ts)) + f"-{self._seq:04d}"
             self.dir.mkdir(parents=True, exist_ok=True)
-            tmp = self.dir / f"{sid}.zip.tmp"
-            tmp.write_bytes(data)
-            os.replace(tmp, self.dir / f"{sid}.zip")
+            _write_bytes_0600(self.dir / f"{sid}.zip", data)
             meta = {"id": sid, "ts": round(ts, 3), "trigger": trigger[:120],
                     "user": user[:40], "note": note[:200], "size": len(data)}
             entries = [e for e in self._read_index() if e["id"] != sid]
@@ -274,9 +333,7 @@ class SnapshotStore:
         with self._lock:
             data = self.build_bundle_bytes()
             self.dir.mkdir(parents=True, exist_ok=True)
-            tmp = self.dir / (_LKG_ZIP + ".tmp")
-            tmp.write_bytes(data)
-            os.replace(tmp, self.dir / _LKG_ZIP)
+            _write_bytes_0600(self.dir / _LKG_ZIP, data)
             meta = {"id": "lkg", "ts": round(time.time(), 3), "size": len(data),
                     "trigger": "healthy-boot", "user": "", "note": "last known good"}
             (self.dir / _LKG_META).write_text(json.dumps(meta, indent=1))

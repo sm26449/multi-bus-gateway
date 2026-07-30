@@ -1313,13 +1313,19 @@ class Config:
         # (password hashes, MQTT/Influx tokens) so it is created 0600 from the
         # start — os.open with the mode avoids the open→chmod race a plain
         # open()+chmod would leave.
+        # serialize with the same lock the register writers use: two concurrent
+        # config saves (device CRUD vs a settings save, both on FastAPI's
+        # threadpool) share config.yaml.tmp (O_TRUNC) — without the lock one
+        # os.replace could publish a half-written mix, the other 500 on a
+        # vanished tmp.
         tmp = self.config_path.with_suffix(self.config_path.suffix + '.tmp')
-        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, 'w') as f:
-            yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-            f.flush()
-            os.fsync(f.fileno())               # durable before the rename
-        os.replace(tmp, self.config_path)
+        with self._file_lock:
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, 'w') as f:
+                yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+                f.flush()
+                os.fsync(f.fileno())           # durable before the rename
+            os.replace(tmp, self.config_path)
         try:
             os.chmod(self.config_path, 0o600)   # tighten an already-existing file too
         except OSError:

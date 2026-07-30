@@ -68,6 +68,15 @@ class AuditLog:
         self.rotate_bytes = rotate_bytes
         self.keep = keep
         self._lock = threading.Lock()
+        # tighten an already-existing file (and its rotated archives) that a
+        # pre-0600 build left world-readable — new files are created 0600
+        for _p in (self.path, *(self.path.with_name(f"{self.path.name}.{i}")
+                                for i in range(1, keep + 1))):
+            try:
+                if _p.exists():
+                    os.chmod(_p, 0o600)
+            except OSError:
+                pass
 
     def append(self, *, user: str, ip: str, action: str, target: str = "",
                status: str = "ok", detail: Any = None) -> None:

@@ -110,6 +110,10 @@ class PasskeyStore:
     def _load(self) -> None:
         try:
             if self.path.exists():
+                try:
+                    os.chmod(self.path, 0o600)   # tighten a pre-0600 file
+                except OSError:
+                    pass
                 self._creds = json.loads(self.path.read_text()).get("credentials", [])
         except Exception:  # noqa: BLE001 — a corrupt store must not block boot
             logger.exception("passkey store unreadable — starting empty")

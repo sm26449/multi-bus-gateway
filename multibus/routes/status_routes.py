@@ -65,6 +65,12 @@ def build(ctx) -> APIRouter:
             out["devices"] = []
             for dev_cfg, client in registry:
                 entry = dev_cfg.summary()
+                # summary() carries http_url raw; a status view never needs the
+                # editable credential URL, so redact it for every role (userinfo
+                # or a ?token= would otherwise leak to a viewer here).
+                if entry.get('http_url'):
+                    from ..redact import redact_url
+                    entry['http_url'] = redact_url(entry['http_url'])
                 if client:
                     stats = client.get_stats()
                     entry.update({

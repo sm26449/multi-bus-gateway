@@ -147,7 +147,7 @@ class AuthState:
         for user, stored, role in ((self.admin_user, self.admin_pw, "admin"),
                                    (self.operator_user, self.operator_pw, "operator"),
                                    (self.viewer_user, self.viewer_pw, "viewer")):
-            if user and hmac.compare_digest(username, user):
+            if user and hmac.compare_digest(username.encode("utf-8"), user.encode("utf-8")):
                 matched_stored = stored or _DECOY_HASH
                 matched_role = role
         ok = verify_password(password, matched_stored)

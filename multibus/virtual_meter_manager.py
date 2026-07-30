@@ -742,6 +742,16 @@ class VirtualMeterManager:
         (legacy|fail|sentinel|hold); `max_hold_s` bounds the hold policy."""
         if on_stale not in ("legacy", "fail", "sentinel", "hold"):
             return {"error": f"on_stale must be legacy|fail|sentinel|hold, not {on_stale!r}"}
+        # a non-finite or non-positive bound would defeat the freshness watchdog
+        # (inf/nan makes every age look in-bound) — reject it, like update_instance
+        import math
+        for _nm, _v in (("stale_after_s", stale_after_s), ("max_hold_s", max_hold_s)):
+            try:
+                _f = float(_v)
+            except (TypeError, ValueError):
+                return {"error": f"{_nm} must be a number"}
+            if not math.isfinite(_f) or _f <= 0:
+                return {"error": f"{_nm} must be a positive, finite number"}
         tmpl_path = self.templates_dir / f"{template_id}.yaml"
         if not tmpl_path.exists():
             return {"error": f"unknown template {template_id}"}

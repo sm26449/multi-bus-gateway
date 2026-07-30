@@ -74,3 +74,107 @@ def test_missing_timestamp_not_laundered_to_now():
     from multibus.virtual_meter_manager import _lookup
     store = {5: {"name": "P", "value": 42.0, "timestamp": None}}
     assert _lookup(store, "P") == (42.0, None)
+
+
+# ---------------------------------------------------------------------------
+# Lot F — P2 batch
+# ---------------------------------------------------------------------------
+
+def test_clock_guard_grace_is_bounded_under_step_storm():
+    """A clock that keeps stepping can't hold the fail-safe suppressed forever
+    — cumulative grace is capped at MAX_TOTAL_GRACE_MULT windows."""
+    from multibus import virtual_meter as vm
+    class FT: wall = 1000.0; mono = 500.0
+    ft = FT()
+    _orig_time, _orig_mono = vm.time.time, vm.time.monotonic
+    vm.time.time = lambda: ft.wall
+    vm.time.monotonic = lambda: ft.mono
+    try:
+        g = vm.VirtualMeter.ClockStepGuard(10)     # grace_s = 10
+        g.tick()
+        ceiling = None
+        # step every 3s of monotonic time, forever
+        for _ in range(20):
+            ft.mono += 3.0
+            ft.wall += 100.0                        # a >5s step each round
+            g.tick()
+            if g._grace_ceiling and ceiling is None:
+                ceiling = g._grace_ceiling
+        # grace must have a ceiling and eventually expire despite constant steps
+        assert ceiling is not None
+        # push monotonic past the ceiling → grace is over even mid-storm
+        ft.mono = g._grace_ceiling + 1
+        assert g.in_grace is False
+    finally:
+        vm.time.time = _orig_time
+        vm.time.monotonic = _orig_mono
+
+
+def test_add_instance_rejects_non_finite_bounds(tmp_path):
+    from multibus.virtual_meter_manager import VirtualMeterManager
+    import os
+    os.makedirs(tmp_path / "tpl", exist_ok=True)
+    mgr = VirtualMeterManager({}, config_path=str(tmp_path / "vm.yaml"),
+                              templates_dir=str(tmp_path / "tpl"))
+    (tmp_path / "tpl" / "t.yaml").write_text(
+        "template:\n  id: t\n  transport: {type: tcp, port: 1502}\n  registers: []\n")
+    for bad in (float("inf"), float("nan"), 0, -5):
+        r = mgr.add_instance("t", port=1502, stale_after_s=bad)
+        assert "error" in r, bad
+
+
+def test_merge_devices_reinjects_stripped_secrets():
+    from multibus.snapshots import _merge_devices
+    live = [{"id": "d1", "connection": {"broker": "b", "password": "SECRET"},
+             "rest_push": {"headers": {"X": "tok"}}}]
+    incoming = [{"id": "d1", "connection": {"broker": "b", "password": ""},
+                 "rest_push": {"headers": {}}}]
+    out = _merge_devices(live, incoming)
+    assert out[0]["connection"]["password"] == "SECRET"     # refilled from live
+    assert out[0]["rest_push"]["headers"] == {"X": "tok"}
+    # a device only in the backup (no live match) is kept as-is
+    out2 = _merge_devices(live, [{"id": "new", "connection": {"broker": "z"}}])
+    assert out2[0]["id"] == "new"
+
+
+# ---------------------------------------------------------------------------
+# Lot F — P3 batch
+# ---------------------------------------------------------------------------
+
+def test_auth_non_ascii_username_no_crash():
+    """A non-ASCII username must not TypeError inside authenticate (which would
+    skip lockout accounting) — compare on bytes."""
+    from multibus.auth import AuthState
+    from multibus.config import UIConfig
+    ui = UIConfig(auth_enabled=True, auth_username="admin", auth_password="pw")
+    st = AuthState(ui)
+    assert st.authenticate("admÿn", "pw") is None    # non-ASCII: no crash, no match
+    assert st.authenticate("admin", "wrong") is None
+
+
+@needs_tc
+def test_discover_esphome_port_range(tmp_path):
+    _, client = make_app(tmp_path)
+    for bad in (0, 65536, 999999):
+        rsp = client.post("/api/discover/esphome",
+                          json={"cidr": "192.168.1.0/30", "port": bad})
+        assert rsp.status_code == 422, bad
+
+
+@needs_tc
+def test_json_view_uses_guarded_clock():
+    import inspect
+    from multibus.virtual_meter import VirtualMeter
+    assert "self._clock_guard.freshness_now()" in inspect.getsource(VirtualMeter.json_view)
+
+
+def test_identity_files_tightened_on_load(tmp_path):
+    import os, stat
+    from multibus.audit import AuditLog
+    from multibus.passkeys import PasskeyStore
+    ap = tmp_path / "audit.jsonl"; ap.write_text("{}\n"); os.chmod(ap, 0o644)
+    AuditLog(str(ap))
+    assert stat.S_IMODE(os.stat(ap).st_mode) == 0o600
+    pk = tmp_path / "passkeys.json"; pk.write_text('{"credentials": []}'); os.chmod(pk, 0o644)
+    PasskeyStore(str(pk))
+    assert stat.S_IMODE(os.stat(pk).st_mode) == 0o600

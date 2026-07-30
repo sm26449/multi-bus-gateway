@@ -1,5 +1,47 @@
 # Changelog
 
+## 3.2.0
+
+### 2026-07-31 — Lot F: audit hardening (P2 + P3 batch)
+
+Working through the thorough audit's remaining findings (each verified in
+code; the two P1s shipped in 3.1.6). 597 tests pass.
+
+**Security / secret hygiene**
+- Viewer roles no longer see credential-bearing URLs: `http_url`, the REST
+  sink url and `rest_push.url` are redacted in the device list; `/api/status`
+  redacts `http_url` for every role; the alerts `webhook_url` is redacted for
+  non-admins.
+- Snapshot ZIPs, the LKG bundle and restored config files (config.yaml,
+  passkeys.json) are written `0600` — no more world-readable secrets in
+  `config/snapshots/`. Existing `audit.jsonl`/`passkeys.json` are tightened
+  to `0600` on load.
+- Importing a sanitized backup no longer wipes per-device secrets or the
+  webhook token: the merge refills stripped `connection.password`/headers and
+  `rest_push` headers per device, and keeps the live `webhook_url` when the
+  imported one is its stripped prefix.
+- The IP allowlist now also gates the unauthenticated SPA shell; device
+  restore re-validates the tombstone through the create-time SSRF/LAN checks;
+  a non-ASCII login username no longer crashes the auth path (which would
+  have skipped lockout accounting).
+
+**Reliability / correctness**
+- The clock-step grace window is now bounded — a clock stuck in a correction
+  loop can no longer suppress the freshness fail-safe indefinitely.
+- `add_instance` rejects non-finite/non-positive `stale_after_s`/`max_hold_s`
+  (an `inf` bound would defeat the watchdog), matching `update_instance`.
+- Virtual-meter `stop()` joins its supervisor and the restart branch rechecks
+  the stop flag — a disable/delete mid-tick can't orphan an unsupervised
+  server on the port.
+- Config-file writes hold the file lock (no half-written `config.yaml` from
+  two concurrent saves). The HTTP-JSON `json_view` reads the step-rebased
+  freshness clock. `PATCH` is now audited and snapshotted. ESPHome discovery
+  validates the port range.
+
+Deferred (noted for a dedicated change): full device-CRUD mutation
+serialization (needs a careful handler refactor) and end-to-end monotonic
+freshness timestamps (the definitive fix for the whole clock-step class).
+
 ## 3.1.6
 
 ### 2026-08-01 — two P1s from the thorough audit round
