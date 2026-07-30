@@ -140,3 +140,37 @@ def test_discover_esphome_route(tmp_path, monkeypatch):
     rsp = client.post("/api/discover/esphome",
                       json={"cidr": "192.168.77.0/30", "port": "x"})
     assert rsp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# LOT B — hardening (2026-07-30 audit)
+# ---------------------------------------------------------------------------
+
+def test_pb_fields_handles_long_varint_length():
+    """A length-delimited field >=128 bytes uses a multi-byte varint length."""
+    long_name = b"x" * 200
+    buf = b"\x22" + bytes([0xC8, 0x01]) + long_name    # field 4, len 200 varint
+    f = _pb_fields(buf)
+    assert f[4] == long_name
+
+
+def test_hello_partial_header_is_soft(monkeypatch):
+    """A peer that dribbles 1 byte then closes must not raise — just be a
+    non-ESPHome result, not an aborted scan."""
+    port, th = serve_once(lambda c: c.sendall(b"\x00"))   # 1 of 3 header bytes
+    r = _esphome_hello("127.0.0.1", port, timeout=2.0)
+    th.join(3)
+    assert r is not None and r["name"] == ""
+
+
+def test_scan_soft_fails_one_bad_host(monkeypatch):
+    import multibus.discovery as disc
+    def boom(h, port, timeout):
+        if h == "127.0.0.2":
+            raise RuntimeError("kaboom")
+        return {"host": h, "port": port, "name": h, "server_info": "",
+                "api_version": "", "encrypted": False}
+    monkeypatch.setattr(disc, "_esphome_hello", boom)
+    out = disc.scan_esphome(["127.0.0.2", "127.0.0.1"], port=6053, timeout=0.1)
+    # the good host still comes back; the bad one is dropped, not fatal
+    assert [r["host"] for r in out["results"]] == ["127.0.0.1"]

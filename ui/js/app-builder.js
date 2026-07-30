@@ -39,7 +39,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <button class="btn btn-sm" id="builderNewBtn"><i class="bi bi-plus-lg"></i> ${this.t('builder.newNode', 'New node')}</button>
                 <button class="btn btn-sm" id="builderImportBtn"><i class="bi bi-upload"></i> ${this.t('builder.importYaml', 'Import YAML')}</button>
                 <button class="btn btn-sm" id="builderUpdateAllBtn" title="${this.t('builder.updateAllTip', 'Rebuild and OTA every node whose firmware is out of date')}"><i class="bi bi-arrow-repeat"></i> ${this.t('builder.updateAll', 'Update all')}</button>
-                <button class="btn btn-ghost btn-sm" id="builderSettingsBtn" title="${this.t('builder.settingsTitle', 'ESPHome connection')}"><i class="bi bi-gear"></i></button>
+                <button class="btn btn-ghost btn-sm" id="builderSettingsBtn" title="${this.t('builder.settingsTitle', 'ESPHome connection')}" aria-label="${this.t('builder.settingsTitle', 'ESPHome connection')}"><i class="bi bi-gear"></i></button>
             </div>
             <div id="builderSettingsPanel" style="display:none;max-width:680px;margin-bottom:14px;">
                 ${this._builderSettingsFormHtml()}
@@ -63,6 +63,7 @@ Object.assign(JanitzaMonitor.prototype, {
     async _renderBuilderNodes() {
         const el = document.getElementById('builderNodes');
         if (!el) return;
+        el.innerHTML = `<span class="field-hint"><i class="bi bi-arrow-repeat spin"></i> ${this.t('common.loading', 'Loading…')}</span>`;
         let data;
         try {
             const rsp = await fetch('/api/builder/nodes');
@@ -89,14 +90,14 @@ Object.assign(JanitzaMonitor.prototype, {
                 n.address ? this._esc(n.address) : null,
             ].filter(Boolean).join(' · ');
             const actions = [
-                `<button class="btn btn-ghost btn-sm" data-act="edit" data-name="${name}" title="${this.t('common.edit', 'Edit')}"><i class="bi bi-pencil"></i></button>`,
-                `<button class="btn btn-ghost btn-sm" data-act="validate" data-name="${name}" title="${this.t('builder.validate', 'Validate')}"><i class="bi bi-check2-circle"></i></button>`,
-                `<button class="btn btn-ghost btn-sm" data-act="compile" data-name="${name}" title="${this.t('builder.build', 'Build')}"><i class="bi bi-hammer"></i></button>`,
-                `<button class="btn btn-ghost btn-sm" data-act="upload" data-name="${name}" title="${this.t('builder.flashOta', 'Flash OTA')}"><i class="bi bi-broadcast-pin"></i></button>`,
-                `<button class="btn btn-ghost btn-sm" data-act="flash-usb" data-name="${name}" title="${this.t('builder.flashUsbTip', 'First-time flash over USB, from this browser (WebSerial)')}"><i class="bi bi-usb-plug"></i></button>`,
-                `<button class="btn btn-ghost btn-sm" data-act="logs" data-name="${name}" title="${this.t('builder.logs', 'Logs')}"><i class="bi bi-terminal"></i></button>`,
-                `<button class="btn btn-ghost btn-sm" data-act="downloads" data-name="${name}" title="${this.t('builder.binaries', 'Binaries')}"><i class="bi bi-download"></i></button>`,
-                `<button class="btn btn-ghost btn-sm" data-act="delete" data-name="${name}" title="${this.t('builder.deleteTip', 'Archive on the ESPHome dashboard (recoverable there)')}"><i class="bi bi-trash"></i></button>`,
+                `<button class="btn btn-ghost btn-sm" data-act="edit" data-name="${name}" title="${this.t('common.edit', 'Edit')}" aria-label="${this.t('common.edit', 'Edit')}"><i class="bi bi-pencil"></i></button>`,
+                `<button class="btn btn-ghost btn-sm" data-act="validate" data-name="${name}" title="${this.t('builder.validate', 'Validate')}" aria-label="${this.t('builder.validate', 'Validate')}"><i class="bi bi-check2-circle"></i></button>`,
+                `<button class="btn btn-ghost btn-sm" data-act="compile" data-name="${name}" title="${this.t('builder.build', 'Build')}" aria-label="${this.t('builder.build', 'Build')}"><i class="bi bi-hammer"></i></button>`,
+                `<button class="btn btn-ghost btn-sm" data-act="upload" data-name="${name}" title="${this.t('builder.flashOta', 'Flash OTA')}" aria-label="${this.t('builder.flashOta', 'Flash OTA')}"><i class="bi bi-broadcast-pin"></i></button>`,
+                `<button class="btn btn-ghost btn-sm" data-act="flash-usb" data-name="${name}" title="${this.t('builder.flashUsbTip', 'First-time flash over USB, from this browser (WebSerial)')}" aria-label="${this.t('builder.flashUsb', 'Flash via USB')}"><i class="bi bi-usb-plug"></i></button>`,
+                `<button class="btn btn-ghost btn-sm" data-act="logs" data-name="${name}" title="${this.t('builder.logs', 'Logs')}" aria-label="${this.t('builder.logs', 'Logs')}"><i class="bi bi-terminal"></i></button>`,
+                `<button class="btn btn-ghost btn-sm" data-act="downloads" data-name="${name}" title="${this.t('builder.binaries', 'Binaries')}" aria-label="${this.t('builder.binaries', 'Binaries')}"><i class="bi bi-download"></i></button>`,
+                `<button class="btn btn-ghost btn-sm" data-act="delete" data-name="${name}" title="${this.t('builder.deleteTip', 'Archive on the ESPHome dashboard (recoverable there)')}" aria-label="${this.t('common.delete', 'Delete')}"><i class="bi bi-trash"></i></button>`,
             ].join('');
             return `
             <div class="device-row" style="cursor:default;">
@@ -335,6 +336,10 @@ Object.assign(JanitzaMonitor.prototype, {
             if (msg.event === 'line') {
                 const atBottom = out.scrollTop + out.clientHeight >= out.scrollHeight - 8;
                 out.textContent += String(msg.data || '').replace(ansi, '');
+                // cap the console so a huge compile log can't freeze the tab
+                if (out.textContent.length > 400000) {
+                    out.textContent = '…(trimmed)\n' + out.textContent.slice(-360000);
+                }
                 if (atBottom) out.scrollTop = out.scrollHeight;
             } else if (msg.event === 'exit') {
                 const ok = msg.code === 0;

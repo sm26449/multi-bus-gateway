@@ -17,3 +17,11 @@ services:
   multi-bus-gateway:
     volumes:
       - ./ui:/app/ui:ro
+
+# --- Attach to an existing external network (multi-stack homes) -------------
+# services:
+#   multi-bus-gateway:
+#     networks: [monitoring, pv-stack-network]
+# networks:
+#   pv-stack-network:
+#     external: true

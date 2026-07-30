@@ -62,6 +62,9 @@ _clients: Dict[tuple, EsphomeDashboard] = {}
 # URL; cleared on settings save.
 _STATUS_TTL_S = 15.0
 _status_cache: Dict[str, tuple] = {}      # url -> (monotonic_ts, payload)
+# FastAPI runs sync routes on a threadpool; guard the module caches so a
+# concurrent settings-save + status poll can't interleave clear()/insert().
+_cache_lock = __import__("threading").Lock()
 
 
 def build(ctx) -> APIRouter:
@@ -85,15 +88,16 @@ def build(ctx) -> APIRouter:
                 "and esphome.url in Settings"))
         key = (c.get("url"), c.get("username"), c.get("password"),
                c.get("timeout_s"))
-        cli = _clients.get(key)
-        if cli is None:
-            try:
-                cli = from_config(c)
-            except EsphomeError as e:
-                raise HTTPException(status_code=503, detail=str(e))
-            _clients.clear()          # config changed → drop stale sessions
-            _clients[key] = cli
-        return cli
+        with _cache_lock:
+            cli = _clients.get(key)
+            if cli is None:
+                try:
+                    cli = from_config(c)
+                except EsphomeError as e:
+                    raise HTTPException(status_code=503, detail=str(e))
+                _clients.clear()          # config changed → drop stale sessions
+                _clients[key] = cli
+            return cli
 
     def _check_name(name: str) -> str:
         if not _NAME_RE.match(name or "") or ".." in name:
@@ -160,8 +164,9 @@ def build(ctx) -> APIRouter:
             "username": str(payload.get("username", "") or ""),
             "password": password, "timeout_s": timeout_s}
         config.save_yaml_config()
-        _clients.clear()               # drop cached sessions on any change
-        _status_cache.clear()          # and the cached reachability verdict
+        with _cache_lock:
+            _clients.clear()           # drop cached sessions on any change
+            _status_cache.clear()      # and the cached reachability verdict
         _audit(request, "esphome settings save", url,
                detail={"enabled": enabled})
         return {"status": "ok", "applies": "live"}
@@ -178,9 +183,10 @@ def build(ctx) -> APIRouter:
                     "url": "", "node_count": 0}
         cli = _client()
         import time
-        hit = _status_cache.get(cli.base)
-        if hit and time.monotonic() - hit[0] < _STATUS_TTL_S:
-            return hit[1]
+        with _cache_lock:
+            hit = _status_cache.get(cli.base)
+            if hit and time.monotonic() - hit[0] < _STATUS_TTL_S:
+                return hit[1]
         try:
             payload = {"enabled": True, "reachable": True,
                        "version": cli.version(),
@@ -189,7 +195,8 @@ def build(ctx) -> APIRouter:
         except EsphomeError as e:
             payload = {"enabled": True, "reachable": False, "version": "",
                        "node_count": 0, "url": cli.base, "error": str(e)}
-        _status_cache[cli.base] = (time.monotonic(), payload)
+        with _cache_lock:
+            _status_cache[cli.base] = (time.monotonic(), payload)
         return payload
 
     @r.get("/api/builder/nodes")
@@ -218,7 +225,8 @@ def build(ctx) -> APIRouter:
                 "project_name and package_import_url are required — pick the "
                 "node from the importable list, which carries both"]})
         configuration = _wrap(lambda: _client().import_node(args))
-        _status_cache.clear()          # node_count changed
+        with _cache_lock:
+            _status_cache.clear()      # node_count changed
         _audit(request, "esphome node import", configuration,
                detail={"project": args["project_name"]})
         return {"status": "imported", "configuration": configuration}
@@ -252,7 +260,8 @@ def build(ctx) -> APIRouter:
             except EsphomeError:
                 pass                       # not found → create is fine
         _wrap(lambda: cli.save_config(name, content))
-        _status_cache.clear()          # node_count may have changed
+        with _cache_lock:
+            _status_cache.clear()      # node_count may have changed
         _audit(request, "esphome yaml save", name,
                detail={"bytes": len(content)})
         return {"status": "saved", "name": name}
@@ -263,7 +272,8 @@ def build(ctx) -> APIRouter:
         _require_admin(request)
         _check_name(name)
         _wrap(lambda: _client().archive(name))
-        _status_cache.clear()          # node_count changed
+        with _cache_lock:
+            _status_cache.clear()      # node_count changed
         _audit(request, "esphome node archive", name)
         return {"status": "archived", "name": name}
 

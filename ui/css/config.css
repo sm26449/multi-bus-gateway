@@ -670,8 +670,8 @@
     font-size: 10.5px; font-weight: 600; border-radius: 10px; padding: 2px 8px;
     margin-left: 8px; vertical-align: middle; text-transform: uppercase; letter-spacing: .03em;
 }
-.sink-pill.ok   { color: #08260f; background: var(--success, #22c55e); }
-.sink-pill.warn { color: #2a1c00; background: var(--warning, #f59e0b); }
+.sink-pill.ok   { color: var(--on-success, #08260f); background: var(--success, #22c55e); }
+.sink-pill.warn { color: var(--on-warning, #2a1c00); background: var(--warning, #f59e0b); }
 .sink-pill.off  { color: var(--text-secondary, #8a94a0); background: var(--bg-tertiary, rgba(128,128,128,.14)); }
 .sink-pill.bad  { color: #fff; background: var(--danger, #d4635d); }
 

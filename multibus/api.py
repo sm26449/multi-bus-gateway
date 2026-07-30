@@ -1003,6 +1003,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             errors.append(f"id: '{did}' already exists")
         template_id = str(payload.get('template', '')).strip()
         conn = payload.get('connection', {}) or {}
+        # Builder adopt: the generate response never carries the real broker
+        # password — the sentinel is resolved here, server-side only.
+        if conn.get('password') == '$GATEWAY_MQTT_PASSWORD':
+            conn['password'] = config.mqtt.password
         protocol = str(conn.get('protocol', 'tcp')).lower()
         if protocol not in ('tcp', 'rtu', 'http', 'mqtt'):
             errors.append("connection.protocol: must be 'tcp', 'rtu', 'http' or 'mqtt'")
@@ -2331,6 +2335,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     BACKUP_VERSION = 1
     # secret keys stripped from config.yaml on export unless include_secrets=true
     _SECRET_PATHS = [("mqtt", "password"), ("influxdb", "token"),
+                     ("esphome", "password"),
                      ("ui", "auth", "password"), ("ui", "auth", "viewer_password"),
                      ("ui", "auth", "operator_password"),
                      ("alerts", "webhook_headers"),   # holds the webhook X-API-Key/bearer
@@ -2403,6 +2408,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 if not include_secrets:
                     _strip_paths(data, _SECRET_PATHS)
                     _strip_device_secrets(data)
+                    _al = data.get("alerts")
+                    if isinstance(_al, dict) and _al.get("webhook_url"):
+                        from urllib.parse import urlsplit, urlunsplit
+                        u = urlsplit(str(_al["webhook_url"]))
+                        if u.query or "@" in u.netloc:      # token in query/userinfo
+                            host = u.netloc.rsplit("@", 1)[-1]
+                            _al["webhook_url"] = urlunsplit((u.scheme, host, u.path, "", ""))
                 if not include_identity:
                     _strip_paths(data, _IDENTITY_PATHS)
                 z.writestr("config.yaml", _yaml.dump(data, default_flow_style=False,
@@ -2419,10 +2431,25 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 for f in udir.iterdir():
                     if f.suffix.lower() in (".json", ".yaml", ".yml"):
                         z.writestr(f"device_templates/{f.name}", f.read_text())
-            # virtual meters
+            # virtual meters (instances + user templates)
             vm = cfg_dir / "virtual_meters.yaml"
             if vm.exists():
                 z.writestr("virtual_meters.yaml", vm.read_text())
+            _vtpl = cfg_dir / "templates"
+            if _vtpl.is_dir():
+                for f in sorted(_vtpl.iterdir()):
+                    if f.suffix.lower() in (".yaml", ".yml"):
+                        z.writestr(f"templates/{f.name}", f.read_text())
+            # calculated presets + builder hardware profiles travel with every
+            # backup; the passkey registry (identity) only when secrets do
+            for name in ("calculated_templates.json", "builder_profiles.json"):
+                p = cfg_dir / name
+                if p.exists():
+                    z.writestr(name, p.read_text())
+            if include_secrets:
+                p = cfg_dir / "passkeys.json"
+                if p.exists():
+                    z.writestr("passkeys.json", p.read_text())
             z.writestr("manifest.json", json.dumps(manifest, indent=1))
         buf.seek(0)
         return Response(

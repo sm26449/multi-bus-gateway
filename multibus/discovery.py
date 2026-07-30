@@ -479,8 +479,13 @@ def _pb_fields(buf: bytes) -> dict:
                     if not b & 0x80:
                         break
                 out[field] = v
-            elif wt == 2:                      # length-delimited
-                ln = buf[i]; i += 1
+            elif wt == 2:                      # length-delimited (varint length)
+                ln = sh = 0
+                while True:
+                    b = buf[i]; i += 1
+                    ln |= (b & 0x7F) << sh; sh += 7
+                    if not b & 0x80:
+                        break
                 out[field] = bytes(buf[i:i + ln]); i += ln
             else:                              # unexpected wire type — stop
                 break
@@ -504,10 +509,17 @@ def _esphome_hello(host: str, port: int, timeout: float):
         client = b"multi-bus-gateway"
         payload = b"\x0a" + bytes([len(client)]) + client   # HelloRequest.client_info
         s.sendall(b"\x00" + bytes([len(payload)]) + b"\x01" + payload)
-        head = s.recv(3)
+        head = b""                             # TCP may fragment: read all 3 bytes
+        while len(head) < 3:
+            chunk = s.recv(3 - len(head))
+            if not chunk:
+                break
+            head += chunk
         if not head:
             res["encrypted"] = True            # closed on plaintext → noise-only
             return res
+        if len(head) < 3:
+            return res                          # partial header → not ESPHome-ish
         if head[0] == 0x01:
             res["encrypted"] = True            # noise frame indicator
             return res
@@ -540,15 +552,22 @@ def scan_esphome(hosts, port: int = ESPHOME_API_PORT, timeout: float = 0.5,
                  workers: int = 64):
     """Probe every host concurrently; return ESPHome responders."""
     t0 = time.time()
-    results = []
 
     def one(h):
-        r = _esphome_hello(h, port, timeout)
-        if r is not None:
-            results.append(r)
+        # never let one misbehaving peer abort the whole sweep
+        try:
+            return _esphome_hello(h, port, timeout)
+        except Exception:  # noqa: BLE001
+            return None
 
     with ThreadPoolExecutor(max_workers=min(workers, max(1, len(hosts)))) as ex:
-        list(ex.map(one, hosts))
-    results.sort(key=lambda r: tuple(int(x) for x in r["host"].split(".")))
+        results = [r for r in ex.map(one, hosts) if r is not None]
+
+    def _sort_key(r):
+        try:
+            return (0, int(ipaddress.ip_address(r["host"])))
+        except ValueError:
+            return (1, r["host"])
+    results.sort(key=_sort_key)
     return {"scanned": len(hosts), "results": results,
             "elapsed_s": round(time.time() - t0, 2)}

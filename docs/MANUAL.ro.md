@@ -100,6 +100,10 @@ Variabilele de mediu opționale:
 | `UI_PORT` | portul UI-ului web | `8080` |
 | `API_KEY` | cere `X-API-Key` la cererile de modificare | — |
 | `VMETER_PORT_START` / `VMETER_PORT_END` | gama de porturi a meterelor virtuale | `1502` / `1512` |
+| `TZ` | fus orar pentru containerul ESPHome inclus și marcajele de timp | `Europe/Bucharest` |
+| `ESPHOME_URL` | unde găsește gateway-ul dashboard-ul ESPHome (Device Builder); pe un deploy nou activează și secțiunea | `http://esphome:6052` |
+| `ESPHOME_ENABLED` | forțează Builder-ul pornit/oprit la fiecare start (altfel decide UI-ul) | — |
+| `ESPHOME_DASHBOARD_USERNAME` / `ESPHOME_DASHBOARD_PASSWORD` | login pe dashboard-ul ESPHome; aceleași valori configurează și clientul gateway-ului | — |
 
 Punctele de status din bara de sus (Modbus / MQTT / InfluxDB) devin verzi pe
 măsură ce fiecare pipeline se conectează — click pe unul pentru detalii.
@@ -627,6 +631,22 @@ Config → **Backup & Snapshots**.
   `pre-import`. Snapshot-urile, prin contrast, sunt puncte de restaurare
   locale cu fidelitate completă — descărcarea unuia e păzită ca un export cu
   secrete.
+
+**Ce intră în backup/snapshot:** `config.yaml`, registrele selectate ale
+fiecărui dispozitiv, template-urile de dispozitiv ale utilizatorului,
+`virtual_meters.yaml` + template-urile de metere virtuale din
+`config/templates/`, presetările calculate și profilurile hardware ale
+Builder-ului. Registrul de passkeys (`passkeys.json`) intră **doar** în
+backup-ul cu secrete (`include_secrets=true`) și în snapshot-uri — altfel
+un restore ar debloca autentificarea.
+
+**Ce NU intră (și cum le salvezi separat):**
+- `audit.jsonl` / `events.jsonl` — istoric operațional, se rotesc singure;
+  dacă ai nevoie de ele pentru analiză, copiază-le manual.
+- YAML-urile nodurilor ESP32 din Device Builder — trăiesc în **volumul
+  ESPHome** (`esphome-config`), nu în `config/` al gateway-ului. Include-l
+  în back-up-ul de infrastructură (Duplicati etc.) dacă folosești Builder-ul.
+- `write_leases.json` — efemer prin design (lease-urile se reconstruiesc).
 
 **Capcană:** snapshot-urile stau sub `config/snapshots/` în volumul de
 configurație — protejează împotriva editărilor greșite, nu împotriva

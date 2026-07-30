@@ -245,10 +245,14 @@ class EsphomeDashboard:
             spawn["port"] = port or "OTA"
         if extra:
             spawn.update(extra)
+        # ws_headers() may perform a blocking urllib login; do it in a worker so
+        # the asyncio event loop never stalls inside the WebSocket handler.
+        import asyncio
+        headers = await asyncio.to_thread(self.ws_headers)
         try:
             async with websockets.connect(
                     f"{self.ws_base}/{command}",
-                    additional_headers=self.ws_headers(),
+                    additional_headers=headers,
                     open_timeout=self.timeout_s, close_timeout=5,
                     max_size=4 * 1024 * 1024) as ws:
                 await ws.send(json.dumps(spawn))

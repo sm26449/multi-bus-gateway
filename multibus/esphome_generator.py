@@ -72,8 +72,12 @@ def safe_topic_name(name: str) -> str:
 
 
 def _yq(s: str) -> str:
-    """Quote a YAML scalar defensively (labels/units may hold anything)."""
-    return '"' + str(s).replace('\\', '\\\\').replace('"', '\\"') + '"'
+    """Quote a YAML scalar defensively (labels/units may hold anything).
+    Newlines and control chars would break a double-quoted scalar, so they are
+    escaped to their YAML/JSON forms rather than emitted literally."""
+    out = str(s).replace('\\', '\\\\').replace('"', '\\"')
+    out = out.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+    return '"' + out + '"'
 
 
 def _fmt_multiply(scale: float) -> str:
@@ -374,7 +378,9 @@ def generate_node(payload: Dict[str, Any], template, poll_groups: Dict,
             "broker": mqtt_defaults.get('broker') or broker,
             "port": int(mqtt_defaults.get('port') or port),
             "username": mqtt_defaults.get('username') or "",
-            "password": mqtt_defaults.get('password') or "",
+            # never echo the real broker secret to the browser — /api/devices
+            # resolves this sentinel server-side on adopt
+            "password": "$GATEWAY_MQTT_PASSWORD" if mqtt_defaults.get('password') else "",
             "tls": False,
             "topic": f"{prefix}/#",
             "stale_after_s": stale_after,

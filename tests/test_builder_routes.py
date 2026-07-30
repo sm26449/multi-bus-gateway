@@ -550,3 +550,44 @@ def test_stream_disabled_feature_closes(tmp_path, fake):
         with client.websocket_connect(
                 "/api/builder/stream/compile?configuration=n.yaml") as ws:
             ws.receive_json()
+
+
+# ---------------------------------------------------------------------------
+# LOT A — security & backup hardening (2026-07-30 audit)
+# ---------------------------------------------------------------------------
+
+@needs_tc
+def test_generate_never_echoes_mqtt_password(tmp_path, fake):
+    """The generate response carries a sentinel, not the broker secret; the
+    devices API resolves it server-side on adopt."""
+    _, client = make_app(tmp_path, extra_yaml=ESPHOME_YAML + "mqtt:\n  password: brokersecret\n")
+    out = client.post("/api/builder/generate", json=GEN_PAYLOAD).json()
+    assert "brokersecret" not in json.dumps(out)
+    assert out["device_payload"]["connection"]["password"] == "$GATEWAY_MQTT_PASSWORD"
+
+
+@needs_tc
+def test_adopt_resolves_password_sentinel(tmp_path, fake, monkeypatch):
+    import multibus.device_template as dt
+    monkeypatch.setattr(dt, 'USER_DIR', tmp_path / 'device_templates')
+    cfg, client = make_app(tmp_path, extra_yaml=ESPHOME_YAML)
+    cfg.mqtt.password = "brokersecret"
+    out = client.post("/api/builder/generate", json=GEN_PAYLOAD).json()
+    client.post("/api/device-templates/upload", json={"template": out["device_template"]})
+    assert client.post("/api/devices", json=out["device_payload"]).status_code == 200
+    dev = next(d for d in cfg.devices if d.id == out["device_payload"]["id"])
+    assert dev.mqtt_in.get("password") == "brokersecret"
+
+
+@needs_tc
+def test_export_strips_esphome_password_and_webhook_url(tmp_path, fake):
+    import io, zipfile, yaml as _y
+    extra = (ESPHOME_YAML.rstrip() + "\n  password: dashsecret\n"
+             + "alerts:\n  enabled: true\n  webhook_url: https://h/x?token=SECRET\n")
+    _, client = make_app(tmp_path, extra_yaml=extra)
+    rsp = client.get("/api/config/export")
+    zf = zipfile.ZipFile(io.BytesIO(rsp.content))
+    data = _y.safe_load(zf.read("config.yaml"))
+    assert "password" not in (data.get("esphome") or {})
+    # endpoint kept (needed to restore), but the token query is stripped
+    assert data["alerts"]["webhook_url"] == "https://h/x"

@@ -41,7 +41,8 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-BUNDLE_EXTRAS = ("calculated_templates.json",)   # beside the classic backup set
+BUNDLE_EXTRAS = ("calculated_templates.json", "builder_profiles.json",
+                 "passkeys.json")   # beside the classic backup set
 _INDEX = "index.json"
 _LKG_ZIP = "lkg.zip"
 _LKG_META = "lkg.json"
@@ -104,6 +105,10 @@ def write_bundle_files(zf: zipfile.ZipFile, *, cfg_dir: Path, user_tpl_dir: Path
         elif n == "virtual_meters.yaml":
             _atomic(cfg_dir / "virtual_meters.yaml", zf.read(n))
             summary["virtual_meters"] = True
+        elif n.startswith("templates/") and n.endswith((".yaml", ".yml")):
+            (cfg_dir / "templates").mkdir(parents=True, exist_ok=True)
+            _atomic(cfg_dir / "templates" / Path(n).name, zf.read(n))
+            summary["extras"] += 1
         elif n in BUNDLE_EXTRAS:
             _atomic(cfg_dir / n, zf.read(n))
             summary["extras"] += 1
@@ -150,6 +155,11 @@ class SnapshotStore:
                 p = self.cfg_dir / name
                 if p.exists():
                     z.writestr(name, p.read_text())
+            tpl_dir = self.cfg_dir / "templates"   # virtual-meter templates
+            if tpl_dir.is_dir():
+                for f in sorted(tpl_dir.iterdir()):
+                    if f.suffix.lower() in (".yaml", ".yml"):
+                        z.writestr(f"templates/{f.name}", f.read_text())
             z.writestr("manifest.json", json.dumps(
                 {"backup_version": 1, "snapshot": True,
                  "include_secrets": True, "include_identity": True,

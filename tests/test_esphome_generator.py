@@ -213,3 +213,13 @@ def test_merge_secrets_appends_missing_only():
 def test_merge_secrets_from_empty():
     merged, added = merge_secrets("", {"wifi_ssid": None})
     assert added == ["wifi_ssid"] and merged.startswith("wifi_ssid:")
+
+
+def test_yq_escapes_newlines_and_tabs():
+    from multibus.esphome_generator import _yq
+    assert _yq("a\nb\tc") == '"a\\nb\\tc"'
+    # a label with a newline still yields valid one-line YAML
+    regs = [{"address": 0, "name": "V", "label": "line1\nline2", "unit": "V",
+             "data_type": "float", "register_type": "input", "poll_group": "normal"}]
+    out = gen(regs=regs)
+    assert "\\nline2" in out["yaml"] and "line1\nline2" not in out["yaml"]

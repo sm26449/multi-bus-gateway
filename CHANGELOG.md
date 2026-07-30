@@ -1,5 +1,45 @@
 # Changelog
 
+## 3.1.1
+
+### 2026-07-30 — audit hardening pass (security · backup · reliability)
+
+A cross-checked review (internal 5-domain audit + three independent external
+models, every finding verified in code before acting) produced three fix lots.
+Output stays byte-identical on the data path; 569 tests pass.
+
+**Security & backup**
+- **Sanitized config export** now strips `esphome.password` and the token
+  from `alerts.webhook_url` (endpoint kept so a restore still works) — a
+  "share-safe" backup no longer carries the ESPHome dashboard credential.
+- **Backup/restore completeness**: snapshots and the export ZIP now include
+  `builder_profiles.json`, the virtual-meter templates under
+  `config/templates/`, and `calculated_templates.json`; `passkeys.json`
+  travels with secret-bearing backups — a disaster restore no longer loses
+  hardware profiles, emulated meters, or WebAuthn logins.
+- **Adopt** no longer echoes the live MQTT broker password to the browser:
+  `/api/builder/generate` returns a sentinel that `/api/devices` resolves
+  server-side.
+
+**Reliability & correctness**
+- ESPHome discovery hardened: full-length varint protobuf lengths, exact
+  3-byte header reads (a fragmented peer no longer aborts the sweep), a
+  soft-fail per host, and IPv4/IPv6-correct result sorting.
+- The Builder's blocking dashboard login moved off the asyncio event loop
+  (WebSocket compile/flash streams no longer risk a stall).
+- Module caches in the Builder routes are lock-guarded; virtual-meter
+  quality age clamps at 0 across a backward clock step; generated-YAML
+  scalar quoting escapes newlines/tabs.
+
+**Ops & UI**
+- Standalone `docker compose up -d` works on a fresh host (the external
+  stack network moved to `docker-compose.override.yml.example`).
+- `.env.example` + manual document `TZ` and the `ESPHOME_*` variables.
+- Builder console caps its buffer (a huge compile log can't freeze the
+  tab), the node list shows a loading state, icon-only actions carry
+  `aria-label`s, and status-pill text colors come from theme variables.
+- Manual §15 now spells out exactly what a backup does and does NOT include.
+
 ## 3.1.0
 
 ### 2026-07-24 — Device Builder (ESPHome-backed node firmware)

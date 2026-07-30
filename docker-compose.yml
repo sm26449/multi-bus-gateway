@@ -56,7 +56,6 @@ services:
       - ESPHOME_PASSWORD=${ESPHOME_DASHBOARD_PASSWORD:-}
     networks:
       - monitoring
-      - pv-stack-network
 
   # ESPHome — the build engine behind the Device Builder section. Ships with
   # the stack so firmware authoring works OUT OF THE BOX: the gateway finds it
@@ -125,11 +124,13 @@ services:
     profiles:
       - grafana
 
+# To attach the gateway to an EXISTING external stack network (e.g. a wider
+# home-automation compose), add it via docker-compose.override.yml — see
+# docker-compose.override.yml.example. A fresh standalone install must work
+# with nothing but `docker compose up -d`.
 networks:
   monitoring:
     driver: bridge
-  pv-stack-network:
-    external: true
 
 volumes:
   influxdb-data:

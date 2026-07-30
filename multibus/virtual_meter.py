@@ -468,7 +468,7 @@ class VirtualMeter:
             state = 2
         else:
             state = 3
-        age = (int(min(time.time() - newest_fresh_ts, 0xFFFFFFFE))
+        age = (int(min(max(0.0, time.time() - newest_fresh_ts), 0xFFFFFFFE))
                if newest_fresh_ts else 0xFFFFFFFF)
         return [1, state, q["fresh"] & 0xffff, q["stale"] & 0xffff,
                 q["missing"] & 0xffff, total & 0xffff,
