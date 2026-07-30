@@ -508,6 +508,11 @@ class RegisterPoller(threading.Thread):
                 try:
                     data = self._poll_registers()
 
+                    # a disconnect() during a slow read flips self.running — don't
+                    # publish a late batch (decoded against a possibly-old map)
+                    # into the store the vmeters serve
+                    if not self.running:
+                        break
                     if data:
                         self.publish_callback(self.poll_group_name, data)
                         self.poll_count += 1

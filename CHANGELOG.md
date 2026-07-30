@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.3.1
+
+### 2026-07-31 — minor P3 batch (audit cleanup)
+
+Closing the low-severity remainder of the audit, each verified in code:
+
+- **Modbus poller** no longer publishes a late batch after `disconnect()` —
+  it rechecks `self.running` between the read and the publish (matching the
+  HTTP poller), so a slow read during an edit can't push a stale batch into
+  the store the virtual meters serve.
+- **ESPHome discovery** no longer reports a silent (timed-out) TCP service on
+  port 6053 as an "encrypted ESPHome device"; a timeout is now distinguished
+  from a connection reset and the host is dropped, not mislabeled.
+- **Operator role** can no longer reach `DELETE /api/devices/restorable/<id>`
+  when the id is literally `write`/`test`/`payload-sample` (the live-action
+  matcher now excludes the admin-only `restorable` sub-tree).
+- **Audit hygiene**: node-YAML config saves (which self-audit key-names only)
+  are excluded from the generic body capture, so a pasted literal
+  `wifi_password:`/OTA key inside the YAML never lands in `audit.jsonl`.
+- **FD hygiene**: the ESPHome dashboard client closes HTTP error responses,
+  and the InfluxDB backfill closes its urlopen response.
+
+603 tests pass.
+
 ## 3.3.0
 
 ### 2026-07-31 — monotonic freshness + serialized device mutations

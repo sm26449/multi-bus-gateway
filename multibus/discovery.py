@@ -538,6 +538,11 @@ def _esphome_hello(host: str, port: int, timeout: float):
             res["name"] = f.get(4, b"").decode("utf-8", "replace") if isinstance(f.get(4), bytes) else ""
             if isinstance(f.get(1), int):
                 res["api_version"] = f"{f.get(1)}.{f.get(2, 0)}"
+    except (socket.timeout, TimeoutError):
+        # a silent service that accepted the connection but never answered the
+        # hello is NOT identifiable as ESPHome — don't report it as an encrypted
+        # device (a reset, below, is the "refused plaintext → protected" signal)
+        return None
     except OSError:
         res["encrypted"] = True                 # reset mid-hello → treat as protected
     finally:

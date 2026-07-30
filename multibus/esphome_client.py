@@ -98,10 +98,14 @@ class EsphomeDashboard:
         except urllib.error.HTTPError as e:
             # Dashboard auth returns a redirect-to-login or 401; try one login.
             if e.code in (401, 403) and self.username and _retry_login:
+                e.close()
                 self._login()
                 return self._request(method, path, params, body, content_type,
                                      _retry_login=False)
-            return e.code, e.read()
+            try:
+                return e.code, e.read()
+            finally:
+                e.close()               # release the socket/FD, don't wait for GC
         except (urllib.error.URLError, OSError, TimeoutError) as e:
             raise EsphomeError(
                 f"ESPHome unreachable at {self.base}: {getattr(e, 'reason', e)}")

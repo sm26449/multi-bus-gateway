@@ -86,7 +86,8 @@ PARAMS: list[tuple[str, int, str, str, dict[str, str]]] = [
 
 
 def _http_json(url: str, timeout: int = 12) -> dict:
-    raw = urllib.request.urlopen(url, timeout=timeout).read().decode("latin1")
+    with urllib.request.urlopen(url, timeout=timeout) as _r:   # close the FD
+        raw = _r.read().decode("latin1")
     return json.loads(raw)
 
 

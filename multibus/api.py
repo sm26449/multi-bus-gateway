@@ -447,7 +447,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 return True
         parts = path.split("/")   # ['', 'api', 'devices', '<id>', '<action>']
         if (len(parts) == 5 and parts[1] == "api" and parts[2] == "devices"
-                and parts[3] and parts[4] in ("write", "test", "payload-sample")):
+                and parts[3] and parts[3] != "restorable"      # not the admin forget sub-tree
+                and parts[4] in ("write", "test", "payload-sample")):
             return True
         return False
 
@@ -878,7 +879,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # have their own richer entry on the write route.
     _AUDIT_SKIP = ("/api/query", "/api/diagnostics/probe", "/api/discover",
                    "/api/auth/", "/api/alerts/test", "/api/devices/test",
-                   "/api/bus-trace")
+                   "/api/bus-trace",
+                   # node YAML CRUD self-audits (key names only); skip the
+                   # generic body capture so a pasted literal wifi_password:/OTA
+                   # key inside the YAML string never lands in audit.jsonl
+                   "/api/builder/nodes/")
 
     @app.middleware("http")
     async def _audit_mw(request: Request, call_next):
