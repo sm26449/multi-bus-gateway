@@ -227,3 +227,26 @@ def test_modbus_poller_no_publish_after_stop():
     from multibus.modbus_client import RegisterPoller
     src = inspect.getsource(RegisterPoller.run)
     assert "if not self.running:" in src and "break" in src
+
+
+def test_driver_staleness_is_monotonic_step_immune(monkeypatch):
+    """A wall-clock step must not falsely mark a source device stale/down —
+    driver data_health now judges on the monotonic clock."""
+    from multibus.modbus_client import ModbusClient
+    from multibus.config import ModbusConfig
+    import multibus.modbus_client as mc_mod
+
+    class _P:
+        interval = 0.25
+        running = True
+    mc = ModbusClient(ModbusConfig(), registers=[1], poll_groups={})
+    mc.pollers = [_P()]
+    mc.connected = True
+    # last success 5s ago on the MONOTONIC clock (fresh)
+    mc.connection.last_success_mono = mc_mod.time.monotonic() - 5.0
+    mc.connection.last_success_ts = mc_mod.time.time() - 5.0
+
+    # now the WALL clock jumps forward 10 minutes — must NOT flip to down
+    real_time = mc_mod.time.time
+    monkeypatch.setattr(mc_mod.time, "time", lambda: real_time() + 600)
+    assert mc.data_health(30)["status"] == "ok"      # monotonic age still ~5s

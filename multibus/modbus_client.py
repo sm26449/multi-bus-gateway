@@ -109,6 +109,7 @@ class ModbusConnection:
         # Janitza comms loss leaves a record in the app, not just docker logs.
         self.events: deque = deque(maxlen=50)
         self.last_success_ts: Optional[float] = None
+        self.last_success_mono: Optional[float] = None   # step-immune staleness
         self.last_failure_ts: Optional[float] = None
         self.last_latency_ms: Optional[float] = None
         # per-ATTEMPT error taxonomy (an error retried away still happened on
@@ -213,6 +214,7 @@ class ModbusConnection:
                     if not result.isError() and result.registers:
                         self.successful_reads += 1
                         self.last_success_ts = time.time()
+                        self.last_success_mono = time.monotonic()
                         self.last_latency_ms = round((time.perf_counter() - _t0) * 1000, 1)
                         return result.registers
                     elif result.isError():
@@ -265,6 +267,7 @@ class ModbusConnection:
                     if not result.isError():
                         self.successful_reads += 1
                         self.last_success_ts = time.time()
+                        self.last_success_mono = time.monotonic()
                         return list(result.bits)[:count]
                     self._count_error(result)
                     if attempt < self.config.retry_attempts - 1:
@@ -822,6 +825,7 @@ class ModbusClient:
                 poll_rate += 1.0 / poller.interval
 
         last_success = self.connection.last_success_ts
+        last_success_mono = self.connection.last_success_mono
         now = time.time()
         poll_groups_detail = [
             {'name': p.poll_group_name, 'interval': p.interval,
@@ -846,7 +850,8 @@ class ModbusClient:
             'last_success_ts': last_success,
             'last_failure_ts': self.connection.last_failure_ts,
             'last_latency_ms': self.connection.last_latency_ms,
-            'staleness_age_s': round(now - last_success, 1) if last_success else None,
+            'staleness_age_s': (round(time.monotonic() - last_success_mono, 1)
+                                if last_success_mono else None),
             'poll_groups_detail': poll_groups_detail,
             'events': self.connection.snapshot_events(),
         }
@@ -859,8 +864,8 @@ class ModbusClient:
         fastest poll interval so a slow-only config can't false-positive. Returns
         ``ok`` when nothing is configured to poll, and stays ``ok`` on cold start
         until a read has actually failed (avoids a false 'down' right after boot)."""
-        now = time.time()
         last = self.connection.last_success_ts
+        last_mono = self.connection.last_success_mono   # step-immune staleness
         connected = self.connected
         if not self.registers or not self.pollers:
             return {"status": "ok", "stale": False, "staleness_age_s": None,
@@ -868,11 +873,11 @@ class ModbusClient:
         fastest = min((p.interval for p in self.pollers if p.running),
                       default=stale_threshold_s)
         threshold = max(float(stale_threshold_s), fastest * 3 + 2)
-        if last is None:
+        if last_mono is None:
             status = "down" if self.connection.last_failure_ts else "ok"
             age = None
         else:
-            age = now - last
+            age = time.monotonic() - last_mono          # NTP-step-proof
             if age > threshold:
                 status = "down"
             elif age > threshold / 2:

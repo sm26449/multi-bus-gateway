@@ -47,6 +47,10 @@ def _mc(pollers, connected=True, last_success=None, last_failure=None, registers
     mc.pollers = pollers
     mc.connected = connected
     mc.connection.last_success_ts = last_success
+    # staleness is judged on the monotonic clock now — mirror the wall offset
+    # the test expresses (last_success = now - N) onto a monotonic stamp
+    mc.connection.last_success_mono = (
+        time.monotonic() - (time.time() - last_success) if last_success else None)
     mc.connection.last_failure_ts = last_failure
     return mc
 

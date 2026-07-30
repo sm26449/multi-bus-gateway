@@ -1,5 +1,31 @@
 # Changelog
 
+## 3.3.2
+
+### 2026-07-31 — senior self-review of today's releases
+
+A critical pass over the 3.1.x–3.3.1 changes caught the tail of the
+clock-step class the monotonic switch had left behind:
+
+- **Fixed a wall/monotonic mix the 3.3.0 age-display fix missed**: the stale
+  event message ("last fresh N s ago") still subtracted a now-monotonic
+  timestamp from `time.time()`, so a genuine stale event logged a ~1.7e9-second
+  age. It now uses the monotonic clock.
+- **Dropped the freshness grace window entirely.** With monotonic freshness a
+  real stale is real regardless of any clock step, so gating the stop on the
+  grace window was not just unnecessary but mildly harmful — it could delay a
+  genuine fail-safe stop for a source that died during a step. The stop now
+  fires immediately; the ClockStepGuard is kept only for its diagnostic
+  `clock_step` event.
+- **Closed the class on the SOURCE side too**: the Modbus/HTTP/MQTT drivers now
+  judge their own staleness (and the device-down alert that follows) on the
+  monotonic clock, so an NTP step no longer false-marks a healthy source
+  down or fires a spurious device-down alert. Absolute `last_success_ts`
+  stays wall for display.
+
+604 tests pass, incl. adversarial tests that jump the wall clock and prove
+both the virtual-meter freshness and the driver staleness are unaffected.
+
 ## 3.3.1
 
 ### 2026-07-31 — minor P3 batch (audit cleanup)

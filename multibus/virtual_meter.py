@@ -710,13 +710,17 @@ class VirtualMeter:
     # ── supervisor ─────────────────────────────────────────────────────────
 
     class ClockStepGuard:
-        """Detects wall-clock steps (NTP/chrony) so staleness math — which
-        compares wall-clock store timestamps against time.time() — cannot
-        fail-safe-stop a meter over a time jump. Seen live 2026-07-28: a
-        chrony install stepped the clock +138s and both meters briefly
-        dropped their consumers over perfectly fresh data. After a detected
-        step the stop-on-stale action pauses for one stale window; REAL
-        staleness still stops the meter, at most one window later."""
+        """Detects wall-clock steps (NTP/chrony) — now DIAGNOSTIC ONLY.
+
+        History: this once rebased freshness so a wall-clock jump couldn't
+        fail-safe-stop a meter over fresh data (seen live 2026-07-28: a chrony
+        install stepped the clock +138s and both meters briefly dropped their
+        consumers). As of 3.3.0 freshness is judged on the MONOTONIC clock
+        (driver 'mono' stamps vs time.monotonic()), so it is immune to steps by
+        construction and no longer depends on this guard. The guard is kept only
+        to emit a `clock_step` event so operators can see "system clock adjusted"
+        in the timeline; ``in_grace``/``freshness_now`` are no longer consulted
+        by the freshness path."""
 
         STEP_THRESHOLD_S = 5.0
 
@@ -833,8 +837,14 @@ class VirtualMeter:
                                     self._stop_server("alive but not serving (~30s) — force-restarting")
                                     probe_fails = 0
                 else:
-                    if self._alive() and not clock_guard.in_grace:
-                        stale_for = (time.time() - newest) if newest else None
+                    # Freshness is judged on the MONOTONIC clock now, so a real
+                    # stale is real regardless of any wall-clock step — stop
+                    # immediately, no grace window (grace could otherwise delay
+                    # a genuine fail-safe stop for a source that died during a
+                    # step). The clock-step guard remains only for the diagnostic
+                    # event it logs above.
+                    if self._alive():
+                        stale_for = (time.monotonic() - newest) if newest else None
                         reason = (f"source stale >{self.stale_after_s:.0f}s "
                                   f"(last fresh {stale_for:.0f}s ago) — stopped responding"
                                   if stale_for else

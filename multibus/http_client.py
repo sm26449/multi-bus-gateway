@@ -350,6 +350,7 @@ class HttpClient:
         self.successful_reads = 0
         self.failed_reads = 0
         self.last_success_ts = None
+        self.last_success_mono = None   # step-immune staleness
         self.last_latency_ms = None
         self._lock = threading.Lock()
 
@@ -399,6 +400,7 @@ class HttpClient:
         with self._lock:
             self.successful_reads += 1
             self.last_success_ts = time.time()
+            self.last_success_mono = time.monotonic()
             self.connected = True
 
     def _note_failure(self):
@@ -413,6 +415,7 @@ class HttpClient:
             self.connected = doc is not None
             if self.connected:
                 self.last_success_ts = time.time()
+            self.last_success_mono = time.monotonic()
             return self.connected
         except Exception as e:  # noqa: BLE001
             logger.warning("HTTP device: initial fetch failed (%s) — pollers will retry", e)
@@ -458,7 +461,8 @@ class HttpClient:
         poll_rate = sum(1.0 / p.interval for p in self.pollers
                         if p.running and p.interval > 0)
         now = time.time()
-        age = round(now - self.last_success_ts, 1) if self.last_success_ts else None
+        age = (round(time.monotonic() - self.last_success_mono, 1)
+               if self.last_success_mono else None)
         return {
             'connected': self.connected,
             'url': self.url,
@@ -473,15 +477,14 @@ class HttpClient:
     def data_health(self, stale_threshold_s: float = 30) -> Dict:
         if not self.registers or not self.pollers:
             return {"status": "ok", "stale": False, "staleness_age_s": None}
-        now = time.time()
-        last = self.last_success_ts
-        if last is None:
+        last_mono = self.last_success_mono
+        if last_mono is None:
             # cold start: down only once a fetch has actually failed
             return {"status": "down" if self.failed_reads else "ok",
                     "stale": False, "staleness_age_s": None}
         fastest = min((p.interval for p in self.pollers), default=stale_threshold_s)
         thresh = max(stale_threshold_s, fastest * 3)
-        age = now - last
+        age = time.monotonic() - last_mono          # NTP-step-proof
         stale = age > thresh
         status = "ok" if (self.connected and not stale) else ("down" if stale else "degraded")
         return {"status": status, "stale": stale, "staleness_age_s": round(age, 1)}

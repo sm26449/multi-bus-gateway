@@ -69,13 +69,15 @@ def test_clock_guard_detects_backward_step(clock):
     assert g.in_grace is True
 
 
-def test_supervisor_skips_stale_stop_during_grace():
-    """The stop branch is gated on `not clock_guard.in_grace` — pin that the
-    wiring exists (the guard logic itself is unit-tested above)."""
+def test_supervisor_ticks_guard_but_does_not_gate_stop_on_grace():
+    """Since freshness moved to the monotonic clock (step-immune), the stale
+    stop is NO LONGER gated by the grace window — a real stale stops the meter
+    immediately even during a clock step. The guard is still ticked, only for
+    the diagnostic clock_step event."""
     import inspect
     src = inspect.getsource(vm.VirtualMeter._supervise)
-    assert "clock_guard.tick()" in src
-    assert "not clock_guard.in_grace" in src
+    assert "clock_guard.tick()" in src                 # still logs clock steps
+    assert "not clock_guard.in_grace" not in src       # but no longer gates the stop
 
 
 # ---------------------------------------------------------------------------

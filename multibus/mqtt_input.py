@@ -230,10 +230,10 @@ class MqttInputClient:
     def data_health(self, stale_threshold_s: float = 30) -> Dict:
         if not self.registers:
             return {"status": "ok", "stale": False, "staleness_age_s": None}
-        if self.last_msg_ts is None:
+        if self.last_msg_mono is None:
             return {"status": "ok" if self.connected else "down",
                     "stale": False, "staleness_age_s": None}
-        age = time.time() - self.last_msg_ts
+        age = time.monotonic() - self.last_msg_mono   # NTP-step-proof
         stale = age > stale_threshold_s
         status = "ok" if (self.connected and not stale) else ("down" if stale else "degraded")
         return {"status": status, "stale": stale, "staleness_age_s": round(age, 1)}
