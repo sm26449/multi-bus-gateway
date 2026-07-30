@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.1.3
+
+### 2026-07-31 — regression sweep (path-traversal fix)
+
+A post-change review of the restore feature found — and fixed — a
+**self-introduced path-traversal**: `DELETE /api/devices/restorable/<id>`
+with an id of `..` mapped to `config/devices/..` = the config dir and
+`shutil.rmtree`'d the ENTIRE configuration. Now every id that maps to a
+`config/devices/<id>` path is validated as a single safe segment (no `..`,
+`/`, `\`, NUL); the restore endpoint maps a bad id to 422, not 500.
+Regression-tested so it can never come back.
+
+Also verified clean after the 3.1.2 audit fixes: the virtual-meter freshness
+guard is correct in BOTH clock-step directions (stale never looks fresh —
+adversarially checked), audit-log rotation still produces 0600 files,
+generated-YAML quoting leaves UTF-8 (Romanian diacritics) intact, and the
+delete tombstone preserves connection secrets at 0600 so a restore is
+complete.
+
 ## 3.1.2
 
 ### 2026-07-31 — second audit pass (verified fixes)

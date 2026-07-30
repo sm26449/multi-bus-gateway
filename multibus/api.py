@@ -1344,7 +1344,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         if any(d.id == device_id for d in config.devices):
             raise HTTPException(status_code=409, detail={"errors": [
                 f"device '{device_id}' already exists"]})
-        raw = config.load_deleted_device(device_id)
+        try:
+            raw = config.load_deleted_device(device_id)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail={"errors": [str(e)]})
         if raw is None:
             raise HTTPException(status_code=404, detail="no restorable device with that id")
         try:

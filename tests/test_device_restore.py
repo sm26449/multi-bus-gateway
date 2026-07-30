@@ -120,3 +120,34 @@ def test_stale_registers_reseeded_on_template_mismatch(tmp_path):
     names = {r["name"] for r in regs}
     assert "TOTALLY_ALIEN_REG" not in names        # stale selection dropped
     assert names                                    # re-seeded from sdm120
+
+
+# ---------------------------------------------------------------------------
+# REGRESSION: path traversal in forget/restore must not escape config/devices
+# (a `..` id once wiped the whole config dir — found 2026-07-31)
+# ---------------------------------------------------------------------------
+
+def test_forget_rejects_path_traversal_ids(tmp_path):
+    from multibus.config import Config
+    (tmp_path / "config.yaml").write_text(
+        "modbus: {host: 1.2.3.4}\nmqtt: {enabled: false}\ninfluxdb: {enabled: false}\n")
+    (tmp_path / "important.txt").write_text("do not delete")
+    (tmp_path / "devices").mkdir()
+    cfg = Config(str(tmp_path / "config.yaml"))
+    import pytest
+    for evil in ("..", ".", "../../etc", "a/b", "x\\y", ""):
+        with pytest.raises(ValueError):
+            cfg.forget_deleted_device(evil)
+        with pytest.raises(ValueError):
+            cfg.load_deleted_device(evil)
+    # nothing outside config/devices/<id> was touched
+    assert (tmp_path / "config.yaml").exists()
+    assert (tmp_path / "important.txt").exists()
+
+
+@needs_tc
+def test_forget_traversal_via_api_is_422(tmp_path):
+    _, client = make_app(tmp_path, extra_yaml=SECONDARY)
+    # encoded dot-dot reaches the handler as a literal id → rejected, not a wipe
+    assert client.delete("/api/devices/restorable/%2e%2e").status_code in (404, 422)
+    assert client.post("/api/devices/%2e%2e/restore").status_code in (404, 422, 409)

@@ -17,6 +17,7 @@
 """Configuration loader for Multi-Bus Gateway."""
 
 import os
+import re
 import yaml
 import json
 import logging
@@ -477,6 +478,17 @@ class Config:
         self._build_devices()
         self.save_yaml_config()
 
+    @staticmethod
+    def _safe_device_id(device_id: str) -> str:
+        """A device id must be a single safe path segment — NEVER a traversal.
+        Used by every method that maps an id to a config/devices/<id> path so a
+        crafted id (``..``, ``a/b``, encoded slashes) can't escape the dir."""
+        did = str(device_id or '')
+        if (not did or did in ('.', '..') or '/' in did or '\\' in did
+                or '\x00' in did or not re.match(r'^[A-Za-z0-9][A-Za-z0-9_.-]*$', did)):
+            raise ValueError(f"invalid device id: {device_id!r}")
+        return did
+
     def get_raw_device(self, device_id: str) -> Optional[Dict]:
         """The raw devices[] entry for a device id (None if absent). Used to
         snapshot the full definition before a delete so it can be restored."""
@@ -504,7 +516,8 @@ class Config:
         return True
 
     def _tombstone_path(self, device_id: str) -> Path:
-        return self.config_path.parent / 'devices' / device_id / 'device.json'
+        return (self.config_path.parent / 'devices'
+                / self._safe_device_id(device_id) / 'device.json')
 
     def _write_device_tombstone(self, device_id: str, raw: Dict) -> None:
         """Persist a deleted device's full definition (secrets included, like
@@ -575,9 +588,10 @@ class Config:
     def forget_deleted_device(self, device_id: str) -> bool:
         """Permanently remove a deleted device's kept dir (tombstone + registers).
         Refuses to touch an ACTIVE device's dir."""
-        if device_id in {d.id for d in self.devices} or device_id == PRIMARY_DEVICE_ID:
+        did = self._safe_device_id(device_id)
+        if did in {d.id for d in self.devices} or did == PRIMARY_DEVICE_ID:
             raise ValueError("device is active — delete it first")
-        d = self.config_path.parent / 'devices' / device_id
+        d = self.config_path.parent / 'devices' / did
         if not d.is_dir():
             return False
         import shutil
