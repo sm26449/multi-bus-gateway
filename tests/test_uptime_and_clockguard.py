@@ -182,3 +182,41 @@ def test_rebuild_block_uses_guard_clock():
     assert "self._clock_guard.freshness_now()" in src
     q = inspect.getsource(vm.VirtualMeter._quality_words)
     assert "self._clock_guard.freshness_now()" in q
+
+
+# ---------------------------------------------------------------------------
+# P1 (2026-08 audit): a FUTURE timestamp is never fresh — closes the residual
+# where a pre-backward-step stamp looked fresh AFTER the grace window ended
+# ---------------------------------------------------------------------------
+
+def test_future_timestamp_is_never_fresh():
+    F = vm.VirtualMeter._is_fresh
+    now = 1000.0
+    assert F(now, 995.0, 15) is True          # 5s old, within bound
+    assert F(now, 980.0, 15) is False         # 20s old, stale
+    assert F(now, 1133.0, 15) is False        # 133s in the FUTURE → never fresh
+    assert F(now, 1000.5, 15) is False        # slightly future → not fresh
+    assert F(now, None, 15) is False          # no timestamp → not fresh
+
+
+def test_dead_source_stays_stale_after_backward_step_grace(clock):
+    """The exact residual: source dies, clock steps BACK, grace ends, and the
+    old (now-future) timestamp must NOT read as fresh to the ESS."""
+    g = vm.VirtualMeter.ClockStepGuard(15)
+    g.tick()
+    ts_dead = clock["wall"] - 40               # genuinely stale (40s > 15 bound)
+    clock["wall"] -= 138.0                      # backward NTP step
+    g.tick()                                    # → grace
+    assert not vm.VirtualMeter._is_fresh(g.freshness_now(), ts_dead, 15)  # during grace
+    clock["mono"] += g.grace_s + 0.1            # grace ends
+    # freshness_now now returns the raw (lower) wall clock; ts_dead is in its
+    # future — the guard must still refuse it
+    assert not vm.VirtualMeter._is_fresh(g.freshness_now(), ts_dead, 15)
+
+
+def test_all_freshness_sites_reject_future_ts():
+    import inspect
+    for m in (vm.VirtualMeter._rebuild_block, vm.VirtualMeter._supervise,
+              vm.VirtualMeter.json_view, vm.VirtualMeter.health_state):
+        src = inspect.getsource(m)
+        assert "_is_fresh(" in src, m.__name__

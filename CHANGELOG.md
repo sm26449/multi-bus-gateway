@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.1.4
+
+### 2026-08-01 — freshness future-timestamp guard (ESS-critical)
+
+Independent audits (running against an older checkout, but the finding holds
+on HEAD) surfaced a residual in the virtual-meter clock-step handling: the
+3.1.2 `freshness_now()` rebasing covers the grace window, but AFTER grace a
+store timestamp captured *before a backward clock step* is in the future
+relative to the new wall clock, so `now - ts < 0` slipped through as fresh —
+a dead source could read as live to the ESS for up to the step size.
+
+Every freshness verdict now rejects a future timestamp: fresh requires
+`0 <= now - ts <= bound` (helper `_is_fresh`), applied in `_rebuild_block`,
+the supervisor's legacy stop check, `json_view` and `health_state` — the
+latter two now also read the step-rebased clock. Genuinely fresh data still
+rides a step; a dead source stays stale in both step directions, verified
+adversarially. 586 tests pass.
+
 ## 3.1.3
 
 ### 2026-07-31 — regression sweep (path-traversal fix)

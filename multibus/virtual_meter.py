@@ -389,6 +389,15 @@ class VirtualMeter:
             return None, None, None
         return enc.encode(value, reg.type, reg.scale), ts, bound
 
+    @staticmethod
+    def _is_fresh(now: float, ts: Optional[float], bound: float) -> bool:
+        """Fresh iff a real, non-future timestamp within ``bound``. A FUTURE
+        stamp (now-ts < 0 — e.g. a store timestamp captured before a backward
+        clock step, once the step's grace window has ended) is NEVER fresh:
+        serving such frozen values as live into an ESS control loop is exactly
+        the failure the freshness watchdog exists to prevent."""
+        return bool(ts) and 0.0 <= (now - ts) <= bound
+
     def _rebuild_block(self) -> float:
         """Recompute (addr, words) for every register. Returns newest live ts.
 
@@ -440,7 +449,7 @@ class VirtualMeter:
             bound = (reg.stale_after_s if reg.stale_after_s is not None
                      else src_bound if src_bound is not None
                      else self.stale_after_s)
-            if words is not None and ts and (now - ts) <= bound:
+            if words is not None and self._is_fresh(now, ts, bound):
                 out.append((reg.addr, [w & 0xffff for w in words]))
                 self._last_good[reg.addr] = ([w & 0xffff for w in words], ts)
                 quality["fresh"] += 1
@@ -770,7 +779,8 @@ class VirtualMeter:
                 # _rebuild_block already judged per register — newest is the
                 # newest FRESH ts, so any fresh row keeps the server up.
                 fresh = ((newest > 0) if self.on_stale != "legacy"
-                         else (newest > 0) and (time.time() - newest <= self.stale_after_s))
+                         else self._is_fresh(self._clock_guard.freshness_now(),
+                                             newest, self.stale_after_s))
                 self._policy_fresh = fresh            # health_state's policy-mode signal
                 if fresh:
                     self._last_fresh_ts = newest
@@ -866,7 +876,7 @@ class VirtualMeter:
                      else self.stale_after_s)
             age = round(now - ts, 1) if ts else None
             entry: dict = {"addr": reg.addr}
-            if val is not None and ts and (now - ts) <= bound:
+            if val is not None and self._is_fresh(now, ts, bound):
                 entry.update({"value": val, "quality": "good", "age_s": age})
             elif val is not None:
                 entry.update({"value": None, "quality": "stale", "age_s": age,
@@ -950,7 +960,7 @@ class VirtualMeter:
                 return "stale"
             return "ok" if self._alive() else "down"
         lf = self._last_fresh_ts
-        fresh = bool(lf) and (time.time() - lf) <= self.stale_after_s
+        fresh = self._is_fresh(self._clock_guard.freshness_now(), lf, self.stale_after_s)
         if not fresh:
             return "stale"
         return "ok" if self._alive() else "down"
