@@ -32,7 +32,11 @@ from pymodbus.server import StartAsyncTcpServer
 
 # Deterministic pseudo-random walk WITHOUT Math.random-style nondeterminism:
 # each unit's phase is derived from its id + tick, so runs are reproducible.
-BLOCK_SIZE = 512          # holding registers per unit (covers the map + slack)
+# BLOCK_SIZE is set from --block-size so the served range covers whatever the
+# device template reads (e.g. janitza_umg512_pro reads up to addr ~19636, so a
+# real-production-template device ramp needs ~20000). Unwritten addresses read
+# 0 — reads still succeed, so the device stays fresh (poll-load is the axis).
+BLOCK_SIZE = 512
 
 
 def _i32(words_lo_hi_value: int) -> tuple[int, int]:
@@ -87,8 +91,12 @@ async def main() -> None:
     ap.add_argument("--port", type=int, default=6502)
     ap.add_argument("--units", type=int, default=8, help="slave unit-ids on this port")
     ap.add_argument("--tick-ms", type=float, default=250.0, help="value-churn period")
+    ap.add_argument("--block-size", type=int, default=512,
+                    help="holding registers per unit (use ~20000 for janitza maps)")
     args = ap.parse_args()
 
+    global BLOCK_SIZE
+    BLOCK_SIZE = args.block_size
     ctx = _make_context(args.units)
     asyncio.create_task(_churn(ctx, args.units, args.tick_ms))
     print(f"[sim_devices] serving {args.units} units on {args.host}:{args.port} "

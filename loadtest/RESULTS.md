@@ -42,9 +42,55 @@ enormous headroom, so the ramps should push aggressively. The harness measures
 correctly (footprint stable, P0 tracked, latency sane), so the numbers from here
 on are trustworthy.
 
-### Next ramps (from here)
-- §6.1 devices → point many sim units at test-MBG, ramp 10/25/50/100, watch
-  `worst_device_staleness_s` cross the poll interval.
+---
+
+## §6.1 Number of polled devices (2026-08-01)
+
+**Setup:** isolated test-MBG polling a **sim fleet** (128 units on one port,
+20000-register blocks so the real `janitza_umg512_pro` template — 67 regs, addr
+3813–19636, poll groups 0.25/5/60 s — reads succeed). Devices added via the API,
+each pointing at a sim unit. Ramped 1→10→25→50→100 total. `--cpus 2 --memory 1g`,
+container FD limit 1024. Measured at steady state.
+
+| devices | worst staleness | threads | FDs | RAM | CPU (2-core cap) | all connected |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 0.20 s | 11 | 23 | 59 MiB | 0.5% | 1/1 |
+| 10 | 0.90 s | 39 | 113 | 65 MiB | 4% | 10/10 |
+| 25 | 0.80 s | 84 | 263 | 72 MiB | 5% | 25/25 |
+| 50 | 1.00 s | 159 | 513 | 85 MiB | 18% | 50/50 |
+| 100 | 1.00 s | 309 | **1013** | 108 MiB | 19% | 100/100 |
+
+**Findings:**
+- **MBG keeps up with 100 devices.** At N=100 the staleness *distribution*
+  across all 100 was min 0.00 / **median 0.50** / max 0.90 s — most devices
+  fresh at ~the realtime interval; the "worst 1.0 s" is just the tail across 100
+  samples, NOT systemic lag. Staleness is **flat vs N** (0.9 s at N=10 →
+  1.0 s at N=100) and CPU only 19% — MBG is not the device-count bottleneck;
+  there is headroom well beyond 100 on CPU/thread terms.
+- **Sim was NOT the bottleneck** (don't-fool-ourselves check): direct sim read
+  latency *while 100 MBG devices polled it* was p50 1.1 ms / max 1.6 ms. The
+  ~1 s tail is normal poll-cycle jitter, not sim queueing.
+- **Threads = 11 + ~3·N** — one poller thread per poll group (3 groups). 309 at
+  N=100.
+- **FDs ≈ 10 per device** — the hard ceiling: **N=100 → 1013/1024 FDs**. One
+  more device (or client) would hit the limit. **~100 devices is the FD cap.**
+
+### Verdict (§6.1)
+The device-count ceiling is **~100 devices ≈ the container FD limit (1024)** at
+~10 FDs each — NOT CPU, NOT staleness (polling stays crisp, median 0.5 s, 19%
+CPU). Real deployment has 1–2 Modbus devices → ~200 FDs of headroom before this
+even matters.
+
+**Recommendations:**
+1. **~10 FDs/device is high** — likely one Modbus connection per poll group
+   (3) plus per-thread fds. Reusing one connection per device across its poll
+   groups would multiply the device ceiling; worth investigating (low priority
+   given real device counts).
+2. Raise `ulimits: nofile` to lift the ceiling for large fleets.
+
+**Joint FD budget (all three ramps):**
+`~23 base + 10·devices + 4·vmeters + 1·client_connections ≤ 1024`.
+Production (1 device, 2 vmeters, ~2 clients) ≈ 45 FDs — ~950 to spare.
 
 ---
 
