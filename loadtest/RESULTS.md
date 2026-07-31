@@ -45,7 +45,46 @@ on are trustworthy.
 ### Next ramps (from here)
 - §6.1 devices → point many sim units at test-MBG, ramp 10/25/50/100, watch
   `worst_device_staleness_s` cross the poll interval.
-- §6.3 vmeters → 2/11/25/50, watch thread count.
+
+---
+
+## §6.3 Number of virtual meters (2026-07-31)
+
+**Setup:** isolated test-MBG (real Janitza), N cloned `em24_av53` vmeters all
+sourcing the primary, on ports 21502+. Booted fresh per N; measured at steady
+state (5 samples over 20 s). `--cpus 2 --memory 1g`, container FD limit 1024.
+
+| N vmeters | threads | FDs | RAM | CPU avg (2-core cap) | vmeters fresh | worst fresh |
+|---:|---:|---:|---:|---:|---:|---:|
+| 2 | 15 | 31 | 65 MiB | ~2.5% | 2/2 | 0.6 s |
+| 11 | 33 | 67 | 90 MiB | ~6% | 11/11 | 0.6 s |
+| 25 | 61 | 123 | 130 MiB | ~11% | 25/25 | 0.5 s |
+| 50 | 111 | 223 | 197 MiB | ~18% | 50/50 | 0.6 s |
+
+**Findings:**
+- **P0 held at every level** — all N vmeters stayed fresh (0.4–0.6 s) even with
+  50 supervisors + 50 asyncio servers on a 2-core cap. Zero failures.
+- **Threads = 11 + 2·N exactly** (supervisor + asyncio server per vmeter) —
+  hypothesis confirmed. This is the dominant scaling cost.
+- **FDs ≈ 4 per vmeter** (listen socket + poll conn + epoll + misc).
+- **RAM ≈ 2.6 MiB per vmeter** (flat coefficient at scale).
+- **CPU ≈ 0.36% of 2 cores per vmeter** (each supervisor ticks at
+  `update_interval_s`=0.25 s + serves).
+
+**Extrapolated ceilings on the 2-core / 1-GiB cap:** RAM ~370 vmeters, CPU
+~250–280, FDs ~248 (but FDs are SHARED with client connections — see §6.4).
+Practical ceiling where threads+CPU+FD converge: **~150–200 vmeters**.
+
+### Verdict (§6.3)
+MBG runs **50 vmeters trivially** (18% CPU, 197 MiB, 111 threads, all fresh) —
+far beyond the default port range (1502–1512 = 11 vmeters, itself trivial at
+33 threads / 6% CPU). To exceed 11, widen `VMETER_PORT_END` (documented).
+
+**Cross-link with §6.4:** the container's 1024 FD budget is SHARED between
+vmeter overhead (~4/vmeter) and client connections (~1/client):
+`~23 + 4·vmeters + 1·total_clients ≤ 1024`. E.g. the default 11 vmeters use
+~67 FDs, leaving ~950 for client connections. Plan the two jointly; raise
+`ulimits: nofile` to lift the shared ceiling.
 
 ---
 
