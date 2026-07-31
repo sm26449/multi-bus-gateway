@@ -51,7 +51,13 @@ _LKG_META = "lkg.json"
 def _is_redaction_of(live_url, incoming_url) -> bool:
     """True when the imported URL is exactly the live URL's redacted form
     (userinfo dropped / secret query values → ``***``) — i.e. a sanitized
-    export masked a credential that a merge-import must not clobber."""
+    export masked a credential that a merge-import must not clobber.
+
+    Deliberately an EXACT match: if the live credential was rotated after the
+    backup was taken, the backup's redacted form no longer matches and the
+    import installs the ``***`` URL — treated as a deliberately-changed URL.
+    Matching any ***-bearing URL instead would guess wrong in murkier ways
+    (e.g. a genuinely retargeted endpoint whose query also got masked)."""
     if not live_url or not incoming_url or live_url == incoming_url:
         return False
     try:
