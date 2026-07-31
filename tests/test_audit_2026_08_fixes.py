@@ -73,7 +73,7 @@ def test_missing_timestamp_not_laundered_to_now():
     # and the vmeter lookup treats None as not-fresh (value kept, ts None)
     from multibus.virtual_meter_manager import _lookup
     store = {5: {"name": "P", "value": 42.0, "timestamp": None}}
-    assert _lookup(store, "P") == (42.0, None)
+    assert _lookup(store, "P") == (42.0, None, None)
 
 
 # ---------------------------------------------------------------------------

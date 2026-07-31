@@ -61,26 +61,43 @@ _VALID_TYPES = ["int16", "uint16", "int32", "uint32", "int64", "uint64",
                 "float", "float32", "double", "string"]
 
 
+# A row's derived freshness bound = GROUP_STALE_MULT × its poll interval —
+# a value simply cannot refresh faster than its group polls, so judging a 60s
+# slow-group row by a 15s instance bound would flap the meter (seen live at the
+# 3.3.4 deploy). 2.5× tolerates one missed poll plus jitter. The vmeter takes
+# max(derived, instance bound): a derived bound may only RELAX the instance
+# floor, never tighten it (explicit row stale_after_s can do either).
+GROUP_STALE_MULT = 2.5
+
+
 def _lookup(store: dict, name: str) -> Optional[tuple]:
-    """(value, MONOTONIC_ts) for a register NAME in one live cache, else None.
+    """(value, MONOTONIC_ts, derived_bound) for a register NAME in one live
+    cache, else None.
 
     The freshness clock is the driver's MONOTONIC stamp ('mono') — immune to
     any wall-clock/NTP step. It is None when the driver gave no measurement
     time (or on a legacy store entry that predates the field), so freshness
     fails CLOSED (not-fresh) rather than trusting a wall time that a clock step
-    could distort. The vmeter compares this against time.monotonic()."""
+    could distort. The vmeter compares this against time.monotonic().
+
+    derived_bound is GROUP_STALE_MULT × the producing poll group's interval
+    (from the store entry), or None for push sources / legacy entries — the
+    instance bound then applies."""
     for info in list(store.values()):          # snapshot vs concurrent poller writes
         if not isinstance(info, dict) or info.get("name") != name:
             continue
         value = info.get("value")
         if value is None:
             return None
-        return value, info.get("mono")         # monotonic seconds, or None → not fresh
+        _iv = info.get("interval")
+        bound = (GROUP_STALE_MULT * float(_iv)) if _iv else None
+        return value, info.get("mono"), bound  # mono None → not fresh
     return None
 
 
 def make_provider(current_values: dict):
-    """Return provider(name) -> (value, monotonic_ts) reading ONE live cache.
+    """Return provider(name) -> (value, monotonic_ts, derived_bound) reading
+    ONE live cache.
 
     current_values is keyed by register ADDRESS; each entry carries 'name',
     'value', 'timestamp' (ISO). Sources are bound by register name.
@@ -112,13 +129,17 @@ def make_multi_provider(default_store: dict, stores: dict, primary_store: dict,
                 got = _lookup(store, reg)
                 if got is None:
                     return None
-                bound = bounds_for(dev) if bounds_for else None
-                return got[0], got[1], bound
+                # two bound sources may apply: the device's own staleness
+                # threshold and the row's poll-cadence bound — honor the
+                # looser one (both exist to prevent false-stale flapping)
+                dev_bound = bounds_for(dev) if bounds_for else None
+                cands = [b for b in (got[2], dev_bound) if b is not None]
+                return got[0], got[1], (max(cands) if cands else None)
             # unknown prefix → the dot belongs to the register name itself
         got = _lookup(default_store, name)
         if got is None:
             return None
-        return got[0], got[1], None            # own store → instance bound applies
+        return got                             # (value, mono, derived_bound)
     return provider
 
 

@@ -107,7 +107,8 @@ class CalcEngine:
             for it in list(store.values()):
                 nm = it.get('name')
                 if nm:
-                    out[nm] = (it.get('value'), it.get('timestamp'), it.get('mono'))
+                    out[nm] = (it.get('value'), it.get('timestamp'),
+                               it.get('mono'), it.get('interval'))
             return out
         this_map = _index(this_store)
         others: Dict[str, Dict] = {}
@@ -122,14 +123,17 @@ class CalcEngine:
                 pair = this_map.get(name)
             if pair is None:
                 return None
-            value, ts, mono = pair
+            value, ts, mono, interval = pair
             if ts is not None:
                 resolve.touched_ts.append(ts)
             if mono is not None:
                 resolve.touched_mono.append(mono)
+            if interval is not None:
+                resolve.touched_interval.append(interval)
             return value
         resolve.touched_ts = []
         resolve.touched_mono = []
+        resolve.touched_interval = []
         return resolve
 
     def run(self, calc_key, poll_group, values_store, *, topic_prefix,
@@ -155,6 +159,7 @@ class CalcEngine:
             prevmap = st['prev']
             resolve.touched_ts = []                # collect input freshness this run
             resolve.touched_mono = []
+            resolve.touched_interval = []
             try:
                 # reuse the AST compiled at load() — no re-parse per poll
                 _tree = e.get('_tree')
@@ -197,11 +202,15 @@ class CalcEngine:
             _in_mono = list(getattr(resolve, 'touched_mono', []))
             _ts = min(_in_num) if _in_num else None
             _mono = min(_in_mono) if _in_mono else None
+            # the result refreshes no faster than its SLOWEST input — carry that
+            # cadence so the vmeter derives the right per-row bound
+            _in_iv = list(getattr(resolve, 'touched_interval', []))
+            _interval = max(_in_iv) if _in_iv else None
             values_store[reg.address] = {
                 'value': val, 'name': reg.name, 'label': reg.label,
                 'unit': reg.unit, 'poll_group': reg.poll_group,
                 'timestamp': _result_ts, 'calculated': True,
-                'ts': _ts, 'mono': _mono,
+                'ts': _ts, 'mono': _mono, 'interval': _interval,
             }
             # same item shape as the poller batch: downstream publishers stamp
             # points with the OLDEST input's time, not a fabricated now()

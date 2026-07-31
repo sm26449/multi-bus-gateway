@@ -1,5 +1,31 @@
 # Changelog
 
+## 3.4.0
+
+### 2026-07-31 — automatic per-row freshness bound from the poll-group interval
+
+The 3.3.4 per-row gate exposed a tuning burden: rows fed by a slow poll
+group had to carry a hand-set `stale_after_s` or the meter flapped. 3.4.0
+derives that bound automatically:
+
+- **Drivers stamp the poll cadence**: Modbus and HTTP pollers add
+  `interval` to every batch item; the store keeps it per entry (push/MQTT
+  sources have none). Calculated registers inherit the SLOWEST input's
+  interval (a result cannot refresh faster than its slowest input).
+- **The provider derives the bound**: `_lookup` returns
+  `(value, mono, 2.5 × interval)` — 2.5× tolerates one missed poll plus
+  jitter. For dotted cross-device sources the device threshold and the
+  cadence bound are combined with max() (both exist to prevent
+  false-stale flapping).
+- **The vmeter applies a loosening-only cascade** (`_row_bound`): an
+  explicit row `stale_after_s` wins outright (may tighten or relax);
+  otherwise a derived/source bound may only RELAX the instance floor —
+  a realtime row's 0.625s cadence bound must never override the 15s
+  instance bound, or a single hiccup would flap the meter.
+- **Templates simplified**: the hand-tuned `stale_after_s: 150` rows added
+  at the 3.3.4 deploy are removed — the derived bound computes the same
+  150s for the 60s slow group, now automatically for any future row.
+
 ## 3.3.4
 
 ### 2026-07-31 — security-hardening audit remediation

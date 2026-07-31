@@ -391,6 +391,19 @@ class VirtualMeter:
             return None, None, None
         return enc.encode(value, reg.type, reg.scale), ts, bound
 
+    def _row_bound(self, reg: RegisterDef, src_bound: Optional[float]) -> float:
+        """Effective freshness bound for one row. An explicit row stale_after_s
+        wins outright (it may tighten or relax). Otherwise a source-derived
+        bound (device threshold or 2.5× the row's poll-group interval) may only
+        RELAX the instance floor — a cadence-derived bound below the instance
+        bound must never make serving stricter, or a fast row's single hiccup
+        would flap the whole meter."""
+        if reg.stale_after_s is not None:
+            return reg.stale_after_s
+        if src_bound is not None:
+            return max(src_bound, self.stale_after_s)
+        return self.stale_after_s
+
     @staticmethod
     def _is_fresh(now: float, ts: Optional[float], bound: float) -> bool:
         """Fresh iff a real, non-future timestamp within ``bound``. A FUTURE
@@ -432,11 +445,8 @@ class VirtualMeter:
                     continue                          # consts are never stale
                 if ts:
                     newest = max(newest, ts)
-                bound = (reg.stale_after_s if reg.stale_after_s is not None
-                         else src_bound if src_bound is not None
-                         else self.stale_after_s)
                 # ts None (source without a mono stamp) fails closed here too
-                if not self._is_fresh(now, ts, bound):
+                if not self._is_fresh(now, ts, self._row_bound(reg, src_bound)):
                     all_fresh = False
             self._legacy_all_fresh = all_fresh and newest > 0.0
             if self.quality_block:
@@ -465,9 +475,7 @@ class VirtualMeter:
                 if words is not None:
                     out.append((reg.addr, [w & 0xffff for w in words]))
                 continue
-            bound = (reg.stale_after_s if reg.stale_after_s is not None
-                     else src_bound if src_bound is not None
-                     else self.stale_after_s)
+            bound = self._row_bound(reg, src_bound)
             if words is not None and self._is_fresh(now, ts, bound):
                 out.append((reg.addr, [w & 0xffff for w in words]))
                 self._last_good[reg.addr] = ([w & 0xffff for w in words], ts)
@@ -891,9 +899,7 @@ class VirtualMeter:
                 val, ts, src_bound = (None if missing else total), oldest, None
             else:
                 val, ts, src_bound = self._got3(self.provider(reg.source) if reg.source else None)
-            bound = (reg.stale_after_s if reg.stale_after_s is not None
-                     else src_bound if src_bound is not None
-                     else self.stale_after_s)
+            bound = self._row_bound(reg, src_bound)
             age = round(now - ts, 1) if ts else None
             entry: dict = {"addr": reg.addr}
             if val is not None and self._is_fresh(now, ts, bound):

@@ -160,6 +160,66 @@ def test_legacy_missing_row_keeps_gap_but_fresh_rows_gate():
     assert vm._legacy_all_fresh is False              # nothing fresh → gate closed
 
 
+# ── derived bound from the poll-group interval (3.4) ─────────────────────────
+
+def test_lookup_derives_bound_from_poll_interval():
+    """A store entry carries the producing group's poll interval; the provider
+    derives bound = 2.5 × interval. No interval (push source / legacy entry)
+    → None, so the instance bound applies."""
+    from multibus.virtual_meter_manager import _lookup
+    now = time.monotonic()
+    store = {1: {"name": "E", "value": 7.0, "mono": now, "interval": 60},
+             2: {"name": "F", "value": 8.0, "mono": now}}
+    assert _lookup(store, "E") == (7.0, now, 150.0)
+    assert _lookup(store, "F") == (8.0, now, None)
+
+
+def test_legacy_slow_group_row_auto_bound():
+    """End-to-end: a 60s slow-group row aged 40s must NOT close the legacy
+    gate despite a 15s instance bound (the flapping seen at the 3.3.4 deploy);
+    genuinely stale (> 2.5× interval) still fails closed."""
+    from multibus.virtual_meter_manager import make_provider
+    now = time.monotonic()
+    store = {1: {"name": "FAST", "value": 1.0, "mono": now, "interval": 0.25},
+             2: {"name": "WH", "value": 2.0, "mono": now - 40, "interval": 60}}
+    vm = VirtualMeter(T([live(0, "FAST"), live(2, "WH")]), make_provider(store),
+                      stale_after_s=15, on_stale="legacy")
+    vm._rebuild_block()
+    assert vm._legacy_all_fresh is True          # 40s < 150s derived bound
+    store[2]["mono"] = now - 200                 # beyond 2.5× interval
+    vm._rebuild_block()
+    assert vm._legacy_all_fresh is False
+
+
+def test_derived_bound_never_tightens_below_instance():
+    """A fast row's cadence bound (2.5×0.25s = 0.625s) must not override the
+    15s instance floor — one hiccup on a realtime row must not flap the meter.
+    An EXPLICIT row stale_after_s may still tighten."""
+    from multibus.virtual_meter_manager import make_provider
+    now = time.monotonic()
+    store = {1: {"name": "FAST", "value": 1.0, "mono": now - 5, "interval": 0.25}}
+    vm = VirtualMeter(T([live(0, "FAST")]), make_provider(store),
+                      stale_after_s=15, on_stale="legacy")
+    vm._rebuild_block()
+    assert vm._legacy_all_fresh is True          # 5s < 15s instance floor
+    vm2 = VirtualMeter(T([live(0, "FAST", stale=2)]), make_provider(store),
+                       stale_after_s=15, on_stale="legacy")
+    vm2._rebuild_block()
+    assert vm2._legacy_all_fresh is False        # explicit row bound tightens
+
+
+def test_multi_provider_combines_device_and_cadence_bounds():
+    """Dotted sources: the device threshold and the cadence bound may both
+    apply — the provider returns the looser (both exist to avoid false-stale)."""
+    now = time.monotonic()
+    dev2 = {1: {"name": "temp", "value": 21.5, "timestamp": "2026-01-01T00:00:00",
+                "mono": now, "interval": 100}}
+    p = make_multi_provider({}, {"ble1": dev2}, {}, "umg512",
+                            bounds_for=lambda d: 60.0 if d == "ble1" else None)
+    v, ts, bound = p("ble1.temp")
+    assert v == 21.5 and bound == 250.0          # max(2.5×100, 60)
+
+
 # ── policy: fail ──────────────────────────────────────────────────────────────
 
 def test_fail_marks_span_unavailable_and_recovers():

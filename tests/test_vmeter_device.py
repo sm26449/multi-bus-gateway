@@ -55,7 +55,7 @@ def test_list_sources_per_device():
 def test_provider_reads_named_value():
     _m, primary, _d = _mgr()
     prov = make_provider(primary)
-    assert prov("_P") == (100, None)
+    assert prov("_P") == (100, None, None)   # (value, mono, derived_bound)
     assert prov("_missing") is None
 
 

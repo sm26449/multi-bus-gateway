@@ -110,11 +110,12 @@ def test_golden_primary_publisher_args_and_store(tmp_path):
 
     # store shape: exactly these keys, ISO timestamp. 'ts' (numeric freshness
     # clock, None when the driver gave no measurement time) was added in the
-    # 2026-08 freshness-laundering fix — an intentional additive change so the
-    # vmeter can fail closed on a missing time instead of trusting a display
-    # timestamp that fell back to now().
+    # 2026-08 freshness-laundering fix; 'interval' (the producing poll group's
+    # cadence, None for push sources) in 3.4.0 so the vmeter derives per-row
+    # freshness bounds — both intentional additive changes.
     item = app.state.current_values[19000]
-    assert set(item) == {"value", "name", "label", "unit", "poll_group", "timestamp", "ts", "mono"}
+    assert set(item) == {"value", "name", "label", "unit", "poll_group",
+                         "timestamp", "ts", "mono", "interval"}
     assert item["value"] == 231.5 and item["name"] == "_ULN1"
     assert item["poll_group"] == "realtime" and ISO_TS.match(item["timestamp"])
     assert item["ts"] is None             # batch() injects no driver ts → fails closed

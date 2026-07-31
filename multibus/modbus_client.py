@@ -457,7 +457,8 @@ class RegisterPoller(threading.Thread):
                     if 0 <= off < len(bits):
                         results[reg.address] = {'value': 1 if bits[off] else 0,
                                                 'register': reg, 'ts': read_ts,
-                                                'mono': read_mono}
+                                                'mono': read_mono,
+                                                'interval': self.interval}
                 continue
 
             raw_data = self.connection.read_registers(
@@ -487,6 +488,9 @@ class RegisterPoller(threading.Thread):
                             'register': reg,
                             'ts': read_ts,
                             'mono': read_mono,
+                            # the poll cadence travels with the value — the
+                            # vmeter derives a per-row freshness bound from it
+                            'interval': self.interval,
                         }
 
         return results

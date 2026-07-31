@@ -628,6 +628,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     # monotonic stamp for STEP-IMMUNE freshness (the vmeter reads
                     # this, not the wall clock). None → the vmeter fails closed.
                     'mono': item.get('mono'),
+                    # poll cadence of the group that produced this value; the
+                    # vmeter derives a per-row bound from it (a 60s slow-group
+                    # row must not be judged by a 15s instance bound). None for
+                    # push sources → the instance bound applies.
+                    'interval': item.get('interval'),
                 }
 
             last_update['timestamp'] = datetime.now().isoformat()

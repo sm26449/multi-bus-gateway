@@ -44,12 +44,12 @@ template:
     # ── totals (live) ──
     - { addr: 0x0028, type: int32,  scale: 10,   source: { live: "_G_P_SUM3" } }   # PowerReal W
     - { addr: 0x0033, type: uint16, scale: 10,   source: { live: "_G_FREQ" } }     # Frequency
-    - { addr: 0x0034, type: int32,  scale: 0.01, source: { live: "_WH_V[4]" }, stale_after_s: 150 }    # Forward (import) total
-    - { addr: 0x004e, type: int32,  scale: 0.01, source: { live: "_WH_Z[4]" }, stale_after_s: 150 }    # Reverse (export) total
+    - { addr: 0x0034, type: int32,  scale: 0.01, source: { live: "_WH_V[4]" } }    # Forward (import) total
+    - { addr: 0x004e, type: int32,  scale: 0.01, source: { live: "_WH_Z[4]" } }    # Reverse (export) total
     # ── per-phase forward energy (0x0040/42/44) ──
-    - { addr: 0x0040, type: int32,  scale: 0.01, source: { live: "_WH_V[0]" }, stale_after_s: 150 }
-    - { addr: 0x0042, type: int32,  scale: 0.01, source: { live: "_WH_V[1]" }, stale_after_s: 150 }
-    - { addr: 0x0044, type: int32,  scale: 0.01, source: { live: "_WH_V[2]" }, stale_after_s: 150 }
+    - { addr: 0x0040, type: int32,  scale: 0.01, source: { live: "_WH_V[0]" } }
+    - { addr: 0x0042, type: int32,  scale: 0.01, source: { live: "_WH_V[1]" } }
+    - { addr: 0x0044, type: int32,  scale: 0.01, source: { live: "_WH_V[2]" } }
     # ── per-phase V / I / P (live) ──
     - { addr: 0x0000, type: int32,  scale: 10,   source: { live: "_G_ULN[0]" } }
     - { addr: 0x0002, type: int32,  scale: 10,   source: { live: "_G_ULN[1]" } }
@@ -94,7 +94,7 @@ template:
     - { addr: 326, type: int32, scale: 1000, source: { live: "_G_COS_PHI[2]" } }
     # energy @1024 (qty 16) — each value split kWh/kVArh part (gap=0) + Wh/VArh part.
     # Put full value in the Wh/VArh slot (mirrors active import: 1024 kWh=0, 1026 Wh=val).
-    - { addr: 1026, type: int32, scale: 1, source: { live: "_WH_V[4]" }, stale_after_s: 150 }   # active import Wh
-    - { addr: 1030, type: int32, scale: 1, source: { live: "_IQH[4]" }, stale_after_s: 150 }    # reactive consumed VArh (inductive)
-    - { addr: 1034, type: int32, scale: 1, source: { live: "_WH_Z[4]" }, stale_after_s: 150 }   # active export Wh
-    - { addr: 1038, type: int32, scale: 1, source: { live: "_CQH[4]" }, stale_after_s: 150 }    # reactive produced VArh (capacitive)
+    - { addr: 1026, type: int32, scale: 1, source: { live: "_WH_V[4]" } }   # active import Wh
+    - { addr: 1030, type: int32, scale: 1, source: { live: "_IQH[4]" } }    # reactive consumed VArh (inductive)
+    - { addr: 1034, type: int32, scale: 1, source: { live: "_WH_Z[4]" } }   # active export Wh
+    - { addr: 1038, type: int32, scale: 1, source: { live: "_CQH[4]" } }    # reactive produced VArh (capacitive)
