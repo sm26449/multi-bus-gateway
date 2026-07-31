@@ -72,7 +72,7 @@ def main() -> None:
     args = ap.parse_args()
 
     fields = ["t", "cpu", "mem", "net", "pids", "fds", "threads",
-              "worst_pollgroup_age_s", "any_device_stale",
+              "worst_device_staleness_s", "any_device_stale",
               "vmeters_total", "vmeters_ok", "worst_vmeter_fresh_s"]
     t0 = time.time()
     with open(args.out, "w", newline="") as fh:
@@ -88,15 +88,18 @@ def main() -> None:
                 row.update(_proc_counts(args.pid))
 
             st = _get_json(f"{args.base}/api/status")
-            worst_age, any_stale = 0.0, False
+            worst_stale, any_stale = 0.0, False
             for d in (st.get("devices") or []) if isinstance(st, dict) else []:
-                for pg in (d.get("poll_groups_detail") or []):
-                    a = pg.get("age_s")
-                    if a is not None:
-                        worst_age = max(worst_age, a)
-                if str(d.get("data_health", {}).get("status", "")) not in ("ok", ""):
+                if not isinstance(d, dict):
+                    continue
+                a = d.get("staleness_age_s")
+                if isinstance(a, (int, float)):
+                    worst_stale = max(worst_stale, a)
+                # data_health is a plain string ("ok"/"degraded"/"down")
+                dh = d.get("data_health")
+                if isinstance(dh, str) and dh not in ("ok", ""):
                     any_stale = True
-            row["worst_pollgroup_age_s"] = round(worst_age, 1)
+            row["worst_device_staleness_s"] = round(worst_stale, 1)
             row["any_device_stale"] = any_stale
 
             hl = _get_json(f"{args.base}/health")
@@ -110,7 +113,7 @@ def main() -> None:
             print(f"[collect] t={row['t']:.0f} cpu={row.get('cpu','')} "
                   f"mem={row.get('mem','')} pids={row.get('pids','')} "
                   f"fds={row.get('fds','')} thr={row.get('threads','')} "
-                  f"worst_poll_age={row['worst_pollgroup_age_s']}s "
+                  f"dev_stale={row['worst_device_staleness_s']}s "
                   f"vmeters={row['vmeters_ok']}/{row['vmeters_total']} "
                   f"worst_vm_fresh={row['worst_vmeter_fresh_s']}s", flush=True)
 
