@@ -228,6 +228,24 @@ def test_write_bounds_enforced(tmp_path):
 
 
 @needs_tc
+def test_write_rejects_non_finite_value(tmp_path):
+    """3.4.1: NaN/Infinity survive the min/max envelope (every comparison is
+    False for NaN) and struct.pack would ship the raw bit pattern to a real
+    device — the endpoint must reject non-finite up front with 422. JSON has no
+    NaN literal, so send raw content (Starlette's json parser accepts the
+    tokens, exactly the attack path)."""
+    client, fake = _envelope_app(tmp_path)
+    for tok in ("NaN", "Infinity", "-Infinity"):
+        r = client.post("/api/devices/ctrl/write",
+                        content=('{"address": 100, "value": %s, '
+                                 '"register_type": "holding", "data_type": "uint16"}' % tok),
+                        headers={"content-type": "application/json"})
+        assert r.status_code == 422, (tok, r.status_code, r.text)
+        assert "finite" in str(r.json()).lower()
+    assert 100 not in fake.reg          # nothing reached the device
+
+
+@needs_tc
 def test_write_lease_armed_and_listed(tmp_path):
     client, _fake = _envelope_app(tmp_path)
     r = client.post("/api/devices/ctrl/write",

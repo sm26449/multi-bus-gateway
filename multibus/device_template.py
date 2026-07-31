@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -373,8 +374,15 @@ class TemplateRegistry:
             raise ValueError(f"template {t.id!r} is built-in (read-only) — duplicate it under a new id")
         self.user_dir.mkdir(parents=True, exist_ok=True)
         path = self.user_dir / f"{t.id}.json"
-        path.write_text(json.dumps(t.to_dict(), indent=1, ensure_ascii=False) + "\n",
-                        encoding='utf-8')
+        # atomic temp+rename — a crash mid-write must not truncate the template
+        # (the API.md-0-bytes failure class)
+        _body = json.dumps(t.to_dict(), indent=1, ensure_ascii=False) + "\n"
+        _tmp = path.with_suffix(".json.tmp")
+        with open(_tmp, "w", encoding="utf-8") as _f:
+            _f.write(_body)
+            _f.flush()
+            os.fsync(_f.fileno())
+        os.replace(_tmp, path)
         t.path = str(path)
         self._templates[t.id] = t
         logger.info("device template %s saved (%d registers)", t.id, len(t.registers))

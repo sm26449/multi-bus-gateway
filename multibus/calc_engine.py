@@ -87,7 +87,7 @@ class CalcEngine:
                 _tree = None
             built.append({'expr': e.get('expr', ''), 'decimals': e.get('decimals'),
                           'poll_group': reg.poll_group, '_reg': reg, '_tree': _tree,
-                          '_refs': refs, '_state': {'prev': {}, 'ts': None}})
+                          '_refs': refs, '_state': {'prev': {}, 'ts_mono': None}})
         self.store[device_id] = built
         return built
 
@@ -154,8 +154,11 @@ class CalcEngine:
             if not _wildcard and e['poll_group'] != poll_group:
                 continue
             st = e['_state']
-            now = time.time()
-            dt = (now - st['ts']) if st['ts'] is not None else 0.0
+            # dt for rate/integral formulas is on the MONOTONIC clock — a wall
+            # step (NTP/chrony, e.g. the 2026-07-28 +138s jump) between two calc
+            # runs would otherwise corrupt the derived value persisted to Influx.
+            now_mono = time.monotonic()
+            dt = (now_mono - st['ts_mono']) if st['ts_mono'] is not None else 0.0
             prevmap = st['prev']
             resolve.touched_ts = []                # collect input freshness this run
             resolve.touched_mono = []
@@ -178,7 +181,7 @@ class CalcEngine:
             # Snapshot this run's inputs + time so prev()/dt work next round — even
             # when we skipped (e.g. the very first run has no history yet).
             st['prev'] = {ref: resolve(ref) for ref in e.get('_refs', [])}
-            st['ts'] = now
+            st['ts_mono'] = now_mono
             if not ok:
                 continue
             if isinstance(val, bool):

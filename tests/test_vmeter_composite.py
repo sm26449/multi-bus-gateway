@@ -174,6 +174,36 @@ def test_lookup_derives_bound_from_poll_interval():
     assert _lookup(store, "F") == (8.0, now, None)
 
 
+def test_derived_bound_is_capped():
+    """3.4.1: a misconfigured huge poll interval must NOT relax the freshness
+    gate to hours — the auto-derived bound is capped at MAX_DERIVED_STALE_S, so
+    a dead source can't read 'fresh' to a control loop indefinitely."""
+    from multibus.virtual_meter_manager import (_lookup, MAX_DERIVED_STALE_S,
+                                                 GROUP_STALE_MULT)
+    now = time.monotonic()
+    # 24h poll interval → 2.5×86400 = 216000s uncapped; must clamp to the cap
+    store = {1: {"name": "E", "value": 7.0, "mono": now, "interval": 86400}}
+    _v, _ts, bound = _lookup(store, "E")
+    assert bound == MAX_DERIVED_STALE_S
+    # a normal slow-group interval stays below the cap (unchanged behaviour)
+    store2 = {1: {"name": "E", "value": 7.0, "mono": now, "interval": 60}}
+    assert _lookup(store2, "E")[2] == 150.0 < MAX_DERIVED_STALE_S
+    # end-to-end THROUGH the real derived path: a source 20 min stale in a 24h
+    # group is NOT fresh (the cap bites, so the gate closes)
+    from multibus.virtual_meter_manager import make_provider
+    stale_store = {1: {"name": "E", "value": 7.0, "mono": now - 1200,
+                       "interval": 86400}}
+    vm = VirtualMeter(T([live(0, "E")]), make_provider(stale_store),
+                      stale_after_s=15, on_stale="legacy")
+    vm._rebuild_block()
+    assert vm._legacy_all_fresh is False
+    # ...whereas the SAME 20-min-old value WOULD be fresh uncapped (216000s bound)
+    fresh_store = {1: {"name": "E", "value": 7.0, "mono": now - 1200,
+                       "interval": 86400}}
+    # sanity: without the cap it would be fresh — confirm the cap is what closed it
+    assert (now - fresh_store[1]["mono"]) < GROUP_STALE_MULT * 86400
+
+
 def test_legacy_slow_group_row_auto_bound():
     """End-to-end: a 60s slow-group row aged 40s must NOT close the legacy
     gate despite a 15s instance bound (the flapping seen at the 3.3.4 deploy);

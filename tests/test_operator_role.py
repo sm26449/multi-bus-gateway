@@ -114,6 +114,46 @@ def test_operator_password_stripped_from_sanitized_export(clients):
     assert "operator_password" not in auth
 
 
+@needs_tc
+def test_operator_and_viewer_get_redacted_urls_admin_raw(tmp_path):
+    """3.4.1: only admin sees raw URL-embedded credentials; operator AND viewer
+    get redacted URLs from /api/config and /api/config/influxdb."""
+    from types import SimpleNamespace
+    from fastapi.testclient import TestClient
+    from multibus import auth as _a
+    from multibus.api import create_api
+    cfg = write_config(tmp_path, extra_yaml=f"""
+influxdb:
+  enabled: true
+  url: "http://influx:8086?token=SUPERSECRET"
+ui:
+  auth:
+    enabled: true
+    username: boss
+    password: "{_a.hash_password('pw')}"
+    operator_username: ops
+    operator_password: "{_a.hash_password('op')}"
+    viewer_username: guest
+    viewer_password: "{_a.hash_password('vw')}"
+""")
+    fake = SimpleNamespace(publish_callback=None)
+    app, _ = create_api(cfg, fake, None, None, devices=[(d, fake) for d in cfg.devices])
+
+    def login(u, p):
+        c = TestClient(app, raise_server_exceptions=False)
+        assert c.post("/api/auth/login", json={"username": u, "password": p}).status_code == 200
+        return c
+    admin, op, viewer = login("boss", "pw"), login("ops", "op"), login("guest", "vw")
+
+    assert "SUPERSECRET" in admin.get("/api/config/influxdb").json()["url"]
+    for c in (op, viewer):
+        u = c.get("/api/config/influxdb").json()["url"]
+        # redact_url masks the token to *** (URL-encoded %2A%2A%2A in the query)
+        assert "SUPERSECRET" not in u and ("***" in u or "%2A" in u)
+        u2 = (c.get("/api/config").json().get("influxdb") or {}).get("url", "")
+        assert "SUPERSECRET" not in u2
+
+
 # ── P1: operator write-matcher is segment-anchored ───────────────────────────
 
 def test_operator_write_matcher_segment_anchored():

@@ -209,15 +209,25 @@ class InfluxDBConfigUpdate(BaseModel):
 class WebSocketManager:
     """Manages WebSocket connections and broadcasts."""
 
+    MAX_CONNECTIONS = 64        # bound FD/memory use; a monitor UI needs a handful
+
     def __init__(self):
         self.active_connections: Set[WebSocket] = set()
         self.lock = asyncio.Lock()
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket) -> bool:
         await websocket.accept()
         async with self.lock:
+            if len(self.active_connections) >= self.MAX_CONNECTIONS:
+                # refuse rather than accumulate to FD exhaustion; the client
+                # sees a clean close and can retry
+                logger.warning("WebSocket refused: %d active (cap %d)",
+                               len(self.active_connections), self.MAX_CONNECTIONS)
+                await websocket.close(code=1013)   # try again later
+                return False
             self.active_connections.add(websocket)
         logger.info(f"WebSocket connected. Active: {len(self.active_connections)}")
+        return True
 
     async def disconnect(self, websocket: WebSocket):
         async with self.lock:
@@ -1255,7 +1265,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     @app.get("/api/devices")
     def list_devices(request: Request):
         """All southbound devices with live health (device #1 first)."""
-        _redact = getattr(request.state, "role", None) == "viewer"
+        # only admin sees raw credentials; viewer AND operator get redacted URLs
+        _redact = getattr(request.state, "role", None) in ("viewer", "operator")
         return {"devices": [_device_entry(d, c, redact=_redact) for d, c in registry]}
 
     def _sync_device_discovery():
@@ -1739,6 +1750,15 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 _fval = float(payload.get('value'))
             except (TypeError, ValueError):
                 raise HTTPException(status_code=422, detail={"errors": ["value must be numeric"]})
+            # NaN/Inf survive the min/max guards below (every comparison against
+            # a non-finite float is False) and struct.pack would ship the raw
+            # bit pattern to a real device — reject up front. (The encoder's
+            # deliberate NaN sentinel path is unaffected; that never comes from
+            # a write request.)
+            import math as _math
+            if not _math.isfinite(_fval):
+                raise HTTPException(status_code=422, detail={"errors": [
+                    "value must be a finite number (NaN/Infinity rejected)"]})
             if rule.write_min is not None and _fval < rule.write_min:
                 raise HTTPException(status_code=422, detail={"errors": [
                     f"value {_fval} is below the register minimum {rule.write_min}"]})
@@ -2056,11 +2076,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     @app.get("/api/config")
     async def get_config(request: Request):
-        """Get current configuration. URLs are redacted for the viewer role —
-        a read-only credential must not walk away with URL-embedded secrets
-        (same convention as /api/devices)."""
+        """Get current configuration. URLs are redacted for viewer AND operator
+        — only admin sees raw URL-embedded secrets (same convention as
+        /api/devices)."""
         data = config.to_dict()
-        if getattr(request.state, "role", None) == "viewer":
+        if getattr(request.state, "role", None) in ("viewer", "operator"):
             from .redact import redact_url
             _inf = data.get("influxdb")
             if isinstance(_inf, dict) and _inf.get("url"):
@@ -2318,9 +2338,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     @app.get("/api/config/influxdb")
     async def get_influxdb_config(request: Request):
-        """Get InfluxDB configuration (URL redacted for the viewer role)."""
+        """Get InfluxDB configuration (URL redacted for viewer + operator)."""
         _url = config.influxdb.url
-        if getattr(request.state, "role", None) == "viewer" and _url:
+        if getattr(request.state, "role", None) in ("viewer", "operator") and _url:
             from .redact import redact_url
             _url = redact_url(str(_url))
         return {
@@ -2815,7 +2835,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             if _o and _o != websocket.headers.get("host", "").lower():
                 await websocket.close(code=1008)
                 return
-        await ws_manager.connect(websocket)
+        if not await ws_manager.connect(websocket):
+            return                       # refused at the connection cap
         try:
             # Send initial data
             await websocket.send_json({

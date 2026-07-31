@@ -1,5 +1,69 @@
 # Changelog
 
+## 3.4.1
+
+### 2026-07-31 — hardening pass from the full-system audit (2 independent audits, adjudicated)
+
+Remediation of the confirmed findings from the v3.4.0 full-system audit (both
+audit reports cross-checked claim-by-claim; see
+`reviews/audit-2026-07-31-adjudication-v3.4.0.md`). No unconditional P1
+survived v3.4.0; this closes the cluster of conditional fail-opens and
+data-integrity gaps.
+
+**Freshness / ESS-safety (the wall-clock + unbounded gaps):**
+- **Calc engine integrates on the monotonic clock** — `dt` for rate/integral
+  formulas was `time.time()`-based, so a wall step (the 2026-07-28 chrony +138s
+  class) between two runs corrupted the derived series written to InfluxDB. Now
+  `time.monotonic()`. (No live calc used it yet, but a shipped preset would.)
+- **Derived freshness bound is capped** (`MAX_DERIVED_STALE_S = 300s`) — a
+  misconfigured huge poll interval could otherwise relax the auto-bound to
+  hours and serve dead data as "fresh" to the ESS. Explicit per-row
+  `stale_after_s` stays uncapped.
+- **`update_instance` rejects non-finite bounds** (`math.isfinite`) like
+  `add_instance` — an `inf` `stale_after_s` disabled the freshness watchdog.
+- **Modbus write rejects NaN/Infinity** — they survived the min/max envelope
+  (every comparison is False) and `struct.pack` would ship the bit pattern to a
+  real device. Rejected 422 up front (the encoder's NaN sentinel path is
+  untouched — it never comes from a write).
+
+**Fail-closed security:**
+- **MQTT TLS fails closed** on both directions (publisher + input) and both
+  discovery probes — a `tls_set()` failure no longer falls through to a
+  cleartext connect. (Production runs `tls_enabled: false`, so this is a no-op
+  live.)
+- **Operator role gets URL redaction** too — only admin now sees raw
+  URL-embedded credentials from `/api/config`, `/api/config/influxdb`,
+  `/api/devices` (was viewer-only).
+- **Passkey import guard** — a merge-import (`/api/config/import`) no longer
+  silently overwrites `passkeys.json` from a possibly-foreign bundle; only a
+  full trusted restore installs it.
+
+**Persistence / integrity:**
+- `save_selected_registers` now holds `_file_lock` (the primary shares its file
+  with the locked energy/calc writers).
+- Backup bundle **includes deleted-device tombstones** (`devices/<id>/device.json`)
+  and restores them — export→restore no longer loses delete→restore recovery.
+- `events.jsonl` is **0600 + fsync** (was world-readable 0644, unsynced).
+- Genuinely non-atomic writers fixed: user device templates and the LKG-meta
+  sidecar now temp+fsync+rename.
+
+**Deploy / resource:**
+- `docker-compose.yml` uses `${UI_PORT:-8080}` — `docker compose up` no longer
+  aborts on a clean host with an unset `.env`.
+- WebSocket connections capped (`MAX_CONNECTIONS = 64`) — refused past the cap
+  instead of accumulating to FD exhaustion.
+- `Dockerfile.test` quotes the `pip install "pytest>=…"` pins (the shell was
+  eating them as redirections).
+- Corrected the false "no word-tearing" comment on the vmeter datastore write.
+
+**Deferred (documented, not in this release):** HA retained-discovery orphan
+tombstoning for removed vmeters/deselected registers (P2, device-delete is
+already handled); non-root container + image-digest pinning (need a live-volume
+`chown` at deploy — deploy-coordination); P3 docs/version stamps, ~5 dead
+methods, 36 unused i18n keys. Verified false positives (rejected): Flux
+injection in `/api/history` (validated/escaped) and forced org-admin InfluxDB
+token (`ensure_bucket` fails gracefully).
+
 ## 3.4.0
 
 ### 2026-07-31 — automatic per-row freshness bound from the poll-group interval

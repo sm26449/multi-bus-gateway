@@ -336,8 +336,9 @@ def mqtt_browse(broker: str, port: int = 1883, username: str = "",
     if tls:
         try:
             cli.tls_set()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            # fail closed: never fall through to a cleartext probe
+            return {"ok": False, "error": f"TLS setup failed: {e}"}
 
     def _oc(c, u, f, rc, props=None):
         if getattr(rc, "is_failure", False):
@@ -408,8 +409,9 @@ def mqtt_sample(broker: str, port: int = 1883, username: str = "",
     if tls:
         try:
             cli.tls_set()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            # fail closed: never fall through to a cleartext probe
+            return {"ok": False, "error": f"TLS setup failed: {e}"}
 
     def _oc(c, u, f, rc, props=None):
         if getattr(rc, "is_failure", False):

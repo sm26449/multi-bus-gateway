@@ -96,6 +96,55 @@ def test_write_bundle_replace_vs_merge(store, tmp_path):
     assert replaced["modbus"]["host"] == "1.2.3.4" and "new_section" not in replaced
 
 
+def test_bundle_includes_and_restores_tombstones(store):
+    """3.4.1: a deleted device's tombstone (devices/<id>/device.json) is in the
+    bundle and restores, so export→restore keeps delete→restore recovery."""
+    tomb = store.cfg_dir / "devices" / "ghost" / "device.json"
+    tomb.parent.mkdir(parents=True, exist_ok=True)
+    tomb.write_text('{"id": "ghost", "name": "deleted meter"}')
+    snap = store.create("with-tombstone")
+    names = set(zipfile.ZipFile(store.get_path(snap["id"])).namelist())
+    assert "devices/ghost/device.json" in names
+    # wipe it, then restore brings it back
+    import shutil
+    shutil.rmtree(store.cfg_dir / "devices" / "ghost")
+    summary = write_bundle_files(zipfile.ZipFile(store.get_path(snap["id"])),
+                                 cfg_dir=store.cfg_dir, user_tpl_dir=store.user_tpl_dir,
+                                 registers_path_for=store._registers_path_for,
+                                 replace_config=True)
+    assert json.loads(tomb.read_text())["name"] == "deleted meter"
+    assert summary.get("tombstones", 0) == 1
+
+
+def test_passkeys_not_restored_on_merge_import(store):
+    """3.4.1: passkeys.json is an auth-identity store — a merge-import
+    (replace_config=False, the sanitized /api/config/import path) must NOT
+    silently swap the passkey registry from a possibly-foreign backup. A full
+    restore (replace_config=True, own trusted snapshot) still installs it."""
+    # bundle carries an attacker-controlled passkeys.json
+    (store.cfg_dir / "passkeys.json").write_text('{"creds": ["ATTACKER"]}')
+    snap = store.create("with-passkeys")
+    zf_path = store.get_path(snap["id"])
+    # local box has its own passkeys
+    (store.cfg_dir / "passkeys.json").write_text('{"creds": ["MINE"]}')
+
+    # merge-import must NOT overwrite the local passkeys
+    import zipfile as _zip
+    summary = write_bundle_files(_zip.ZipFile(zf_path), cfg_dir=store.cfg_dir,
+                                 user_tpl_dir=store.user_tpl_dir,
+                                 registers_path_for=store._registers_path_for,
+                                 replace_config=False)
+    assert json.loads((store.cfg_dir / "passkeys.json").read_text())["creds"] == ["MINE"]
+    assert any("passkeys" in s for s in summary.get("skipped", []))
+
+    # full restore (own snapshot) DOES install it
+    write_bundle_files(_zip.ZipFile(zf_path), cfg_dir=store.cfg_dir,
+                       user_tpl_dir=store.user_tpl_dir,
+                       registers_path_for=store._registers_path_for,
+                       replace_config=True)
+    assert json.loads((store.cfg_dir / "passkeys.json").read_text())["creds"] == ["ATTACKER"]
+
+
 def test_primary_registers_restore_to_legacy_root(store):
     """Registrele primary-ului se restaurează în root-ul legacy, nu într-o
     copie moartă sub devices/ (bug-ul vechiului import)."""

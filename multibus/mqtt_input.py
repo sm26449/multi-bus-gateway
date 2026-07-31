@@ -176,7 +176,11 @@ class MqttInputClient:
             try:
                 c.tls_set()
             except Exception as e:  # noqa: BLE001
-                logger.warning("MQTT-in TLS setup failed: %s", e)
+                # FAIL CLOSED: refuse to fall through to a cleartext connect
+                # when TLS was requested but could not be set up.
+                logger.error("MQTT-in TLS setup FAILED (%s) — refusing cleartext "
+                             "connect to %s:%s", e, self.broker, self.port)
+                return False
         c.on_connect = self._on_connect
         c.on_message = self._on_message
         c.on_disconnect = self._on_disconnect

@@ -4,7 +4,7 @@ services:
     container_name: multi-bus-gateway
     restart: unless-stopped
     ports:
-      - "${UI_PORT}:${UI_PORT}"
+      - "${UI_PORT:-8080}:${UI_PORT:-8080}"
       # Virtual meters — publish a contiguous range so they are reachable on the
       # LAN. Any virtual meter on a port in this range works without editing the
       # compose again; grow VMETER_PORT_END if you need more. (See docs/MANUAL.md §11.)

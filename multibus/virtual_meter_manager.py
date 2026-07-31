@@ -25,6 +25,7 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import math
 import os
 import re
 import struct
@@ -68,6 +69,12 @@ _VALID_TYPES = ["int16", "uint16", "int32", "uint32", "int64", "uint64",
 # max(derived, instance bound): a derived bound may only RELAX the instance
 # floor, never tighten it (explicit row stale_after_s can do either).
 GROUP_STALE_MULT = 2.5
+# ...but the AUTO-derived bound is capped, so a misconfigured huge poll interval
+# (the interval validator has only a 0.05s floor, no ceiling) can never let a
+# dead source read "fresh" for hours to a control loop / ESS. 300s = 5 min is
+# far above any real cadence on this system; a genuinely slower source must set
+# an EXPLICIT per-row stale_after_s (uncapped) to opt out.
+MAX_DERIVED_STALE_S = 300.0
 
 
 def _lookup(store: dict, name: str) -> Optional[tuple]:
@@ -90,7 +97,8 @@ def _lookup(store: dict, name: str) -> Optional[tuple]:
         if value is None:
             return None
         _iv = info.get("interval")
-        bound = (GROUP_STALE_MULT * float(_iv)) if _iv else None
+        bound = (min(GROUP_STALE_MULT * float(_iv), MAX_DERIVED_STALE_S)
+                 if _iv else None)
         return value, info.get("mono"), bound  # mono None → not fresh
     return None
 
@@ -785,7 +793,6 @@ class VirtualMeterManager:
             return {"error": f"on_stale must be legacy|fail|sentinel|hold, not {on_stale!r}"}
         # a non-finite or non-positive bound would defeat the freshness watchdog
         # (inf/nan makes every age look in-bound) — reject it, like update_instance
-        import math
         for _nm, _v in (("stale_after_s", stale_after_s), ("max_hold_s", max_hold_s)):
             try:
                 _f = float(_v)
@@ -907,8 +914,8 @@ class VirtualMeterManager:
                 max_hold_s = float(max_hold_s)
             except (TypeError, ValueError):
                 return {"error": "max_hold_s must be a number"}
-            if max_hold_s <= 0:
-                return {"error": "max_hold_s must be > 0"}
+            if not math.isfinite(max_hold_s) or max_hold_s <= 0:
+                return {"error": "max_hold_s must be a positive, finite number"}
             inst["max_hold_s"] = max_hold_s
         if device is not None:
             # empty / primary → drop the field (meter reads the primary cache)
@@ -942,16 +949,18 @@ class VirtualMeterManager:
                 stale_after_s = float(stale_after_s)
             except (TypeError, ValueError):
                 return {"error": "stale_after_s must be a number"}
-            if stale_after_s <= 0:
-                return {"error": "stale_after_s must be > 0"}
+            # inf/nan would defeat the freshness watchdog (inf → never stale,
+            # nan → every comparison False) — same guard as add_instance
+            if not math.isfinite(stale_after_s) or stale_after_s <= 0:
+                return {"error": "stale_after_s must be a positive, finite number"}
             inst["stale_after_s"] = stale_after_s
         if update_interval_s is not None:
             try:
                 update_interval_s = float(update_interval_s)
             except (TypeError, ValueError):
                 return {"error": "update_interval_s must be a number"}
-            if update_interval_s <= 0:
-                return {"error": "update_interval_s must be > 0"}
+            if not math.isfinite(update_interval_s) or update_interval_s <= 0:
+                return {"error": "update_interval_s must be a positive, finite number"}
             inst["update_interval_s"] = update_interval_s
         self._save_cfg(cfg)
         restarted = False

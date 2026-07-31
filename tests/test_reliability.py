@@ -251,6 +251,25 @@ def test_keepalive_survives_closed_socket_and_no_server():
 
 # ── MQTT reconnect ownership ─────────────────────────────────────────────────
 
+def test_mqtt_tls_failure_fails_closed(monkeypatch):
+    """3.4.1: when TLS is requested but tls_set() fails, the publisher must NOT
+    fall through to a cleartext connect — _try_connect refuses (fail-closed)."""
+    pub = MQTTPublisher(MQTTConfig(enabled=True, tls_enabled=True,
+                                   tls_ca_cert="/nonexistent/ca.pem"),
+                        [], publish_mode="changed")
+    # force tls_set to raise regardless of environment
+    monkeypatch.setattr(pub.client, "tls_set",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bad CA")))
+    pub._setup_client()
+    assert pub._tls_broken is True
+    # and it must refuse to connect (no cleartext fallback)
+    called = {"connect": False}
+    monkeypatch.setattr(pub.client, "connect",
+                        lambda *a, **k: called.__setitem__("connect", True))
+    assert pub._try_connect() is False
+    assert called["connect"] is False
+
+
 def test_on_disconnect_records_state_and_spawns_no_thread():
     pub = MQTTPublisher(MQTTConfig(enabled=False), [], publish_mode="changed")
     pub.connected = True

@@ -1086,12 +1086,17 @@ class Config:
             }
         }
 
-        tmp = self.registers_path.with_suffix(self.registers_path.suffix + '.tmp')
-        with open(tmp, 'w') as f:                       # atomic: crash-safe write
-            json.dump(data, f, indent=2, ensure_ascii=False)
-            f.flush()
-            os.fsync(f.fileno())               # durable before the rename
-        os.replace(tmp, self.registers_path)
+        # hold _file_lock like every other config writer: for the PRIMARY device
+        # this file is shared with save_energy_fields/save_calculated/... which
+        # take the lock; without it here a concurrent save could lose fields or
+        # clobber the shared .tmp
+        with self._file_lock:
+            tmp = self.registers_path.with_suffix(self.registers_path.suffix + '.tmp')
+            with open(tmp, 'w') as f:                   # atomic: crash-safe write
+                json.dump(data, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())           # durable before the rename
+            os.replace(tmp, self.registers_path)
 
         # Reload
         self._load_selected_registers()

@@ -181,6 +181,13 @@ def write_bundle_files(zf: zipfile.ZipFile, *, cfg_dir: Path, user_tpl_dir: Path
             dev_id = Path(n).parts[1]
             _atomic(registers_path_for(dev_id), zf.read(n))
             summary["device_registers"] += 1
+        elif n.startswith("devices/") and n.endswith("/device.json"):
+            # deleted-device tombstone — restore beside the config tree so a
+            # later "restore device" still finds its kept settings
+            dev_id = Path(n).parts[1]
+            _atomic(cfg_dir / "devices" / dev_id / "device.json", zf.read(n))
+            summary.setdefault("tombstones", 0)
+            summary["tombstones"] += 1
         elif n.startswith("device_templates/") and not n.endswith("/"):
             _atomic(user_tpl_dir / Path(n).name, zf.read(n))
             summary["templates"] += 1
@@ -192,6 +199,15 @@ def write_bundle_files(zf: zipfile.ZipFile, *, cfg_dir: Path, user_tpl_dir: Path
             _atomic(cfg_dir / "templates" / Path(n).name, zf.read(n))
             summary["extras"] += 1
         elif n in BUNDLE_EXTRAS:
+            # passkeys.json IS an auth-identity store: importing it installs
+            # whatever WebAuthn credentials the bundle carries. Only honor it on
+            # a FULL replace (replace_config=True — an operator restoring a
+            # trusted own-system snapshot). A merge-import (replace_config=False,
+            # e.g. the sanitized /api/config/import path) must NOT silently swap
+            # the auth registry from a possibly-foreign backup.
+            if n == "passkeys.json" and not replace_config:
+                summary.setdefault("skipped", []).append("passkeys.json (merge-import)")
+                continue
             _atomic(cfg_dir / n, zf.read(n))
             summary["extras"] += 1
     return summary
@@ -242,6 +258,14 @@ class SnapshotStore:
                 p = self._registers_path_for(dev_id)
                 if p.exists():
                     z.writestr(f"devices/{dev_id}/selected_registers.json", p.read_text())
+            # tombstones: a DELETED device's kept settings live at
+            # devices/<id>/device.json (no longer in the active _device_ids
+            # list). Without these the restore loses delete→restore recovery.
+            _devs_dir = self.cfg_dir / "devices"
+            if _devs_dir.is_dir():
+                for _tomb in sorted(_devs_dir.glob("*/device.json")):
+                    z.writestr(f"devices/{_tomb.parent.name}/device.json",
+                               _tomb.read_text())
             if self.user_tpl_dir.is_dir():
                 for f in sorted(self.user_tpl_dir.iterdir()):
                     if f.suffix.lower() in (".json", ".yaml", ".yml"):
@@ -370,7 +394,10 @@ class SnapshotStore:
             _write_bytes_0600(self.dir / _LKG_ZIP, data)
             meta = {"id": "lkg", "ts": round(time.time(), 3), "size": len(data),
                     "trigger": "healthy-boot", "user": "", "note": "last known good"}
-            (self.dir / _LKG_META).write_text(json.dumps(meta, indent=1))
+            # atomic + durable like the zip beside it — a torn meta sidecar
+            # would make a good LKG zip un-restorable
+            _write_bytes_0600(self.dir / _LKG_META,
+                              json.dumps(meta, indent=1).encode("utf-8"))
             logger.info("last-known-good config snapshot updated")
             return meta
 

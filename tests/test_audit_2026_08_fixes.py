@@ -94,6 +94,44 @@ def test_add_instance_rejects_non_finite_bounds(tmp_path):
         assert "error" in r, bad
 
 
+def test_event_log_is_0600(tmp_path):
+    """3.4.1: events.jsonl may carry operational detail — must be 0600, not the
+    world-readable 0644 a plain open() produces under umask 022."""
+    import os
+    from multibus.event_log import EventLog
+    old = os.umask(0o022)
+    try:
+        p = tmp_path / "events.jsonl"
+        el = EventLog(path=str(p))
+        el.add("warn", "test", "hello")
+        assert (os.stat(p).st_mode & 0o777) == 0o600
+        # survives compaction too
+        for i in range(60):
+            el.add("info", "test", f"e{i}")
+        assert (os.stat(p).st_mode & 0o777) == 0o600
+    finally:
+        os.umask(old)
+
+
+def test_update_instance_rejects_non_finite_bounds(tmp_path):
+    """3.4.1: update_instance must reject inf/nan like add_instance — an inf
+    stale_after_s would make _is_fresh true forever and disable the watchdog."""
+    from multibus.virtual_meter_manager import VirtualMeterManager
+    import os
+    os.makedirs(tmp_path / "tpl", exist_ok=True)
+    mgr = VirtualMeterManager({}, config_path=str(tmp_path / "vm.yaml"),
+                              templates_dir=str(tmp_path / "tpl"))
+    (tmp_path / "tpl" / "t.yaml").write_text(
+        "template:\n  id: t\n  transport: {type: tcp, port: 1502}\n  registers: []\n")
+    assert "error" not in mgr.add_instance("t", port=1502, stale_after_s=15)
+    for field in ("stale_after_s", "update_interval_s", "max_hold_s"):
+        for bad in (float("inf"), float("nan")):
+            r = mgr.update_instance("t", **{field: bad})
+            assert "error" in r, (field, bad)
+    # a finite update still works
+    assert mgr.update_instance("t", stale_after_s=30).get("updated") is True
+
+
 def test_merge_devices_reinjects_stripped_secrets():
     from multibus.snapshots import _merge_devices
     live = [{"id": "d1", "connection": {"broker": "b", "password": "SECRET"},

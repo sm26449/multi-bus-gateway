@@ -732,7 +732,12 @@ class VirtualMeter:
         with self._lock:
             out = list(self._regs_out)
         for addr, words in out:                      # zero_mode → address == index
-            self._block.setValues(addr, words)       # one call per value = no word-tearing
+            # one setValues call per VALUE (not per word). NB: the default
+            # ModbusSequentialDataBlock stores this as one atomic slice write;
+            # the opt-in quality_block's ModbusSparseDataBlock stores word-by-word,
+            # so a concurrent multi-word read there can still tear (known P2 —
+            # the sparse read/write share no lock).
+            self._block.setValues(addr, words)
 
     # ── supervisor ─────────────────────────────────────────────────────────
 

@@ -247,6 +247,33 @@ def test_calc_result_inherits_oldest_input_timestamp():
     assert calc["timestamp"] == old_ts          # oldest input, NOT now()
 
 
+def test_calc_dt_uses_monotonic_clock_not_wall(monkeypatch):
+    """3.4.1: dt for rate/integral formulas is computed on time.monotonic(),
+    so a wall-clock step (NTP/chrony) between two calc runs does NOT corrupt
+    the derived value. We drive two runs, step the WALL clock wildly between
+    them, and assert dt reflects only the monotonic delta."""
+    from types import SimpleNamespace
+    from multibus import calc_engine as ce
+    from multibus.calc_engine import CalcEngine, CALC_ADDR_BASE
+
+    mono = {"t": 1000.0}
+    monkeypatch.setattr(ce.time, "monotonic", lambda: mono["t"])
+    monkeypatch.setattr(ce.time, "time", lambda: 5.0)      # wall frozen/absurd
+    store = {1: {"name": "_E", "value": 100.0, "timestamp": "2020-01-01T00:00:00",
+                 "mono": 1000.0}}
+    # expose dt via the expression itself: result = dt
+    cfg = SimpleNamespace(load_calculated=lambda d: [{"name": "_R", "expr": "dt"}])
+    eng = CalcEngine(cfg, store_for=lambda d: store, publishers=lambda: (None, None))
+    eng.load("dev")
+    eng.run("dev", "normal", store, topic_prefix="", bucket=None, device_tag=None,
+            device_id="dev", mqtt_on=False, influx_on=False)      # first run: dt=0
+    mono["t"] = 1005.0                                    # +5s monotonic
+    monkeypatch.setattr(ce.time, "time", lambda: 9.0e9)  # wall jumps forward billions
+    eng.run("dev", "normal", store, topic_prefix="", bucket=None, device_tag=None,
+            device_id="dev", mqtt_on=False, influx_on=False)
+    assert store[CALC_ADDR_BASE]["value"] == 5.0         # dt = monotonic delta, not wall
+
+
 def test_calc_batch_carries_ts_and_mono_for_publishers():
     """3.3.4: the batch handed to the MQTT/Influx publishers carries the same
     ts/mono as the store entry — InfluxDB must stamp the point with the OLDEST

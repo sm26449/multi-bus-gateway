@@ -67,7 +67,10 @@ class EventLog:
             self._events.append(ev)
             self._adds += 1
             try:
-                with open(self.path, "a", encoding="utf-8") as f:
+                # 0600: the event log can carry operational detail (and, from a
+                # careless caller, a secret) — it must not sit world-readable.
+                fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+                with os.fdopen(fd, "a", encoding="utf-8") as f:
                     f.write(json.dumps(ev, ensure_ascii=False) + "\n")
             except OSError:
                 pass
@@ -80,9 +83,12 @@ class EventLog:
     def _compact_locked(self) -> None:
         try:
             tmp = self.path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 for ev in self._events:
                     f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, self.path)
         except OSError as e:
             logger.debug("event log: compact failed (%s)", e)

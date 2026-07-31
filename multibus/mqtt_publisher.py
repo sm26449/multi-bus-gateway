@@ -133,8 +133,14 @@ class MQTTPublisher:
                     self.client.tls_insecure_set(True)
                 logger.info("MQTT TLS enabled (mutual=%s, insecure=%s)",
                             bool(cert and key), self.config.tls_insecure)
+                self._tls_broken = False
             except Exception as e:  # noqa: BLE001
-                logger.error("MQTT TLS setup failed: %s", e)
+                # FAIL CLOSED: TLS was requested but could not be configured —
+                # connecting anyway would ship credentials + telemetry in the
+                # clear while the operator believes the link is encrypted.
+                logger.error("MQTT TLS setup FAILED (%s) — refusing to connect "
+                             "in cleartext; fix the CA/cert config", e)
+                self._tls_broken = True
 
         # Last Will Testament
         status_topic = f"{self.config.topic_prefix}/status"
@@ -190,6 +196,10 @@ class MQTTPublisher:
 
     def _try_connect(self) -> bool:
         """Attempt a single connection."""
+        if getattr(self, "_tls_broken", False):
+            logger.error("MQTT: TLS requested but setup failed — not connecting "
+                         "(fail-closed); no cleartext fallback")
+            return False
         try:
             self.client.connect(self.config.broker, self.config.port, keepalive=60)
             self.client.loop_start()
