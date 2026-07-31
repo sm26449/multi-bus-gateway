@@ -76,6 +76,8 @@ def build(ctx) -> APIRouter:
             timeout = min(3.0, max(0.1, float(payload.get('timeout', 0.5))))
         except (TypeError, ValueError):
             raise HTTPException(status_code=422, detail={"errors": ["port/unit_id/timeout must be numbers"]})
+        if not 1 <= port <= 65535:
+            raise HTTPException(status_code=422, detail={"errors": ["port must be 1..65535"]})
         try:
             hosts = discovery.hosts_from_cidr(cidr, allow_nonlan=config.security.allow_nonlan_http_devices)
         except ValueError as e:

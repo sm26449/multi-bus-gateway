@@ -1,5 +1,33 @@
 # Changelog
 
+## 3.3.3
+
+### 2026-07-31 — dead-code + loose-ends cleanup (final audit pass)
+
+A dead-code/consistency audit of the day's changes; every finding verified:
+
+- **Restored docs/API.md** — it had been accidentally truncated to 0 bytes
+  during the version bumps while six docs still linked to it.
+- **Removed ClockStepGuard dead code** — after freshness went monotonic,
+  `freshness_now`/`in_grace`/`_offset`/`_grace_until`/`_grace_ceiling`/
+  `MAX_TOTAL_GRACE_MULT`/`grace_s` had no production callers; the guard is now
+  a minimal step-detector for the diagnostic `clock_step` event.
+- **http_client**: `last_success_mono` was stamped even on a FAILED connect
+  (would read fresh after a failure) — now only in the success branch; dropped
+  a dead `now = time.time()`.
+- **`/api/meters` staleness** moved to the monotonic clock and now fails closed
+  (was wall-clock ISO, and failed OPEN on a malformed timestamp).
+- **`add_instance`** validates the template id through `_template_path`
+  (blocks a `../` traversal that bypassed the id regex).
+- **`forget_restorable_device`** now runs under the device-mutation lock
+  (could race a concurrent restore on the same dir).
+- Generated firmware and Modbus/MQTT discovery now range-check ports
+  (1..65535); the ESPHome dashboard client closes its login error response;
+  sanitized export redacts device connection URLs; builder settings/profiles
+  no longer double-audit; several stale comments/docstrings corrected.
+
+597 tests pass.
+
 ## 3.3.2
 
 ### 2026-07-31 — senior self-review of today's releases

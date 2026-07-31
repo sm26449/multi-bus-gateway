@@ -66,32 +66,31 @@ def build(ctx) -> APIRouter:
     def _meter_payload(dev_cfg) -> Dict:
         store = registry.store_for(dev_cfg.id) or {}
         values: Dict[str, Dict] = {}
-        newest = None
+        newest_mono = None                             # step-immune freshness
         for address, item in list(store.items()):     # snapshot vs concurrent poller writes
             name = item.get('name') or f"addr_{address}"
             ts = item.get('timestamp')
+            mono = item.get('mono')
             values[name] = {
                 'value': item.get('value'),
                 'unit': item.get('unit', ''),
                 'label': item.get('label', ''),
                 'ts': ts,
             }
-            if ts and (newest is None or ts > newest):
-                newest = ts
+            if mono is not None and (newest_mono is None or mono > newest_mono):
+                newest_mono = mono
         # Stale if the freshest value is older than the device's stale bound
         # (default 30s). No values yet → stale.
-        stale = True
-        if newest:
-            try:
-                age = (datetime.now() - datetime.fromisoformat(newest)).total_seconds()
-                bound = max(1, int(getattr(dev_cfg.connection, 'stale_after_s', 30) or 30))
-                stale = age > bound
-            except (ValueError, TypeError):
-                stale = False
+        stale = True                               # no fresh sample yet → stale (fail closed)
+        if newest_mono is not None:
+            import time as _t
+            age = _t.monotonic() - newest_mono
+            bound = max(1, int(getattr(dev_cfg.connection, 'stale_after_s', 30) or 30))
+            stale = not (0 <= age <= bound)        # future/over-bound → stale
         return {
             'device': dev_cfg.id,
             'name': dev_cfg.name,
-            'ts': newest or last_update['timestamp'],
+            'ts': last_update['timestamp'],   # display (wall); freshness uses mono
             'stale': stale,
             'values': values,
         }

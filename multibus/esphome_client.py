@@ -123,6 +123,7 @@ class EsphomeDashboard:
                 cookie = resp.headers.get("Set-Cookie", "")
         except urllib.error.HTTPError as e:
             cookie = e.headers.get("Set-Cookie", "") if e.code in (302, 303) else ""
+            e.close()
             if not cookie:
                 raise EsphomeError("ESPHome login failed (check username/password)")
         except (urllib.error.URLError, OSError) as e:

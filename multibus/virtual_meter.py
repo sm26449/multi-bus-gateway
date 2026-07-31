@@ -335,11 +335,10 @@ class VirtualMeter:
         self._conn_seen: dict[str, float] = {}  # connection ident -> first-seen ts (uptime)
         self._conn_lock = threading.Lock()      # guards _conn_seen across threads
         self.stats = VMeterStats()              # in-RAM query log + counters
-        # Freshness clock: a wall-clock step (NTP/chrony) would otherwise make
-        # perfectly fresh rows look stale for one window. The guard rebases the
-        # comparison clock during its grace; _rebuild_block/_quality_words read
-        # freshness_now() so the whole freshness verdict — not just the
-        # instance-level stop — is immune to the jump. Ticked by _supervise.
+        # Freshness is judged on the MONOTONIC clock (driver 'mono' stamps vs
+        # time.monotonic()), so it is immune to wall-clock/NTP steps by
+        # construction. This guard is kept only to emit a diagnostic clock_step
+        # event; it no longer participates in the freshness verdict.
         self._clock_guard = self.ClockStepGuard(self.stale_after_s)
 
     # ── value resolution + encoding ────────────────────────────────────────
@@ -724,52 +723,24 @@ class VirtualMeter:
 
         STEP_THRESHOLD_S = 5.0
 
-        # A clock that keeps stepping (chrony correction loop, broken VM TSC)
-        # must NOT be able to hold the fail-safe suppressed forever. Cap the
-        # TOTAL time the stop can be held across back-to-back steps; past it,
-        # real staleness stops the meter even mid-correction-storm.
-        MAX_TOTAL_GRACE_MULT = 3          # ~3 stale windows of cumulative grace
-
-        def __init__(self, grace_s: float):
-            # a very short window (a 250ms meter) still deserves enough grace to
-            # ride out a step tick — floor it so freshness never flaps
-            self.grace_s = max(float(grace_s), 5.0)
+        def __init__(self, grace_s: float = 0.0):
+            # grace_s is accepted for construction compatibility but unused —
+            # freshness no longer has a grace window (it is monotonic).
             self._drift_prev = None
-            self._grace_until = 0.0
-            self._grace_ceiling = 0.0     # monotonic time past which grace won't extend
             self.last_step_s = 0.0
-            self._offset = 0.0        # wall-clock correction applied during grace
 
         def tick(self) -> bool:
-            """Call once per supervisor pass; True when a step was detected
-            on THIS tick (caller logs it once)."""
-            now_mono = time.monotonic()
-            if now_mono >= self._grace_until:     # grace expired → drop correction
-                self._offset = 0.0
-                self._grace_ceiling = 0.0         # and reset the anti-storm cap
-            drift = time.time() - now_mono
+            """Call once per supervisor pass; True when a wall-clock step was
+            detected on THIS tick (the caller logs a clock_step event once).
+            Purely diagnostic — the freshness verdict is on the monotonic clock
+            and does not consult this guard."""
+            drift = time.time() - time.monotonic()
             stepped = (self._drift_prev is not None
                        and abs(drift - self._drift_prev) >= self.STEP_THRESHOLD_S)
             if stepped:
                 self.last_step_s = drift - self._drift_prev
-                self._offset += self.last_step_s  # accumulate across steps in a window
-                if self._grace_ceiling == 0.0:    # first step of a burst sets the cap
-                    self._grace_ceiling = now_mono + self.grace_s * self.MAX_TOTAL_GRACE_MULT
-                # extend grace, but never past the ceiling — a stepping-loop
-                # clock can't suppress the fail-safe indefinitely
-                self._grace_until = min(now_mono + self.grace_s, self._grace_ceiling)
             self._drift_prev = drift
             return stepped
-
-        @property
-        def in_grace(self) -> bool:
-            return time.monotonic() < self._grace_until
-
-        def freshness_now(self) -> float:
-            """Wall clock to compare stored timestamps against. During a
-            clock-step grace it is rebased by the detected step so a jump does
-            not falsely age data that was fresh a moment ago."""
-            return time.time() - (self._offset if self.in_grace else 0.0)
 
     def _supervise(self) -> None:
         """Reliability core, runs every update_interval_s:
@@ -788,8 +759,7 @@ class VirtualMeter:
             try:
                 if clock_guard.tick():
                     msg = (f"system clock stepped {clock_guard.last_step_s:+.1f}s — "
-                           f"holding the stale fail-safe for {self.stale_after_s:.0f}s "
-                           "(data itself never stopped)")
+                           "freshness unaffected (judged on the monotonic clock)")
                     self.stats.record_event("warn", "clock_step", msg)
                     logger.warning("virtual meter %s: %s", self.t.id, msg)
                 newest = self._rebuild_block()

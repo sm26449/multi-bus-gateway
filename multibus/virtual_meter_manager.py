@@ -67,7 +67,7 @@ def _lookup(store: dict, name: str) -> Optional[tuple]:
 
 
 def make_provider(current_values: dict):
-    """Return provider(name) -> (value, unix_ts) reading ONE live cache.
+    """Return provider(name) -> (value, monotonic_ts) reading ONE live cache.
 
     current_values is keyed by register ADDRESS; each entry carries 'name',
     'value', 'timestamp' (ISO). Sources are bound by register name.
@@ -745,8 +745,8 @@ class VirtualMeterManager:
                 return {"error": f"{_nm} must be a number"}
             if not math.isfinite(_f) or _f <= 0:
                 return {"error": f"{_nm} must be a positive, finite number"}
-        tmpl_path = self.templates_dir / f"{template_id}.yaml"
-        if not tmpl_path.exists():
+        tmpl_path = self._template_path(template_id)   # validates id, blocks traversal
+        if tmpl_path is None or not tmpl_path.exists():
             return {"error": f"unknown template {template_id}"}
         cfg = self._load_cfg()
         cfg.setdefault("instances", [])

@@ -169,6 +169,8 @@ def generate_node(payload: Dict[str, Any], template, poll_groups: Dict,
         port = int(mqtt.get('port', mqtt_defaults.get('port', 1883)) or 1883)
     except (TypeError, ValueError):
         raise ValueError("mqtt.port must be an integer")
+    if not 1 <= port <= 65535:
+        raise ValueError("mqtt.port must be 1..65535")
     username = str(mqtt.get('username', mqtt_defaults.get('username', '')) or '')
     has_password = bool(mqtt_defaults.get('password')) or bool(mqtt.get('password_secret'))
     prefix = str(mqtt.get('topic_prefix', '') or f"esphome/{name}").strip('/')

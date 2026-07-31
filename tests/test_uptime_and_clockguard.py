@@ -18,8 +18,10 @@
 
 Born from a live incident (2026-07-28): installing chrony stepped the host
 clock +138s and both virtual meters fail-safe-stopped over perfectly fresh
-data. The guard detects wall-vs-monotonic drift changes and holds the stale
-stop for one window; up_since_s is measured on the monotonic clock."""
+data. As of 3.3.x freshness is judged on the MONOTONIC clock (driver 'mono'
+stamps vs time.monotonic()), so it is immune to any wall-clock step by
+construction; the ClockStepGuard survives only to emit a diagnostic event.
+up_since_s is measured on the monotonic clock."""
 from unittest.mock import MagicMock
 
 import pytest
@@ -38,35 +40,7 @@ def clock(monkeypatch):
     return t
 
 
-def test_clock_guard_ignores_normal_time_flow(clock):
-    g = vm.VirtualMeter.ClockStepGuard(15)
-    assert g.tick() is False                      # first sample: baseline
-    for _ in range(10):
-        clock["wall"] += 1.0
-        clock["mono"] += 1.0
-        assert g.tick() is False                  # drift unchanged
-    assert g.in_grace is False
 
-
-def test_clock_guard_detects_forward_step_and_grace_expires(clock):
-    g = vm.VirtualMeter.ClockStepGuard(15)
-    g.tick()
-    clock["wall"] += 138.36                       # the chrony incident, replayed
-    assert g.tick() is True
-    assert g.last_step_s == pytest.approx(138.36)
-    assert g.in_grace is True
-    clock["mono"] += 14.9                         # inside the window
-    assert g.in_grace is True
-    clock["mono"] += 0.2                          # window over
-    assert g.in_grace is False
-
-
-def test_clock_guard_detects_backward_step(clock):
-    g = vm.VirtualMeter.ClockStepGuard(15)
-    g.tick()
-    clock["wall"] -= 30.0
-    assert g.tick() is True and g.last_step_s == pytest.approx(-30.0)
-    assert g.in_grace is True
 
 
 def test_supervisor_ticks_guard_but_does_not_gate_stop_on_grace():
@@ -140,40 +114,19 @@ def test_snapshot_bundle_includes_new_artifacts(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# LOT D — freshness clock is step-immune, not just the stop action
+# ClockStepGuard is diagnostic-only now — it just detects a step for the event
 # ---------------------------------------------------------------------------
 
-def test_freshness_now_rebases_during_grace(clock):
-    g = vm.VirtualMeter.ClockStepGuard(15)
-    g.tick()
-    base = g.freshness_now()
-    assert base == clock["wall"]                    # no step → raw wall clock
-    clock["wall"] += 138.36                         # the incident
-    g.tick()
-    # during grace the freshness clock is rebased to the PRE-step wall time,
-    # so a sample stored a moment ago is NOT falsely aged
-    assert abs(g.freshness_now() - base) < 0.001
-    # once grace ends, it tracks the (new) wall clock again
-    clock["mono"] += g.grace_s + 0.1
-    assert g.freshness_now() == clock["wall"]
+def test_clock_guard_detects_step_for_diagnostics(clock):
+    g = vm.VirtualMeter.ClockStepGuard()
+    assert g.tick() is False                 # first sample: baseline
+    clock["wall"] += 1.0; clock["mono"] += 1.0
+    assert g.tick() is False                 # normal flow: no step
+    clock["wall"] += 138.0                    # NTP jump
+    assert g.tick() is True
+    assert g.last_step_s == pytest.approx(138.0)
 
 
-def test_freshness_now_accumulates_multiple_steps(clock):
-    """Two steps inside one window both get removed; real elapsed time (both
-    clocks advancing together) is preserved, not cancelled."""
-    g = vm.VirtualMeter.ClockStepGuard(15)
-    g.tick()
-    base = g.freshness_now()
-    clock["wall"] += 100.0; g.tick()                # step 1: +100
-    clock["wall"] += 1.0; clock["mono"] += 1.0      # 1s of NORMAL time passes
-    clock["wall"] += 50.0;  g.tick()                # step 2: +50, still in grace
-    # net wall jump is +151, but 1s was real → freshness clock = base + 1
-    assert abs(g.freshness_now() - (base + 1.0)) < 0.001
-
-
-def test_short_stale_window_gets_floored_grace():
-    g = vm.VirtualMeter.ClockStepGuard(0.25)        # a 250ms meter
-    assert g.grace_s >= 5.0                          # floored so it can ride a step
 
 
 def test_rebuild_block_uses_monotonic_clock():
@@ -200,20 +153,6 @@ def test_future_timestamp_is_never_fresh():
     assert F(now, 1000.5, 15) is False        # slightly future → not fresh
     assert F(now, None, 15) is False          # no timestamp → not fresh
 
-
-def test_dead_source_stays_stale_after_backward_step_grace(clock):
-    """The exact residual: source dies, clock steps BACK, grace ends, and the
-    old (now-future) timestamp must NOT read as fresh to the ESS."""
-    g = vm.VirtualMeter.ClockStepGuard(15)
-    g.tick()
-    ts_dead = clock["wall"] - 40               # genuinely stale (40s > 15 bound)
-    clock["wall"] -= 138.0                      # backward NTP step
-    g.tick()                                    # → grace
-    assert not vm.VirtualMeter._is_fresh(g.freshness_now(), ts_dead, 15)  # during grace
-    clock["mono"] += g.grace_s + 0.1            # grace ends
-    # freshness_now now returns the raw (lower) wall clock; ts_dead is in its
-    # future — the guard must still refuse it
-    assert not vm.VirtualMeter._is_fresh(g.freshness_now(), ts_dead, 15)
 
 
 def test_all_freshness_sites_reject_future_ts():

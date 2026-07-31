@@ -617,10 +617,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     'unit': item.get('register').unit if item.get('register') else '',
                     'poll_group': poll_group,
                     # 'timestamp' is the ISO DISPLAY time (falls back to now for
-                    # a rare untimestamped value); 'ts' is the NUMERIC freshness
-                    # clock the vmeter reads — None when the driver gave no
-                    # measurement time, so a missing time fails CLOSED (stale)
-                    # instead of being laundered into "fresh".
+                    # a rare untimestamped value); 'ts' is the numeric wall
+                    # measurement time (public via /api/values). The vmeter
+                    # freshness clock is 'mono' below — a MONOTONIC stamp, so it
+                    # is immune to wall-clock steps; None when the driver gave no
+                    # time, so a missing time fails CLOSED (stale).
                     'timestamp': (datetime.fromtimestamp(_ts).isoformat()
                                   if _ts else datetime.now().isoformat()),
                     'ts': _ts if _ts else None,
@@ -883,7 +884,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                    # node YAML CRUD self-audits (key names only); skip the
                    # generic body capture so a pasted literal wifi_password:/OTA
                    # key inside the YAML string never lands in audit.jsonl
-                   "/api/builder/nodes/")
+                   "/api/builder/nodes/", "/api/builder/settings",
+                   "/api/builder/profiles")
 
     @app.middleware("http")
     async def _audit_mw(request: Request, call_next):
@@ -1422,6 +1424,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         return {"status": "restored", "device": _device_entry(dev_cfg, client)}
 
     @app.delete("/api/devices/restorable/{device_id}")
+    @_serialized_mutation
     def forget_restorable_device(device_id: str):
         """Permanently drop a deleted device's kept settings (tombstone +
         registers). Irreversible; refuses to touch an active device."""
@@ -2466,6 +2469,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             if isinstance(conn, dict):
                 conn.pop("password", None)           # MQTT-input broker password
                 conn.pop("headers", None)            # HTTP-input auth headers
+                if conn.get("url"):                  # HTTP URL may hold userinfo/token
+                    from .redact import redact_url
+                    conn["url"] = redact_url(conn["url"])
             rp = dev.get("rest_push")
             if isinstance(rp, dict):
                 rp.pop("headers", None)              # REST-push auth headers

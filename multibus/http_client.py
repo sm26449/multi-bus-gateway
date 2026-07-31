@@ -415,7 +415,7 @@ class HttpClient:
             self.connected = doc is not None
             if self.connected:
                 self.last_success_ts = time.time()
-            self.last_success_mono = time.monotonic()
+                self.last_success_mono = time.monotonic()
             return self.connected
         except Exception as e:  # noqa: BLE001
             logger.warning("HTTP device: initial fetch failed (%s) — pollers will retry", e)
@@ -460,7 +460,6 @@ class HttpClient:
     def get_stats(self) -> Dict:
         poll_rate = sum(1.0 / p.interval for p in self.pollers
                         if p.running and p.interval > 0)
-        now = time.time()
         age = (round(time.monotonic() - self.last_success_mono, 1)
                if self.last_success_mono else None)
         return {

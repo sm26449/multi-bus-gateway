@@ -80,35 +80,6 @@ def test_missing_timestamp_not_laundered_to_now():
 # Lot F — P2 batch
 # ---------------------------------------------------------------------------
 
-def test_clock_guard_grace_is_bounded_under_step_storm():
-    """A clock that keeps stepping can't hold the fail-safe suppressed forever
-    — cumulative grace is capped at MAX_TOTAL_GRACE_MULT windows."""
-    from multibus import virtual_meter as vm
-    class FT: wall = 1000.0; mono = 500.0
-    ft = FT()
-    _orig_time, _orig_mono = vm.time.time, vm.time.monotonic
-    vm.time.time = lambda: ft.wall
-    vm.time.monotonic = lambda: ft.mono
-    try:
-        g = vm.VirtualMeter.ClockStepGuard(10)     # grace_s = 10
-        g.tick()
-        ceiling = None
-        # step every 3s of monotonic time, forever
-        for _ in range(20):
-            ft.mono += 3.0
-            ft.wall += 100.0                        # a >5s step each round
-            g.tick()
-            if g._grace_ceiling and ceiling is None:
-                ceiling = g._grace_ceiling
-        # grace must have a ceiling and eventually expire despite constant steps
-        assert ceiling is not None
-        # push monotonic past the ceiling → grace is over even mid-storm
-        ft.mono = g._grace_ceiling + 1
-        assert g.in_grace is False
-    finally:
-        vm.time.time = _orig_time
-        vm.time.monotonic = _orig_mono
-
 
 def test_add_instance_rejects_non_finite_bounds(tmp_path):
     from multibus.virtual_meter_manager import VirtualMeterManager

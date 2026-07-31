@@ -27,10 +27,15 @@ def _seed(app, store_attr, device_id, address, name, value, unit='', ts=None):
     store = getattr(app.state, store_attr)
     if store_attr == 'device_values':
         store = store.setdefault(device_id, {})
+    import time as _t
+    _wall = ts or datetime.now()
+    # mirror the wall age onto a monotonic stamp (freshness now reads 'mono')
+    _mono = _t.monotonic() - (datetime.now() - _wall).total_seconds()
     store[address] = {
         'value': value, 'name': name, 'label': name, 'unit': unit,
         'poll_group': 'normal',
-        'timestamp': (ts or datetime.now()).isoformat(),
+        'timestamp': _wall.isoformat(),
+        'mono': _mono,
     }
 
 
