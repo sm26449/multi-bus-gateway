@@ -1,0 +1,83 @@
+# Multi-Bus Gateway — ISOLATED load-test stack.
+#
+# ⚠️  RULE ZERO — never touches production:
+#   * own network (mbg-loadtest-net), own throwaway broker + influx
+#   * UI on 18080, virtual meters on 21502-21562 (NOT 502/1502-1512/8080)
+#   * config in a fresh named volume (loadtest-mbg-config), NOT /docker-storage
+#   * resource limits so a runaway test can't starve the production containers
+#     sharing the host.
+#
+# Bring up:   docker compose -f loadtest/docker-compose.loadtest.yml up -d --build
+# Seed:       python loadtest/seed_via_api.py --base http://127.0.0.1:18080 --devices 10 --vmeters 4
+# Drive:      python loadtest/vmeter_client_swarm.py --targets 127.0.0.1:21502 --clients 20
+# Collect:    python loadtest/collect_metrics.py --base http://127.0.0.1:18080 --container loadtest-mbg
+# Tear down:  docker compose -f loadtest/docker-compose.loadtest.yml down -v
+name: mbg-loadtest
+
+networks:
+  mbg-loadtest-net:
+    driver: bridge
+
+volumes:
+  loadtest-mbg-config:
+
+services:
+  loadtest-mbg:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: multi-bus-gateway:loadtest
+    container_name: loadtest-mbg
+    networks: [mbg-loadtest-net]
+    ports:
+      - "18080:18080"
+      - "21502-21562:21502-21562"     # test vmeter range — disjoint from prod
+    environment:
+      - UI_PORT=18080
+      - VMETER_PORT_START=21502
+      - VMETER_PORT_END=21562
+      - MQTT_ENABLED=true
+      - MQTT_BROKER=loadtest-mosquitto
+      - MQTT_PORT=1883
+      # Influx off by default — turn on to measure write load (§6.2)
+      - INFLUXDB_ENABLED=false
+    volumes:
+      - loadtest-mbg-config:/app/config
+    command: ["python", "main.py", "-c", "config/config.yaml"]
+    depends_on: [loadtest-mosquitto]
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"       # cap so the test can't eat the whole host
+          memory: 1g
+
+  loadtest-mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: loadtest-mosquitto
+    networks: [mbg-loadtest-net]
+    ports: ["21883:1883"]
+    command: ["sh", "-c", "printf 'listener 1883\\nallow_anonymous true\\n' > /m.conf && exec mosquitto -c /m.conf"]
+
+  # S1 — fake device fleet (add more with distinct ports/units for a bigger fleet)
+  loadtest-sim-devices:
+    build:
+      context: ..
+      dockerfile: loadtest/Dockerfile.sim
+    image: multi-bus-gateway:loadtest-sim
+    container_name: loadtest-sim-devices
+    networks: [mbg-loadtest-net]
+    command: ["python", "loadtest/sim_devices.py", "--host", "0.0.0.0",
+              "--port", "6502", "--units", "16", "--tick-ms", "250"]
+
+  # Optional: disposable InfluxDB (enable INFLUXDB_ENABLED on loadtest-mbg to use)
+  # loadtest-influxdb:
+  #   image: influxdb:2.7
+  #   container_name: loadtest-influxdb
+  #   networks: [mbg-loadtest-net]
+  #   ports: ["28086:8086"]
+  #   environment:
+  #     - DOCKER_INFLUXDB_INIT_MODE=setup
+  #     - DOCKER_INFLUXDB_INIT_USERNAME=test
+  #     - DOCKER_INFLUXDB_INIT_PASSWORD=testtest123
+  #     - DOCKER_INFLUXDB_INIT_ORG=loadtest
+  #     - DOCKER_INFLUXDB_INIT_BUCKET=loadtest

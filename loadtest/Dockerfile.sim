@@ -1,0 +1,5 @@
+# Minimal image for the load-test simulators (S1 device fleet / S3 swarm).
+FROM python:3.11-slim
+WORKDIR /app
+RUN pip install --no-cache-dir "pymodbus==3.6.9"
+COPY loadtest/ ./loadtest/
