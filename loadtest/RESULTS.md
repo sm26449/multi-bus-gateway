@@ -94,6 +94,49 @@ Production (1 device, 2 vmeters, ~2 clients) ≈ 45 FDs — ~950 to spare.
 
 ---
 
+## §6.6 Combined worst-case (2026-08-01)
+
+**Setup:** everything at once — **30 sim-backed devices** (janitza template,
+67 regs, 0.25/5/60 s groups) + **30 vmeters** (sourcing the primary) +
+**300 client connections** (10 per vmeter across 30 ports, 250 ms cadence).
+MQTT/Influx off (their load is additive, §6.2 — the sim doesn't churn the
+janitza read addresses, so publish would be unrealistically low here). 180 s
+sustained. `--cpus 2 --memory 1g`.
+
+**During-load footprint (collector, every 5 s):**
+
+| Metric | Value |
+|---|---|
+| CPU | max 42.5%, **avg 36%** of 2-core cap (~0.7 core, 58% idle) |
+| FDs | **733** (23 base + ~300 dev + 120 vmeter + 300 client — additive) |
+| Threads | 159 (11 + 3·30 dev + 2·30 vmeter) |
+| RAM | 162 → 179 MiB peak |
+| Client reads | 213,860 / 180 s = **1184/s, 0 errors**, p50 1.0 / p95 8.9 / **p99 19.4** / max 87 ms |
+
+**P0 — held under combined load:**
+- vmeters **30/30 fresh** the entire run, worst freshness **0.5 s** (vs 15 s).
+- worst device staleness **1.0 s** — identical to §6.1 in isolation, NOT
+  degraded by the concurrent vmeter-serve + 300-client-read load.
+
+**Findings — the envelopes compose cleanly:**
+- **No emergent GIL blowup.** Individual CPU (interpolated: ~10% for 30 dev +
+  ~13% for 30 vmeter + ~30% for 300 clients ≈ 53% naive sum) vs **combined 36%**
+  — sub-additive, not super-linear. Loading all three at once did NOT move the
+  knee below the individual limits.
+- **FDs compose additively** (733 ≈ sum of the per-dimension costs) — confirming
+  the joint FD budget is the real binding constraint, and it is predictable.
+- Device polling stayed crisp (1.0 s tail) while 300 clients hammered the
+  vmeters at 1184 reads/s — the client-read path does not steal from the poller.
+
+### Verdict (§6.6)
+A **~20× production-scale** combined load (30 dev + 30 vmeter + 300 clients)
+runs at **36% CPU, 733/1024 FDs, all SLOs green**. The individual capacity
+envelopes hold together; plan by the **additive FD budget**
+(`~23 + 10·dev + 4·vmeter + 1·client ≤ 1024`), which binds before CPU. Raise
+`ulimits: nofile` to scale past it.
+
+---
+
 ## §6.3 Number of virtual meters (2026-07-31)
 
 **Setup:** isolated test-MBG (real Janitza), N cloned `em24_av53` vmeters all
