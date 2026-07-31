@@ -22,6 +22,7 @@ VirtualMeter per enabled instance. Isolated from the UI/MQTT/InfluxDB paths.
 """
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
@@ -40,6 +41,18 @@ from .register_parser import RegisterParser
 from .virtual_meter import VirtualMeter, _parse_source, load_template
 
 logger = logging.getLogger(__name__)
+
+
+def _cfg_mutation(fn):
+    """Serialize a whole load→modify→save cycle on virtual_meters.yaml — two
+    concurrent API requests must not lose each other's changes (the per-write
+    atomicity of _save_cfg protects the FILE, not the read-modify-write)."""
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        with self._cfg_lock:
+            return fn(self, *args, **kwargs)
+    return wrapper
+
 
 # Filename-safe template id (also blocks path traversal).
 _ID_RE = re.compile(r"^[a-z0-9_]+$")
@@ -81,7 +94,7 @@ def make_multi_provider(default_store: dict, stores: dict, primary_store: dict,
                         primary_device_id: str, bounds_for=None):
     """Composite provider: resolve ``device.register`` across ALL device caches;
     a bare name stays in the instance's own store (byte-identical single-source
-    behavior). Returns (value, unix_ts, source_stale_bound) — the third element
+    behavior). Returns (value, monotonic_ts, source_stale_bound) — the third element
     lets the engine judge each row against ITS source's freshness threshold
     (a 60s BLE sensor next to a 250ms Janitza row).
 
@@ -132,6 +145,9 @@ class VirtualMeterManager:
         # (state-publisher thread) — prevents 'list changed size during
         # iteration' under concurrency.
         self._meters_lock = threading.RLock()
+        # serializes load→modify→save cycles on virtual_meters.yaml (see
+        # _cfg_mutation); always taken OUTSIDE _meters_lock when both are held
+        self._cfg_lock = threading.RLock()
         self.mqtt_publisher = mqtt_publisher        # optional: publish state to MQTT
         self.modbus_client = modbus_client          # optional: publish data-acquisition health
         self._states_stop = threading.Event()
@@ -231,7 +247,9 @@ class VirtualMeterManager:
             name = vm.t.name if vm else tid
             if vm is None:
                 try:
-                    name = load_template(str(self.templates_dir / f"{tid}.yaml")).name
+                    _p = self._template_path(str(tid or ""))
+                    if _p is not None:
+                        name = load_template(str(_p)).name
                 except Exception:  # noqa: BLE001
                     pass
             meters.append({"id": tid, "name": name})
@@ -328,7 +346,9 @@ class VirtualMeterManager:
                 name = vm.t.name
             else:                                    # load template for the friendly name
                 try:
-                    name = load_template(str(self.templates_dir / f"{tid}.yaml")).name
+                    _p = self._template_path(str(tid or ""))
+                    if _p is not None:
+                        name = load_template(str(_p)).name
                 except Exception:  # noqa: BLE001
                     pass
             row = {"template": tid, "enabled": bool(inst.get("enabled", True)),
@@ -695,11 +715,17 @@ class VirtualMeterManager:
     def _dump_template(tid: str, name: str, byte_order: str, transport: dict,
                        regs: list[dict]) -> str:
         """Render a clean, human-readable template YAML (hex addrs, one reg/line)."""
+        def _q(s) -> str:
+            # JSON string escaping is valid YAML double-quoted-scalar syntax —
+            # quotes/newlines/backslashes in free text (name, source, note)
+            # can't corrupt the hand-crafted layout or change its meaning
+            return json.dumps(str(s), ensure_ascii=False)
+
         lines = ["# Managed by the Virtual Meter template editor — UI saves overwrite this file.",
-                 "template:", f"  id: {tid}", f'  name: "{name}"', "  kind: flat",
+                 "template:", f"  id: {tid}", f"  name: {_q(name)}", "  kind: flat",
                  f"  byte_order: {byte_order}",
                  f'  transport: {{ type: {transport["type"]}, port: {transport["port"]}, '
-                 f'unit_id: {transport["unit_id"]}, bind: "{transport["bind"]}" }}',
+                 f'unit_id: {transport["unit_id"]}, bind: {_q(transport["bind"])} }}',
                  "  registers:"]
         for r in regs:
             parts = [f"addr: 0x{r['addr']:04x}", f"type: {r['type']}"]
@@ -710,21 +736,22 @@ class VirtualMeterManager:
             if r["type"] == "string":
                 parts.append(f"length: {max(1, r['length'])}")
             if r["source_kind"] == "live":
-                parts.append(f'source: {{ live: "{r["source"]}" }}')
+                parts.append(f'source: {{ live: {_q(r["source"])} }}')
             elif r["source_kind"] == "sum":
-                names = ", ".join(f'"{n}"' for n in r["source"])
+                names = ", ".join(_q(n) for n in r["source"])
                 parts.append(f'source: {{ sum: [{names}] }}')
             elif r["source_kind"] == "const_str":
-                parts.append(f'source: {{ const_str: "{r["source"]}" }}')
+                parts.append(f'source: {{ const_str: {_q(r["source"])} }}')
             else:
                 parts.append(f'source: {{ const: {r["source"]} }}')
             if r.get("stale_after_s"):
                 parts.append(f"stale_after_s: {r['stale_after_s']:g}")
             if r["note"]:
-                parts.append(f'note: "{r["note"].replace(chr(34), chr(39))}"')
+                parts.append(f"note: {_q(r['note'])}")
             lines.append("    - { " + ", ".join(parts) + " }")
         return "\n".join(lines) + "\n"
 
+    @_cfg_mutation
     def add_instance(self, template_id: str, port: int, unit_id: int = 1,
                      stale_after_s: float = 15.0, enabled: bool = False,
                      device: str = "", on_stale: str = "legacy",
@@ -779,6 +806,7 @@ class VirtualMeterManager:
                 return {"error": f"added but failed to start: {e}"}
         return {"template": template_id, "added": True, "enabled": bool(enabled)}
 
+    @_cfg_mutation
     def remove_instance(self, template_id: str) -> dict:
         """Stop + remove a virtual-meter instance."""
         cfg = self._load_cfg()
@@ -800,6 +828,7 @@ class VirtualMeterManager:
                 pass
         return {"template": template_id, "removed": True}
 
+    @_cfg_mutation
     def set_enabled(self, template_id: str, on: bool) -> dict:
         """Persist enabled flag + start/stop the instance live."""
         cfg = self._load_cfg()
@@ -825,6 +854,7 @@ class VirtualMeterManager:
                     pass
         return {"template": template_id, "enabled": bool(on)}
 
+    @_cfg_mutation
     def update_instance(self, template_id: str, port=None, unit_id=None,
                         stale_after_s=None, update_interval_s=None,
                         device=None, on_stale=None, max_hold_s=None,
@@ -934,7 +964,10 @@ class VirtualMeterManager:
         provider = make_multi_provider(self._store_for(inst), self.device_values,
                                        self.current_values, self.primary_device_id,
                                        bounds_for=self.bounds_for)
-        tmpl_path = self.templates_dir / f"{inst['template']}.yaml"
+        tmpl_path = self._template_path(str(inst.get("template", "")))
+        if tmpl_path is None:                # invalid id / traversal attempt
+            raise ValueError(f"invalid template id {inst.get('template')!r} "
+                             "in virtual_meters.yaml — instance not started")
         template = load_template(str(tmpl_path))
         if "port" in inst:
             template.transport["port"] = int(inst["port"])

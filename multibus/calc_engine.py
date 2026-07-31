@@ -195,14 +195,18 @@ class CalcEngine:
             # rather than treating a fabricated now() as fresh.
             _in_num = [datetime.fromisoformat(t).timestamp() for t in _in_ts]
             _in_mono = list(getattr(resolve, 'touched_mono', []))
+            _ts = min(_in_num) if _in_num else None
+            _mono = min(_in_mono) if _in_mono else None
             values_store[reg.address] = {
                 'value': val, 'name': reg.name, 'label': reg.label,
                 'unit': reg.unit, 'poll_group': reg.poll_group,
                 'timestamp': _result_ts, 'calculated': True,
-                'ts': min(_in_num) if _in_num else None,
-                'mono': min(_in_mono) if _in_mono else None,
+                'ts': _ts, 'mono': _mono,
             }
-            batch[reg.address] = {'value': val, 'register': reg}
+            # same item shape as the poller batch: downstream publishers stamp
+            # points with the OLDEST input's time, not a fabricated now()
+            batch[reg.address] = {'value': val, 'register': reg,
+                                  'ts': _ts, 'mono': _mono}
         if not batch:
             return {}
         mqtt_publisher, influxdb_publisher = self._publishers()

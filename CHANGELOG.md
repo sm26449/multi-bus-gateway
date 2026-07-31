@@ -1,5 +1,65 @@
 # Changelog
 
+## 3.3.4
+
+### 2026-07-31 — security-hardening audit remediation
+
+Point-by-point remediation of the 2026-07-31 security-hardening audit
+(all findings independently re-verified against v3.3.3 first):
+
+- **P1 — legacy freshness is now fail-CLOSED per row.** The default
+  `on_stale: legacy` mode encoded individually-stale rows and judged only the
+  NEWEST timestamp, so "A fresh + B expired" kept the server up serving B's
+  old words as live to an ESS. Every row that resolves to a value is now
+  judged against its own bound cascade (row → source device → instance) and
+  one stale/unstamped row stops the whole meter. Missing rows keep the pinned
+  gap contract (the production EM24 depends on it); legacy still never
+  refuses individual reads. `health_state` follows the supervisor's gate
+  immediately instead of waiting for `_last_fresh_ts` to age out.
+- **Export/import round-trip regression (introduced in 3.3.3) closed both
+  ways**: the sanitized export now also redacts `rest_push.url` (device +
+  root) and `influxdb.url`; the merge-import recognizes a URL that is exactly
+  the live URL's redacted form and keeps the live original
+  (`connection.url`, `rest_push.url`, `influxdb.url`) — a sanitized
+  export→import no longer overwrites a working URL with `?api_key=***`.
+- **Calculated values keep their timestamps end-to-end**: the calc batch now
+  carries `ts`/`mono` (same shape as the poller batch), so InfluxDB stamps
+  the point with the OLDEST input's time instead of falling back to `now()`
+  for a stale result.
+- **Lost-update races serialized**: virtual-meter instance mutations
+  (add/update/remove/enable) run under a config lock; builder profile
+  save/delete under a profile lock; `save_calculated`, `save_energy_fields`,
+  `save_device_poll_groups` and `save_calculated_templates` now hold
+  `_file_lock` like the register writer.
+- **Template handling hardened**: `_start_one` and the two friendly-name
+  fallbacks resolve templates through `_template_path` (a hand-edited
+  `template: ../x` can no longer read outside the templates dir); the
+  template editor's YAML dump escapes free text (name/source/note) with
+  JSON-string quoting, so quotes/newlines can't corrupt the file.
+- **Route validation**: discovery unit-sweep/SunSpec/MQTT-browse now
+  range-check ports (1..65535) like the scan routes; builder `generate`
+  validates `registers` as a list of strings and maps TypeError → 422;
+  `package_import_url` restricted to http(s)/github without embedded
+  credentials; artifact `file`/`download` params validated and the
+  Content-Disposition filename sanitized; the builder stream's `port` accepts
+  only `OTA` or a `/dev/...` serial path.
+- **Secret redaction**: viewer-role `GET /api/config` and
+  `/api/config/influxdb` redact URLs (same convention as `/api/devices`);
+  env-override reporting redacts `INFLUXDB_URL`; audit entries redact URL
+  VALUES (not just secret key names) and a URL-shaped `target`; the ESPHome
+  dashboard URL rejects embedded credentials on save and is redacted in
+  settings/status responses.
+- **Cleanup**: the ad-hoc MQTT test tears down `loop_stop()`+`disconnect()`
+  in a `finally`; per-poll-group `age_s` moved to the monotonic clock;
+  http_client's write-only `last_success_ts` removed; `ClockStepGuard`'s dead
+  `grace_s` parameter removed; stale "grace window"/"unix_ts" docstrings
+  corrected; the vacuous `in_grace` source-text assertion replaced — freshness
+  tests are now behavioral (legacy gate, future-stamp rejection in
+  `_rebuild_block`/`json_view`/`health_state`).
+
+Not addressed (deliberate): ~40 unused legacy i18n keys (en/ro key sets are
+equal; removal is churn without behavior change).
+
 ## 3.3.3
 
 ### 2026-07-31 — dead-code + loose-ends cleanup (final audit pass)

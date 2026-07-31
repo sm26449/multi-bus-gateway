@@ -43,15 +43,15 @@ def clock(monkeypatch):
 
 
 
-def test_supervisor_ticks_guard_but_does_not_gate_stop_on_grace():
-    """Since freshness moved to the monotonic clock (step-immune), the stale
-    stop is NO LONGER gated by the grace window — a real stale stops the meter
-    immediately even during a clock step. The guard is still ticked, only for
-    the diagnostic clock_step event."""
+def test_supervisor_ticks_guard_but_freshness_ignores_it():
+    """Since freshness moved to the monotonic clock (step-immune), the guard is
+    diagnostic-only: it is still ticked (for the clock_step event) but exposes
+    no grace/freshness API for anything to consult."""
     import inspect
     src = inspect.getsource(vm.VirtualMeter._supervise)
     assert "clock_guard.tick()" in src                 # still logs clock steps
-    assert "not clock_guard.in_grace" not in src       # but no longer gates the stop
+    g = vm.VirtualMeter.ClockStepGuard()
+    assert not hasattr(g, "in_grace") and not hasattr(g, "freshness_now")
 
 
 # ---------------------------------------------------------------------------
@@ -129,14 +129,30 @@ def test_clock_guard_detects_step_for_diagnostics(clock):
 
 
 
-def test_rebuild_block_uses_monotonic_clock():
-    """Freshness is judged on the MONOTONIC clock (driver 'mono' stamps vs
-    time.monotonic()) — step-immune by construction, not via wall rebasing."""
-    import inspect
-    src = inspect.getsource(vm.VirtualMeter._rebuild_block)
-    assert "time.monotonic()" in src
-    q = inspect.getsource(vm.VirtualMeter._quality_words)
-    assert "time.monotonic()" in q
+def test_legacy_gate_future_or_missing_stamp_fails_closed():
+    """Behavioral: the legacy per-row gate judges each stamped row on the
+    monotonic clock — a fresh stamp opens the gate; a FUTURE monotonic stamp
+    (corrupted) or a missing 'mono' fails the instance CLOSED, so the
+    supervisor stops the meter instead of serving frozen values."""
+    import time as _t
+    from multibus.virtual_meter import VirtualMeter, Template, RegisterDef
+
+    def mk(provider):
+        return VirtualMeter(Template(id="t", name="t", kind="flat",
+                                     transport={"port": 1502},
+                                     registers=[RegisterDef(addr=0, type="float",
+                                                source_kind="live", source="A")]),
+                            provider, stale_after_s=15.0, on_stale="legacy")
+
+    m = mk(lambda n: (10.0, _t.monotonic() - 3.0))
+    m._rebuild_block()
+    assert m._legacy_all_fresh is True             # fresh row → gate open
+    m = mk(lambda n: (10.0, _t.monotonic() + 120.0))
+    m._rebuild_block()
+    assert m._legacy_all_fresh is False            # future stamp → fail closed
+    m = mk(lambda n: (10.0, None))
+    m._rebuild_block()
+    assert m._legacy_all_fresh is False            # no mono stamp → fail closed
 
 
 # ---------------------------------------------------------------------------
@@ -155,12 +171,38 @@ def test_future_timestamp_is_never_fresh():
 
 
 
-def test_all_freshness_sites_reject_future_ts():
-    import inspect
-    for m in (vm.VirtualMeter._rebuild_block, vm.VirtualMeter._supervise,
-              vm.VirtualMeter.json_view, vm.VirtualMeter.health_state):
-        src = inspect.getsource(m)
-        assert "_is_fresh(" in src, m.__name__
+def test_json_view_marks_future_stamp_stale():
+    """Behavioral: the JSON feed applies the same never-fresh rule to a FUTURE
+    monotonic stamp — the row degrades to quality=stale, value=null."""
+    import time as _t
+    from multibus.virtual_meter import VirtualMeter, Template, RegisterDef
+    m = VirtualMeter(Template(id="t", name="t", kind="flat",
+                              transport={"port": 1502},
+                              registers=[RegisterDef(addr=0, type="float",
+                                         source_kind="live", source="A")]),
+                     lambda n: (10.0, _t.monotonic() + 300.0), stale_after_s=15.0)
+    view = m.json_view()
+    assert view["values"]["A"]["quality"] == "stale"
+    assert view["values"]["A"]["value"] is None
+    assert view["complete"] is False
+
+
+def test_health_state_reflects_supervisor_gate_immediately():
+    """Behavioral: legacy health follows the supervisor's per-row gate — one
+    stale row flips health to 'stale' at once, without waiting for
+    _last_fresh_ts to age past the instance bound."""
+    import time as _t
+    from multibus.virtual_meter import VirtualMeter, Template, RegisterDef
+    m = VirtualMeter(Template(id="t", name="t", kind="flat",
+                              transport={"port": 1502},
+                              registers=[RegisterDef(addr=0, type="uint16",
+                                         source_kind="live", source="A")]),
+                     lambda n: None, stale_after_s=15.0)
+    m._last_fresh_ts = _t.monotonic() - 1.0        # recent — fresh by age alone
+    m._policy_fresh = False                        # ...but the gate says stale
+    assert m.health_state() == "stale"
+    m._policy_fresh = True                         # gate open + recent age
+    assert m.health_state() in ("ok", "down")      # (down: no server started)
 
 
 def test_hold_policy_respects_future_ts_guard():

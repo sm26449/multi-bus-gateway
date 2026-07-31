@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import threading
 from typing import Dict
 
 from fastapi import APIRouter, Body, HTTPException, Request, WebSocket
@@ -130,9 +131,10 @@ def build(ctx) -> APIRouter:
     @r.get("/api/builder/settings")
     def get_builder_settings():
         """The esphome: block with the password redacted (UI settings form)."""
+        from ..redact import redact_url
         c = _cfg()
         return {"enabled": bool(c.get("enabled")),
-                "url": str(c.get("url", "") or ""),
+                "url": redact_url(str(c.get("url", "") or "")),
                 "username": str(c.get("username", "") or ""),
                 "password_set": bool(c.get("password")),
                 "timeout_s": float(c.get("timeout_s", 10) or 10)}
@@ -148,6 +150,10 @@ def build(ctx) -> APIRouter:
             if u.scheme not in ("http", "https") or not u.netloc:
                 raise HTTPException(status_code=422, detail={"errors": [
                     "url must be http(s)://host:port (e.g. http://esphome:6052)"]})
+            if "@" in u.netloc:
+                raise HTTPException(status_code=422, detail={"errors": [
+                    "credentials in the URL are not allowed — use the "
+                    "username/password fields instead"]})
         try:
             timeout_s = float(payload.get("timeout_s", 10))
         except (TypeError, ValueError):
@@ -187,14 +193,15 @@ def build(ctx) -> APIRouter:
             hit = _status_cache.get(cli.base)
             if hit and time.monotonic() - hit[0] < _STATUS_TTL_S:
                 return hit[1]
+        from ..redact import redact_url
         try:
             payload = {"enabled": True, "reachable": True,
                        "version": cli.version(),
                        "node_count": len(cli.devices()["configured"]),
-                       "url": cli.base}
+                       "url": redact_url(cli.base)}
         except EsphomeError as e:
             payload = {"enabled": True, "reachable": False, "version": "",
-                       "node_count": 0, "url": cli.base, "error": str(e)}
+                       "node_count": 0, "url": redact_url(cli.base), "error": str(e)}
         with _cache_lock:
             _status_cache[cli.base] = (time.monotonic(), payload)
         return payload
@@ -224,6 +231,14 @@ def build(ctx) -> APIRouter:
             raise HTTPException(status_code=422, detail={"errors": [
                 "project_name and package_import_url are required — pick the "
                 "node from the importable list, which carries both"]})
+        # the dashboard fetches this URL — accept only the schemes ESPHome
+        # itself announces for importable nodes, and never embedded credentials
+        from urllib.parse import urlparse
+        _pu = urlparse(args["package_import_url"])
+        if _pu.scheme not in ("http", "https", "github") or "@" in _pu.netloc:
+            raise HTTPException(status_code=422, detail={"errors": [
+                "package_import_url must be an http(s):// or github:// package "
+                "source without embedded credentials"]})
         configuration = _wrap(lambda: _client().import_node(args))
         with _cache_lock:
             _status_cache.clear()      # node_count changed
@@ -290,7 +305,17 @@ def build(ctx) -> APIRouter:
                           download: str = ""):
         _require_admin(request)
         _check_name(name)
+        # `file` is a build-artifact path the dashboard's downloads list gave
+        # us — never a traversal; `download` becomes the Content-Disposition
+        # filename, so it must stay a bare name (no separators/quotes/CRLF)
+        if (not re.match(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$", file)
+                or ".." in file):
+            raise HTTPException(status_code=422, detail={"errors": [
+                "file must be an artifact path from the downloads list"]})
+        if download:
+            download = re.sub(r"[^A-Za-z0-9._-]", "_", download)[:128]
         data, fname = _wrap(lambda: _client().download_bin(name, file, download))
+        fname = re.sub(r"[^A-Za-z0-9._-]", "_", str(fname or "firmware.bin"))[:128]
         _audit(request, "esphome binary download", f"{name}:{file}",
                detail={"bytes": len(data)})
         return Response(
@@ -347,6 +372,10 @@ def build(ctx) -> APIRouter:
     def _profiles_path():
         return config.config_path.parent / "builder_profiles.json"
 
+    # serializes the load→modify→save cycle (and the shared .tmp file) of the
+    # profile store — two concurrent saves must not lose each other's profile
+    _profiles_lock = threading.Lock()
+
     def _load_profiles() -> list:
         import json
         p = _profiles_path()
@@ -384,19 +413,21 @@ def build(ctx) -> APIRouter:
                         ("tx_pin", ""), ("rx_pin", ""), ("flow_control_pin", ""),
                         ("baud_rate", 9600), ("parity", "NONE"), ("stop_bits", 1)):
             prof[k] = payload.get(k, dflt)
-        items = [x for x in _load_profiles() if x.get("id") != pid] + [prof]
-        _save_profiles(items)
+        with _profiles_lock:
+            items = [x for x in _load_profiles() if x.get("id") != pid] + [prof]
+            _save_profiles(items)
         _audit(request, "builder profile save", pid)
         return {"status": "saved", "profile": prof}
 
     @r.delete("/api/builder/profiles/{pid}")
     def delete_profile(pid: str, request: Request):
-        items = _load_profiles()
-        keep = [x for x in items if x.get("id") != pid]
-        if len(keep) == len(items):
-            raise HTTPException(status_code=404, detail="profile not found "
-                                "(built-ins cannot be deleted)")
-        _save_profiles(keep)
+        with _profiles_lock:
+            items = _load_profiles()
+            keep = [x for x in items if x.get("id") != pid]
+            if len(keep) == len(items):
+                raise HTTPException(status_code=404, detail="profile not found "
+                                    "(built-ins cannot be deleted)")
+            _save_profiles(keep)
         _audit(request, "builder profile delete", pid)
         return {"status": "deleted"}
 
@@ -426,7 +457,7 @@ def build(ctx) -> APIRouter:
         }
         try:
             out = generate_node(payload, tpl, config.poll_groups, mqtt_defaults)
-        except ValueError as e:
+        except (ValueError, TypeError) as e:   # malformed payload shapes → 422, not 500
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
         return out
 
@@ -488,6 +519,11 @@ def build(ctx) -> APIRouter:
 
         name = websocket.query_params.get("configuration", "")
         port = websocket.query_params.get("port", "OTA")
+        # OTA or a serial device path only — this string reaches the
+        # dashboard's subprocess spawn verbatim
+        if not re.match(r"^(OTA|/dev/[A-Za-z0-9._-]{1,64})$", port):
+            await websocket.close(code=1008)
+            return
         if command == "update-all":
             name = ""                       # fleet-wide: no configuration
         elif not _NAME_RE.match(name) or ".." in name:

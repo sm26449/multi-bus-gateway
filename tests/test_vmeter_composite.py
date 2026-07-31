@@ -18,9 +18,11 @@
 
 The convention under test (docs/design → the aggregator evaluation):
   * absence must NEVER be encodable as a plausible measurement (no 0/false)
-  * legacy instances (no on_stale) keep the EXACT pre-composite semantics —
-    gap keeps last words, one instance-level watchdog (Victron EM24 in
-    production depends on this)
+  * legacy instances (no on_stale) keep the pre-composite READ semantics —
+    gap keeps last words, individual reads are never refused (Victron EM24 in
+    production depends on this) — but since 3.3.4 the watchdog is fail-CLOSED
+    per row: every row that resolves to a value must be fresh (row bound →
+    source bound → instance bound) or the whole meter stops responding
   * fail     → reads touching a stale register are refused (Modbus exception)
   * sentinel → SunSpec NA words (float NaN, int16 0x8000, uint16 0xFFFF, …)
   * hold     → last value up to max_hold_s, then behaves like fail
@@ -106,6 +108,56 @@ def test_legacy_sum_gap_on_missing_member():
     del vals["B"]
     vm._rebuild_block()
     # gap — no partial sum was written (the entry stays at its last value)
+
+
+# ── legacy: fail-closed per row (3.3.4) ──────────────────────────────────────
+
+def test_legacy_one_stale_row_closes_the_gate():
+    """P1 (2026-07-31 audit): A fresh + B expired must NOT keep the server up
+    serving B's old words as live — one stale row fails the instance closed."""
+    now = time.monotonic()
+    vals = {"A": (10.0, now), "B": (20.0, now - 999)}     # B stale
+    vm = VirtualMeter(T([live(0, "A"), live(2, "B")]),
+                      lambda n: vals.get(n), stale_after_s=15, on_stale="legacy")
+    newest = vm._rebuild_block()
+    assert newest == now                              # display ts still newest
+    assert f32(words_at(vm, 2)) == 20.0               # words encoded (reads never refused)
+    assert vm._legacy_all_fresh is False              # ...but the supervisor will stop
+    vals["B"] = (20.0, time.monotonic())              # source recovers
+    vm._rebuild_block()
+    assert vm._legacy_all_fresh is True
+
+
+def test_legacy_row_bound_cascade():
+    """Legacy judges each row on ITS bound (row → source → instance) — a slow
+    source with its own threshold must not flap the meter."""
+    now = time.monotonic()
+    # row-level bound: 40s old with stale=60 is fresh despite instance bound 15
+    vals = {"SLOW": (5.0, now - 40)}
+    vm = VirtualMeter(T([live(0, "SLOW", stale=60)]), lambda n: vals.get(n),
+                      stale_after_s=15, on_stale="legacy")
+    vm._rebuild_block()
+    assert vm._legacy_all_fresh is True
+    # source-level bound: provider's 3rd element carries the device threshold
+    vm = VirtualMeter(T([live(0, "X")]), lambda n: (5.0, now - 40, 60.0),
+                      stale_after_s=15, on_stale="legacy")
+    vm._rebuild_block()
+    assert vm._legacy_all_fresh is True
+
+
+def test_legacy_missing_row_keeps_gap_but_fresh_rows_gate():
+    """A MISSING row keeps the pinned gap contract (no verdict contribution);
+    the gate closes only when nothing at all is fresh."""
+    now = time.monotonic()
+    vals = {"A": (10.0, now)}                        # B absent entirely
+    vm = VirtualMeter(T([live(0, "A"), live(2, "B")]),
+                      lambda n: vals.get(n), stale_after_s=15, on_stale="legacy")
+    vm._rebuild_block()
+    assert words_at(vm, 2) is None                    # gap for the missing row
+    assert vm._legacy_all_fresh is True               # fresh A keeps the gate open
+    vals.clear()                                      # everything vanishes
+    vm._rebuild_block()
+    assert vm._legacy_all_fresh is False              # nothing fresh → gate closed
 
 
 # ── policy: fail ──────────────────────────────────────────────────────────────

@@ -2000,15 +2000,18 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 cli.loop_start()
                 ev.wait(timeout=3.0)
             except Exception as e:  # noqa: BLE001
+                return {"ok": False, "error": f"connect failed: {e}"}
+            finally:
+                # both halves, on EVERY path — a connect that half-succeeded
+                # must not leak its socket/network thread
                 try:
                     cli.loop_stop()
                 except Exception:  # noqa: BLE001
                     pass
-                return {"ok": False, "error": f"connect failed: {e}"}
-            try:
-                cli.loop_stop(); cli.disconnect()
-            except Exception:  # noqa: BLE001
-                pass
+                try:
+                    cli.disconnect()
+                except Exception:  # noqa: BLE001
+                    pass
             if not got["connected"]:
                 return {"ok": False, "message": "could not connect to the broker"}
             if got["msg"] is not None:
@@ -2047,9 +2050,20 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # /api/languages(+{code}) → routes/languages.py
 
     @app.get("/api/config")
-    async def get_config():
-        """Get current configuration."""
-        return config.to_dict()
+    async def get_config(request: Request):
+        """Get current configuration. URLs are redacted for the viewer role —
+        a read-only credential must not walk away with URL-embedded secrets
+        (same convention as /api/devices)."""
+        data = config.to_dict()
+        if getattr(request.state, "role", None) == "viewer":
+            from .redact import redact_url
+            _inf = data.get("influxdb")
+            if isinstance(_inf, dict) and _inf.get("url"):
+                _inf["url"] = redact_url(str(_inf["url"]))
+            for _dev in (data.get("devices") or []):
+                if isinstance(_dev, dict) and _dev.get("http_url"):
+                    _dev["http_url"] = redact_url(str(_dev["http_url"]))
+        return data
 
     # /api/registers/* → routes/registers_routes.py
 
@@ -2298,11 +2312,15 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 "allow_nonlan_http_devices": config.security.allow_nonlan_http_devices}
 
     @app.get("/api/config/influxdb")
-    async def get_influxdb_config():
-        """Get InfluxDB configuration."""
+    async def get_influxdb_config(request: Request):
+        """Get InfluxDB configuration (URL redacted for the viewer role)."""
+        _url = config.influxdb.url
+        if getattr(request.state, "role", None) == "viewer" and _url:
+            from .redact import redact_url
+            _url = redact_url(str(_url))
         return {
             "enabled": config.influxdb.enabled,
-            "url": config.influxdb.url,
+            "url": _url,
             "org": config.influxdb.org,
             "bucket": config.influxdb.bucket,
             "write_interval": config.influxdb.write_interval,
@@ -2460,8 +2478,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     def _strip_device_secrets(data: dict):
         """Redact per-device secrets that live inside the devices[] list: the MQTT
-        broker / HTTP-input password + headers, and REST-push auth headers. These
-        are NOT top-level so _strip_paths misses them."""
+        broker / HTTP-input password + headers, REST-push auth headers, and any
+        URL that may embed credentials. These are NOT top-level so _strip_paths
+        misses them. The import side (_merge_devices) recognizes the redacted
+        URL forms and keeps the live originals on a merge-import."""
+        from .redact import redact_url
         for dev in (data.get("devices") or []):
             if not isinstance(dev, dict):
                 continue
@@ -2470,11 +2491,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 conn.pop("password", None)           # MQTT-input broker password
                 conn.pop("headers", None)            # HTTP-input auth headers
                 if conn.get("url"):                  # HTTP URL may hold userinfo/token
-                    from .redact import redact_url
                     conn["url"] = redact_url(conn["url"])
             rp = dev.get("rest_push")
             if isinstance(rp, dict):
                 rp.pop("headers", None)              # REST-push auth headers
+                if rp.get("url"):                    # push target may hold a token
+                    rp["url"] = redact_url(rp["url"])
     # network identity kept out of a portable backup (clone-to-another-host safe)
     _IDENTITY_PATHS = [("ui", "host"), ("ui", "port")]
 
@@ -2528,6 +2550,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 if not include_secrets:
                     _strip_paths(data, _SECRET_PATHS)
                     _strip_device_secrets(data)
+                    # top-level URLs can embed credentials too (userinfo /
+                    # ?token=…) — same redaction, same import re-injection
+                    from .redact import redact_url as _redact_url
+                    for _sect in ("rest_push", "influxdb"):
+                        _node = data.get(_sect)
+                        if isinstance(_node, dict) and _node.get("url"):
+                            _node["url"] = _redact_url(_node["url"])
                     _al = data.get("alerts")
                     if isinstance(_al, dict) and _al.get("webhook_url"):
                         from urllib.parse import urlsplit, urlunsplit

@@ -349,7 +349,6 @@ class HttpClient:
         self.connected = False
         self.successful_reads = 0
         self.failed_reads = 0
-        self.last_success_ts = None
         self.last_success_mono = None   # step-immune staleness
         self.last_latency_ms = None
         self._lock = threading.Lock()
@@ -399,7 +398,6 @@ class HttpClient:
     def _note_success(self, n: int):
         with self._lock:
             self.successful_reads += 1
-            self.last_success_ts = time.time()
             self.last_success_mono = time.monotonic()
             self.connected = True
 
@@ -414,7 +412,6 @@ class HttpClient:
             doc = self._fetch()
             self.connected = doc is not None
             if self.connected:
-                self.last_success_ts = time.time()
                 self.last_success_mono = time.monotonic()
             return self.connected
         except Exception as e:  # noqa: BLE001

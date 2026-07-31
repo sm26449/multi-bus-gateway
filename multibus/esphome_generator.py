@@ -117,6 +117,11 @@ def generate_node(payload: Dict[str, Any], template, poll_groups: Dict,
     modb = dict(payload.get('modbus') or {})
     mqtt = dict(payload.get('mqtt') or {})
     wanted = payload.get('registers') or []
+    # must be register NAMES — a non-string entry (e.g. a dict) would blow up
+    # as an unhashable key downstream instead of a clean 422
+    if (not isinstance(wanted, list)
+            or any(not isinstance(n, str) for n in wanted)):
+        raise ValueError("registers must be a list of register names (strings)")
 
     # ---- node identity ---------------------------------------------------------
     name = str(node.get('name', '') or '').strip().lower()

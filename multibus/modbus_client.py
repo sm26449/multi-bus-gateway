@@ -360,7 +360,8 @@ class RegisterPoller(threading.Thread):
 
         # Poll rate tracking
         self.poll_count = 0
-        self.last_poll_time = None
+        self.last_poll_time = None       # wall time (display)
+        self.last_poll_mono = None       # monotonic (step-immune age)
 
         # Optimize reads by grouping consecutive addresses
         self._read_groups = self._create_read_groups()
@@ -520,6 +521,7 @@ class RegisterPoller(threading.Thread):
                         self.publish_callback(self.poll_group_name, data)
                         self.poll_count += 1
                         self.last_poll_time = time.time()
+                        self.last_poll_mono = time.monotonic()
                         logger.debug(f"{self._tag}Poller {self.poll_group_name}: read {len(data)} values")
 
                 except Exception as e:
@@ -826,11 +828,12 @@ class ModbusClient:
 
         last_success = self.connection.last_success_ts
         last_success_mono = self.connection.last_success_mono
-        now = time.time()
+        now_mono = time.monotonic()      # ages are monotonic (step-immune)
         poll_groups_detail = [
             {'name': p.poll_group_name, 'interval': p.interval,
              'last_poll_ts': p.last_poll_time,
-             'age_s': round(now - p.last_poll_time, 1) if p.last_poll_time else None,
+             'age_s': (round(now_mono - p.last_poll_mono, 1)
+                       if getattr(p, 'last_poll_mono', None) else None),
              'poll_count': p.poll_count}
             for p in self.pollers]
 

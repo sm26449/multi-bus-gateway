@@ -48,7 +48,9 @@ from .encoder import RegisterEncoder
 
 logger = logging.getLogger(__name__)
 
-# value_provider(source_name) -> (engineering_value, unix_ts) or None if unknown
+# value_provider(source_name) -> (engineering_value, monotonic_ts) or None if
+# unknown — the timestamp is a time.monotonic() stamp (the freshness clock),
+# NOT wall time.
 ValueProvider = Callable[[str], Optional[tuple]]
 
 # Write function codes (single/multiple coil+register, mask, read/write).
@@ -300,7 +302,8 @@ class VirtualMeter:
         self._last_good: dict[int, tuple[list[int], float]] = {}   # addr → (words, ts) for hold
         self._unavail_spans: list[tuple[int, int]] = []            # [start, end) refused when policy=fail
         self._quality = {"fresh": 0, "stale": 0, "missing": 0}     # last rebuild summary (status)
-        self._policy_fresh = False                                 # supervisor verdict (policy modes)
+        self._policy_fresh = False                                 # supervisor verdict (all modes)
+        self._legacy_all_fresh = False                             # legacy gate: every stamped row fresh
         self._regs_out: list[tuple[int, list[int]]] = []   # (addr, words) per register
         # Block spans only [min_addr, max_addr] of the template. Starting the
         # block at the map base (not 0) makes reads BELOW the map return a Modbus
@@ -339,7 +342,7 @@ class VirtualMeter:
         # time.monotonic()), so it is immune to wall-clock/NTP steps by
         # construction. This guard is kept only to emit a diagnostic clock_step
         # event; it no longer participates in the freshness verdict.
-        self._clock_guard = self.ClockStepGuard(self.stale_after_s)
+        self._clock_guard = self.ClockStepGuard()
 
     # ── value resolution + encoding ────────────────────────────────────────
     @staticmethod
@@ -391,34 +394,51 @@ class VirtualMeter:
     @staticmethod
     def _is_fresh(now: float, ts: Optional[float], bound: float) -> bool:
         """Fresh iff a real, non-future timestamp within ``bound``. A FUTURE
-        stamp (now-ts < 0 — e.g. a store timestamp captured before a backward
-        clock step, once the step's grace window has ended) is NEVER fresh:
-        serving such frozen values as live into an ESS control loop is exactly
-        the failure the freshness watchdog exists to prevent."""
+        stamp (now-ts < 0 — a corrupted or mis-sourced monotonic stamp) is
+        NEVER fresh: serving such frozen values as live into an ESS control
+        loop is exactly the failure the freshness watchdog exists to prevent."""
         return bool(ts) and 0.0 <= (now - ts) <= bound
 
     def _rebuild_block(self) -> float:
         """Recompute (addr, words) for every register. Returns newest live ts.
 
-        LEGACY mode (default; byte-identical to the pre-composite engine): a
-        register with no value leaves a gap — the block keeps its last words —
-        and freshness is judged ONCE per instance by the supervisor.
+        LEGACY mode (default): a register with no value leaves a gap — the
+        block keeps its last words (pre-composite contract; the production
+        Victron EM24 depends on it). Freshness is fail-CLOSED per row since
+        3.3.4: every row that resolves to a value is judged against its own
+        bound cascade (row bound → source-device bound → instance bound), and
+        one stale row fails the whole instance — the supervisor then stops the
+        server (the meter goes silent) instead of serving that row's old words
+        as live. Legacy still never refuses individual reads; the fail-safe is
+        all-or-nothing. (Legacy ``sum`` rows keep their historical newest-member
+        ts — use a policy mode for worst-input sum quality.)
 
         Policy modes (fail/sentinel/hold) judge freshness PER REGISTER against
-        (row bound → source-device bound → instance bound) and apply the
-        configured treatment; the returned ts is the newest FRESH one, so the
-        supervisor's server-up rule becomes "at least one live source fresh".
+        the same bound cascade and apply the configured treatment; the returned
+        ts is the newest FRESH one, so the supervisor's server-up rule becomes
+        "at least one live source fresh".
         """
         if self.on_stale == "legacy":
+            now = time.monotonic()
             out: list[tuple[int, list[int]]] = []
             newest = 0.0
+            all_fresh = True
             for reg in self.t.registers:
-                regs, ts, _b = self._resolve(reg)
+                regs, ts, src_bound = self._resolve(reg)
                 if regs is None:
                     continue                          # leave gap (keep last value)
                 out.append((reg.addr, [w & 0xffff for w in regs]))
+                if reg.source_kind in ("const", "const_str"):
+                    continue                          # consts are never stale
                 if ts:
                     newest = max(newest, ts)
+                bound = (reg.stale_after_s if reg.stale_after_s is not None
+                         else src_bound if src_bound is not None
+                         else self.stale_after_s)
+                # ts None (source without a mono stamp) fails closed here too
+                if not self._is_fresh(now, ts, bound):
+                    all_fresh = False
+            self._legacy_all_fresh = all_fresh and newest > 0.0
             if self.quality_block:
                 out.append((QUALITY_BASE, self._quality_words(newest)))
             with self._lock:
@@ -718,14 +738,11 @@ class VirtualMeter:
         (driver 'mono' stamps vs time.monotonic()), so it is immune to steps by
         construction and no longer depends on this guard. The guard is kept only
         to emit a `clock_step` event so operators can see "system clock adjusted"
-        in the timeline; ``in_grace``/``freshness_now`` are no longer consulted
-        by the freshness path."""
+        in the timeline; it plays no part in the freshness verdict."""
 
         STEP_THRESHOLD_S = 5.0
 
-        def __init__(self, grace_s: float = 0.0):
-            # grace_s is accepted for construction compatibility but unused —
-            # freshness no longer has a grace window (it is monotonic).
+        def __init__(self):
             self._drift_prev = None
             self.last_step_s = 0.0
 
@@ -763,12 +780,12 @@ class VirtualMeter:
                     self.stats.record_event("warn", "clock_step", msg)
                     logger.warning("virtual meter %s: %s", self.t.id, msg)
                 newest = self._rebuild_block()
-                # legacy: one instance-level freshness judgement. Policy modes:
-                # _rebuild_block already judged per register — newest is the
-                # newest FRESH ts, so any fresh row keeps the server up.
+                # legacy: fail-closed per row — _rebuild_block set the gate;
+                # one stale row stops the whole meter. Policy modes: freshness
+                # was judged per register — newest is the newest FRESH ts, so
+                # any fresh row keeps the server up.
                 fresh = ((newest > 0) if self.on_stale != "legacy"
-                         else self._is_fresh(time.monotonic(),
-                                             newest, self.stale_after_s))
+                         else self._legacy_all_fresh)
                 self._policy_fresh = fresh            # health_state's policy-mode signal
                 if fresh:
                     self._last_fresh_ts = newest
@@ -965,8 +982,11 @@ class VirtualMeter:
             if not getattr(self, "_policy_fresh", False):
                 return "stale"
             return "ok" if self._alive() else "down"
+        # Legacy: the supervisor's per-row gate is the verdict; the age check on
+        # _last_fresh_ts is a backstop should the supervisor ever stop ticking.
         lf = self._last_fresh_ts
-        fresh = self._is_fresh(time.monotonic(), lf, self.stale_after_s)
+        fresh = (getattr(self, "_policy_fresh", False)
+                 and self._is_fresh(time.monotonic(), lf, self.stale_after_s))
         if not fresh:
             return "stale"
         return "ok" if self._alive() else "down"

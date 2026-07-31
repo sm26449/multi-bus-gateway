@@ -247,6 +247,30 @@ def test_calc_result_inherits_oldest_input_timestamp():
     assert calc["timestamp"] == old_ts          # oldest input, NOT now()
 
 
+def test_calc_batch_carries_ts_and_mono_for_publishers():
+    """3.3.4: the batch handed to the MQTT/Influx publishers carries the same
+    ts/mono as the store entry — InfluxDB must stamp the point with the OLDEST
+    input's time, never fall back to now() for an old value."""
+    from types import SimpleNamespace
+    from datetime import datetime
+    from multibus.calc_engine import CalcEngine, CALC_ADDR_BASE
+    old_ts = "2020-01-01T00:00:00"
+    new_ts = "2020-01-01T00:00:30"
+    store = {
+        1: {"name": "_A", "value": 10.0, "timestamp": new_ts, "mono": 200.0},
+        2: {"name": "_B", "value": 20.0, "timestamp": old_ts, "mono": 100.0},
+    }
+    cfg = SimpleNamespace(load_calculated=lambda d: [{"name": "_P", "expr": "_A + _B"}])
+    eng = CalcEngine(cfg, store_for=lambda d: store, publishers=lambda: (None, None))
+    eng.load("dev")
+    batch = eng.run("dev", "normal", store, topic_prefix="", bucket=None,
+                    device_tag=None, device_id="dev", mqtt_on=False, influx_on=False)
+    item = batch[CALC_ADDR_BASE]
+    assert item["ts"] == datetime.fromisoformat(old_ts).timestamp()   # oldest input
+    assert item["mono"] == 100.0                                      # oldest mono
+    assert item["ts"] == store[CALC_ADDR_BASE]["ts"]                  # same as store
+
+
 def test_calc_with_no_timestamped_inputs_falls_back_to_now():
     from types import SimpleNamespace
     from datetime import datetime

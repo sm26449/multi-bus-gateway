@@ -108,6 +108,45 @@ def test_merge_devices_reinjects_stripped_secrets():
     assert out2[0]["id"] == "new"
 
 
+def test_merge_devices_keeps_live_url_over_redacted_import():
+    """3.3.4: a sanitized export redacts connection.url / rest_push.url — the
+    merge-import must recognize the redacted form and keep the live URL, or the
+    round-trip silently breaks the device (?api_key=*** is not a token)."""
+    from multibus.redact import redact_url
+    from multibus.snapshots import _merge_devices
+    live_url = "http://user:tok@shelly.local/status?api_key=SECRET"
+    push_url = "https://ingest.example.com/p?token=ABC"
+    live = [{"id": "d1", "connection": {"url": live_url},
+             "rest_push": {"url": push_url}}]
+    incoming = [{"id": "d1", "connection": {"url": redact_url(live_url)},
+                 "rest_push": {"url": redact_url(push_url)}}]
+    out = _merge_devices(live, incoming)
+    assert out[0]["connection"]["url"] == live_url          # live URL survives
+    assert out[0]["rest_push"]["url"] == push_url
+    # a deliberately CHANGED url in the backup is authoritative (not a redaction)
+    out2 = _merge_devices(live, [{"id": "d1",
+                                  "connection": {"url": "http://other.host/x"}}])
+    assert out2[0]["connection"]["url"] == "http://other.host/x"
+
+
+def test_reinject_restores_top_level_redacted_urls():
+    """3.3.4: root rest_push.url and influxdb.url are exported through
+    redact_url — the merge-import re-injects the live originals."""
+    from multibus.redact import redact_url
+    from multibus.snapshots import _reinject_stripped_secrets
+    live = {"rest_push": {"url": "https://push.example.com/i?key=S3CR3T"},
+            "influxdb": {"url": "http://admin:pw@influx.local:8086"}}
+    merged = {"rest_push": {"url": redact_url(live["rest_push"]["url"])},
+              "influxdb": {"url": redact_url(live["influxdb"]["url"])}}
+    _reinject_stripped_secrets(merged, live)
+    assert merged["rest_push"]["url"] == live["rest_push"]["url"]
+    assert merged["influxdb"]["url"] == live["influxdb"]["url"]
+    # a genuinely different imported URL stays authoritative
+    merged2 = {"influxdb": {"url": "http://newhost:8086"}}
+    _reinject_stripped_secrets(merged2, live)
+    assert merged2["influxdb"]["url"] == "http://newhost:8086"
+
+
 # ---------------------------------------------------------------------------
 # Lot F — P3 batch
 # ---------------------------------------------------------------------------

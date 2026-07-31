@@ -48,11 +48,25 @@ _LKG_ZIP = "lkg.zip"
 _LKG_META = "lkg.json"
 
 
+def _is_redaction_of(live_url, incoming_url) -> bool:
+    """True when the imported URL is exactly the live URL's redacted form
+    (userinfo dropped / secret query values → ``***``) — i.e. a sanitized
+    export masked a credential that a merge-import must not clobber."""
+    if not live_url or not incoming_url or live_url == incoming_url:
+        return False
+    try:
+        from .redact import redact_url
+        return redact_url(str(live_url)) == str(incoming_url)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _merge_devices(live_list, incoming_list):
     """Merge the devices[] list per id: the incoming list is authoritative for
     the device SET, but each device's stripped secret fields (connection
-    password/headers, rest_push headers) are refilled from the matching live
-    device when the incoming value is absent or empty."""
+    password/headers/url, rest_push headers/url) are refilled from the matching
+    live device when the incoming value is absent, empty, or the live value's
+    redacted form."""
     live_by_id = {d.get("id"): d for d in live_list if isinstance(d, dict)}
     out = []
     for dev in incoming_list:
@@ -68,14 +82,21 @@ def _merge_devices(live_list, incoming_list):
                     for key in keys:
                         if not i_s.get(key) and l_s.get(key):
                             i_s[key] = l_s[key]
+            # a sanitized export redacts URLs in place — importing that form
+            # would silently break the device (?api_key=*** is not a token)
+            for sect in ("connection", "rest_push"):
+                l_s, i_s = live.get(sect), dev.get(sect)
+                if isinstance(l_s, dict) and isinstance(i_s, dict):
+                    if _is_redaction_of(l_s.get("url"), i_s.get("url")):
+                        i_s["url"] = l_s["url"]
         out.append(dev)
     return out
 
 
 def _reinject_stripped_secrets(merged, live):
-    """Restore secrets a sanitized export blanked at the top level (only the
-    alerts.webhook_url token today — device secrets are handled per-id in
-    _merge_devices)."""
+    """Restore secrets a sanitized export blanked at the top level
+    (alerts.webhook_url, rest_push.url, influxdb.url — device secrets are
+    handled per-id in _merge_devices)."""
     m_al, l_al = merged.get("alerts"), live.get("alerts")
     if isinstance(m_al, dict) and isinstance(l_al, dict):
         m_url, l_url = m_al.get("webhook_url", ""), l_al.get("webhook_url", "")
@@ -84,6 +105,13 @@ def _reinject_stripped_secrets(merged, live):
         # the live one so the webhook still authenticates.
         if l_url and m_url and l_url.startswith(m_url) and l_url != m_url:
             m_al["webhook_url"] = l_url
+    # rest_push.url / influxdb.url are exported through redact_url — keep the
+    # live URL when the import carries exactly its redacted form
+    for sect in ("rest_push", "influxdb"):
+        m_s, l_s = merged.get(sect), live.get(sect)
+        if isinstance(m_s, dict) and isinstance(l_s, dict):
+            if _is_redaction_of(l_s.get("url"), m_s.get("url")):
+                m_s["url"] = l_s["url"]
 
 
 def write_bundle_files(zf: zipfile.ZipFile, *, cfg_dir: Path, user_tpl_dir: Path,

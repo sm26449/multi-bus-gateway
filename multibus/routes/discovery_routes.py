@@ -60,6 +60,15 @@ def _require_lan_host(host: str) -> str:
     return sorted(addrs)[0]
 
 
+def _port_or_422(port: int) -> int:
+    """Shared TCP-port bound for every discovery route — an out-of-range port
+    must 422 here, not surface from the client code."""
+    if not 1 <= port <= 65535:
+        raise HTTPException(status_code=422,
+                            detail={"errors": ["port must be 1..65535"]})
+    return port
+
+
 def build(ctx) -> APIRouter:
     r = APIRouter(tags=["discovery"])
     config = ctx.config
@@ -135,8 +144,12 @@ def build(ctx) -> APIRouter:
             _e = discovery.lan_host_error(host, config.security.allow_nonlan_http_devices)
             if _e:
                 raise HTTPException(status_code=422, detail={"errors": [_e]})
+            try:
+                tcp_port = _port_or_422(int(payload.get('port', 502)))
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422, detail={"errors": ["port must be a number"]})
             units = await asyncio.to_thread(discovery.sweep_units_tcp, host,
-                                            int(payload.get('port', 502)), u0, u1, timeout)
+                                            tcp_port, u0, u1, timeout)
         return {"protocol": proto, "units": units}
 
     @r.post("/api/discover/sunspec")
@@ -157,6 +170,7 @@ def build(ctx) -> APIRouter:
             timeout = min(5.0, max(0.5, float(payload.get('timeout', 2.0))))
         except (TypeError, ValueError):
             raise HTTPException(status_code=422, detail={"errors": ["port/unit_id/timeout must be numbers"]})
+        _port_or_422(port)
         return await asyncio.to_thread(discovery.sunspec_walk, host, port, unit, timeout)
 
     @r.post("/api/discover/mqtt/browse")
@@ -176,6 +190,7 @@ def build(ctx) -> APIRouter:
             duration = float(payload.get('duration_s', 3.0))
         except (TypeError, ValueError):
             raise HTTPException(status_code=422, detail={"errors": ["port/duration_s must be numbers"]})
+        _port_or_422(port)
         return await asyncio.to_thread(
             discovery.mqtt_browse, broker, port,
             str(payload.get('username', '') or ''), str(payload.get('password', '') or ''),

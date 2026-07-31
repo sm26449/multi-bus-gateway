@@ -653,19 +653,20 @@ class Config:
                 raise ValueError(f"poll group {name!r}: interval must be >= 0.05 s "
                                  f"(got {iv}) — 0 would flood the bus")
         path = self.device_registers_path(device_id)
-        if path.exists():
-            with open(path) as f:
-                data = json.load(f)
-        else:
-            data = {"version": "1.0", "registers": [], "poll_groups": {}}
-        data["poll_groups"] = groups
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        with open(tmp, "w") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-            f.flush()
-            os.fsync(f.fileno())               # durable before the rename
-        os.replace(tmp, path)
+        with self._file_lock:                  # serialize the read-modify-write
+            if path.exists():
+                with open(path) as f:
+                    data = json.load(f)
+            else:
+                data = {"version": "1.0", "registers": [], "poll_groups": {}}
+            data["poll_groups"] = groups
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            with open(tmp, "w") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())           # durable before the rename
+            os.replace(tmp, path)
         if device_id == PRIMARY_DEVICE_ID:
             for name, g in groups.items():
                 self.poll_groups[name] = PollGroup(interval=float(g.get("interval", 5)),
@@ -700,19 +701,20 @@ class Config:
         """Persist the device's calculated registers alongside its register file
         (a top-level ``calculated`` list, next to registers/poll_groups)."""
         path = self.device_registers_path(device_id)
-        if path.exists():
-            with open(path) as f:
-                data = json.load(f)
-        else:
-            data = {"version": "1.0", "registers": [], "poll_groups": {}}
-        data["calculated"] = calculated
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + '.tmp')
-        with open(tmp, 'w') as f:
-            json.dump(data, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
+        with self._file_lock:                  # serialize the read-modify-write
+            if path.exists():
+                with open(path) as f:
+                    data = json.load(f)
+            else:
+                data = {"version": "1.0", "registers": [], "poll_groups": {}}
+            data["calculated"] = calculated
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(path.suffix + '.tmp')
+            with open(tmp, 'w') as f:
+                json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
 
     def load_calculated_templates(self) -> List[Dict]:
         """User-saved reusable calculated presets (global, not per-device)."""
@@ -728,31 +730,33 @@ class Config:
     def save_calculated_templates(self, templates: List[Dict]) -> None:
         """Persist the user's reusable calculated presets (atomic)."""
         p = self.config_path.parent / "calculated_templates.json"
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(p.suffix + '.tmp')
-        with open(tmp, 'w') as f:
-            json.dump({"version": "1.0", "templates": templates}, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, p)
+        with self._file_lock:                  # load()+save() cycles race otherwise
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_suffix(p.suffix + '.tmp')
+            with open(tmp, 'w') as f:
+                json.dump({"version": "1.0", "templates": templates}, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, p)
 
     def save_energy_fields(self, device_id: str, fields: List[Dict]) -> None:
         """Persist the Energy-tab field selection alongside the device's registers
         file (a top-level ``energy_fields`` list, next to registers/poll_groups)."""
         path = self.device_registers_path(device_id)
-        if path.exists():
-            with open(path) as f:
-                data = json.load(f)
-        else:
-            data = {"version": "1.0", "registers": [], "poll_groups": {}}
-        data["energy_fields"] = fields
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        with open(tmp, "w") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
+        with self._file_lock:                  # serialize the read-modify-write
+            if path.exists():
+                with open(path) as f:
+                    data = json.load(f)
+            else:
+                data = {"version": "1.0", "registers": [], "poll_groups": {}}
+            data["energy_fields"] = fields
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            with open(tmp, "w") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
         logger.info(f"device {device_id}: energy fields set ({len(fields)})")
 
     def load_device_registers(self, device: DeviceConfig):
@@ -1177,11 +1181,19 @@ class Config:
             'UI_PORT': 'ui.port',
         }
         # Secret-bearing paths: report only that they are env-pinned, never the
-        # value (this endpoint is readable without the API key).
+        # value (this endpoint is readable without the API key). URL-valued
+        # paths go through redact_url — an env URL can embed userinfo/tokens.
         secret_paths = {'mqtt.password', 'influxdb.token'}
+        url_paths = {'influxdb.url'}
         for env_var, config_path in env_mappings.items():
             if os.getenv(env_var):
-                overrides[config_path] = '***' if config_path in secret_paths else os.getenv(env_var)
+                if config_path in secret_paths:
+                    overrides[config_path] = '***'
+                elif config_path in url_paths:
+                    from .redact import redact_url
+                    overrides[config_path] = redact_url(os.getenv(env_var))
+                else:
+                    overrides[config_path] = os.getenv(env_var)
         return overrides
 
     def save_yaml_config(self):

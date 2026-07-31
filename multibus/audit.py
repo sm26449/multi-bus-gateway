@@ -35,7 +35,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .redact import _is_secret_key
+from .redact import _is_secret_key, redact_url
 
 logger = logging.getLogger(__name__)
 
@@ -44,14 +44,29 @@ _ROTATE_BYTES = 1 << 20     # 1 MB per file
 _KEEP_FILES = 4             # audit.jsonl + audit.jsonl.1..4
 
 
+def _is_url_key(k: str) -> bool:
+    kl = k.lower()
+    return any(s in kl for s in ("url", "uri", "endpoint"))
+
+
 def redact_obj(obj: Any, depth: int = 0) -> Any:
-    """Deep-copy ``obj`` with secret-keyed values masked. Never raises."""
+    """Deep-copy ``obj`` with secret-keyed values masked and URL-keyed string
+    VALUES passed through redact_url (a url can embed userinfo/tokens that a
+    key-name check alone would keep). Never raises."""
     try:
         if depth > 8:
             return "…"
         if isinstance(obj, dict):
-            return {k: ("***" if _is_secret_key(str(k)) else redact_obj(v, depth + 1))
-                    for k, v in obj.items()}
+            out = {}
+            for k, v in obj.items():
+                ks = str(k)
+                if _is_secret_key(ks):
+                    out[k] = "***"
+                elif _is_url_key(ks) and isinstance(v, str):
+                    out[k] = redact_url(v)
+                else:
+                    out[k] = redact_obj(v, depth + 1)
+            return out
         if isinstance(obj, list):
             return [redact_obj(v, depth + 1) for v in obj[:50]]
         return obj
@@ -83,6 +98,10 @@ class AuditLog:
         """Record one action. Never raises — an audit failure must not break
         the request it describes (it is logged loudly instead)."""
         try:
+            # a target that IS a URL (device/builder actions) may carry
+            # credentials — store its redacted form, like detail values
+            if "://" in target:
+                target = redact_url(target)
             entry = {"ts": round(time.time(), 3), "user": user or "-",
                      "ip": ip or "-", "action": action[:200],
                      "target": target[:200], "status": status[:40]}
