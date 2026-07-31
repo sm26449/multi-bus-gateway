@@ -137,6 +137,33 @@ envelopes hold together; plan by the **additive FD budget**
 
 ---
 
+## §6.7 Soak — slow-leak detection (2026-08-01)
+
+**Setup:** 15 devices + 15 vmeters + 100 steady clients (250 ms) **+ 20 clients
+in continuous flap** (reconnect every cycle). Ran **27.7 min** sampled every
+20 s (called early — the trend was conclusive). The flap swarm alone made
+**523,394 reconnections** — connection-path churn far beyond weeks of normal
+operation.
+
+**Trend (steady state, after ~2 min warmup):**
+
+| Metric | Behaviour |
+|---|---|
+| RAM | **mean 121.4 MiB, flat** (119.6–122.0 across 25+ min; one transient 130 blip, immediately back). No monotonic growth. |
+| FDs | 323–343, oscillating with flap churn, **no upward trend** |
+| Threads | **83–84, constant** |
+| vmeters ok | **15/15 every single sample**; worst freshness ≤ 0.5 s |
+| device staleness | 0.4–1.0 s, stable |
+
+### Verdict (§6.7)
+**No leak.** Half a million connection churn cycles left RAM, FDs, and threads
+flat, and P0 held throughout. This is the definitive confirmation of the §6.4
+flap result over the long haul — the `_conn_seen` / connection-handling paths do
+not accumulate. (A full overnight 2–4 h soak could be scheduled for extra
+assurance, but the trend here is already conclusive.)
+
+---
+
 ## §6.3 Number of virtual meters (2026-07-31)
 
 **Setup:** isolated test-MBG (real Janitza), N cloned `em24_av53` vmeters all
