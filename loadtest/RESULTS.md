@@ -164,6 +164,53 @@ assurance, but the trend here is already conclusive.)
 
 ---
 
+## §6.8 Failure injection (2026-08-01)
+
+### Scenario A — source failure fail-safe (the ESS-critical test)
+**Setup:** 5 devices + 5 vmeters + 30 clients reading at 250 ms,
+`stale_after_s`=15. Killed the data source (sim) under load at t=30 s, restored
+it at t=66 s; sampled `/health` every 2 s and the client swarm every 10 s.
+
+**Timeline:**
+
+| t (s) | phase | vmeters | worst freshness | client swarm |
+|---:|---|---|---|---|
+| 0–30 | baseline | **5 ok** | 0.2–0.4 s | 120 reads/s, 0 err, 0 connfail |
+| 30 | **source killed** | 5 ok | — | still reading |
+| 30–40 | aging | 5 ok | 0.4 → 10.6 s | still serving last-good (within the 15 s bound) |
+| **42** | **threshold crossed** | **0 ok / 5 stale** | 12.7 s | — |
+| 42–66 | source dead | 0 ok / 5 stale | 20 → 41 s | **reads STOP, connfail climbs 420→1620** |
+| 66 | **source restored** | 5 stale | 41 s | — |
+| **72** | **recovered (~6 s)** | **5 ok** | 0.3 s | reads resume, connfail plateaus |
+| 72–120 | healthy | 5 ok | 0.2–0.4 s | 89 reads/s, recovering |
+
+**The fail-safe is exactly right:**
+- On source loss, vmeters serve last-good **only within the 15 s freshness
+  bound**, then transition to stale and the supervisor **STOPS the servers**.
+- Clients then get **connection-refused, NOT stale data**: `err%` stayed
+  **0.000** the whole time — the reads that returned were always fresh; the
+  failure mode is "can't connect" (connfail climbs), never "served a wrong
+  value." For an ESS this is the correct choice: **no data beats stale data.**
+- **Recovery in ~6 s** after the source returned — vmeters fresh, clients
+  resume, zero manual intervention.
+
+This live test validates the whole freshness-watchdog architecture (3.3.4
+per-row gate, monotonic freshness, fail-closed) under a real source failure:
+**the system fails SAFE.**
+
+### Scenario B — MQTT broker down (not run live)
+MQTT is a sink; the code already handles broker loss via paho auto-reconnect +
+LWT + `publish_if_changed` guarded on `connected`, so acquisition and vmeter
+serving continue regardless. A live confirmation is a low-risk follow-up.
+
+### Scenario C — clock step under load (covered by unit tests)
+Freshness is on the monotonic clock (immune to wall steps) and calc `dt` was
+moved to monotonic in 3.4.1. Covered by `test_freshness_is_immune_to_wall_clock_steps`
+and `test_calc_dt_uses_monotonic_clock_not_wall`; a live container clock step
+needs CAP_SYS_TIME and is not worth the risk given the unit coverage.
+
+---
+
 ## §6.3 Number of virtual meters (2026-07-31)
 
 **Setup:** isolated test-MBG (real Janitza), N cloned `em24_av53` vmeters all
