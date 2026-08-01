@@ -211,6 +211,27 @@ needs CAP_SYS_TIME and is not worth the risk given the unit coverage.
 
 ---
 
+## quality_block shared-lock — latency validation (3.4.2, 2026-08-01)
+
+The 3.4.2 word-tearing fix adds a `_store_lock` on the quality_block read/write
+paths. The question: does the lock hurt the hot read path? Isolated 3-way
+comparison, one vmeter, 400 clients @ 250 ms (multiple runs each):
+
+| variant | p50 | p99 |
+|---|---:|---:|
+| **A** — sequential block (default/production) | 1.2 ms | **~21 ms** |
+| **B** — quality_block + lock (the fix) | 6–8 ms | **~39–59 ms** |
+| **C** — quality_block, lock disabled (isolation) | 7–13 ms | **~44–72 ms** |
+
+**Conclusion:** B and C are statistically indistinguishable (overlapping, noisy)
+— **the lock adds no measurable latency.** The ~2× gap vs the sequential block
+is the `ModbusSparseDataBlock`'s inherent cost (dict lookups vs list slice),
+present with or without the lock. At production scale (~2 clients/vmeter) all
+variants are ~2 ms. The fix is free; quality_block is opt-in and off in
+production regardless.
+
+---
+
 ## §6.3 Number of virtual meters (2026-07-31)
 
 **Setup:** isolated test-MBG (real Janitza), N cloned `em24_av53` vmeters all

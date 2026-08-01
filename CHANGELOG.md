@@ -1,5 +1,33 @@
 # Changelog
 
+## 3.4.2
+
+### 2026-08-01 — quality_block word-tearing fix (shared datastore lock)
+
+Closes the last open P2 from the v3.4.0 audit. Under `quality_block` the vmeter
+serves from a `ModbusSparseDataBlock`, which writes a multi-word value
+**word-by-word**; the supervisor's block rebuild (`_push_to_ctx`) ran outside
+any lock the server's read path (`getValues`) shared, so a consumer reading a
+2-word float32 mid-rebuild could observe a torn hybrid (new high word + stale
+low word → a wildly wrong value into an ESS loop).
+
+- **Shared `_store_lock`** now guards both the write (whole block rebuild) and
+  the read (`getValues`) — but **only when `quality_block` is on**. The default
+  `ModbusSequentialDataBlock` writes each value as one atomic slice, so its hot
+  read path stays **byte-identical and lock-free** (zero production impact —
+  quality_block is opt-in and off in production).
+- **Validated under load** (isolated harness, quality_block ON vs OFF, up to
+  400 clients): the lock adds **no measurable latency** — quality_block-with-lock
+  and quality_block-without-lock are statistically indistinguishable (p99
+  ~40–72 ms, high variance, overlapping). The ~2× slowdown vs the sequential
+  block at high client counts is the **sparse block's inherent cost** (dict vs
+  slice), present with or without the lock, and irrelevant at production scale
+  (~2 clients/vmeter → ~2 ms either way).
+- **Deterministic race test** (`test_quality_block_no_word_tearing_under_concurrency`):
+  drives the real `_push_to_ctx` + `_store_lock` with an injected inter-word
+  delay; with the fix, zero torn reads; without the write-side lock, ~3M torn
+  reads/second.
+
 ## 3.4.1
 
 ### 2026-07-31 — hardening pass from the full-system audit (2 independent audits, adjudicated)

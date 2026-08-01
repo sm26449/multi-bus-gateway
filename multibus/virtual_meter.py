@@ -327,6 +327,12 @@ class VirtualMeter:
                            f"block at {QUALITY_BASE} — quality block disabled")
             self.quality_block = False
         self._lock = threading.Lock()
+        # Guards the datastore against word-tearing under quality_block: the
+        # ModbusSparseDataBlock writes a multi-word value word-by-word, so a
+        # consumer read must not observe a half-updated value. Only engaged when
+        # quality_block is on — the default ModbusSequentialDataBlock writes each
+        # value as one atomic slice, so its hot read path stays lock-free.
+        self._store_lock = threading.Lock()
         self._stop = threading.Event()
         self._sup_thread: threading.Thread | None = None
         self._server = None
@@ -589,9 +595,18 @@ class VirtualMeter:
                     pass
             return ok
 
+        _lock_reads = self.quality_block          # sparse block: guard reads
+        _store_lock = self._store_lock
+
         def _instrumented_get(address, count=1, _o=_orig_get):
             t0 = time.perf_counter()
-            vals = _o(address, count)
+            if _lock_reads:
+                # atomic w.r.t. the supervisor's block rebuild — a multi-word
+                # value is read whole (all-old or all-new), never torn
+                with _store_lock:
+                    vals = _o(address, count)
+            else:
+                vals = _o(address, count)   # sequential block: lock-free (atomic slice)
             try:
                 _stats.record(3, int(address), int(count), vals,
                               (time.perf_counter() - t0) * 1e6, time.time())
@@ -731,13 +746,19 @@ class VirtualMeter:
             return
         with self._lock:
             out = list(self._regs_out)
-        for addr, words in out:                      # zero_mode → address == index
-            # one setValues call per VALUE (not per word). NB: the default
-            # ModbusSequentialDataBlock stores this as one atomic slice write;
-            # the opt-in quality_block's ModbusSparseDataBlock stores word-by-word,
-            # so a concurrent multi-word read there can still tear (known P2 —
-            # the sparse read/write share no lock).
-            self._block.setValues(addr, words)
+        # one setValues call per VALUE (not per word). The default
+        # ModbusSequentialDataBlock stores each as one atomic slice write, so the
+        # write path is lock-free. Under quality_block the ModbusSparseDataBlock
+        # stores word-by-word, so the whole rebuild is held under _store_lock —
+        # the same lock the read path takes — so a consumer never sees a value
+        # torn across the write (the P2 word-tearing fix; validated under load).
+        if self.quality_block:
+            with self._store_lock:
+                for addr, words in out:              # zero_mode → address == index
+                    self._block.setValues(addr, words)
+        else:
+            for addr, words in out:
+                self._block.setValues(addr, words)
 
     # ── supervisor ─────────────────────────────────────────────────────────
 

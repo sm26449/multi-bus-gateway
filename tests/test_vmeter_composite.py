@@ -500,6 +500,63 @@ def test_quality_block_words_fresh_and_stale():
     assert w[1] == 3 and w[2] == 0                      # stale, nimic fresh
 
 
+def test_quality_block_no_word_tearing_under_concurrency():
+    """3.4.2: under quality_block the sparse block writes a multi-word value
+    word-by-word — a concurrent consumer read must not observe a half-updated
+    value (P2 word-tearing). The write path (_push_to_ctx) and the read path
+    both take _store_lock, so a reader sees a value whole (all-old or all-new).
+
+    We drive the REAL _push_to_ctx against a sparse block whose per-word write
+    is slowed to force the race window, and read under the SAME _store_lock the
+    server's getValues uses. The writer always writes EQUAL words [v, v], so any
+    read where hi != lo is a torn value. Without the shared lock this tears
+    within milliseconds; with it, never."""
+    import struct  # noqa: F401  (kept parallel to the encoder path)
+    import threading
+    import time as _t
+    from pymodbus.datastore import ModbusSparseDataBlock
+
+    now = time.monotonic()
+    vm = VirtualMeter(T([live(0, "a")]), _provider({"a": (1.0, now)}),
+                      quality_block=True, on_stale="legacy")
+    block = ModbusSparseDataBlock({0: 0, 1: 0})
+
+    def slow_set(addr, values, **_k):          # widen the tearing window
+        block.values[addr] = values[0]
+        _t.sleep(0.0003)
+        if len(values) > 1:
+            block.values[addr + 1] = values[1]
+    block.setValues = slow_set
+    vm._block = block
+
+    torn, stop = [], threading.Event()
+
+    def writer():
+        v = 1
+        while not stop.is_set():
+            with vm._lock:
+                vm._regs_out = [(0, [v, v])]   # equal words → a tear shows as hi!=lo
+            vm._push_to_ctx()                  # real write path: holds _store_lock
+            v = 2 if v == 1 else 1
+
+    def reader():
+        while not stop.is_set():
+            with vm._store_lock:               # mirrors _instrumented_get's guard
+                hi, lo = block.values[0], block.values[1]
+            if hi != lo:
+                torn.append((hi, lo))
+
+    ts = [threading.Thread(target=writer), threading.Thread(target=reader),
+          threading.Thread(target=reader)]
+    for t in ts:
+        t.start()
+    _t.sleep(1.0)
+    stop.set()
+    for t in ts:
+        t.join(timeout=2)
+    assert not torn, f"observed {len(torn)} torn reads, e.g. {torn[:3]}"
+
+
 def test_quality_block_legacy_state_zero_and_never_age():
     from multibus.virtual_meter import QUALITY_BASE
     vm = VirtualMeter(T([live(100, "a")]), _provider({}), quality_block=True)
