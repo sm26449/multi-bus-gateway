@@ -54,12 +54,9 @@ tools/capture-screenshots.js
 docs/PUBLISHING.md
 docs/ROADMAP.md
 docs/vendor/
+# Internal audit prompts & history — never published (see git history caveat before going public)
+.audit/
 config/audit.jsonl*
 config/events.jsonl
 config/snapshots/
 config/passkeys.json
-config/audit.jsonl*
-config/events.jsonl
-config/snapshots/
-config/passkeys.json
-__pycache__/
