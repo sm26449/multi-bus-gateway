@@ -158,8 +158,11 @@ Devices → *Discover devices*:
 
 1. **Connection** — pick the protocol:
    - **Modbus TCP**: host, port, unit ID, timeout.
-   - **Modbus RTU**: serial port (e.g. `/dev/ttyUSB0`), baud rate, parity,
-     stop bits — remember to pass the adapter into the container.
+   - **Modbus RTU**: two modes (see [rtu-serial.md](rtu-serial.md)).
+     **Over network (recommended)** — press **Scan** and pick a USB adapter
+     from the serial bridge (plug in → appears; unplug → gone), MBG stays
+     unprivileged. **Direct serial** — serial port (e.g. `/dev/ttyUSB0`),
+     baud, parity, stop bits, with the adapter mapped into the container.
    - **HTTP/JSON**: a URL returning JSON; each register extracts its value
      with a `json_path` (e.g. `Body.Data.PowerReal_P_Sum`). URLs must point
      at a private LAN host unless `security.allow_nonlan_http_devices` is

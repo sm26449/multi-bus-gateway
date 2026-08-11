@@ -69,7 +69,9 @@ viewer session ends when its cookie expires or is cleared client-side.
 | GET | `/api/devices/restorable` | Deleted devices whose settings were kept (id no longer active) | viewer |
 | POST | `/api/devices/{id}/restore` | Rebuild a deleted device from its kept tombstone (connection + template + registers) | admin |
 | DELETE | `/api/devices/restorable/{id}` | Permanently forget a deleted device's kept settings | admin |
-| POST | `/api/devices/test` | Ad-hoc connection probe for a not-yet-saved device (TCP/RTU/HTTP/MQTT) | operator |
+| GET | `/api/serial-ports` | Local `/dev` serial lines visible to the container (direct RTU mode; empty when MBG has no `/dev`) | viewer |
+| GET | `/api/bridge/adapters` | Live USB-adapter inventory from the serial bridge (RTU-over-network Scan); `available:false` with an `error` when the bridge is unreachable | viewer |
+| POST | `/api/devices/test` | Ad-hoc connection probe for a not-yet-saved device (TCP/RTU/rtu-tcp/HTTP/MQTT) | operator |
 | POST | `/api/devices/{id}/test` | Probe a saved device (uses its first selected register address) | operator |
 | GET | `/api/devices/{id}/poll-groups` | Current poll-group intervals | viewer |
 | POST | `/api/devices/{id}/poll-groups` | Update intervals (0.05–86400 s) and live-restart that device's pollers | admin |

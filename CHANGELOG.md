@@ -1,5 +1,35 @@
 # Changelog
 
+## 3.5.0
+
+### 2026-08-11 — Modbus RTU as a first-class citizen + serial-over-TCP bridge
+
+RTU now has two modes, both shipped and validated live against a real Fronius
+Smart Meter 65A-3 (rebranded Carlo Gavazzi EM24) on an FTDI USB-RS485 adapter.
+See [`docs/rtu-serial.md`](docs/rtu-serial.md) and the design at
+[`reviews/rtu-serial-bridge-design.md`](reviews/rtu-serial-bridge-design.md).
+
+- **New `rtu-tcp` transport** (`modbus_client._build_client`): `ModbusTcpClient`
+  + `ModbusRtuFramer` tunnels RTU frames over a raw TCP socket, so a device can
+  reach an adapter through a network bridge instead of a local `/dev` line.
+  Wired through device validation, the ad-hoc probe (Test connection) and
+  bus-trace (decoded as RTU wire framing).
+- **`serial-bridge` service** (ser2net + a Python supervisor): exposes each USB
+  serial adapter as a **stable internal TCP endpoint**, keyed by USB serial or
+  (serial-less CH340) physical port-path, persisted across replug/restart.
+  Unprivileged (`/dev` bind + cgroup rules), hotplug-aware (udev + periodic
+  reconcile), data ports internal-only, control API on localhost. A
+  `BRIDGE_EXCLUDE` list guarantees an adapter owned by another service (e.g. a
+  BMS) is **never** opened by the bridge.
+- **MBG stays unprivileged**: the primary path no longer maps `/dev` — RTU goes
+  over the bridge. Direct mode (`devices:` + `protocol: rtu`) remains for static
+  setups.
+- **Wizard**: Modbus RTU enabled with a mode sub-toggle — *Over network
+  (auto-detect)* (default) with a **Scan** button + adapter dropdown that binds
+  the device to an adapter's stable endpoint, and *Direct serial*. i18n EN+RO.
+- **New endpoints**: `GET /api/bridge/adapters` (scan, degrades gracefully when
+  the bridge is down), `GET /api/serial-ports` (local `/dev` for direct mode).
+
 ## 3.4.2
 
 ### 2026-08-01 — quality_block word-tearing fix (shared datastore lock)
