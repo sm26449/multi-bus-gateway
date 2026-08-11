@@ -63,10 +63,9 @@ low word → a wildly wrong value into an ESS loop).
 ### 2026-07-31 — hardening pass from the full-system audit (2 independent audits, adjudicated)
 
 Remediation of the confirmed findings from the v3.4.0 full-system audit (both
-audit reports cross-checked claim-by-claim; see
-`reviews/audit-2026-07-31-adjudication-v3.4.0.md`). No unconditional P1
-survived v3.4.0; this closes the cluster of conditional fail-opens and
-data-integrity gaps.
+audit reports cross-checked claim-by-claim in an internal adjudication). No
+unconditional P1 survived v3.4.0; this closes the cluster of conditional
+fail-opens and data-integrity gaps.
 
 **Freshness / ESS-safety (the wall-clock + unbounded gaps):**
 - **Calc engine integrates on the monotonic clock** — `dt` for rate/integral

@@ -2,8 +2,7 @@
 
 **System:** Multi-Bus Gateway v3.4.1  **Date:** 2026-08-01
 **Basis:** 7-phase load/stress campaign (§6.0–§6.8), full data in
-[`RESULTS.md`](RESULTS.md), method in
-[`../reviews/load-test-plan-mbg-2026-07-31.md`](../reviews/load-test-plan-mbg-2026-07-31.md).
+[`RESULTS.md`](RESULTS.md).
 **Test hardware:** container capped at **2 CPU / 1 GiB**, `nofile`=1024, on a
 12-core host. Isolated stack; the baseline used the **real Janitza** (live data),
 the ramps used the sim fleet. Production was never touched.

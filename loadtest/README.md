@@ -1,7 +1,6 @@
 # MBG load-test harness (Phase A)
 
-Instruments for finding MBG's capacity limits per the plan
-(`reviews/load-test-plan-mbg-2026-07-31.md`). **Isolated from production** — see
+Instruments for finding MBG's capacity limits. **Isolated from production** — see
 Rule Zero in the compose file.
 
 ## Components
