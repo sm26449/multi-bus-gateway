@@ -23,6 +23,7 @@ from collections import deque
 from typing import Dict, List, Optional, Callable, Any
 
 from pymodbus.client import ModbusTcpClient, ModbusSerialClient
+from pymodbus.transaction import ModbusRtuFramer
 from pymodbus.exceptions import ModbusException
 
 from . import bus_trace
@@ -52,10 +53,15 @@ def coil_truthy(v) -> bool:
 
 
 def _build_client(config: ModbusConfig):
-    """Create a pymodbus client for the configured transport — TCP (host/port)
-    or RTU (serial line). One factory so connect() and the per-read reconnect
-    stay in sync."""
-    if getattr(config, 'protocol', 'tcp') == 'rtu':
+    """Create a pymodbus client for the configured transport:
+      - tcp      → ModbusTcpClient (native Modbus/TCP)
+      - rtu      → ModbusSerialClient (direct serial line)
+      - rtu-tcp  → ModbusTcpClient with the RTU framer (RTU frames tunnelled over
+                   a raw TCP socket — talks to a serial-over-TCP bridge like
+                   ser2net; host/port point at the bridge endpoint)
+    One factory so connect() and the per-read reconnect stay in sync."""
+    proto = getattr(config, 'protocol', 'tcp')
+    if proto == 'rtu':
         return ModbusSerialClient(
             port=config.serial_port,
             baudrate=int(config.baudrate),
@@ -64,14 +70,20 @@ def _build_client(config: ModbusConfig):
             bytesize=int(config.bytesize),
             timeout=config.timeout,
         )
+    if proto == 'rtu-tcp':
+        return ModbusTcpClient(host=config.host, port=config.port,
+                               framer=ModbusRtuFramer, timeout=config.timeout)
     return ModbusTcpClient(host=config.host, port=config.port,
                            timeout=config.timeout)
 
 
 def _endpoint(config: ModbusConfig) -> str:
     """Human label for logs/UI."""
-    if getattr(config, 'protocol', 'tcp') == 'rtu':
+    proto = getattr(config, 'protocol', 'tcp')
+    if proto == 'rtu':
         return f"{config.serial_port}@{config.baudrate} unit {config.unit_id}"
+    if proto == 'rtu-tcp':
+        return f"rtu-tcp {config.host}:{config.port} unit {config.unit_id}"
     return f"{config.host}:{config.port}"
 
 
@@ -151,8 +163,11 @@ class ModbusConnection:
     def _new_client(self):
         """Build a fresh pymodbus client, wired into the bus-trace monitor."""
         client = _build_client(self.config)
-        bus_trace.trace.instrument(client, label=self.trace_label,
-                                   proto=getattr(self.config, 'protocol', 'tcp'))
+        # bus-trace decodes by WIRE framing, not transport: rtu-tcp puts RTU
+        # frames (CRC, no MBAP) on the socket, so trace it as 'rtu'.
+        _proto = getattr(self.config, 'protocol', 'tcp')
+        _wire = 'rtu' if _proto in ('rtu', 'rtu-tcp') else 'tcp'
+        bus_trace.trace.instrument(client, label=self.trace_label, proto=_wire)
         return client
 
     def connect(self) -> bool:

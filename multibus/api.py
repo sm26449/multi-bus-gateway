@@ -997,7 +997,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         """Create + wire + background-start a client for a device (Modbus
         TCP/RTU or HTTP/JSON). Returns None for disabled/unknown-protocol
         devices."""
-        if not dev_cfg.enabled or dev_cfg.protocol not in ('tcp', 'rtu', 'http', 'mqtt'):
+        if not dev_cfg.enabled or dev_cfg.protocol not in ('tcp', 'rtu', 'rtu-tcp', 'http', 'mqtt'):
             return None
         regs, groups = config.load_device_registers(dev_cfg)
         if dev_cfg.protocol == 'http':
@@ -1046,8 +1046,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         if conn.get('password') == '$GATEWAY_MQTT_PASSWORD':
             conn['password'] = config.mqtt.password
         protocol = str(conn.get('protocol', 'tcp')).lower()
-        if protocol not in ('tcp', 'rtu', 'http', 'mqtt'):
-            errors.append("connection.protocol: must be 'tcp', 'rtu', 'http' or 'mqtt'")
+        if protocol not in ('tcp', 'rtu', 'rtu-tcp', 'http', 'mqtt'):
+            errors.append("connection.protocol: must be 'tcp', 'rtu', 'rtu-tcp', 'http' or 'mqtt'")
         # A template's register map is transport-specific (Modbus reads by address,
         # HTTP/MQTT by json_path), so the device protocol MUST match the template's
         # transport class — otherwise every read silently resolves to nothing.
@@ -1055,7 +1055,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         _classmap = {'http': 'http', 'mqtt': 'mqtt'}
         if template_id and _tpl is None:
             errors.append(f"template: '{template_id}' not found")
-        elif _tpl is not None and protocol in ('tcp', 'rtu', 'http', 'mqtt'):
+        elif _tpl is not None and protocol in ('tcp', 'rtu', 'rtu-tcp', 'http', 'mqtt'):
             from .device_template import template_transport
             dev_class = _classmap.get(protocol, 'modbus')
             tpl_class = template_transport(_tpl)
@@ -1113,8 +1113,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             if str(conn.get('parity', 'N')).upper() not in ('N', 'E', 'O'):
                 errors.append("connection.parity: must be N, E or O")
         else:
-            if protocol == 'tcp' and not str(conn.get('host', '')).strip():
-                errors.append("connection.host: required for Modbus TCP")
+            if protocol in ('tcp', 'rtu-tcp') and not str(conn.get('host', '')).strip():
+                errors.append(f"connection.host: required for Modbus {'RTU-over-TCP' if protocol == 'rtu-tcp' else 'TCP'}")
             try:
                 port = int(conn.get('port', 502))
                 if not (1 <= port <= 65535):
@@ -1933,8 +1933,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         protocol-level answer (even a Modbus exception) proves a live device;
         only silence/timeouts fail. Used by the wizard's Test connection button."""
         from pymodbus.client import ModbusTcpClient, ModbusSerialClient
+        from pymodbus.transaction import ModbusRtuFramer
         from pymodbus.pdu import ExceptionResponse
-        rtu = str(conn.get('protocol', 'tcp')).lower() == 'rtu'
+        proto = str(conn.get('protocol', 'tcp')).lower()
+        rtu = proto == 'rtu'
         t0 = time.perf_counter()
         if rtu:
             where = f"{conn.get('serial_port','')}@{conn.get('baudrate',9600)}"
@@ -1946,8 +1948,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                                    timeout=timeout)
         else:
             where = f"{conn.get('host','')}:{conn.get('port',502)}"
+            # rtu-tcp: RTU frames over a raw TCP socket (serial-over-TCP bridge)
+            _framer = {'framer': ModbusRtuFramer} if proto == 'rtu-tcp' else {}
             c = ModbusTcpClient(host=conn.get('host', ''),
-                                port=int(conn.get('port', 502)), timeout=timeout)
+                                port=int(conn.get('port', 502)), timeout=timeout,
+                                **_framer)
         try:
             if not c.connect():
                 return {"ok": False,
