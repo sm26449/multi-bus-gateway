@@ -82,6 +82,8 @@ Object.assign(JanitzaMonitor.prototype, {
         const d = this._devWiz.data;
         const tcp = d.protocol === 'tcp';
         const http = d.protocol === 'http';
+        const isRtu = d.protocol === 'rtu' || d.protocol === 'rtu-tcp';
+        const rtuBridge = d.protocol === 'rtu-tcp';   // over-network (ser2net) vs direct serial
         // Protocol is fixed after creation: the template's register map is
         // transport-specific (Modbus reads by address, HTTP by json_path), so
         // switching transport would orphan the map.
@@ -91,7 +93,7 @@ Object.assign(JanitzaMonitor.prototype, {
         <div class="wiz-eyebrow">${this.t('devices.wizard.protoQ', 'How is it connected?')}</div>
         <div class="seg" role="radiogroup" aria-label="${this.t('devices.wizard.protocol', 'Protocol')}">
             <label class="seg-btn ${tcp ? 'on' : ''} ${locked && !tcp ? 'disabled' : ''}"><input type="radio" name="devWizProto" value="tcp" ${tcp ? 'checked' : ''} ${lk}><span class="s"></span> Modbus TCP</label>
-            <label class="seg-btn disabled" title="${this.t('devices.rtuSoon', 'Modbus RTU support is coming soon')}"><input type="radio" name="devWizProto" value="rtu" ${d.protocol === 'rtu' ? 'checked' : 'disabled'} ${lk}><span class="s"></span> Modbus RTU <span class="seg-soon">${this.t('common.comingSoon', 'soon')}</span></label>
+            <label class="seg-btn ${isRtu ? 'on' : ''} ${locked && !isRtu ? 'disabled' : ''}"><input type="radio" name="devWizProto" value="rtu" ${isRtu ? 'checked' : ''} ${lk}><span class="s"></span> Modbus RTU</label>
             <label class="seg-btn ${http ? 'on' : ''} ${locked && !http ? 'disabled' : ''}"><input type="radio" name="devWizProto" value="http" ${http ? 'checked' : ''} ${lk}><span class="s"></span> HTTP / JSON</label>
             <label class="seg-btn ${d.protocol === 'mqtt' ? 'on' : ''} ${locked && d.protocol !== 'mqtt' ? 'disabled' : ''}"><input type="radio" name="devWizProto" value="mqtt" ${d.protocol === 'mqtt' ? 'checked' : ''} ${lk}><span class="s"></span> MQTT</label>
         </div>
@@ -132,33 +134,63 @@ Object.assign(JanitzaMonitor.prototype, {
                 <i class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
             <div class="wiz-test-result" id="devWizTestResult" role="status"></div>
         </div>
-        <div id="devWizRtuFields" style="display:${d.protocol === 'rtu' ? '' : 'none'}">
-            <div class="form-row">
-                <div class="form-group flex-2">
-                    <label class="form-label" for="devWizSerial">${this.t('devices.wizard.serialPort', 'Serial port')}</label>
-                    <input type="text" id="devWizSerial" class="input" value="${this._esc(d.serial_port)}" placeholder="/dev/ttyUSB0">
-                </div>
-                <div class="form-group">
-                    <label class="form-label" for="devWizBaud">${this.t('lbl.baudrate', "Baudrate")}</label>
-                    <select id="devWizBaud" class="input">
-                        ${[9600, 19200, 38400, 57600, 115200].map(b => `<option ${b === +d.baudrate ? 'selected' : ''}>${b}</option>`).join('')}
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label" for="devWizParity">${this.t('lbl.parity', "Parity")}</label>
-                    <select id="devWizParity" class="input">
-                        ${['N', 'E', 'O'].map(x => `<option ${x === d.parity ? 'selected' : ''}>${x}</option>`).join('')}
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label" for="devWizUnitR">${this.t('lbl.unitId', "Unit ID")}</label>
-                    <input type="number" id="devWizUnitR" class="input" aria-label="Unit ID" value="${d.unit_id}" min="0" max="255">
-                </div>
+        <div id="devWizRtuFields" style="display:${isRtu ? '' : 'none'}">
+            <div class="seg seg-sm" role="radiogroup" aria-label="${this.t('devices.wizard.rtuMode', 'RTU connection mode')}" style="margin-bottom:12px;">
+                <label class="seg-btn ${rtuBridge ? 'on' : ''}"><input type="radio" name="devWizRtuMode" value="rtu-tcp" ${rtuBridge ? 'checked' : ''}><span class="s"></span> ${this.t('devices.wizard.rtuOverNet', 'Over network (auto-detect)')} <span class="seg-reco">${this.t('common.recommended', 'recommended')}</span></label>
+                <label class="seg-btn ${rtuBridge ? '' : 'on'}"><input type="radio" name="devWizRtuMode" value="rtu" ${rtuBridge ? '' : 'checked'}><span class="s"></span> ${this.t('devices.wizard.rtuDirect', 'Direct serial')}</label>
             </div>
-            <button class="btn btn-secondary btn-sm" id="devWizTestBtn2" onclick="app.devWizardTest(this)">
-                <i class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
+            <div id="devWizRtuBridge" style="display:${rtuBridge ? '' : 'none'}">
+                <div class="form-row" style="align-items:end;">
+                    <div class="form-group flex-2">
+                        <label class="form-label" for="devWizAdapter">${this.t('devices.wizard.adapter', 'USB serial adapter')}</label>
+                        <select id="devWizAdapter" class="input" onchange="app._devWizAdapterPick(this.value)">
+                            ${this._devWizAdapterOptions(d)}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <button class="btn btn-secondary btn-sm" id="devWizScanBtn" onclick="app.devWizScanBridge(this)">
+                            <i class="bi bi-arrow-repeat"></i> ${this.t('devices.wizard.scan', 'Scan')}</button>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="devWizUnitB">${this.t('lbl.unitId', "Unit ID")}</label>
+                        <input type="number" id="devWizUnitB" class="input" aria-label="Unit ID" value="${d.unit_id}" min="0" max="255">
+                    </div>
+                </div>
+                <div class="field-hint" id="devWizBridgeHint" style="margin-top:2px;">${
+                    d.host && rtuBridge
+                        ? this.t('devices.wizard.bridgeBound', 'Bound to {ep} — the adapter keeps this endpoint across replug.').replace('{ep}', `${d.host}:${d.port}`)
+                        : this.t('devices.wizard.bridgeScanHint', 'Plug the adapter in and press Scan. Baud rate is set on the bridge (default 9600 8N1).')}</div>
+                <button class="btn btn-secondary btn-sm" style="margin-top:8px;" onclick="app.devWizardTest(this)">
+                    <i class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
+            </div>
+            <div id="devWizRtuDirect" style="display:${rtuBridge ? 'none' : ''}">
+                <div class="form-row">
+                    <div class="form-group flex-2">
+                        <label class="form-label" for="devWizSerial">${this.t('devices.wizard.serialPort', 'Serial port')}</label>
+                        <input type="text" id="devWizSerial" class="input" value="${this._esc(d.serial_port)}" placeholder="/dev/ttyUSB0">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="devWizBaud">${this.t('lbl.baudrate', "Baudrate")}</label>
+                        <select id="devWizBaud" class="input">
+                            ${[9600, 19200, 38400, 57600, 115200].map(b => `<option ${b === +d.baudrate ? 'selected' : ''}>${b}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="devWizParity">${this.t('lbl.parity', "Parity")}</label>
+                        <select id="devWizParity" class="input">
+                            ${['N', 'E', 'O'].map(x => `<option ${x === d.parity ? 'selected' : ''}>${x}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="devWizUnitR">${this.t('lbl.unitId', "Unit ID")}</label>
+                        <input type="number" id="devWizUnitR" class="input" aria-label="Unit ID" value="${d.unit_id}" min="0" max="255">
+                    </div>
+                </div>
+                <button class="btn btn-secondary btn-sm" onclick="app.devWizardTest(this)">
+                    <i class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
+                <div class="field-hint" style="margin-top:6px;">${this.t('devices.wizard.rtuNote', 'The serial device must be attached to the host and mapped into the container (e.g. devices: /dev/ttyUSB0). It starts polling right after saving.')}</div>
+            </div>
             <div class="wiz-test-result" id="devWizTestResult2" role="status"></div>
-            <div class="field-hint" style="margin-top:6px;">${this.t('devices.wizard.rtuNote', 'The serial device must be attached to the host and mapped into the container (e.g. devices: /dev/ttyUSB0). It starts polling right after saving.')}</div>
         </div>
         <div id="devWizMqttFields" style="display:${d.protocol === 'mqtt' ? '' : 'none'}">
             <div class="form-row">
@@ -408,7 +440,15 @@ Object.assign(JanitzaMonitor.prototype, {
             document.querySelectorAll('input[name="devWizProto"]').forEach(r =>
                 r.addEventListener('change', () => {
                     this._devWizCollect();
-                    w.data.protocol = r.value;
+                    // RTU defaults to over-network (bridge) — the recommended mode;
+                    // the sub-toggle lets the user switch to direct serial.
+                    w.data.protocol = r.value === 'rtu' ? 'rtu-tcp' : r.value;
+                    this._devWizRender();
+                }));
+            document.querySelectorAll('input[name="devWizRtuMode"]').forEach(r =>
+                r.addEventListener('change', () => {
+                    this._devWizCollect();
+                    w.data.protocol = r.value;          // 'rtu' | 'rtu-tcp'
                     this._devWizRender();
                 }));
         } else if (w.step === 2) {
@@ -466,6 +506,72 @@ Object.assign(JanitzaMonitor.prototype, {
         }
     },
 
+    // Build the <option> list for the bridge adapter dropdown from the last
+    // scan (cached on w.data._adapters). Keeps the currently-bound endpoint
+    // visible even before a scan (e.g. when editing an rtu-tcp device).
+    _devWizAdapterOptions(d) {
+        const ads = (this._devWiz.data._adapters || []).filter(a => a.available && a.tcp_port);
+        const cur = (d.host && d.port) ? `${d.host}::${d.port}` : '';
+        const opts = [];
+        if (!ads.length && !cur) {
+            return `<option value="">${this._esc(this.t('devices.wizard.noAdapters', '— press Scan to detect adapters —'))}</option>`;
+        }
+        let curSeen = false;
+        for (const a of ads) {
+            const val = `${a.bridge_host}::${a.tcp_port}`;
+            if (val === cur) curSeen = true;
+            const label = `${a.model || a.manufacturer || a.vendor_id || 'serial'}`
+                        + `${a.serial ? ' (' + a.serial + ')' : ''} → :${a.tcp_port}`;
+            opts.push(`<option value="${this._esc(val)}" ${val === cur ? 'selected' : ''}>${this._esc(label)}</option>`);
+        }
+        if (cur && !curSeen) {   // bound endpoint not in the (possibly empty) scan — keep it selectable
+            opts.unshift(`<option value="${this._esc(cur)}" selected>${this._esc(`${d.host}:${d.port}`)}</option>`);
+        }
+        return opts.join('');
+    },
+
+    // A dropdown pick binds the device to that adapter's stable endpoint.
+    _devWizAdapterPick(value) {
+        const [host, port] = String(value).split('::');
+        const d = this._devWiz.data;
+        d.host = host || '';
+        d.port = parseInt(port, 10) || 0;
+        const hint = document.getElementById('devWizBridgeHint');
+        if (hint && d.host) {
+            hint.textContent = this.t('devices.wizard.bridgeBound',
+                'Bound to {ep} — the adapter keeps this endpoint across replug.')
+                .replace('{ep}', `${d.host}:${d.port}`);
+        }
+    },
+
+    // Scan the serial bridge for live adapters and refresh the dropdown.
+    async devWizScanBridge(btn) {
+        btn.disabled = true;
+        const orig = btn.innerHTML;
+        btn.innerHTML = `<i class="bi bi-arrow-repeat"></i> ${this._esc(this.t('devices.wizard.scanning', 'Scanning…'))}`;
+        let msg = '', ok = false;
+        try {
+            const r = await fetch('/api/bridge/adapters');
+            const data = await r.json();
+            if (!r.ok) throw new Error((data.detail?.errors || [data.detail || r.statusText]).join('; '));
+            if (!data.available) throw new Error(data.error || this.t('devices.wizard.bridgeDown', 'Serial bridge not reachable.'));
+            this._devWiz.data._adapters = data.adapters || [];
+            const avail = this._devWiz.data._adapters.filter(a => a.available && a.tcp_port);
+            if (avail.length === 1) this._devWizAdapterPick(`${avail[0].bridge_host}::${avail[0].tcp_port}`);
+            ok = avail.length > 0;
+            msg = avail.length
+                ? this.t('devices.wizard.scanFound', 'Found {n} adapter(s).').replace('{n}', avail.length)
+                : this.t('devices.wizard.scanNone', 'No available adapters — plug one in and Scan again.');
+        } catch (e) {
+            msg = String(e.message || e);
+        }
+        // The dropdown lives inside the re-rendered body, so render first, then
+        // report into the freshly-created result element.
+        this._devWizRender();
+        const out = document.getElementById('devWizTestResult2');
+        if (out) { out.className = 'wiz-test-result ' + (ok ? 'ok' : 'err'); out.textContent = (ok ? '✓ ' : '✗ ') + msg; }
+    },
+
     _devWizCollect() {
         const w = this._devWiz, d = w.data;
         const g = id => document.getElementById(id);
@@ -485,11 +591,19 @@ Object.assign(JanitzaMonitor.prototype, {
                 d.mqtt_username = g('devWizMqttUser')?.value.trim() ?? d.mqtt_username;
                 d.mqtt_password = g('devWizMqttPass')?.value ?? d.mqtt_password;
                 d.mqtt_tls = !!g('devWizMqttTls')?.checked;
-            } else {
-                d.serial_port = g('devWizSerial')?.value.trim() ?? d.serial_port;
-                d.baudrate = parseInt(g('devWizBaud')?.value, 10) || 9600;
-                d.parity = g('devWizParity')?.value || 'N';
-                d.unit_id = parseInt(g('devWizUnitR')?.value, 10) ?? 1;
+            } else {   // rtu (direct serial) or rtu-tcp (over the bridge)
+                const mode = document.querySelector('input[name="devWizRtuMode"]:checked')?.value;
+                if (mode) d.protocol = mode;
+                if (d.protocol === 'rtu-tcp') {
+                    // host/port were set by _devWizAdapterPick from the scan; only
+                    // the unit id is a free field here.
+                    d.unit_id = parseInt(g('devWizUnitB')?.value, 10) ?? 1;
+                } else {
+                    d.serial_port = g('devWizSerial')?.value.trim() ?? d.serial_port;
+                    d.baudrate = parseInt(g('devWizBaud')?.value, 10) || 9600;
+                    d.parity = g('devWizParity')?.value || 'N';
+                    d.unit_id = parseInt(g('devWizUnitR')?.value, 10) ?? 1;
+                }
             }
         } else if (w.step === 3) {
             d.name = g('devWizName')?.value.trim() ?? d.name;
@@ -516,6 +630,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const w = this._devWiz, d = w.data;
         if (w.step === 1 && d.protocol === 'tcp' && !d.host) return this._wizInvalid('devWizHost');
         if (w.step === 1 && d.protocol === 'rtu' && !d.serial_port) return this._wizInvalid('devWizSerial');
+        if (w.step === 1 && d.protocol === 'rtu-tcp' && !d.host) return this._wizInvalid('devWizAdapter');
         if (w.step === 1 && d.protocol === 'http' && !/^https?:\/\//.test(d.url || ''))
             return this._wizInvalid('devWizUrl');
         if (w.step === 1 && d.protocol === 'mqtt' && !d.broker) return this._wizInvalid('devWizBroker');
@@ -556,6 +671,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 : d.protocol === 'rtu'
                 ? { protocol: 'rtu', serial_port: d.serial_port, baudrate: d.baudrate,
                     parity: d.parity, stopbits: d.stopbits, unit_id: d.unit_id, timeout: d.timeout }
+                : d.protocol === 'rtu-tcp'
+                ? { protocol: 'rtu-tcp', host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout }
                 : { protocol: 'tcp', host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout };
             const r = await fetch('/api/devices/test', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -596,6 +713,8 @@ Object.assign(JanitzaMonitor.prototype, {
                     username: d.mqtt_username || '', password: d.mqtt_password || '', tls: !!d.mqtt_tls }
                 : d.protocol === 'tcp'
                 ? { protocol: 'tcp', host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout }
+                : d.protocol === 'rtu-tcp'
+                ? { protocol: 'rtu-tcp', host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout }
                 : { protocol: 'rtu', serial_port: d.serial_port, baudrate: d.baudrate,
                     parity: d.parity, stopbits: d.stopbits, unit_id: d.unit_id },
             mqtt: { topic_prefix: d.topic_prefix || `meters/${d.id}` },
