@@ -6,8 +6,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ser2net python3 python3-pyudev tini \
     && rm -rf /var/lib/apt/lists/*
 COPY supervisor.py /app/supervisor.py
-# control API port; adapter TCP ports are 7001-7099
-EXPOSE 7000 7001-7099
+# Only the control API is declared here. The adapter data ports (7001-7099) are
+# deliberately NOT EXPOSEd: they carry raw Modbus to live buses and must stay
+# reachable ONLY on the internal Docker network — never publish them to the LAN
+# (no `-p 7001-7099`, no `-P`). MBG reaches them by container name internally.
+EXPOSE 7000
 # tini as PID 1 so ser2net (child of the supervisor) is reaped cleanly on stop
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["python3", "/app/supervisor.py"]
