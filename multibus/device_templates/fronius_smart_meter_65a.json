@@ -1,0 +1,358 @@
+{
+ "device_template": {
+  "schema_version": 1,
+  "id": "fronius_smart_meter_65a",
+  "name": "Fronius Smart Meter 65A-3 (RTU, Carlo Gavazzi EM24-based)",
+  "vendor": "Fronius",
+  "model": "",
+  "version": "1.0.0",
+  "author": "",
+  "description": "",
+  "source_document": "",
+  "protocol": {
+   "byte_order": "little",
+   "default_register_type": "holding"
+  },
+  "poll_groups": {
+   "realtime": {
+    "interval": 1,
+    "description": "V/I/P live"
+   },
+   "normal": {
+    "interval": 5,
+    "description": "system, freq, PF"
+   },
+   "slow": {
+    "interval": 60,
+    "description": "energy counters"
+   }
+  },
+  "categories": {},
+  "registers": [
+   {
+    "address": 0,
+    "name": "V_L1",
+    "label": "Voltage L1-N",
+    "unit": "V",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "voltage",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "realtime"
+   },
+   {
+    "address": 2,
+    "name": "V_L2",
+    "label": "Voltage L2-N",
+    "unit": "V",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "voltage",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "realtime"
+   },
+   {
+    "address": 4,
+    "name": "V_L3",
+    "label": "Voltage L3-N",
+    "unit": "V",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "voltage",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "realtime"
+   },
+   {
+    "address": 6,
+    "name": "V_L12",
+    "label": "Voltage L1-L2",
+    "unit": "V",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "voltage",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "realtime"
+   },
+   {
+    "address": 8,
+    "name": "V_L23",
+    "label": "Voltage L2-L3",
+    "unit": "V",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "voltage",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "realtime"
+   },
+   {
+    "address": 10,
+    "name": "V_L31",
+    "label": "Voltage L3-L1",
+    "unit": "V",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "voltage",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "realtime"
+   },
+   {
+    "address": 12,
+    "name": "I_L1",
+    "label": "Current L1",
+    "unit": "A",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "current",
+    "description": "",
+    "scale": 1000.0,
+    "poll_group": "realtime"
+   },
+   {
+    "address": 14,
+    "name": "I_L2",
+    "label": "Current L2",
+    "unit": "A",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "current",
+    "description": "",
+    "scale": 1000.0,
+    "poll_group": "realtime"
+   },
+   {
+    "address": 16,
+    "name": "I_L3",
+    "label": "Current L3",
+    "unit": "A",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "current",
+    "description": "",
+    "scale": 1000.0,
+    "poll_group": "realtime"
+   },
+   {
+    "address": 18,
+    "name": "P_L1",
+    "label": "Active Power L1",
+    "unit": "W",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "power_active",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "realtime"
+   },
+   {
+    "address": 20,
+    "name": "P_L2",
+    "label": "Active Power L2",
+    "unit": "W",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "power_active",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "realtime"
+   },
+   {
+    "address": 22,
+    "name": "P_L3",
+    "label": "Active Power L3",
+    "unit": "W",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "power_active",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "realtime"
+   },
+   {
+    "address": 24,
+    "name": "S_L1",
+    "label": "Apparent Power L1",
+    "unit": "VA",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "power_apparent",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "normal"
+   },
+   {
+    "address": 26,
+    "name": "S_L2",
+    "label": "Apparent Power L2",
+    "unit": "VA",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "power_apparent",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "normal"
+   },
+   {
+    "address": 28,
+    "name": "S_L3",
+    "label": "Apparent Power L3",
+    "unit": "VA",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "power_apparent",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "normal"
+   },
+   {
+    "address": 30,
+    "name": "Q_L1",
+    "label": "Reactive Power L1",
+    "unit": "var",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "power_reactive",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "normal"
+   },
+   {
+    "address": 32,
+    "name": "Q_L2",
+    "label": "Reactive Power L2",
+    "unit": "var",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "power_reactive",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "normal"
+   },
+   {
+    "address": 34,
+    "name": "Q_L3",
+    "label": "Reactive Power L3",
+    "unit": "var",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "power_reactive",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "normal"
+   },
+   {
+    "address": 36,
+    "name": "V_LN_sys",
+    "label": "Voltage L-N sys",
+    "unit": "V",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "voltage",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "normal"
+   },
+   {
+    "address": 38,
+    "name": "V_LL_sys",
+    "label": "Voltage L-L sys",
+    "unit": "V",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "voltage",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "normal"
+   },
+   {
+    "address": 40,
+    "name": "P_total",
+    "label": "Active Power Total",
+    "unit": "W",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "power_active",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "realtime"
+   },
+   {
+    "address": 42,
+    "name": "S_total",
+    "label": "Apparent Power Total",
+    "unit": "VA",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "power_apparent",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "normal"
+   },
+   {
+    "address": 44,
+    "name": "Q_total",
+    "label": "Reactive Power Total",
+    "unit": "var",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "power_reactive",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "normal"
+   },
+   {
+    "address": 49,
+    "name": "Freq",
+    "label": "Frequency",
+    "unit": "Hz",
+    "data_type": "uint16",
+    "access": "RD",
+    "category": "frequency",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "normal"
+   },
+   {
+    "address": 51,
+    "name": "PF_sys",
+    "label": "Power Factor sys",
+    "unit": "",
+    "data_type": "int16",
+    "access": "RD",
+    "category": "power_factor",
+    "description": "",
+    "scale": 1000.0,
+    "poll_group": "normal"
+   },
+   {
+    "address": 52,
+    "name": "Energy_Import",
+    "label": "Energy Import Total",
+    "unit": "kWh",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "energy",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "slow"
+   },
+   {
+    "address": 78,
+    "name": "Energy_Export",
+    "label": "Energy Export Total",
+    "unit": "kWh",
+    "data_type": "int32",
+    "access": "RD",
+    "category": "energy",
+    "description": "",
+    "scale": 10.0,
+    "poll_group": "slow"
+   }
+  ]
+ }
+}

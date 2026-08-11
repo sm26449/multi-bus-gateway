@@ -188,7 +188,7 @@ Devices → *Discover devices*:
    protocol — chiar și o excepție — dovedește un dispozitiv viu; la HTTP cu
    un template ales, testul raportează câte `json_path`-uri s-au rezolvat;
    la MQTT se conectează și așteaptă scurt un mesaj de probă.
-2. **Template** — alege din bibliotecă (10 hărți incluse, vezi
+2. **Template** — alege din bibliotecă (11 hărți incluse, vezi
    [device-catalog.md](device-catalog.md)), **încarcă** un template `.json`
    (validat rând cu rând; conflictele de id întreabă înainte de suprascriere),
    **creează** unul în editor sau **importă un CSV** cu harta de registre

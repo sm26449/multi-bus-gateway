@@ -176,7 +176,7 @@ Devices → *Discover devices*:
    an exception — proves a live device; for HTTP with a template chosen the
    test reports how many `json_path`s resolved; for MQTT it connects and
    waits briefly for a sample message.
-2. **Template** — choose from the library (10 bundled maps, see
+2. **Template** — choose from the library (11 bundled maps, see
    [device-catalog.md](device-catalog.md)), **upload** a `.json` template
    (validated row by row; id conflicts ask before overwriting), **create**
    one in the editor, or **import a CSV** register map

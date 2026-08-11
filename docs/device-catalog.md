@@ -4,7 +4,7 @@
 
 Every built-in device map, with its Modbus transport (function code + byte/word order), the exact register table, and the **source it was verified against**. We do not fabricate maps — each entry cites its provenance. **Confidence varies by entry:** some are *vendor-verified* (confirmed against the manufacturer manual or a field-tested driver — e.g. ABB B23 vs the ABB manual, Schneider iEM3000 vs volkszaehler/mbmd, Carlo Gavazzi EM24 vs Victron), while others are *community-sourced* and their description says to verify against your specific unit's manual before billing-grade use (e.g. the Eastron SDM entries). Read each entry's Source line. `scale` is a divisor — engineering value = raw / scale.
 
-**10 device maps.**
+**11 device maps.**
 
 | Map | Vendor | Model | Registers | Transport |
 |---|---|---|---|---|
@@ -13,6 +13,7 @@ Every built-in device map, with its Modbus transport (function code + byte/word 
 | [ABB B23 (3-phase)](#abb-b23-3-phase) | ABB | B23 (System pro M compact) | 32 | FC03 / big |
 | [BLE sensor (Theengs / BTHome → MQTT)](#ble-sensor-theengs--bthome--mqtt) | Theengs | BLE advertisement sensor | 5 | FC03 / big |
 | [Carlo Gavazzi EM24 (AV5/AV53, 3-phase)](#carlo-gavazzi-em24-av5av53-3-phase) | Carlo Gavazzi | EM24-DIN AV5(3) | 16 | FC03 / little |
+| [Fronius Smart Meter 65A-3 (RTU, EM24-based)](#fronius-smart-meter-65a-3-rtu-em24-based) | Fronius | Smart Meter 65A-3 (= Carlo Gavazzi EM24) | 27 | FC03 / little |
 | [Eastron SDM120 (single-phase)](#eastron-sdm120-single-phase) | Eastron | SDM120 Modbus | 10 | FC04 / big |
 | [Eastron SDM630 (3-phase)](#eastron-sdm630-3-phase) | Eastron | SDM630 Modbus V2 | 29 | FC04 / big |
 | [Generic MQTT (JSON)](#generic-mqtt-json) | Generic | MQTT JSON source | 3 | FC03 / big |
@@ -142,6 +143,45 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 66 / 0x0042 | `Energy_L2_Import` | Import active energy L2 | int32 | 10 | kWh | slow |
 | 68 / 0x0044 | `Energy_L3_Import` | Import active energy L3 | int32 | 10 | kWh | slow |
 | 78 / 0x004E | `Export_kWh` | Export active energy (total) | int32 | 10 | kWh | slow |
+
+## Fronius Smart Meter 65A-3 (RTU, EM24-based)
+
+**id** `fronius_smart_meter_65a` · **vendor** Fronius · **model** Smart Meter 65A-3 (= rebranded Carlo Gavazzi EM24) · **version** 1.0.0 · **registers** 27
+
+- **Transport:** FC03 (read holding registers) · byte order **little-endian, low word first (CDAB / word-swapped)** · Modbus RTU (9600 8N1), unit id 1
+- **Source / provenance:** field-verified against a physical Fronius Smart Meter 65A-3 over a Waveshare USB-RS485 adapter (2026-08-11). Cross-checked against the Carlo Gavazzi EM24 map and validated by physics on live values (|P| ≤ S per phase, S² ≈ P² + Q², PF = P/S, Freq = 50 Hz).
+
+> The Fronius Smart Meter 65A-3 is a rebranded Carlo Gavazzi EM24, so the base map matches [Carlo Gavazzi EM24](#carlo-gavazzi-em24-av5av53-3-phase) (INT32, HOLDING/FC03, low-word-first, V/10 · A/1000 · W/10 · Hz/10 · kWh/10). **The one meaningful difference from the standard EM24: frequency is at register 49, not 51** — on this variant register 51 holds `PF_sys` (system power factor, INT16 ÷1000). This map adds the line-to-line voltages (6/8/10), per-phase apparent/reactive power (24–34) and system aggregates (36–44) the EM24 map omits. `scale` is a divisor — engineering value = raw / scale.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 0 / 0x0000 | `V_L1` | Voltage L1-N | int32 | 10 | V | realtime |
+| 2 / 0x0002 | `V_L2` | Voltage L2-N | int32 | 10 | V | realtime |
+| 4 / 0x0004 | `V_L3` | Voltage L3-N | int32 | 10 | V | realtime |
+| 6 / 0x0006 | `V_L12` | Voltage L1-L2 | int32 | 10 | V | realtime |
+| 8 / 0x0008 | `V_L23` | Voltage L2-L3 | int32 | 10 | V | realtime |
+| 10 / 0x000A | `V_L31` | Voltage L3-L1 | int32 | 10 | V | realtime |
+| 12 / 0x000C | `I_L1` | Current L1 | int32 | 1000 | A | realtime |
+| 14 / 0x000E | `I_L2` | Current L2 | int32 | 1000 | A | realtime |
+| 16 / 0x0010 | `I_L3` | Current L3 | int32 | 1000 | A | realtime |
+| 18 / 0x0012 | `P_L1` | Active Power L1 | int32 | 10 | W | realtime |
+| 20 / 0x0014 | `P_L2` | Active Power L2 | int32 | 10 | W | realtime |
+| 22 / 0x0016 | `P_L3` | Active Power L3 | int32 | 10 | W | realtime |
+| 24 / 0x0018 | `S_L1` | Apparent Power L1 | int32 | 10 | VA | normal |
+| 26 / 0x001A | `S_L2` | Apparent Power L2 | int32 | 10 | VA | normal |
+| 28 / 0x001C | `S_L3` | Apparent Power L3 | int32 | 10 | VA | normal |
+| 30 / 0x001E | `Q_L1` | Reactive Power L1 | int32 | 10 | var | normal |
+| 32 / 0x0020 | `Q_L2` | Reactive Power L2 | int32 | 10 | var | normal |
+| 34 / 0x0022 | `Q_L3` | Reactive Power L3 | int32 | 10 | var | normal |
+| 36 / 0x0024 | `V_LN_sys` | Voltage L-N sys | int32 | 10 | V | normal |
+| 38 / 0x0026 | `V_LL_sys` | Voltage L-L sys | int32 | 10 | V | normal |
+| 40 / 0x0028 | `P_total` | Active Power Total | int32 | 10 | W | realtime |
+| 42 / 0x002A | `S_total` | Apparent Power Total | int32 | 10 | VA | normal |
+| 44 / 0x002C | `Q_total` | Reactive Power Total | int32 | 10 | var | normal |
+| 49 / 0x0031 | `Freq` | Frequency (**@49, not @51**) | uint16 | 10 | Hz | normal |
+| 51 / 0x0033 | `PF_sys` | Power Factor sys | int16 | 1000 | — | normal |
+| 52 / 0x0034 | `Energy_Import` | Energy Import Total | int32 | 10 | kWh | slow |
+| 78 / 0x004E | `Energy_Export` | Energy Export Total | int32 | 10 | kWh | slow |
 
 ## Eastron SDM120 (single-phase)
 
