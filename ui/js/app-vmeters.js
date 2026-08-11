@@ -107,7 +107,7 @@ Object.assign(JanitzaMonitor.prototype, {
               <div class="settings-card-header vm-acc-head" tabindex="0" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;">
                 <div class="vm-head-l" style="display:flex;align-items:center;gap:10px;min-width:0;">
                   <i class="bi bi-chevron-right vm-acc-chev" style="transition:transform .15s ease;color:var(--text-secondary);"></i>
-                  <h3 style="margin:0;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><i class="bi bi-hdd-network"></i> ${this._esc(m.name || m.template)}</h3>
+                  <h3 style="margin:0;font-size:15px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><i class="bi bi-hdd-network"></i> ${this._esc(m.name || m.template)}</h3>
                   <span class="dev-chip" title="${t('vmeter.sourceDevice', 'Source device')}"><i class="bi bi-arrow-left-short"></i>${this._esc(devName(m.device))}</span>
                   ${badge}
                 </div>

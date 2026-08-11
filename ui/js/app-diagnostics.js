@@ -241,8 +241,8 @@ Object.assign(JanitzaMonitor.prototype, {
             ? this._diagRows.filter(r => r.device === this._diagFilter)
             : this._diagRows;
         if (!rows.length) {
-            body.innerHTML = `<tr><td colspan="8" class="diag-empty">${this._esc(
-                this.t('diag.empty', 'No transactions captured. Start the capture and the polled traffic appears here — each retry as its own frame.'))}</td></tr>`;
+            body.innerHTML = `<tr><td colspan="8" class="diag-empty"><span style="position:sticky;left:0;display:inline-block;max-width:calc(100vw - 80px);white-space:normal;">${this._esc(
+                this.t('diag.empty', 'No transactions captured. Start the capture and the polled traffic appears here — each retry as its own frame.'))}</span></td></tr>`;
             return;
         }
         body.innerHTML = rows.map(r => {

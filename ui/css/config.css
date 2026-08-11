@@ -632,6 +632,28 @@
         gap: 12px;
         text-align: center;
     }
+
+    /* Card headers (e.g. Devices toolbar): let the title + action buttons wrap
+       so the last button — Add Device (+) — never clips off-screen. */
+    .settings-card-header {
+        flex-wrap: wrap;
+        row-gap: 10px;
+    }
+
+    /* Segmented controls (e.g. the add-device protocol picker) wrap to 2/row
+       instead of clipping the last option (MQTT) past the viewport edge. */
+    .seg {
+        flex-wrap: wrap;
+    }
+    .seg-btn {
+        flex: 1 1 42%;
+    }
+
+    /* Dashboard device selector: wrap the chips so every device is reachable
+       without a non-obvious horizontal scroll. */
+    .dash-device-chips {
+        flex-wrap: wrap;
+    }
 }
 
 /* Per-section Save & Apply footer */
