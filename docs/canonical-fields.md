@@ -26,6 +26,7 @@ The canonical name a register carries becomes its **MQTT topic leaf**, its **Inf
 | `current_l3` | `current/l3` | A | L3 current |
 | `current_n` | `current/n` | A | Neutral current |
 | `current_total` | `current/total` | A | Total / sum current |
+| `current_avg` | `current/avg` | A | Average phase current |
 
 ## power_active
 
@@ -76,6 +77,7 @@ The canonical name a register carries becomes its **MQTT topic leaf**, its **Inf
 | `energy_active_import` | `energy/active/import` | kWh | Total imported active energy |
 | `energy_active_export` | `energy/active/export` | kWh | Total exported active energy |
 | `energy_active_net` | `energy/active/net` | kWh | Net active energy (import − export) |
+| `energy_active_total` | `energy/active/total` | kWh | Total active energy (import + export) |
 | `energy_active_import_l1` | `energy/active/import/l1` | kWh | L1 imported active energy |
 | `energy_active_import_l2` | `energy/active/import/l2` | kWh | L2 imported active energy |
 | `energy_active_import_l3` | `energy/active/import/l3` | kWh | L3 imported active energy |
@@ -89,6 +91,7 @@ The canonical name a register carries becomes its **MQTT topic leaf**, its **Inf
 |---|---|---|---|
 | `energy_reactive_import` | `energy/reactive/import` | kvarh | Total imported reactive energy |
 | `energy_reactive_export` | `energy/reactive/export` | kvarh | Total exported reactive energy |
+| `energy_reactive_total` | `energy/reactive/total` | kvarh | Total reactive energy (import + export) |
 
 ## energy_apparent
 
@@ -117,4 +120,4 @@ The canonical name a register carries becomes its **MQTT topic leaf**, its **Inf
 | `temperature` | `diagnostic/temperature` | °C | Internal temperature |
 | `uptime` | `diagnostic/uptime` | s | Meter uptime |
 
-_Total: 53 canonical fields across 12 measurements._
+_Total: 56 canonical fields across 12 measurements._

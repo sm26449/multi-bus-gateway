@@ -332,7 +332,7 @@ GEN_PAYLOAD = {
     "uart": {"tx_pin": "GPIO17", "rx_pin": "GPIO16"},
     "modbus": {"unit_id": 2},
     "mqtt": {},
-    "registers": ["V_L1", "Import_kWh"],
+    "registers": ["voltage_l1_n", "energy_active_import"],
 }
 
 
@@ -397,10 +397,10 @@ def test_adopt_chain_creates_paired_device(tmp_path, fake, monkeypatch):
     regs = client.get("/api/registers/selected",
                       params={"device": "hala-sdm630"}).json()["registers"]
     by_name = {r["name"]: r for r in regs}
-    assert set(by_name) == {"V_L1", "Import_kWh", "Uptime"}
-    assert by_name["V_L1"]["topic"] == "esphome/hala-sdm630/V_L1/state"
-    assert not by_name["V_L1"].get("json_path")
-    assert float(by_name["V_L1"].get("scale", 1) or 1) == 1.0
+    assert set(by_name) == {"voltage_l1_n", "energy_active_import", "Uptime"}
+    assert by_name["voltage_l1_n"]["topic"] == "esphome/hala-sdm630/voltage_l1_n/state"
+    assert not by_name["voltage_l1_n"].get("json_path")
+    assert float(by_name["voltage_l1_n"].get("scale", 1) or 1) == 1.0
 
 
 @needs_tc

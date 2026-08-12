@@ -40,6 +40,7 @@ CANONICAL_FIELDS: Dict[str, Tuple[str, str, str, str]] = {
     'current_l3':    ('current', 'A', 'current/l3', 'L3 current'),
     'current_n':     ('current', 'A', 'current/n', 'Neutral current'),
     'current_total': ('current', 'A', 'current/total', 'Total / sum current'),
+    'current_avg':   ('current', 'A', 'current/avg', 'Average phase current'),
     # ── Active power (measurement: power_active) ──────────────────────────────
     'power_active_l1':    ('power_active', 'W', 'power/active/l1', 'L1 active power'),
     'power_active_l2':    ('power_active', 'W', 'power/active/l2', 'L2 active power'),
@@ -66,6 +67,7 @@ CANONICAL_FIELDS: Dict[str, Tuple[str, str, str, str]] = {
     'energy_active_import':    ('energy_active', 'kWh', 'energy/active/import', 'Total imported active energy'),
     'energy_active_export':    ('energy_active', 'kWh', 'energy/active/export', 'Total exported active energy'),
     'energy_active_net':       ('energy_active', 'kWh', 'energy/active/net', 'Net active energy (import − export)'),
+    'energy_active_total':     ('energy_active', 'kWh', 'energy/active/total', 'Total active energy (import + export)'),
     'energy_active_import_l1': ('energy_active', 'kWh', 'energy/active/import/l1', 'L1 imported active energy'),
     'energy_active_import_l2': ('energy_active', 'kWh', 'energy/active/import/l2', 'L2 imported active energy'),
     'energy_active_import_l3': ('energy_active', 'kWh', 'energy/active/import/l3', 'L3 imported active energy'),
@@ -75,6 +77,7 @@ CANONICAL_FIELDS: Dict[str, Tuple[str, str, str, str]] = {
     # ── Reactive / apparent energy ────────────────────────────────────────────
     'energy_reactive_import': ('energy_reactive', 'kvarh', 'energy/reactive/import', 'Total imported reactive energy'),
     'energy_reactive_export': ('energy_reactive', 'kvarh', 'energy/reactive/export', 'Total exported reactive energy'),
+    'energy_reactive_total':  ('energy_reactive', 'kvarh', 'energy/reactive/total', 'Total reactive energy (import + export)'),
     'energy_apparent':        ('energy_apparent', 'kVAh', 'energy/apparent/total', 'Total apparent energy'),
     # ── THD (measurement: thd) ────────────────────────────────────────────────
     'thd_voltage_l1': ('thd', '%', 'thd/voltage/l1', 'L1 voltage THD'),

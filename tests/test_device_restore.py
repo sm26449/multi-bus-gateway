@@ -48,7 +48,7 @@ def test_delete_keeps_tombstone_and_restore_rebuilds(tmp_path, monkeypatch):
 
     # give it a custom register selection so we can prove it comes back
     client.post("/api/registers/selected?device=hall-em24", json=[
-        {"address": 0, "name": "V_L1", "label": "L1", "unit": "V",
+        {"address": 0, "name": "voltage_l1_n", "label": "L1", "unit": "V",
          "data_type": "float", "poll_group": "realtime"}])
 
     # delete → tombstone written, appears as restorable with its metadata
@@ -70,7 +70,7 @@ def test_delete_keeps_tombstone_and_restore_rebuilds(tmp_path, monkeypatch):
     assert dev["template"] == "carlo_gavazzi_em24"
     assert (dev.get("host") or dev.get("connection", {}).get("host")) == "192.0.2.9"
     regs = client.get("/api/registers/selected?device=hall-em24").json()["registers"]
-    assert [r["name"] for r in regs] == ["V_L1"]
+    assert [r["name"] for r in regs] == ["voltage_l1_n"]
     # no longer restorable once active
     assert client.get("/api/devices/restorable").json()["devices"] == []
 

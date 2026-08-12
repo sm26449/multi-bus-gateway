@@ -51,23 +51,52 @@ matching Janitza). → **decision pending** before roll-out (see below).
 
 ## Roll-out status
 
-Only three templates have live devices; the rest have none (safe to rename):
-
 | Template | Live device | Consumers | Action |
 |---|---|---|---|
-| `janitza_umg512_pro` | umg512 | pv-stack-ui, Node-RED | **FROZEN — do not touch** |
-| `fronius_smart_meter_65a` | fronius_rtu (test) | none | ✅ canonical (field). MQTT shape TBD |
-| `fronius_solar_api` | fronius-solar (idle) | check before touching | pending |
-| `carlo_gavazzi_em24` | — | none | pending (safe) |
-| `abb_b21`, `abb_b23` | — | none | pending (safe) |
-| `eastron_sdm120`, `eastron_sdm630` | — | none | pending (safe) |
-| `schneider_iem3000` | — | none | pending (safe) |
+| `janitza_umg512_pro` | umg512 | pv-stack-ui, Node-RED, **both vmeters** | **FROZEN** — see Victron-source domain below |
+| `fronius_solar_api` | fronius-solar (disabled) | vmeter drop-in source (latent) | **FROZEN** — see Victron-source domain below |
+| `fronius_smart_meter_65a` | fronius_rtu (test) | none | ✅ canonical — field + hierarchical MQTT topic, live-verified |
+| `carlo_gavazzi_em24` | — | none | ✅ canonical (2026-08-12) |
+| `abb_b21`, `abb_b23` | — | none | ✅ canonical (2026-08-12) |
+| `eastron_sdm120`, `eastron_sdm630` | — | none | ✅ canonical (2026-08-12) |
+| `schneider_iem3000` | — | none | ✅ canonical (2026-08-12) |
 | sensor maps (mqtt/zigbee/ble) | — | none | out of scope (non-electrical) |
 
-## Open decision (before rolling out the rest)
+Auto-select now applies the hierarchical MQTT topic + canonical InfluxDB
+measurement from the dictionary (or the template's explicit `defaults`), so any
+**new** device seeded from a canonical template is uniform out of the box.
 
-**MQTT topic shape for canonical registers:** hierarchical (`voltage/l1_n`, matches
-Janitza + consumers) or flat (`voltage_l1_n`, matches the InfluxDB field)? If
-hierarchical, the canonical dictionary gains an `mqtt_topic` per field and the
-Fronius pilot is revised to set it. Recommended: **hierarchical**, so new devices'
-MQTT matches what pv-stack-ui/Node-RED already speak.
+Three canonical fields were added during this roll-out to cover real registers
+the vendor maps report: `current_avg` (Schneider I_avg), `energy_active_total`
+(SDM120/630 `Total_kWh` = import+export), `energy_reactive_total` (SDM630
+`Total_kvarh`).
+
+## ⛔ The Victron-source naming domain (Janitza + vmeters + fronius-solar)
+
+The two virtual meters that feed the Victron ESS — `em24_av53` and
+`fronius_ts_native` — map their live sources **by register name**: `live:
+"_G_P_SUM3"`, `live: "_G_ULN[0]"`, `live: "_WH_V[4]"`, … Those names resolve
+against the **primary (Janitza) device's** `current_values` (the vmeter
+instances carry no `device:` field → primary cache). So the vmeter templates are
+coupled to Janitza's cryptic names.
+
+`fronius-solar` (Solar-API HTTP reader of the Fronius **Smart Meter TS 5kA-3**,
+a *different* physical meter than fronius_rtu's 65A-3) deliberately mirrors those
+same cryptic names so it can drop in as an alternative vmeter source. It is
+`enabled: false` and no vmeter currently sources from it.
+
+**Decision (2026-08-12):** Janitza, the two vmeter templates, and
+`fronius-solar` form ONE naming domain and must be canonicalised **atomically**
+in a night maintenance window (no production) — rename Janitza's selected
+registers, update the two vmeter templates' `live:` keys to the canonical names,
+migrate `fronius-solar`, and update pv-stack-ui (78) + Node-RED (37) topic refs
+together. Renaming any one in isolation half-migrates the chain that feeds the
+Victron. Prefer dual-publish for zero-gap since Janitza also feeds the grid/DG
+controllers. Until then: **all three are FROZEN.**
+
+## Settled — MQTT topic shape
+
+**Hierarchical** (`voltage/l1_n`), matching what pv-stack-ui / Node-RED already
+speak, while the InfluxDB field stays the flat canonical name (`voltage_l1_n`).
+The dictionary carries both per field; auto-select applies them. Live-verified on
+fronius_rtu.
