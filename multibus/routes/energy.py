@@ -64,8 +64,8 @@ def build(ctx) -> APIRouter:
         regs = config.load_energy_fields(did) or _energy_candidates(did)
         if not regs and (not device or registry.find(did)[1] and registry.find(did)[1].primary):
             regs = [
-                {"name": "_WH_V[4]", "label": "Consumption (import)", "unit": "kWh", "div": 1000},
-                {"name": "_WH_Z[4]", "label": "Injection (export)", "unit": "kWh", "div": 1000},
+                {"name": "energy_active_import", "label": "Consumption (import)", "unit": "kWh", "div": 1000},
+                {"name": "energy_active_export", "label": "Injection (export)", "unit": "kWh", "div": 1000},
                 {"name": "_QH[4]", "label": "Reactive", "unit": "kvarh", "div": 1000},
                 {"name": "_WH_S[4]", "label": "Apparent", "unit": "kVAh", "div": 1000},
             ]

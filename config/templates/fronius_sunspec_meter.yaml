@@ -30,30 +30,30 @@ template:
     - { addr: 40071, type: uint16, source: { const: 124 } }
     # current (A) — float, engineering units
     - { addr: 40072, type: float, source: { live: "_I_SUM3" } }  # A total
-    - { addr: 40074, type: float, source: { live: "_ILN[0]" } }  # AphA
-    - { addr: 40076, type: float, source: { live: "_ILN[1]" } }  # AphB
-    - { addr: 40078, type: float, source: { live: "_ILN[2]" } }  # AphC
+    - { addr: 40074, type: float, source: { live: "current_l1" } }  # AphA
+    - { addr: 40076, type: float, source: { live: "current_l2" } }  # AphB
+    - { addr: 40078, type: float, source: { live: "current_l3" } }  # AphC
     # voltage L-N (V)
-    - { addr: 40080, type: float, source: { live: "_G_ULN[0]" } } # PhV (avg ~L1)
-    - { addr: 40082, type: float, source: { live: "_G_ULN[0]" } } # PhVphA
-    - { addr: 40084, type: float, source: { live: "_G_ULN[1]" } } # PhVphB
-    - { addr: 40086, type: float, source: { live: "_G_ULN[2]" } } # PhVphC
+    - { addr: 40080, type: float, source: { live: "voltage_l1_n" } } # PhV (avg ~L1)
+    - { addr: 40082, type: float, source: { live: "voltage_l1_n" } } # PhVphA
+    - { addr: 40084, type: float, source: { live: "voltage_l2_n" } } # PhVphB
+    - { addr: 40086, type: float, source: { live: "voltage_l3_n" } } # PhVphC
     # frequency (Hz)
-    - { addr: 40096, type: float, source: { live: "_G_FREQ" } }   # Hz
+    - { addr: 40096, type: float, source: { live: "frequency" } }   # Hz
     # power (W) — sign: + = import from grid (matches Janitza _G_P_SUM3)
-    - { addr: 40098, type: float, source: { live: "_G_P_SUM3" } } # W total
-    - { addr: 40100, type: float, source: { live: "_PLN[0]" } }   # WphA
-    - { addr: 40102, type: float, source: { live: "_PLN[1]" } }   # WphB
-    - { addr: 40104, type: float, source: { live: "_PLN[2]" } }   # WphC
+    - { addr: 40098, type: float, source: { live: "power_active_total" } } # W total
+    - { addr: 40100, type: float, source: { live: "power_active_l1" } }   # WphA
+    - { addr: 40102, type: float, source: { live: "power_active_l2" } }   # WphB
+    - { addr: 40104, type: float, source: { live: "power_active_l3" } }   # WphC
     # energy (Wh) — float; Janitza values already in Wh
-    - { addr: 40130, type: float, source: { live: "_WH_Z[4]" } }  # TotWhExp (export) total
-    - { addr: 40132, type: float, source: { live: "_WH_Z[0]" } }  # TotWhExpPhA
-    - { addr: 40134, type: float, source: { live: "_WH_Z[1]" } }  # TotWhExpPhB
-    - { addr: 40136, type: float, source: { live: "_WH_Z[2]" } }  # TotWhExpPhC
-    - { addr: 40138, type: float, source: { live: "_WH_V[4]" } }  # TotWhImp (import) total
-    - { addr: 40140, type: float, source: { live: "_WH_V[0]" } }  # TotWhImpPhA
-    - { addr: 40142, type: float, source: { live: "_WH_V[1]" } }  # TotWhImpPhB
-    - { addr: 40144, type: float, source: { live: "_WH_V[2]" } }  # TotWhImpPhC
+    - { addr: 40130, type: float, source: { live: "energy_active_export" } }  # TotWhExp (export) total
+    - { addr: 40132, type: float, source: { live: "energy_active_export_l1" } }  # TotWhExpPhA
+    - { addr: 40134, type: float, source: { live: "energy_active_export_l2" } }  # TotWhExpPhB
+    - { addr: 40136, type: float, source: { live: "energy_active_export_l3" } }  # TotWhExpPhC
+    - { addr: 40138, type: float, source: { live: "energy_active_import" } }  # TotWhImp (import) total
+    - { addr: 40140, type: float, source: { live: "energy_active_import_l1" } }  # TotWhImpPhA
+    - { addr: 40142, type: float, source: { live: "energy_active_import_l2" } }  # TotWhImpPhB
+    - { addr: 40144, type: float, source: { live: "energy_active_import_l3" } }  # TotWhImpPhC
     # end marker (after model body 40070..40195)
     - { addr: 40196, type: uint16, source: { const: 0xFFFF } }
     - { addr: 40197, type: uint16, source: { const: 0 } }

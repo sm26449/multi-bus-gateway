@@ -76,12 +76,12 @@ TB = 60  # meter recording timebase (seconds) — 1-minute means
 # (hist_param, address, register_name, field_name, extra_tags) — measurement is "voltage".
 # Mirrors the live registers in config/selected_registers.json (L-N: type, L-L: connection).
 PARAMS: list[tuple[str, int, str, str, dict[str, str]]] = [
-    ("_ULN[0]", 19000, "_G_ULN[0]", "uln_0", {"phase": "L1", "type": "line_neutral"}),
-    ("_ULN[1]", 19002, "_G_ULN[1]", "uln_1", {"phase": "L2", "type": "line_neutral"}),
-    ("_ULN[2]", 19004, "_G_ULN[2]", "uln_2", {"phase": "L3", "type": "line_neutral"}),
-    ("_ULL[0]", 19006, "_G_ULL[0]", "ull_0", {"phase": "L1", "connection": "line_line"}),
-    ("_ULL[1]", 19008, "_G_ULL[1]", "ull_1", {"phase": "L2", "connection": "line_line"}),
-    ("_ULL[2]", 19010, "_G_ULL[2]", "ull_2", {"phase": "L3", "connection": "line_line"}),
+    ("_ULN[0]", 19000, "voltage_l1_n", "voltage_l1_n", {"phase": "L1", "type": "line_neutral"}),
+    ("_ULN[1]", 19002, "voltage_l2_n", "voltage_l2_n", {"phase": "L2", "type": "line_neutral"}),
+    ("_ULN[2]", 19004, "voltage_l3_n", "voltage_l3_n", {"phase": "L3", "type": "line_neutral"}),
+    ("_ULL[0]", 19006, "voltage_l1_l2", "voltage_l1_l2", {"phase": "L1", "connection": "line_line"}),
+    ("_ULL[1]", 19008, "voltage_l2_l3", "voltage_l2_l3", {"phase": "L2", "connection": "line_line"}),
+    ("_ULL[2]", 19010, "voltage_l3_l1", "voltage_l3_l1", {"phase": "L3", "connection": "line_line"}),
 ]
 
 
