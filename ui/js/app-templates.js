@@ -466,6 +466,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <td><select class="input tpl-cell" data-f="data_type" aria-label="Data type">
                     ${dataTypes.map(t => `<option ${t === r.data_type ? 'selected' : ''}>${t}</option>`).join('')}</select></td>
                 <td><input class="input tpl-cell" data-f="scale" type="number" step="any" value="${r.scale ?? 1}" style="width:68px" aria-label="Scale"></td>
+                <td><input class="input tpl-cell" data-f="offset" type="number" step="any" value="${r.offset ?? 0}" style="width:68px" aria-label="Offset" title="engineering = raw / scale + offset"></td>
                 <td><select class="input tpl-cell" data-f="register_type" aria-label="Register type" title="Function code">
                     <option value="holding" ${(r.register_type || 'holding') === 'holding' ? 'selected' : ''}>FC3</option>
                     <option value="input" ${r.register_type === 'input' ? 'selected' : ''}>FC4</option></select></td>
@@ -526,7 +527,7 @@ Object.assign(JanitzaMonitor.prototype, {
         <datalist id="tplGroupList">${groups.map(g => `<option value="${this._esc(g)}"></option>`).join('')}</datalist>
         <div class="table-container" style="max-height:320px;overflow:auto;">
             <table class="data-table tpl-table">
-                <thead><tr><th>Addr</th><th>${this.t('devtpl.colName', 'Name')}</th><th>${this.t('devtpl.colLabel', 'Label')}</th><th>${this.t('devtpl.colUnit', 'Unit')}</th><th>${this.t('devtpl.colType', 'Type')}</th><th>${this.t('devtpl.colScale', 'Scale')}</th><th title="Function code">${this.t('devtpl.colFC', 'FC')}</th><th>${this.t('devtpl.colCategory', 'Category')}</th><th>${this.t('devtpl.colGroup', 'Poll group')}</th><th title="Writable via the write API">${this.t('devtpl.colWr', 'Wr')}</th><th>${this.t('devtpl.colMin', 'Min')}</th><th>${this.t('devtpl.colMax', 'Max')}</th><th title="Auto-revert value on lease expiry">${this.t('devtpl.colSafe', 'Safe')}</th><th></th></tr></thead>
+                <thead><tr><th>Addr</th><th>${this.t('devtpl.colName', 'Name')}</th><th>${this.t('devtpl.colLabel', 'Label')}</th><th>${this.t('devtpl.colUnit', 'Unit')}</th><th>${this.t('devtpl.colType', 'Type')}</th><th>${this.t('devtpl.colScale', 'Scale')}</th><th title="engineering = raw / scale + offset">${this.t('devtpl.colOffset', 'Offset')}</th><th title="Function code">${this.t('devtpl.colFC', 'FC')}</th><th>${this.t('devtpl.colCategory', 'Category')}</th><th>${this.t('devtpl.colGroup', 'Poll group')}</th><th title="Writable via the write API">${this.t('devtpl.colWr', 'Wr')}</th><th>${this.t('devtpl.colMin', 'Min')}</th><th>${this.t('devtpl.colMax', 'Max')}</th><th title="Auto-revert value on lease expiry">${this.t('devtpl.colSafe', 'Safe')}</th><th></th></tr></thead>
                 <tbody>${rows}</tbody>
             </table>
         </div>
@@ -540,6 +541,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 if (inp.type === 'checkbox') v = inp.checked;
                 else if (f === 'address') v = parseInt(inp.value, 10);
                 else if (f === 'scale') v = parseFloat(inp.value) || 1;
+                else if (f === 'offset') v = parseFloat(inp.value) || 0;
                 else if (f === 'write_min' || f === 'write_max' || f === 'write_safe')
                     v = inp.value === '' ? null : parseFloat(inp.value);
                 else v = inp.value;

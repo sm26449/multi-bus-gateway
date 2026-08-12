@@ -574,8 +574,12 @@ class RegisterPoller(threading.Thread):
                             # meters, transformer ratios, …). scale defaults to
                             # 1.0 so the Janitza primary is byte-identical.
                             sc = getattr(reg, 'scale', 1.0) or 1.0
-                            if sc != 1.0 and isinstance(value, (int, float)):
-                                value = value / sc
+                            off = getattr(reg, 'offset', 0.0) or 0.0
+                            if isinstance(value, (int, float)):
+                                if sc != 1.0:
+                                    value = value / sc
+                                if off:
+                                    value = value + off
                             # cumulative-counter hygiene: a downward glitch on an
                             # energy register reads as a counter reset downstream
                             # (HA Energy, Victron, InfluxDB difference()). Drop it

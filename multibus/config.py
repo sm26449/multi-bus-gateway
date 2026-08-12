@@ -260,6 +260,7 @@ class SelectedRegister:
     json_path: str = ""   # HTTP/JSON + MQTT input: dot/bracket path into the JSON payload
     topic: str = ""       # MQTT input: the topic this register reads from (else device base topic)
     scale: float = 1.0    # Modbus input: engineering_value = raw / scale (SunSpec 10^-SF etc.)
+    offset: float = 0.0   # engineering_value = raw / scale + offset (zero-point / unit shift)
     nan: Any = None       # not-available sentinel (True=std for type / value / list) → missing
     monotonic: bool = False   # cumulative counter (energy): reject downward glitches → HA/Victron safe
     # status-register decode (mutually exclusive): raw int → text
@@ -947,6 +948,7 @@ class Config:
                 json_path=reg.get('json_path', ''),
                 topic=reg.get('topic', ''),
                 scale=float(reg.get('scale', 1) or 1),
+                offset=float(reg.get('offset', 0) or 0),
                 nan=reg.get('nan'),
                 monotonic=bool(reg.get('monotonic', False)),
                 enum=reg.get('enum'),

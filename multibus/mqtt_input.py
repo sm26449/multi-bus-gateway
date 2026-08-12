@@ -161,6 +161,9 @@ class MqttInputClient:
             _sc = getattr(r, 'scale', 1.0) or 1.0
             if _sc != 1.0:
                 val = val / _sc
+            _off = getattr(r, 'offset', 0.0) or 0.0
+            if _off:
+                val = val + _off
             data[r.address] = {'value': val, 'register': r, 'ts': self.last_msg_ts, 'mono': self.last_msg_mono}
         if data and self.publish_callback:
             self.updates += len(data)

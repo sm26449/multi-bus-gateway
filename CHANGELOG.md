@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.13.0
+
+### 2026-08-13 — Per-register offset
+
+- **`offset`** — engineering value is now `raw / scale + offset`, so a register
+  with a zero-point or unit shift decodes correctly (e.g. Kelvin×10 → °C with
+  `scale: 10, offset: -273.15`, or a sensor whose 0 isn't the electrical 0).
+  Applied after scale on **every** transport (Modbus / HTTP / MQTT), so a
+  register's offset means the same thing everywhere; skipped for enum/bitfield
+  registers (they decode to text). An **Offset** column sits next to Scale in
+  the template editor. Threaded template → autoselect → save → load; +7 tests.
+  Default `0` — purely additive.
+
 ## 3.12.0
 
 ### 2026-08-13 — Enum / bitfield builder in the template editor

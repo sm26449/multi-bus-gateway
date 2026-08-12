@@ -77,6 +77,7 @@ class TemplateRegister:
     category: str = "other"
     description: str = ""
     scale: float = 1.0
+    offset: float = 0.0                      # engineering = raw / scale + offset
     poll_group: str = ""                     # suggested group when selected
     json_path: str = ""                      # HTTP/JSON + MQTT input: path into the JSON payload
     topic: str = ""                          # MQTT input: the topic this register reads from
@@ -115,6 +116,8 @@ class TemplateRegister:
         }
         if self.scale != 1.0:
             d['scale'] = self.scale
+        if self.offset:
+            d['offset'] = self.offset
         if self.poll_group:
             d['poll_group'] = self.poll_group
         if self.json_path:
@@ -326,6 +329,7 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         category=str(r.get('category', 'other')),
         description=str(r.get('description', '')),
         scale=float(r.get('scale', 1)),
+        offset=float(r.get('offset', 0) or 0),
         poll_group=str(r.get('poll_group', '')),
         json_path=str(r.get('json_path', '')),
         topic=str(r.get('topic', '')),

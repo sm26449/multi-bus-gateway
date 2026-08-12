@@ -319,6 +319,9 @@ class _JsonPoller(threading.Thread):
                         _sc = getattr(reg, 'scale', 1.0) or 1.0
                         if _sc != 1.0:
                             val = val / _sc
+                        _off = getattr(reg, 'offset', 0.0) or 0.0
+                        if _off:
+                            val = val + _off
                         data[reg.address] = {'value': val, 'register': reg,
                                              'ts': t0, 'mono': t0_mono,
                                              'interval': self.interval}
