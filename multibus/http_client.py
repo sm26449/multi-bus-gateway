@@ -333,8 +333,10 @@ class _JsonPoller(threading.Thread):
             self.poll_count += 1
             self.last_poll_time = time.time()
             dt = self.interval - (time.time() - t0)
-            if dt > 0:
-                time.sleep(dt)
+            # On time → sleep the remainder (exact cadence). If the fetch OVERRAN
+            # the interval (dt <= 0), still back off (up to 1 s) instead of
+            # re-fetching immediately — a slow endpoint must not be hammered.
+            time.sleep(dt if dt > 0 else min(self.interval, 1.0))
 
     def stop(self):
         self.running = False
