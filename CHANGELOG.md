@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.15.0
+
+### 2026-08-13 — Per-device illegal-register skip-list
+
+- **`modbus.illegal_registers`** — a per-device list of addresses the slave
+  answers with ILLEGAL DATA ADDRESS (exception 02). The batch reader now never
+  bridges a merged read across one of them (splitting the block instead) and
+  drops a selected register that sits on one, so a single unmapped hole *inside*
+  a contiguous run can no longer poison the whole block — the case `max_gap: 0`
+  can't fix. Accepts decimal or `0x…`; a per-device override lives under that
+  device's `connection:`. Round-trips through config; +7 tests. Empty by
+  default — no behaviour change.
+
 ## 3.14.0
 
 ### 2026-08-13 — Home Assistant write-entities (number / select)

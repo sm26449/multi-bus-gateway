@@ -52,6 +52,12 @@ class ModbusConfig:
     # fire in lock-step and hammer a shared transport (e.g. the RTU-over-TCP
     # serial bridge) at boot. 0 = off (all groups fire immediately, as before).
     startup_jitter_s: float = 0.0
+    # Addresses this slave answers with ILLEGAL DATA ADDRESS (exception 02).
+    # The batch builder never bridges a merged read across one of these (and
+    # skips a selected register that sits on one), so a single unmapped address
+    # can't poison a whole block. Use when max_gap=0 isn't enough (a hole INSIDE
+    # a contiguous run). Per-device.
+    illegal_registers: List[int] = field(default_factory=list)
     # transport: "tcp" (host/port) or "rtu" (serial line below)
     protocol: str = "tcp"
     serial_port: str = ""             # e.g. /dev/ttyUSB0
@@ -235,6 +241,21 @@ class PollGroup:
     description: str = ""
 
 
+def parse_address_list(raw) -> List[int]:
+    """Coerce a config list of addresses (ints or ``0x…``/decimal strings) to a
+    sorted, de-duplicated list of ints in the Modbus range. Bad entries are
+    dropped, not raised — a typo must not down a device."""
+    out = set()
+    for a in (raw or []):
+        try:
+            n = int(a, 0) if isinstance(a, str) else int(a)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= n <= 0xFFFF:
+            out.add(n)
+    return sorted(out)
+
+
 _INPUT_REGISTER_ALIASES = {'input', 'inputregister', 'inputregisters', 'ir', 'fc4', '4'}
 _COIL_ALIASES = {'coil', 'coils', 'fc1', 'fc5', '1'}
 _DISCRETE_ALIASES = {'discrete', 'discreteinput', 'discreteinputs', 'di', 'fc2', '2'}
@@ -402,6 +423,7 @@ class Config:
                     max_gap=int(conn.get('max_gap', 10)),
                     startup_jitter_s=float(conn.get('startup_jitter_s',
                         self.modbus.startup_jitter_s) or 0.0),
+                    illegal_registers=parse_address_list(conn.get('illegal_registers')),
                     protocol=str(conn.get('protocol', 'tcp')).lower(),
                     serial_port=conn.get('serial_port', ''),
                     baudrate=int(conn.get('baudrate', 9600)),
@@ -779,6 +801,7 @@ class Config:
                     max_gap=m.get('max_gap', self.modbus.max_gap),
                     startup_jitter_s=float(m.get('startup_jitter_s',
                         data.get('polling', {}).get('startup_jitter_s', 0.0)) or 0.0),
+                    illegal_registers=parse_address_list(m.get('illegal_registers')),
                 )
 
             # MQTT
@@ -1116,6 +1139,7 @@ class Config:
                 "stale_after_s": self.modbus.stale_after_s,
                 "max_gap": self.modbus.max_gap,
                 "startup_jitter_s": self.modbus.startup_jitter_s,
+                "illegal_registers": list(self.modbus.illegal_registers),
             },
             "mqtt": {
                 "enabled": self.mqtt.enabled,
@@ -1214,6 +1238,7 @@ class Config:
                 'stale_after_s': self.modbus.stale_after_s,
                 'max_gap': self.modbus.max_gap,
                 'startup_jitter_s': self.modbus.startup_jitter_s,
+                'illegal_registers': list(self.modbus.illegal_registers),
             },
             'mqtt': {
                 'enabled': self.mqtt.enabled,

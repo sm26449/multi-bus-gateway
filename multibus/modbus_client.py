@@ -475,12 +475,25 @@ class RegisterPoller(threading.Thread):
         # slaves that reject a read spanning unmapped addresses (exception 02).
         _cfg = getattr(self.connection, 'config', None)
         max_gap = max(0, int(getattr(_cfg, 'max_gap', 10)))
+        # addresses the slave rejects (exception 02) — never bridge a merged read
+        # across one, and skip a register that sits on one.
+        illegal = set(getattr(_cfg, 'illegal_registers', None) or [])
+
+        def _spans_illegal(lo, hi):
+            return bool(illegal) and any(a in illegal for a in range(lo, hi))
 
         for reg in sorted_regs:
             reg_type = getattr(reg, 'register_type', 'holding')
             # coils/discrete inputs are single bits, not 16-bit registers
             reg_count = 1 if reg_type in ('coil', 'discrete') else \
                 self.parser.get_register_count(reg.data_type)
+
+            # a selected register whose own span hits an illegal address can't be
+            # read at all — drop it (loudly) rather than fail its whole batch
+            if _spans_illegal(reg.address, reg.address + reg_count):
+                logger.warning(f"{self._tag}skipping {reg.name}@{reg.address}: "
+                               f"on the illegal-register skip-list")
+                continue
 
             if current_group is None:
                 # Start new group
@@ -493,7 +506,9 @@ class RegisterPoller(threading.Thread):
             elif (reg_type == current_group['register_type']
                   and reg.address <= current_group['end'] + max_gap
                   and (max(current_group['end'], reg.address + reg_count)
-                       - current_group['start']) <= MAX_READ):
+                       - current_group['start']) <= MAX_READ
+                  # don't merge if the bridged gap covers an illegal address
+                  and not _spans_illegal(current_group['end'], reg.address)):
                 # Extend group (same FC type, small gap, within one legal read).
                 # Holding (FC3) and input (FC4) share an address space but are
                 # distinct blocks — never merge across types.
