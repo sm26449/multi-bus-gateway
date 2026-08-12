@@ -16,11 +16,43 @@
 #
 """CSV register-map importer: parsing, aliases, and template round-trip."""
 from multibus.csv_import import parse_csv
+from multibus.canonical_fields import guess_canonical
 from multibus.device_template import validate_template
 
 
 def _template(regs):
     return {"device_template": {"id": "csv_dev", "name": "CSV Device", "registers": regs}}
+
+
+def test_imported_csv_auto_canonicalizes():
+    """End-to-end user flow: import a cryptic vendor CSV, then auto-canonicalize.
+    Classification is driven by the descriptive labels; a comms-config row that
+    isn't a measurement must stay unmapped (None), never guessed."""
+    csv = (
+        "address,name,label,unit,type,scale\n"
+        "0,Uln1,Voltage L1-N,V,float,1\n"
+        "6,Ull12,Voltage L1-L2,V,float,1\n"
+        "8,Il2,Current L2,A,float,1\n"
+        "14,Ptot,Active power total,kW,float,1\n"
+        "18,Qtot,Reactive power total,kvar,float,1\n"   # kvar must not read as apparent
+        "20,Stot,Apparent power total,kVA,float,1\n"
+        "26,EimpT,Active energy import,kWh,float,1\n"
+        "30,ErimpT,Reactive energy import,kvarh,float,1\n"
+        "32,ThdU1,Voltage THD L1,%,float,1\n"
+        "36,Sernum,Serial number,,uint32,1\n"
+        "38,ComBaud,RS485 baud rate,,uint16,1\n"        # comms config → stays None
+    )
+    regs = parse_csv(csv)["registers"]
+    got = {r["name"]: guess_canonical(name=r["name"], label=r.get("label", ""),
+                                      unit=r.get("unit", ""))
+           for r in regs}
+    assert got == {
+        "Uln1": "voltage_l1_n", "Ull12": "voltage_l1_l2", "Il2": "current_l2",
+        "Ptot": "power_active_total", "Qtot": "power_reactive_total",
+        "Stot": "power_apparent_total", "EimpT": "energy_active_import",
+        "ErimpT": "energy_reactive_import", "ThdU1": "thd_voltage_l1",
+        "Sernum": "serial", "ComBaud": None,
+    }
 
 
 def test_basic_comma_with_aliases_and_hex():
