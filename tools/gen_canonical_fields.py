@@ -28,15 +28,16 @@ def main() -> None:
     out = [HEADER]
     by: dict = {}
     order: list = []
-    for name, (meas, unit, desc) in CANONICAL_FIELDS.items():
+    for name, (meas, unit, topic, desc) in CANONICAL_FIELDS.items():
         if meas not in by:
             by[meas] = []
             order.append(meas)
-        by[meas].append((name, unit, desc))
+        by[meas].append((name, unit, topic, desc))
     for meas in order:
-        out.append(f"## {meas}\n\n| Field | Unit | Description |\n|---|---|---|\n")
-        for name, unit, desc in by[meas]:
-            out.append(f"| `{name}` | {unit or '—'} | {desc} |\n")
+        out.append(f"## {meas}\n\n| InfluxDB field | MQTT topic | Unit | Description |\n"
+                   "|---|---|---|---|\n")
+        for name, unit, topic, desc in by[meas]:
+            out.append(f"| `{name}` | `{topic}` | {unit or '—'} | {desc} |\n")
         out.append("\n")
     out.append(f"_Total: {len(CANONICAL_FIELDS)} canonical fields across "
                f"{len(order)} measurements._\n")
