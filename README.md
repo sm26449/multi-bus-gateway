@@ -312,6 +312,14 @@ curl -s http://localhost:8080/metrics | grep gateway_device_up
 Implicit, appliance-ul e gândit pentru un **LAN de încredere** — totul e
 deschis local și fiecare strat de apărare e opt-in:
 
+> **⚠️ La prima pornire e deschis intenționat.** Din fabrică autentificarea e
+> **oprită**, UI-ul ascultă pe `0.0.0.0`, iar credențialele admin sunt
+> `admin` / `admin`. E ok pe un LAN izolat, de încredere — dar **înainte de a
+> expune gateway-ul într-o rețea mai largă, activează autentificarea și schimbă
+> parola** (Settings → Security, sau blocul `ui.auth` din `config.yaml`) și ia în
+> calcul bind pe `127.0.0.1` în spatele unui reverse proxy. Oricine ajunge la
+> host ajunge și la scrierile Modbus și la serverele de metere virtuale.
+
 - **Login + roluri** (admin/operator/viewer), lockout per IP, **passkeys
   WebAuthn**, sesiuni HttpOnly glisante 7 zile.
 - **Cheie API** (`API_KEY` → `X-API-Key` pe modificări), **allowlist de

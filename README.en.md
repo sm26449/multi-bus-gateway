@@ -315,6 +315,14 @@ curl -s http://localhost:8080/metrics | grep gateway_device_up
 By default the appliance targets a **trusted LAN** — everything is open
 locally and every defense layer is opt-in:
 
+> **⚠️ First boot is open by design.** Out of the box authentication is **off**,
+> the UI binds to `0.0.0.0`, and the admin credentials are `admin` / `admin`.
+> That is fine on an isolated, trusted LAN — but **before exposing the gateway to
+> any wider network, enable authentication and change the password** (Settings →
+> Security, or the `ui.auth` block in `config.yaml`) and consider binding to
+> `127.0.0.1` behind a reverse proxy. Anyone who can reach the host can also
+> reach the Modbus writes and the virtual-meter servers.
+
 - **Login + roles** (admin/operator/viewer), per-IP lockout, **WebAuthn
   passkeys**, HttpOnly sessions (7-day sliding).
 - **API key** (`API_KEY` → `X-API-Key` on mutations), **IP allowlist**,
