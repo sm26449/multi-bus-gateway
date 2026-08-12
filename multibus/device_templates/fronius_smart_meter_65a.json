@@ -2,13 +2,13 @@
  "device_template": {
   "schema_version": 1,
   "id": "fronius_smart_meter_65a",
-  "name": "Fronius Smart Meter 65A-3 (RTU, Carlo Gavazzi EM24-based)",
+  "name": "Fronius Smart Meter 65A-3 (RTU)",
   "vendor": "Fronius",
-  "model": "",
+  "model": "Smart Meter 65A-3",
   "version": "1.0.0",
   "author": "",
-  "description": "",
-  "source_document": "",
+  "description": "Fronius Smart Meter 65A-3, 3-phase, Modbus RTU. Register map field-verified against the physical meter: INT32 low-word-first (CDAB), holding registers (FC03), scales V/10 A/1000 W/10 Hz/10 kWh/10. Frequency at register 49 (register 51 holds PF_sys). Meter model id 731 at 0x000B.",
+  "source_document": "Field-verified against a physical Fronius Smart Meter 65A-3 over Modbus RTU (2026-08-11): |P|<=S per phase, S^2~=P^2+Q^2, PF=P/S, Freq=50Hz.",
   "protocol": {
    "byte_order": "little",
    "default_register_type": "holding"

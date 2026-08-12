@@ -13,7 +13,7 @@ Every built-in device map, with its Modbus transport (function code + byte/word 
 | [ABB B23 (3-phase)](#abb-b23-3-phase) | ABB | B23 (System pro M compact) | 32 | FC03 / big |
 | [BLE sensor (Theengs / BTHome → MQTT)](#ble-sensor-theengs--bthome--mqtt) | Theengs | BLE advertisement sensor | 5 | FC03 / big |
 | [Carlo Gavazzi EM24 (AV5/AV53, 3-phase)](#carlo-gavazzi-em24-av5av53-3-phase) | Carlo Gavazzi | EM24-DIN AV5(3) | 16 | FC03 / little |
-| [Fronius Smart Meter 65A-3 (RTU, EM24-based)](#fronius-smart-meter-65a-3-rtu-em24-based) | Fronius | Smart Meter 65A-3 (= Carlo Gavazzi EM24) | 27 | FC03 / little |
+| [Fronius Smart Meter 65A-3 (RTU)](#fronius-smart-meter-65a-3-rtu) | Fronius | Smart Meter 65A-3 | 27 | FC03 / little |
 | [Eastron SDM120 (single-phase)](#eastron-sdm120-single-phase) | Eastron | SDM120 Modbus | 10 | FC04 / big |
 | [Eastron SDM630 (3-phase)](#eastron-sdm630-3-phase) | Eastron | SDM630 Modbus V2 | 29 | FC04 / big |
 | [Generic MQTT (JSON)](#generic-mqtt-json) | Generic | MQTT JSON source | 3 | FC03 / big |
@@ -144,14 +144,14 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 68 / 0x0044 | `Energy_L3_Import` | Import active energy L3 | int32 | 10 | kWh | slow |
 | 78 / 0x004E | `Export_kWh` | Export active energy (total) | int32 | 10 | kWh | slow |
 
-## Fronius Smart Meter 65A-3 (RTU, EM24-based)
+## Fronius Smart Meter 65A-3 (RTU)
 
-**id** `fronius_smart_meter_65a` · **vendor** Fronius · **model** Smart Meter 65A-3 (= rebranded Carlo Gavazzi EM24) · **version** 1.0.0 · **registers** 27
+**id** `fronius_smart_meter_65a` · **vendor** Fronius · **model** Smart Meter 65A-3 · **version** 1.0.0 · **registers** 27
 
 - **Transport:** FC03 (read holding registers) · byte order **little-endian, low word first (CDAB / word-swapped)** · Modbus RTU (9600 8N1), unit id 1
-- **Source / provenance:** field-verified against a physical Fronius Smart Meter 65A-3 over a Waveshare USB-RS485 adapter (2026-08-11). Cross-checked against the Carlo Gavazzi EM24 map and validated by physics on live values (|P| ≤ S per phase, S² ≈ P² + Q², PF = P/S, Freq = 50 Hz).
+- **Source / provenance:** field-verified against a **physical Fronius Smart Meter 65A-3** over a Waveshare USB-RS485 adapter (2026-08-11), validated by physics on live values (|P| ≤ S per phase, S² ≈ P² + Q², PF = P/S, Freq = 50 Hz). The meter reports model id **731** at register `0x000B` and a serial block at `0x5000`.
 
-> The Fronius Smart Meter 65A-3 is a rebranded Carlo Gavazzi EM24, so the base map matches [Carlo Gavazzi EM24](#carlo-gavazzi-em24-av5av53-3-phase) (INT32, HOLDING/FC03, low-word-first, V/10 · A/1000 · W/10 · Hz/10 · kWh/10). **The one meaningful difference from the standard EM24: frequency is at register 49, not 51** — on this variant register 51 holds `PF_sys` (system power factor, INT16 ÷1000). This map adds the line-to-line voltages (6/8/10), per-phase apparent/reactive power (24–34) and system aggregates (36–44) the EM24 map omits. `scale` is a divisor — engineering value = raw / scale.
+> Fronius Smart Meter 65A-3, 3-phase, Modbus RTU. INT32 measurements in HOLDING registers (FC03), low-word-first (CDAB); scales V/10 · A/1000 · W/10 · Hz/10 · kWh/10 (`scale` is a divisor — engineering value = raw / scale). **Note:** frequency is at register **49** (register 51 holds `PF_sys`, system power factor, INT16 ÷1000). The map covers phase + line-to-line voltages (0–10), currents (12–16), per-phase and system active/apparent/reactive power (18–44), frequency, PF, and import/export energy.
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
