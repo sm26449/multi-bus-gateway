@@ -18,6 +18,7 @@
 
 import time
 import logging
+import random
 import threading
 from collections import deque
 from typing import Dict, List, Optional, Callable, Any
@@ -403,7 +404,8 @@ class RegisterPoller(threading.Thread):
 
     def __init__(self, name: str, interval: int, registers: List[SelectedRegister],
                  connection: ModbusConnection, parser: RegisterParser,
-                 publish_callback: Callable, device_id: str = ""):
+                 publish_callback: Callable, device_id: str = "",
+                 startup_jitter_s: float = 0.0):
         # Multi-device: tag the thread + logs with the device so several devices'
         # identically-named poll groups (realtime/normal/slow) are distinguishable.
         super().__init__(daemon=True,
@@ -420,6 +422,13 @@ class RegisterPoller(threading.Thread):
         except (TypeError, ValueError):
             interval = 5.0
         self.interval = interval
+        # first-fire jitter is capped at the interval so it can never delay a
+        # group by more than one of its own cycles (a slow-group energy row is
+        # never held from the vmeters longer than its cadence already allows)
+        try:
+            self.startup_jitter_s = max(0.0, min(float(startup_jitter_s), interval))
+        except (TypeError, ValueError):
+            self.startup_jitter_s = 0.0
         self.registers = registers
         self.connection = connection
         self.parser = parser
@@ -609,6 +618,14 @@ class RegisterPoller(threading.Thread):
         logger.debug(f"{self._tag}Poller {self.poll_group_name}: addresses {reg_addrs[:10]}...")
 
         try:
+            # Stagger the FIRST read by a random fraction of the interval so
+            # several devices/groups don't fire in lock-step and collide on a
+            # shared transport (RTU-over-TCP bridge) at boot. Interruptible: a
+            # stop() during the wait flips self.running, so the loop won't run.
+            if self.startup_jitter_s > 0:
+                delay = random.uniform(0, self.startup_jitter_s)
+                logger.debug(f"{self._tag}Poller {self.poll_group_name}: startup jitter {delay:.2f}s")
+                self._stop_event.wait(delay)
             while self.running:
                 try:
                     data = self._poll_registers()
@@ -728,6 +745,7 @@ class ModbusClient:
                 parser=self.parser,
                 publish_callback=self.publish_callback,
                 device_id=self.device_id,
+                startup_jitter_s=getattr(self.config, 'startup_jitter_s', 0.0),
             )
             poller.start()
             self.pollers.append(poller)

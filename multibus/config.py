@@ -47,6 +47,11 @@ class ModbusConfig:
     # ILLEGAL DATA ADDRESS (exception 02) should set this to 0 to read each
     # contiguous run separately.
     max_gap: int = 10
+    # Startup jitter: each poll group waits a random delay in [0, min(interval,
+    # startup_jitter_s)] before its FIRST read, so several devices/groups don't
+    # fire in lock-step and hammer a shared transport (e.g. the RTU-over-TCP
+    # serial bridge) at boot. 0 = off (all groups fire immediately, as before).
+    startup_jitter_s: float = 0.0
     # transport: "tcp" (host/port) or "rtu" (serial line below)
     protocol: str = "tcp"
     serial_port: str = ""             # e.g. /dev/ttyUSB0
@@ -388,6 +393,8 @@ class Config:
                     retry_delay=float(conn.get('retry_delay', 1.0)),
                     stale_after_s=int(conn.get('stale_after_s', 30)),
                     max_gap=int(conn.get('max_gap', 10)),
+                    startup_jitter_s=float(conn.get('startup_jitter_s',
+                        self.modbus.startup_jitter_s) or 0.0),
                     protocol=str(conn.get('protocol', 'tcp')).lower(),
                     serial_port=conn.get('serial_port', ''),
                     baudrate=int(conn.get('baudrate', 9600)),
@@ -763,6 +770,8 @@ class Config:
                     retry_delay=m.get('retry_delay', self.modbus.retry_delay),
                     stale_after_s=m.get('stale_after_s', self.modbus.stale_after_s),
                     max_gap=m.get('max_gap', self.modbus.max_gap),
+                    startup_jitter_s=float(m.get('startup_jitter_s',
+                        data.get('polling', {}).get('startup_jitter_s', 0.0)) or 0.0),
                 )
 
             # MQTT
@@ -1096,6 +1105,7 @@ class Config:
                 "retry_delay": self.modbus.retry_delay,
                 "stale_after_s": self.modbus.stale_after_s,
                 "max_gap": self.modbus.max_gap,
+                "startup_jitter_s": self.modbus.startup_jitter_s,
             },
             "mqtt": {
                 "enabled": self.mqtt.enabled,
@@ -1192,6 +1202,7 @@ class Config:
                 'retry_delay': self.modbus.retry_delay,
                 'stale_after_s': self.modbus.stale_after_s,
                 'max_gap': self.modbus.max_gap,
+                'startup_jitter_s': self.modbus.startup_jitter_s,
             },
             'mqtt': {
                 'enabled': self.mqtt.enabled,

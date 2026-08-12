@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.11.0
+
+### 2026-08-13 — Poller startup jitter
+
+- **`polling.startup_jitter_s`** (0 = off, default) — each poll group waits a
+  random delay in `[0, min(interval, startup_jitter_s)]` before its **first**
+  read, so several devices/groups don't fire in lock-step and hammer a shared
+  transport (notably the RTU-over-TCP serial bridge) at boot. The jitter is
+  capped at the group's own interval, so it can never delay a group by more than
+  one of its cycles — a slow-group energy row is never withheld from the virtual
+  meters longer than its cadence already allows. A per-device
+  `modbus.startup_jitter_s` overrides the global default. +6 tests.
+
 ## 3.10.0
 
 ### 2026-08-13 — Enum / bitfield decode for status registers
