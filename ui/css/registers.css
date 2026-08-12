@@ -282,6 +282,17 @@
     max-width: 480px;
 }
 
+/* The measurement editor carries a full form (identity + MQTT + InfluxDB +
+   thresholds); 500px cramps the 3-up form rows. The template editor is a wide
+   13-column grid. Give both room (still capped to the viewport on mobile). */
+#addRegisterModal .modal-content { max-width: 720px; }
+#devTplModal .modal-content { max-width: min(1120px, 96vw); }
+/* template-editor Name cell flagged when the value isn't a canonical field */
+.tpl-cell.tpl-noncanon {
+    border-color: var(--warning-text, #e2a336);
+    background: color-mix(in srgb, var(--warning-text, #e2a336) 8%, transparent);
+}
+
 #queryModal .form-row {
     display: flex;
     gap: 12px;

@@ -253,8 +253,21 @@ Object.assign(JanitzaMonitor.prototype, {
             const verr = res.validation_errors || [];
             const warn = res.warnings || [];
             document.getElementById('csvImportBtn').disabled = verr.length > 0 || res.register_count === 0;
+            // canonical check on the parsed names — nudge toward uniform naming
+            const _inner = this._csvTemplate && (this._csvTemplate.device_template || this._csvTemplate);
+            const _regs = (_inner && _inner.registers) || [];
+            const _named = _regs.filter(r => r.name);
+            const _canonOk = _named.filter(r => this._isCanonical(r.name)).length;
+            const _nonCanon = _named.length - _canonOk;
+            const canonLine = _named.length
+                ? `<div style="margin-top:4px;font-size:12.5px;color:${_nonCanon ? 'var(--warning-text,#c77700)' : 'var(--success-text,#1a8f4c)'};">`
+                  + `${_nonCanon ? '⚠' : '✓'} ${_canonOk}/${_named.length} ${this.t('devtpl.canonCount', 'canonical')}`
+                  + (_nonCanon ? ` — ${this.t('csv.canonFix', 'edit the map after import to canonicalize names')}` : '')
+                  + `</div>`
+                : '';
             box.innerHTML = `<div class="settings-card" style="padding:10px 12px;">
                 <div><b style="color:${verr.length ? 'var(--danger-text,#c0392b)' : 'var(--success-text,#1a8f4c)'};">${res.register_count}</b> ${this.t('csv.parsed', 'measurements parsed')} · ${this.t('csv.cols', 'columns')}: ${(res.columns || []).map(c => this._esc(c)).join(', ')}</div>
+                ${canonLine}
                 ${verr.length ? `<div style="color:var(--danger-text,#c0392b);font-size:12.5px;margin-top:6px;">${this.t('csv.fixFirst', 'Fix before importing')}: ${verr.slice(0, 5).map(e => this._esc(e)).join('<br>')}</div>` : ''}
                 ${warn.length ? `<details style="margin-top:6px;"><summary style="cursor:pointer;color:var(--warning-text,#c77700);font-size:12.5px;">${warn.length} ${this.t('csv.warnings', 'skipped rows / coercions')}</summary><div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">${warn.slice(0, 20).map(w => this._esc(w)).join('<br>')}</div></details>` : ''}</div>`;
         } catch (e) { box.innerHTML = `<span style="color:var(--danger-text,#c0392b);">${this._esc(e.message)}</span>`; }
@@ -278,11 +291,12 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     downloadCsvExample() {
+        // canonical names in the example so imports start uniform (see docs/canonical-fields.md)
         const csv = 'address,name,label,unit,type,scale,category,json_path\n'
-            + '0x0000,V_L1,Voltage L1-N,V,float,1,voltage,\n'
-            + '0x0002,V_L2,Voltage L2-N,V,float,1,voltage,\n'
-            + '40,P_total,Total active power,W,int32,10,power,\n'
-            + '19000,Freq,Frequency,Hz,uint16,100,frequency,\n';
+            + '0x0000,voltage_l1_n,Voltage L1-N,V,float,1,voltage,\n'
+            + '0x0002,voltage_l2_n,Voltage L2-N,V,float,1,voltage,\n'
+            + '40,power_active_total,Total active power,W,int32,10,power_active,\n'
+            + '19000,frequency,Frequency,Hz,uint16,100,frequency,\n';
         const a = document.createElement('a');
         a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
         a.download = 'register-map-example.csv';
@@ -395,6 +409,7 @@ Object.assign(JanitzaMonitor.prototype, {
                                    access: 'RD', category: 'basic', description: '' }] };
         }
         this._tplEdit = { data, isNew: !id || duplicate, search: '' };
+        await this._loadCanonicalFields();   // canonical dictionary for name guidance (before first render)
         document.getElementById('devTplTitle').textContent =
             (!id ? this.t('devtpl.newTitle', 'New Device Template')
                  : duplicate ? this.t('devtpl.dupTitle', 'Duplicate Template')
@@ -402,6 +417,26 @@ Object.assign(JanitzaMonitor.prototype, {
             (data.id ? ` — ${data.id}` : '');
         this._tplEditorRender();
         this.openModal('devTplModal');
+    },
+
+    // One template-editor Name cell, flagged amber + 'did you mean' title when
+    // the name isn't canonical (uses the shared _isCanonical/_canonicalSuggest).
+    _tplNameCell(r) {
+        const canon = !r.name || this._isCanonical(r.name);
+        const s = canon ? '' : this._canonicalSuggest(String(r.name).toLowerCase());
+        const title = canon ? '' : (s
+            ? `${this.t('registers.canon.non', 'Non-canonical name')} — ${this.t('registers.canon.didYouMean', 'did you mean')} ${s}?`
+            : this.t('registers.canon.non', 'Non-canonical name'));
+        return `<td><input class="input tpl-cell${canon ? '' : ' tpl-noncanon'}" data-f="name" `
+            + `list="tplCanonList" value="${this._esc(r.name)}" aria-label="Name" title="${this._esc(title)}"></td>`;
+    },
+
+    // "N/M canonical" summary for the editor header.
+    _tplCanonSummaryText() {
+        const regs = this._tplEdit?.data?.registers || [];
+        const named = regs.filter(r => r.name);
+        const ok = named.filter(r => this._isCanonical(r.name)).length;
+        return `${ok}/${named.length} ${this.t('devtpl.canonCount', 'canonical')}`;
     },
 
     _tplEditorRender() {
@@ -424,7 +459,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const rows = shown.map(({ r, i }) => `
             <tr data-idx="${i}">
                 <td><input class="input tpl-cell" data-f="address" type="number" min="0" max="65535" value="${r.address}" aria-label="Address"></td>
-                <td><input class="input tpl-cell" data-f="name" value="${this._esc(r.name)}" aria-label="Name"></td>
+                ${this._tplNameCell(r)}
                 <td><input class="input tpl-cell" data-f="label" value="${this._esc(r.label || '')}" aria-label="Label"></td>
                 <td><input class="input tpl-cell" data-f="unit" value="${this._esc(r.unit || '')}" style="width:56px" aria-label="Unit"></td>
                 <td><select class="input tpl-cell" data-f="data_type" aria-label="Data type">
@@ -471,7 +506,15 @@ Object.assign(JanitzaMonitor.prototype, {
                 ? this.t('devtpl.showing', 'showing') + ` ${MAX} / ${matching.length}`
                 : `${matching.length} ${this.t('devices.regsSelected', 'measurements')}`}
                 · ${d.registers.length} ${this.t('devtpl.total', 'total')}</span>
+            <label class="checkbox-label" style="margin-left:auto;" title="${this._esc(this.t('devtpl.canonHint', 'Validate register names against the canonical dictionary (flags non-canonical names).'))}">
+                <input type="checkbox" id="tplCanonical" ${d.canonical ? 'checked' : ''}>
+                <span>${this.t('devtpl.canonical', 'Canonical map')}</span></label>
+            <span class="field-hint" id="tplCanonSummary">${this._esc(this._tplCanonSummaryText())}</span>
         </div>
+        <datalist id="tplCanonList">${(this._canonicalNames || []).map(n => {
+            const f = this._canonicalFields[n];
+            return `<option value="${this._esc(n)}">${this._esc(f.description || '')}</option>`;
+        }).join('')}</datalist>
         <datalist id="tplCatList">${cats.map(c => `<option value="${this._esc(c)}"></option>`).join('')}</datalist>
         <datalist id="tplGroupList">${groups.map(g => `<option value="${this._esc(g)}"></option>`).join('')}</datalist>
         <div class="table-container" style="max-height:320px;overflow:auto;">
@@ -494,6 +537,17 @@ Object.assign(JanitzaMonitor.prototype, {
                     v = inp.value === '' ? null : parseFloat(inp.value);
                 else v = inp.value;
                 this._tplEdit.data.registers[idx][f] = v;
+                if (f === 'name') {
+                    // live canonical feedback: flag the cell + refresh the summary
+                    const canon = !v || this._isCanonical(v);
+                    inp.classList.toggle('tpl-noncanon', !canon);
+                    const s = canon ? '' : this._canonicalSuggest(String(v).toLowerCase());
+                    inp.title = canon ? '' : (s
+                        ? `${this.t('registers.canon.non', 'Non-canonical name')} — ${this.t('registers.canon.didYouMean', 'did you mean')} ${s}?`
+                        : this.t('registers.canon.non', 'Non-canonical name'));
+                    const sum = document.getElementById('tplCanonSummary');
+                    if (sum) sum.textContent = this._tplCanonSummaryText();
+                }
             });
         });
         const search = document.getElementById('tplSearch');
@@ -513,6 +567,8 @@ Object.assign(JanitzaMonitor.prototype, {
         d.name = g('tplName')?.value.trim() ?? d.name;
         d.vendor = g('tplVendor')?.value.trim() ?? d.vendor;
         d.model = g('tplModel')?.value.trim() ?? d.model;
+        const canon = g('tplCanonical');
+        if (canon) d.canonical = canon.checked;
     },
 
     tplAddRow() {
