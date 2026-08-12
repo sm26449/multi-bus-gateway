@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.18.0
+
+### 2026-08-13 — Backlog close-out (2/3): config self-healing, alert hygiene
+
+- **Config self-healing** — a good load now keeps a `config.yaml.good` snapshot;
+  a later corrupt edit falls back to that **last-known-good** config (not bare
+  defaults), so the primary keeps polling the right host through a bad edit. The
+  broken file is preserved as `.yaml.bad`, saves stay disabled until it's fixed,
+  and the condition is surfaced in `/api/status` (`config.healthy`) and raised as
+  an alert instead of only a log line.
+- **Threshold alerts suppressed on stale data** — the threshold engine no longer
+  evaluates a register the device has stopped refreshing (down/frozen); the band
+  holds and resumes cleanly on reconnect, so a comms loss can't fire a phantom
+  crossing.
+- **Connection-sharing audit** — verified MBG opens **one** Modbus socket per
+  device, shared across its poll groups (not one per group/vmeter); no change
+  needed.
+
 ## 3.17.0
 
 ### 2026-08-13 — Backlog close-out (1/3): decode, write-refresh, wedged link

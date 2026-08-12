@@ -60,6 +60,7 @@ def build(ctx) -> APIRouter:
             "influxdb": influxdb_publisher.get_stats() if influxdb_publisher else {},
             "websocket_clients": len(ws_manager.active_connections),
             "last_update": last_update['timestamp'],
+            "config": ctx.config.config_status() if hasattr(ctx.config, "config_status") else {"healthy": True},
         }
         if registry:
             out["devices"] = []

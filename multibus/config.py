@@ -925,6 +925,15 @@ class Config:
 
             logger.info(f"Loaded config from {self.config_path}")
             self._load_failed = False
+            # Keep a last-known-good snapshot so a future corrupt edit can be
+            # self-healed instead of falling back to bare defaults. (Skipped
+            # while healing — we'd only be copying the snapshot onto itself.)
+            if not getattr(self, '_healing', False):
+                try:
+                    import shutil
+                    shutil.copyfile(self.config_path, self.config_path.with_suffix('.yaml.good'))
+                except Exception:  # noqa: BLE001
+                    pass
 
         except Exception as e:
             # A corrupt config.yaml must NOT silently become "defaults": the
@@ -940,6 +949,24 @@ class Config:
                              "config saves are DISABLED until it is repaired")
             except Exception:  # noqa: BLE001
                 logger.error(f"Error loading config: {e} — config saves are DISABLED")
+            # SELF-HEAL: run on the last known-good snapshot rather than defaults,
+            # so the primary keeps polling the right host through a bad edit. The
+            # broken file is preserved and saves stay disabled until it's fixed.
+            good = self.config_path.with_suffix('.yaml.good')
+            if good.exists() and not getattr(self, '_healing', False):
+                logger.error(f"SELF-HEAL: loading last known-good snapshot {good}")
+                self._healing = True
+                _orig = self.config_path
+                try:
+                    self.config_path = good
+                    self._load_yaml_config()          # re-parse the snapshot
+                except Exception as e2:  # noqa: BLE001
+                    logger.error(f"snapshot load also failed: {e2}")
+                finally:
+                    self.config_path = _orig
+                    self._healing = False
+                self._load_failed = True              # real file still broken → block saves
+                self._healed_from_snapshot = True
 
     def _load_selected_registers(self):
         """Load selected registers configuration."""
@@ -1229,6 +1256,19 @@ class Config:
                 else:
                     overrides[config_path] = os.getenv(env_var)
         return overrides
+
+    def config_status(self) -> Dict:
+        """Config-load health for /api/status — so a corrupt config that
+        self-healed to the last-known-good snapshot is visible to an operator,
+        not just buried in a boot log line."""
+        failed = bool(getattr(self, '_load_failed', False))
+        return {
+            "healthy": not failed,
+            "healed_from_snapshot": bool(getattr(self, '_healed_from_snapshot', False)),
+            "saves_disabled": failed,
+            "bad_file": (str(self.config_path.with_suffix('.yaml.bad'))
+                         if failed else None),
+        }
 
     def save_yaml_config(self):
         """Save current configuration to YAML file."""

@@ -775,6 +775,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                                 continue
                             key = f'thr:{did}:{reg.address}'
                             thr_seen.add(key)
+                            # suppress on stale data: don't alarm on a value the
+                            # device stopped refreshing (down/frozen) — the band
+                            # holds and resumes cleanly on reconnect
+                            _mono = entry.get('mono')
+                            _iv = entry.get('interval') or 5
+                            if _mono is not None and (time.monotonic() - _mono) > max(2.5 * _iv, 15):
+                                continue
                             ev = threshold_engine.evaluate(
                                 key, entry.get('value'), th, source=name,
                                 label=(reg.label or reg.name),
@@ -786,6 +793,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     # drop band state for registers/devices that went away, so a
                     # removed threshold can't leave a stuck alarm behind
                     threshold_engine.retain(thr_seen)
+                # a config that failed to load (self-healed to snapshot/defaults)
+                # is a loud, operator-actionable condition — surface it (rate-
+                # limited per key so it doesn't spam)
+                if getattr(config, '_load_failed', False):
+                    alert_mgr.fire('error', 'config', 'Config',
+                                   'config.yaml failed to load — running on '
+                                   'last-known-good/defaults; saves disabled until repaired')
                 if mqtt_publisher:
                     transition('mqtt', 'MQTT', bool(mqtt_publisher.get_stats().get('connected')), 'sink')
                 if influxdb_publisher:
