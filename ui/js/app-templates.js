@@ -502,6 +502,9 @@ Object.assign(JanitzaMonitor.prototype, {
                    value="${this._esc(e.search || '')}" style="max-width:220px;">
             <button class="btn btn-secondary btn-sm" onclick="app.tplAddRow()">
                 <i class="bi bi-plus-lg"></i> ${this.t('devtpl.addRegister', 'Add measurement')}</button>
+            <button class="btn btn-secondary btn-sm" onclick="app.tplAutoCanonicalize()"
+                    title="${this._esc(this.t('devtpl.autoCanonHint', 'Infer canonical names from each row’s label/unit (conservative — leaves anything uncertain untouched). Review, then Save.'))}">
+                <i class="bi bi-magic"></i> ${this.t('devtpl.autoCanon', 'Auto-canonicalize')}</button>
             <span class="field-hint">${matching.length > MAX
                 ? this.t('devtpl.showing', 'showing') + ` ${MAX} / ${matching.length}`
                 : `${matching.length} ${this.t('devices.regsSelected', 'measurements')}`}
@@ -569,6 +572,33 @@ Object.assign(JanitzaMonitor.prototype, {
         d.model = g('tplModel')?.value.trim() ?? d.model;
         const canon = g('tplCanonical');
         if (canon) d.canonical = canon.checked;
+    },
+
+    // Infer canonical names for the non-canonical rows from label/name/unit.
+    // Conservative: only renames on a confident, dictionary-validated guess and
+    // never creates a duplicate (a colliding guess is left for the human). Purely
+    // in-memory — the user reviews the grid and still has to Save.
+    tplAutoCanonicalize() {
+        this._tplCollectMeta();
+        const regs = this._tplEdit.data.registers;
+        // names that will exist, seeded with the rows already canonical
+        const taken = new Set(regs.filter(r => this._isCanonical(r.name))
+                                  .map(r => String(r.name).toLowerCase()));
+        let mapped = 0, conflict = 0, unresolved = 0;
+        for (const r of regs) {
+            if (this._isCanonical(r.name)) continue;
+            const g = this._guessCanonical(r);
+            if (!g) { unresolved++; continue; }
+            if (taken.has(g)) { conflict++; continue; }   // would duplicate — skip
+            r.name = g; taken.add(g); mapped++;
+        }
+        if (mapped) this._tplEdit.data.canonical = true;   // opt into validation
+        this._tplEditorRender();
+        const parts = [`${mapped} ${this.t('devtpl.canonMapped', 'renamed')}`];
+        if (conflict) parts.push(`${conflict} ${this.t('devtpl.canonConflict', 'conflicts')}`);
+        if (unresolved) parts.push(`${unresolved} ${this.t('devtpl.canonUnresolved', 'left for review')}`);
+        this.showToast(conflict || unresolved ? 'info' : 'success',
+                       this.t('devtpl.autoCanon', 'Auto-canonicalize'), parts.join(' · '));
     },
 
     tplAddRow() {
