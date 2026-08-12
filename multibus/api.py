@@ -2105,7 +2105,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     "message": "connected — no message on the topic within 3s (it may be idle)"}
         if protocol == 'rtu' and not str(conn.get('serial_port', '')).strip():
             raise HTTPException(status_code=422, detail={"errors": ["connection.serial_port required"]})
-        if protocol == 'tcp' and not str(conn.get('host', '')).strip():
+        if protocol in ('tcp', 'rtu-tcp') and not str(conn.get('host', '')).strip():
             raise HTTPException(status_code=422, detail={"errors": ["connection.host required"]})
         return _modbus_probe(conn, int(conn.get('unit_id', 1)),
                              float(conn.get('timeout', 3)),

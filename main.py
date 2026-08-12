@@ -328,7 +328,7 @@ class GatewayApp:
             threading.Thread(
                 target=self._connect_modbus_background,
                 args=(client, device.connection.host, device.connection.port,
-                      f"Modbus[{device.id}]", device.protocol == 'tcp'),
+                      f"Modbus[{device.id}]", device.protocol in ('tcp', 'rtu-tcp')),
                 name=f"Modbus-Init-{device.id}",
                 daemon=True
             ).start()

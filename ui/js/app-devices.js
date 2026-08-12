@@ -75,6 +75,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 ? `HTTP · ${this._esc((d.connection?.url || d.http_url || '').replace(/^https?:\/\//, '').split('/')[0] || '—')}`
                 : d.protocol === 'mqtt'
                 ? `MQTT · ${this._esc(d.mqtt_in_broker || d.connection?.broker || '—')} · ${this._esc(d.mqtt_in_topic || d.connection?.topic || '')}`
+                : d.protocol === 'rtu-tcp'
+                ? `RTU/TCP · ${this._esc(d.host || '')}:${d.port}`
                 : `TCP · ${this._esc(d.host || '')}:${d.port}`;
             const stats = d.connected
                 ? `${(d.poll_rate ?? 0).toFixed ? (d.poll_rate ?? 0).toFixed(1) : d.poll_rate} poll/s · ` +
