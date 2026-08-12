@@ -96,6 +96,18 @@ ADVERSARIAL = [
     ("IN", "IN", "A", None),                 # neutral shorthand without the word → None, not L1
     # per-phase apparent energy has no canonical field → None, not the aggregate
     ("EAp", "Apparent Energy L1", "kVAh", None),
+    # direction words with suffixes: import/imported/importing, export/exported
+    ("E", "Total imported active energy", "kWh", "energy_active_import"),
+    ("E", "exported active energy", "kWh", "energy_active_export"),
+    # 'important' must NOT read as import
+    ("E", "Total important active energy", "kWh", "energy_active_total"),
+    # per-phase total/net active energy has no canonical field → None
+    ("E", "Total active energy L1", "kWh", None),
+    ("E", "Net active energy L1", "kWh", None),
+    # a 'model'/'serial' reference in an electrical register's label must not
+    # short-circuit to a diagnostic
+    ("V_L1", "Voltage L1 (model SDM630)", "V", "voltage_l1_n"),
+    ("I_L2", "Current L2 (serial 224026)", "A", "current_l2"),
 ]
 
 

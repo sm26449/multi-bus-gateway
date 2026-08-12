@@ -168,14 +168,21 @@ def guess_canonical(name: str = '', label: str = '', unit: str = '',
     def cand(n: Optional[str]) -> Optional[str]:
         return n if (n and is_canonical(n)) else None
 
-    # diagnostics — require a specific token; guard 'serial' against comms config
-    if _re.search(r'\bserial\b', hay) and not _re.search(
-            r'port|address|baud|parity|rs.?485|rs.?232|config|comm', hay):
-        return 'serial'
-    if _re.search(r'firmware|\bfw\b', hay):
-        return 'firmware_rev'
-    if _re.search(r'\bmodel\b', hay):
-        return 'model_id'
+    # An electrical unit means this is a measurement, not an identity register —
+    # so 'model'/'serial'/'firmware' in the label (e.g. "Voltage L1 (model
+    # SDM630)") must NOT short-circuit to a diagnostic.
+    elec_unit = bool(u) and bool(_re.match(r'^[km]?(v|a|w|va|var|wh|varh|vah|hz)$', u))
+
+    # diagnostics — require a specific token; the identity ones only when there
+    # is no electrical unit; guard 'serial' against comms config
+    if not elec_unit:
+        if _re.search(r'\bserial\b', hay) and not _re.search(
+                r'port|address|baud|parity|rs.?485|rs.?232|config|comm', hay):
+            return 'serial'
+        if _re.search(r'firmware|\bfw\b', hay):
+            return 'firmware_rev'
+        if _re.search(r'\bmodel\b', hay):
+            return 'model_id'
     if _re.search(r'temperature', hay) or (_re.search(r'\btemp\b', hay) and 'c' in u):
         return 'temperature'
     if _re.search(r'\buptime\b', hay):
@@ -263,7 +270,9 @@ def guess_canonical(name: str = '', label: str = '', unit: str = '',
             return cand(f'{q}_total')
         return None
     if q in ('energy_active', 'energy_reactive'):
-        has_imp, has_exp = bool(_re.search(r'\bimport\b', hay)), bool(_re.search(r'\bexport\b', hay))
+        # match import/imported/importing/imports (but NOT 'important')
+        has_imp = bool(_re.search(r'\bimport(?:ed|ing|s)?\b', hay))
+        has_exp = bool(_re.search(r'\bexport(?:ed|ing|s)?\b', hay))
         if has_imp and has_exp:
             dir_ = 'total'                       # both mentioned → the combined counter
         elif has_imp:
@@ -276,11 +285,12 @@ def guess_canonical(name: str = '', label: str = '', unit: str = '',
             dir_ = 'total'
         else:
             return None
-        # per-phase energy is representable ONLY for active import/export;
-        # reactive/apparent per-phase would collide → leave for the human
-        if q == 'energy_active' and dir_ in ('import', 'export') and single_ph and len(distinct) == 1:
-            return cand(f'{q}_{dir_}_l{single_ph}')
-        if q == 'energy_reactive' and single_ph:
+        # per-phase energy is representable ONLY for active import/export; any
+        # other per-phase energy (total/net, reactive) has no canonical field →
+        # None rather than silently dropping the phase into the aggregate.
+        if single_ph:
+            if q == 'energy_active' and dir_ in ('import', 'export') and len(distinct) == 1:
+                return cand(f'{q}_{dir_}_l{single_ph}')
             return None
         return cand(f'{q}_{dir_}')
     if q == 'energy_apparent':
