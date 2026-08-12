@@ -1,5 +1,30 @@
 # Changelog
 
+## 3.9.0
+
+### 2026-08-13 — Redundant-source failover for virtual meters
+
+A virtual-meter register can now be backed by an **ordered list of redundant
+sources** instead of one — the reliability guard for the ESS feed. A single
+source outage no longer stops the meter.
+
+```yaml
+source: { failover: ["_G_P_SUM3", "fronius.power_active_total"] }
+```
+
+- **First-fresh wins** — each rebuild serves the highest-priority candidate that
+  is fresh (within that row's freshness bound); a missing/stale candidate is
+  skipped in order. The primary is preferred whenever fresh, so recovery
+  switches back automatically.
+- **Degrades through `on_stale`** — if *no* candidate is fresh the row behaves
+  exactly as a single stale source (under `fail` the read is refused — never a
+  silently-stale value into the ESS). Composes with the existing freshness
+  watchdog and quality block unchanged.
+- **Observable** — a change of serving source logs one event (`warn` on drop to
+  a lower-priority source, `info` on recovery); the `combined` alias matches
+  evcc's name for the same idea. Editor + template save/load round-trip the new
+  kind. +9 tests. Existing single-source meters are untouched.
+
 ## 3.8.0
 
 ### 2026-08-13 — Value-based alerting (threshold engine)

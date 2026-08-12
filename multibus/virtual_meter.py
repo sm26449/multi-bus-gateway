@@ -89,8 +89,9 @@ class RegisterDef:
     type: str
     scale: float = 1.0
     order: str = "big"
-    source_kind: str = "const"          # const | const_str | live
-    source: Any = 0                      # const value, string, or live source name
+    source_kind: str = "const"          # const | const_str | live | sum | failover
+    source: Any = 0                      # const value, string, or live source name;
+                                         # a list for sum/failover (ordered candidates)
     length: int = 1                      # registers, for strings
     note: str = ""                       # human note (round-trips through the editor)
     # Composite (multi-source) staleness: per-row freshness bound override.
@@ -119,6 +120,12 @@ def _parse_source(reg: dict) -> tuple[str, Any]:
             return "const_str", src["const_str"]
         if "sum" in src:
             return "sum", src["sum"]          # sum of several live sources
+        # ordered redundant sources: serve the first FRESH one, auto-switch on
+        # staleness. `combined` is an alias (evcc's name for the same idea).
+        if "failover" in src:
+            return "failover", src["failover"]
+        if "combined" in src:
+            return "failover", src["combined"]
     # bare value → const
     return "const", src if src is not None else 0
 
@@ -130,6 +137,12 @@ def load_template(path: str) -> Template:
     default_order = d.get("byte_order", "big")
     for r in d.get("registers", []):
         kind, src = _parse_source(r)
+        if kind in ("sum", "failover"):
+            if not isinstance(src, (list, tuple)) or not src or \
+                    not all(isinstance(s, str) and s for s in src):
+                raise ValueError(
+                    f"register 0x{int(r['addr']):04x}: {kind} source must be a "
+                    f"non-empty list of source names")
         row_stale = r.get("stale_after_s")
         regs.append(RegisterDef(
             addr=int(r["addr"]), type=r["type"], scale=float(r.get("scale", 1)),
@@ -344,6 +357,7 @@ class VirtualMeter:
         self._conn_seen: dict[str, float] = {}  # connection ident -> first-seen ts (uptime)
         self._conn_lock = threading.Lock()      # guards _conn_seen across threads
         self.stats = VMeterStats()              # in-RAM query log + counters
+        self._failover_active: dict[int, str] = {}   # addr → active source name
         # Freshness is judged on the MONOTONIC clock (driver 'mono' stamps vs
         # time.monotonic()), so it is immune to wall-clock/NTP steps by
         # construction. This guard is kept only to emit a diagnostic clock_step
@@ -391,11 +405,54 @@ class VirtualMeter:
                     tightest = min(tightest if tightest is not None else bound, bound)
             eff_ts = newest if self.on_stale == "legacy" else oldest
             return enc.encode(total, reg.type, reg.scale), eff_ts, tightest
+        if reg.source_kind == "failover":
+            value, ts, bound, name = self._resolve_failover(reg)
+            if value is None:
+                return None, None, None
+            self._note_failover(reg, name)
+            return enc.encode(value, reg.type, reg.scale), ts, bound
         # live
         value, ts, bound = self._got3(self.provider(reg.source) if reg.source else None)
         if value is None:
             return None, None, None
         return enc.encode(value, reg.type, reg.scale), ts, bound
+
+    def _resolve_failover(self, reg: RegisterDef):
+        """Pick the highest-priority FRESH candidate from an ordered redundant
+        source list; if none is fresh, fall back to the first candidate that has
+        a value at all (stale) so the on_stale policy judges it exactly as it
+        would a single stale source. Returns (value, ts, bound, active_name) or
+        (None, None, None, None) when no candidate is even known."""
+        now = time.monotonic()
+        fallback = None
+        for name in reg.source:
+            value, ts, bound = self._got3(self.provider(name))
+            if value is None:
+                continue
+            if fallback is None:
+                fallback = (value, ts, bound, name)     # first known → stale path
+            if self._is_fresh(now, ts, self._row_bound(reg, bound)):
+                return value, ts, bound, name           # first fresh wins
+        return fallback if fallback is not None else (None, None, None, None)
+
+    def _note_failover(self, reg: RegisterDef, name: str) -> None:
+        """Log a one-line event when a failover row changes which source feeds
+        it — a warn when it drops to a lower-priority source, an info when it
+        recovers toward the primary. Silent on the first bind and steady state."""
+        prev = self._failover_active.get(reg.addr)
+        if prev == name:
+            return
+        self._failover_active[reg.addr] = name
+        if prev is None:
+            return                                        # first bind — no event
+        try:
+            recovering = reg.source.index(name) < reg.source.index(prev)
+        except ValueError:
+            recovering = False
+        self.stats.record_event(
+            "info" if recovering else "warn", "failover",
+            f"0x{reg.addr:04x}: source {prev} → {name}"
+            + (" (recovered)" if recovering else " (failover)"))
 
     def _row_bound(self, reg: RegisterDef, src_bound: Optional[float]) -> float:
         """Effective freshness bound for one row. An explicit row stale_after_s
@@ -906,7 +963,7 @@ class VirtualMeter:
         stale_fields: list[str] = []
         for reg in self.t.registers:
             key = (reg.source if isinstance(reg.source, str) and reg.source_kind == "live"
-                   else f"addr_{reg.addr}" if reg.source_kind == "sum"
+                   else f"addr_{reg.addr}" if reg.source_kind in ("sum", "failover")
                    else None)
             if reg.source_kind in ("const", "const_str"):
                 values[f"addr_{reg.addr}"] = {"value": reg.source, "quality": "const",
@@ -923,6 +980,8 @@ class VirtualMeter:
                     if ts:
                         oldest = min(oldest if oldest is not None else ts, ts)
                 val, ts, src_bound = (None if missing else total), oldest, None
+            elif reg.source_kind == "failover":
+                val, ts, src_bound, _active = self._resolve_failover(reg)
             else:
                 val, ts, src_bound = self._got3(self.provider(reg.source) if reg.source else None)
             bound = self._row_bound(reg, src_bound)
@@ -956,6 +1015,10 @@ class VirtualMeter:
             if reg.source_kind == "live" and reg.source:
                 got = self.provider(reg.source)
                 out[reg.source] = got[0] if got else None
+            elif reg.source_kind in ("sum", "failover"):
+                for name in reg.source:
+                    got = self.provider(name)
+                    out[name] = got[0] if got else None
         return out
 
     def connections(self) -> list[dict]:

@@ -56,3 +56,28 @@ with one of those for composites.
 **Versioning promise:** the layout above never changes meaning within
 version `1`; new fields may APPEND (61448+). A consumer should check 61440
 once at commissioning.
+
+## Register source kinds
+
+A register's `source:` binds it to live data. Besides the single-source forms
+(`live: <name>`, `const: <n>`, `const_str: <s>`) and `sum: [<names>]`, a row may
+declare **redundant sources**:
+
+```yaml
+- { addr: 0x0028, type: int32, scale: 10,
+    source: { failover: ["_G_P_SUM3", "fronius.power_active_total"] } }
+```
+
+* **`failover` (alias `combined`)** — an *ordered* candidate list. Each rebuild
+  the meter serves the **first candidate that is fresh** (within that row's
+  freshness bound); a candidate that is missing or stale is skipped in order.
+  The primary is preferred whenever it is fresh, so recovery switches back
+  automatically. If **no** candidate is fresh the row degrades through the
+  meter's `on_stale` policy exactly as a single stale source would (under
+  `fail` the read is refused — never a silently-stale value into the ESS).
+  A change of the serving source logs one event (`warn` on drop to a
+  lower-priority source, `info` on recovery) for the Status page / alerting.
+
+This is the reliability guard for a control feed: bind the ESS grid-power row to
+the accurate primary meter with a second meter (or a derived value) as backup,
+and a single source outage no longer stops the meter.

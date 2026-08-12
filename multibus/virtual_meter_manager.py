@@ -489,22 +489,23 @@ class VirtualMeterManager:
             if typ not in _VALID_TYPES:
                 return None, f"{tag}: invalid type {typ!r}"
             kind = r.get("source_kind", "const")
-            if kind not in ("const", "const_str", "live", "sum"):
+            if kind not in ("const", "const_str", "live", "sum", "failover"):
                 return None, f"{tag}: invalid source kind {kind!r}"
             src = r.get("source")
             if kind == "live":
                 if not (isinstance(src, str) and src.strip()):
                     return None, f"{tag}: live source register name required"
                 src = src.strip()
-            elif kind == "sum":
+            elif kind in ("sum", "failover"):
                 # a list of live source names, or a comma-separated string
+                # (sum = add them all; failover = ordered, serve first fresh)
                 if isinstance(src, str):
                     src = [x.strip() for x in src.split(",")]
                 if not (isinstance(src, list) and all(isinstance(x, str) for x in src)):
-                    return None, f"{tag}: sum source must be a list of register names"
+                    return None, f"{tag}: {kind} source must be a list of register names"
                 src = [x.strip() for x in src if x.strip()]
                 if not src:
-                    return None, f"{tag}: sum needs at least one source name"
+                    return None, f"{tag}: {kind} needs at least one source name"
             elif kind == "const_str":
                 src = "" if src is None else str(src)
             else:  # const number
@@ -766,9 +767,9 @@ class VirtualMeterManager:
                 parts.append(f"length: {max(1, r['length'])}")
             if r["source_kind"] == "live":
                 parts.append(f'source: {{ live: {_q(r["source"])} }}')
-            elif r["source_kind"] == "sum":
+            elif r["source_kind"] in ("sum", "failover"):
                 names = ", ".join(_q(n) for n in r["source"])
-                parts.append(f'source: {{ sum: [{names}] }}')
+                parts.append(f'source: {{ {r["source_kind"]}: [{names}] }}')
             elif r["source_kind"] == "const_str":
                 parts.append(f'source: {{ const_str: {_q(r["source"])} }}')
             else:
