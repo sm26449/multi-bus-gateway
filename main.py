@@ -85,7 +85,8 @@ class GatewayApp:
             self.mqtt_publisher = MQTTPublisher(
                 config=self.config.mqtt,
                 registers=self.config.selected_registers,
-                publish_mode=self.config.mqtt.publish_mode
+                publish_mode=self.config.mqtt.publish_mode,
+                heartbeat_interval=getattr(self.config.mqtt, 'heartbeat_interval', 0),
             )
             logger.info("MQTT publisher initialized (connecting in background)")
 

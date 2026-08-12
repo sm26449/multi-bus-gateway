@@ -2120,7 +2120,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     mqtt_publisher = MQTTPublisher(
                         config=config.mqtt,
                         registers=config.selected_registers,
-                        publish_mode=config.mqtt.publish_mode
+                        publish_mode=config.mqtt.publish_mode,
+                        heartbeat_interval=getattr(config.mqtt, 'heartbeat_interval', 0),
                     )
                     ctx.mqtt_publisher = mqtt_publisher   # mirror for route modules
                     alert_mgr.mqtt = mqtt_publisher       # else alerts publish to the dead ref

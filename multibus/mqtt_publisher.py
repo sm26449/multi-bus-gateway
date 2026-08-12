@@ -73,14 +73,17 @@ class MQTTPublisher:
     """
 
     def __init__(self, config: MQTTConfig, registers: List[SelectedRegister],
-                 publish_mode: str = 'changed'):
+                 publish_mode: str = 'changed', heartbeat_interval: int = 0):
         self.config = config
         self.registers = registers
         self.publish_mode = publish_mode
+        # force a republish of an unchanged value after this many seconds (0=off)
+        self.heartbeat_interval = int(heartbeat_interval or 0)
 
         self.client: Optional[mqtt.Client] = None
         self.connected = False
         self.last_values: Dict[str, Any] = {}
+        self.last_publish_at: Dict[str, float] = {}   # topic → last publish time (heartbeat)
         self.lock = threading.Lock()
         # HA discovery configs we've published, so a later republish can clear the
         # ones for registers that were removed/disabled (else HA keeps a ghost
@@ -339,6 +342,13 @@ class MQTTPublisher:
             if self.last_values[topic] != value:
                 return True
 
+            # heartbeat: unchanged, but republish if it's been quiet too long so
+            # the value keeps a fresh timestamp for HA/consumers
+            if self.heartbeat_interval > 0:
+                last = self.last_publish_at.get(topic, 0)
+                if time.time() - last >= self.heartbeat_interval:
+                    return True
+
             return False
 
     def _confirm_publish(self, topic: str, value: Any):
@@ -352,6 +362,7 @@ class MQTTPublisher:
                 self.last_values[topic] = round(value, 3)
             else:
                 self.last_values[topic] = value
+            self.last_publish_at[topic] = time.time()   # heartbeat reference
 
     def _publish(self, topic: str, payload: str, retain: bool = None) -> bool:
         """Internal publish method."""
@@ -610,6 +621,7 @@ class MQTTPublisher:
         """Update MQTT configuration."""
         self.config = new_config
         self.publish_mode = new_config.publish_mode
+        self.heartbeat_interval = int(getattr(new_config, 'heartbeat_interval', 0) or 0)
         logger.info(f"MQTT config updated: {new_config.broker}:{new_config.port}")
 
     def update_registers(self, registers: List[SelectedRegister]):

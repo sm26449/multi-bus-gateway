@@ -57,6 +57,9 @@ mqtt:
   qos: 0
   # Publish mode: "changed" (only changed values) or "all" (all values every poll)
   publish_mode: "changed"
+  # In "changed" mode, republish an UNCHANGED value after this many seconds so it
+  # keeps a fresh timestamp and HA doesn't grey the entity out (0 = off)
+  heartbeat_interval: 0
   # Enable Home Assistant MQTT autodiscovery
   ha_discovery:
     enabled: true

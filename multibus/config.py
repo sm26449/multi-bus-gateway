@@ -116,6 +116,10 @@ class MQTTConfig:
     retain: bool = True
     qos: int = 0
     publish_mode: str = "changed"  # "changed" or "all"
+    # In "changed" mode, force a republish of an UNCHANGED value after this many
+    # seconds (0 = off) so a steady reading keeps a fresh timestamp and HA/other
+    # consumers don't grey the entity out during long steady states.
+    heartbeat_interval: int = 0
     ha_discovery_enabled: bool = True
     ha_discovery_prefix: str = "homeassistant"
     ha_device_name: str = "Janitza UMG 512-PRO"
@@ -761,6 +765,7 @@ class Config:
                     retain=m.get('retain', self.mqtt.retain),
                     qos=m.get('qos', self.mqtt.qos),
                     publish_mode=m.get('publish_mode', self.mqtt.publish_mode),
+                    heartbeat_interval=m.get('heartbeat_interval', self.mqtt.heartbeat_interval),
                     ha_discovery_enabled=ha.get('enabled', self.mqtt.ha_discovery_enabled),
                     ha_discovery_prefix=ha.get('prefix', self.mqtt.ha_discovery_prefix),
                     ha_device_name=ha.get('device_name', self.mqtt.ha_device_name),
@@ -1076,6 +1081,7 @@ class Config:
                 "retain": self.mqtt.retain,
                 "qos": self.mqtt.qos,
                 "publish_mode": self.mqtt.publish_mode,
+                "heartbeat_interval": self.mqtt.heartbeat_interval,
                 "ha_discovery_enabled": self.mqtt.ha_discovery_enabled,
                 "ha_discovery_prefix": self.mqtt.ha_discovery_prefix,
                 "ha_device_name": self.mqtt.ha_device_name,
@@ -1172,6 +1178,7 @@ class Config:
                 'retain': self.mqtt.retain,
                 'qos': self.mqtt.qos,
                 'publish_mode': self.mqtt.publish_mode,
+                'heartbeat_interval': self.mqtt.heartbeat_interval,
                 'ha_discovery': {
                     'enabled': self.mqtt.ha_discovery_enabled,
                     'prefix': self.mqtt.ha_discovery_prefix,

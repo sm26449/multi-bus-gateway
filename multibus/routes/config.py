@@ -82,6 +82,7 @@ def build(ctx) -> APIRouter:
             "retain": config.mqtt.retain,
             "qos": config.mqtt.qos,
             "publish_mode": config.mqtt.publish_mode,
+            "heartbeat_interval": config.mqtt.heartbeat_interval,
             "ha_discovery_enabled": config.mqtt.ha_discovery_enabled,
             "ha_discovery_prefix": config.mqtt.ha_discovery_prefix,
             "ha_device_name": config.mqtt.ha_device_name,
