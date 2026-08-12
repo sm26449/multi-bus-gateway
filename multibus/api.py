@@ -1270,58 +1270,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         _redact = getattr(request.state, "role", None) in ("viewer", "operator")
         return {"devices": [_device_entry(d, c, redact=_redact) for d, c in registry]}
 
-    # Where the serial-over-TCP bridge's control API lives. On the stack it is
-    # the serial-bridge service by name; override for a different host/port.
-    _BRIDGE_URL = os.environ.get("SERIAL_BRIDGE_URL", "http://pv-stack-serial-bridge:7000")
-
-    @app.get("/api/serial-ports")
-    def list_serial_ports():
-        """Local /dev serial lines visible to THIS container — for direct RTU
-        mode (a compose `devices:` mapping). Empty when MBG has no /dev access
-        (the default now: RTU goes through the bridge). Never raises."""
-        import glob
-        ports = []
-        for dev in sorted(glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*")):
-            entry = {"dev": dev}
-            try:
-                name = os.path.basename(dev)
-                usb = os.path.realpath(f"/sys/class/tty/{name}/device")
-                for _ in range(8):
-                    if os.path.exists(os.path.join(usb, "idVendor")):
-                        break
-                    usb = os.path.dirname(usb)
-
-                def _r(p):
-                    try:
-                        with open(os.path.join(usb, p)) as f:
-                            return f.read().strip()
-                    except OSError:
-                        return ""
-                entry.update(vendor_id=_r("idVendor"), product_id=_r("idProduct"),
-                             serial=_r("serial"), model=_r("product"))
-            except Exception:  # noqa: BLE001
-                pass
-            ports.append(entry)
-        return {"ports": ports}
-
-    @app.get("/api/bridge/adapters")
-    def bridge_adapters():
-        """Live adapter inventory from the serial-over-TCP bridge, so the UI can
-        scan for RTU-over-network devices. Returns available=false (not an error)
-        when the bridge is unreachable, so the UI degrades gracefully. Adapters
-        carry the bridge host + their stable tcp_port to prefill the add form."""
-        import urllib.request
-        from urllib.parse import urlparse
-        host = urlparse(_BRIDGE_URL).hostname or "pv-stack-serial-bridge"
-        try:
-            with urllib.request.urlopen(f"{_BRIDGE_URL}/adapters", timeout=4) as r:
-                data = json.loads(r.read().decode())
-            for a in data.get("adapters", []):
-                a["bridge_host"] = host        # what an rtu-tcp device sets as connection.host
-            return {"available": True, "bridge_host": host, **data}
-        except Exception as e:  # noqa: BLE001
-            return {"available": False, "bridge_host": host, "adapters": [],
-                    "error": f"serial bridge unreachable at {_BRIDGE_URL}: {e}"}
+    # /api/serial-ports, /api/bridge/adapters → routes/commissioning.py
 
     def _sync_device_discovery():
         """Rebuild the MQTT discovery hooks from the current non-primary
@@ -2961,9 +2910,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # object here, so routers reading ctx.<publisher> at request time always
     # see the live one. Everything else is a stable singleton.
     from .routes import (ApiCtx, auth_routes, builder_routes, calculated,
-                         device_templates, diagnostics, discovery_routes,
-                         energy, general_config, languages, metrics,
-                         registers_routes, status_routes, system,
+                         commissioning, device_templates, diagnostics,
+                         discovery_routes, energy, general_config, languages,
+                         metrics, registers_routes, status_routes, system,
                          values_routes, vmeters)
     ctx = ApiCtx(
         app=app, config=config, registry=registry, calc_engine=calc_engine,
@@ -2977,9 +2926,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         ip_allowed=_ip_allowed,   # WS routes enforce the allowlist themselves
     )
     app.state.ctx = ctx
-    for _mod in (builder_routes, calculated, device_templates, diagnostics,
-                 discovery_routes, energy, general_config, languages, metrics,
-                 registers_routes, status_routes, system, auth_routes,
+    for _mod in (builder_routes, calculated, commissioning, device_templates,
+                 diagnostics, discovery_routes, energy, general_config, languages,
+                 metrics, registers_routes, status_routes, system, auth_routes,
                  values_routes, vmeters):
         app.include_router(_mod.build(ctx))
     app.include_router(auth_routes.build_passkeys(ctx))
