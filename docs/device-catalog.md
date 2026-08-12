@@ -13,9 +13,9 @@ Every built-in device map, with its Modbus transport (function code + byte/word 
 | [ABB B23 (3-phase)](#abb-b23-3-phase) | ABB | B23 (System pro M compact) | 32 | FC03 / big |
 | [BLE sensor (Theengs / BTHome → MQTT)](#ble-sensor-theengs--bthome--mqtt) | Theengs | BLE advertisement sensor | 5 | FC03 / big |
 | [Carlo Gavazzi EM24 (AV5/AV53, 3-phase)](#carlo-gavazzi-em24-av5av53-3-phase) | Carlo Gavazzi | EM24-DIN AV5(3) | 16 | FC03 / little |
-| [Fronius Smart Meter 65A-3 (RTU)](#fronius-smart-meter-65a-3-rtu) | Fronius | Smart Meter 65A-3 | 27 | FC03 / little |
 | [Eastron SDM120 (single-phase)](#eastron-sdm120-single-phase) | Eastron | SDM120 Modbus | 10 | FC04 / big |
 | [Eastron SDM630 (3-phase)](#eastron-sdm630-3-phase) | Eastron | SDM630 Modbus V2 | 29 | FC04 / big |
+| [Fronius Smart Meter 65A-3 (RTU)](#fronius-smart-meter-65a-3-rtu) | Fronius | Smart Meter 65A-3 | 29 | FC03 / little |
 | [Generic MQTT (JSON)](#generic-mqtt-json) | Generic | MQTT JSON source | 3 | FC03 / big |
 | [Schneider iEM3000 (3-phase)](#schneider-iem3000-3-phase) | Schneider Electric | iEM3155 / iEM3255 / iEM3455 / iEM3555 | 22 | FC03 / big |
 | [Zigbee sensor (zigbee2mqtt)](#zigbee-sensor-zigbee2mqtt) | Zigbee2MQTT | climate / battery sensor | 6 | FC03 / big |
@@ -144,45 +144,6 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 68 / 0x0044 | `Energy_L3_Import` | Import active energy L3 | int32 | 10 | kWh | slow |
 | 78 / 0x004E | `Export_kWh` | Export active energy (total) | int32 | 10 | kWh | slow |
 
-## Fronius Smart Meter 65A-3 (RTU)
-
-**id** `fronius_smart_meter_65a` · **vendor** Fronius · **model** Smart Meter 65A-3 · **version** 1.0.0 · **registers** 27
-
-- **Transport:** FC03 (read holding registers) · byte order **little-endian, low word first (CDAB / word-swapped)** · Modbus RTU (9600 8N1), unit id 1
-- **Source / provenance:** field-verified against a **physical Fronius Smart Meter 65A-3** over a Waveshare USB-RS485 adapter (2026-08-11), validated by physics on live values (|P| ≤ S per phase, S² ≈ P² + Q², PF = P/S, Freq = 50 Hz). The meter reports model id **731** at register `0x000B` and a serial block at `0x5000`.
-
-> Fronius Smart Meter 65A-3, 3-phase, Modbus RTU. INT32 measurements in HOLDING registers (FC03), low-word-first (CDAB); scales V/10 · A/1000 · W/10 · Hz/10 · kWh/10 (`scale` is a divisor — engineering value = raw / scale). **Note:** frequency is at register **49** (register 51 holds `PF_sys`, system power factor, INT16 ÷1000). The map covers phase + line-to-line voltages (0–10), currents (12–16), per-phase and system active/apparent/reactive power (18–44), frequency, PF, and import/export energy.
-
-| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
-|---|---|---|---|---|---|---|
-| 0 / 0x0000 | `V_L1` | Voltage L1-N | int32 | 10 | V | realtime |
-| 2 / 0x0002 | `V_L2` | Voltage L2-N | int32 | 10 | V | realtime |
-| 4 / 0x0004 | `V_L3` | Voltage L3-N | int32 | 10 | V | realtime |
-| 6 / 0x0006 | `V_L12` | Voltage L1-L2 | int32 | 10 | V | realtime |
-| 8 / 0x0008 | `V_L23` | Voltage L2-L3 | int32 | 10 | V | realtime |
-| 10 / 0x000A | `V_L31` | Voltage L3-L1 | int32 | 10 | V | realtime |
-| 12 / 0x000C | `I_L1` | Current L1 | int32 | 1000 | A | realtime |
-| 14 / 0x000E | `I_L2` | Current L2 | int32 | 1000 | A | realtime |
-| 16 / 0x0010 | `I_L3` | Current L3 | int32 | 1000 | A | realtime |
-| 18 / 0x0012 | `P_L1` | Active Power L1 | int32 | 10 | W | realtime |
-| 20 / 0x0014 | `P_L2` | Active Power L2 | int32 | 10 | W | realtime |
-| 22 / 0x0016 | `P_L3` | Active Power L3 | int32 | 10 | W | realtime |
-| 24 / 0x0018 | `S_L1` | Apparent Power L1 | int32 | 10 | VA | normal |
-| 26 / 0x001A | `S_L2` | Apparent Power L2 | int32 | 10 | VA | normal |
-| 28 / 0x001C | `S_L3` | Apparent Power L3 | int32 | 10 | VA | normal |
-| 30 / 0x001E | `Q_L1` | Reactive Power L1 | int32 | 10 | var | normal |
-| 32 / 0x0020 | `Q_L2` | Reactive Power L2 | int32 | 10 | var | normal |
-| 34 / 0x0022 | `Q_L3` | Reactive Power L3 | int32 | 10 | var | normal |
-| 36 / 0x0024 | `V_LN_sys` | Voltage L-N sys | int32 | 10 | V | normal |
-| 38 / 0x0026 | `V_LL_sys` | Voltage L-L sys | int32 | 10 | V | normal |
-| 40 / 0x0028 | `P_total` | Active Power Total | int32 | 10 | W | realtime |
-| 42 / 0x002A | `S_total` | Apparent Power Total | int32 | 10 | VA | normal |
-| 44 / 0x002C | `Q_total` | Reactive Power Total | int32 | 10 | var | normal |
-| 49 / 0x0031 | `Freq` | Frequency (**@49, not @51**) | uint16 | 10 | Hz | normal |
-| 51 / 0x0033 | `PF_sys` | Power Factor sys | int16 | 1000 | — | normal |
-| 52 / 0x0034 | `Energy_Import` | Energy Import Total | int32 | 10 | kWh | slow |
-| 78 / 0x004E | `Energy_Export` | Energy Export Total | int32 | 10 | kWh | slow |
-
 ## Eastron SDM120 (single-phase)
 
 **id** `eastron_sdm120` · **vendor** Eastron · **model** SDM120 Modbus · **version** 0.9.0 · **registers** 10
@@ -245,6 +206,47 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 78 / 0x004E | `Export_kvarh` | Export reactive energy | float | 1 | kvarh | slow |
 | 342 / 0x0156 | `Total_kWh` | Total active energy | float | 1 | kWh | slow |
 | 344 / 0x0158 | `Total_kvarh` | Total reactive energy | float | 1 | kvarh | slow |
+
+## Fronius Smart Meter 65A-3 (RTU)
+
+**id** `fronius_smart_meter_65a` · **vendor** Fronius · **model** Smart Meter 65A-3 · **version** 1.0.0 · **registers** 29
+
+- **Transport:** FC03 (read holding registers) · byte order **little-endian, low word first (CDAB / word-swapped)**
+- **Source / provenance:** Field-verified against a physical Fronius Smart Meter 65A-3 over Modbus RTU (2026-08-11): |P|<=S per phase, S^2~=P^2+Q^2, PF=P/S, Freq=50Hz.
+
+> Fronius Smart Meter 65A-3, 3-phase, Modbus RTU. Register map field-verified against the physical meter: INT32 low-word-first (CDAB), holding registers (FC03), scales V/10 A/1000 W/10 Hz/10 kWh/10. Frequency at register 49 (register 51 holds PF_sys). Meter model id 731 at 0x000B.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 0 / 0x0000 | `V_L1` | Voltage L1-N | int32 | 10.0 | V | realtime |
+| 2 / 0x0002 | `V_L2` | Voltage L2-N | int32 | 10.0 | V | realtime |
+| 4 / 0x0004 | `V_L3` | Voltage L3-N | int32 | 10.0 | V | realtime |
+| 6 / 0x0006 | `V_L12` | Voltage L1-L2 | int32 | 10.0 | V | realtime |
+| 8 / 0x0008 | `V_L23` | Voltage L2-L3 | int32 | 10.0 | V | realtime |
+| 10 / 0x000A | `V_L31` | Voltage L3-L1 | int32 | 10.0 | V | realtime |
+| 11 / 0x000B | `Model_ID` | Meter model id | uint16 | 1.0 | — | slow |
+| 12 / 0x000C | `I_L1` | Current L1 | int32 | 1000.0 | A | realtime |
+| 14 / 0x000E | `I_L2` | Current L2 | int32 | 1000.0 | A | realtime |
+| 16 / 0x0010 | `I_L3` | Current L3 | int32 | 1000.0 | A | realtime |
+| 18 / 0x0012 | `P_L1` | Active Power L1 | int32 | 10.0 | W | realtime |
+| 20 / 0x0014 | `P_L2` | Active Power L2 | int32 | 10.0 | W | realtime |
+| 22 / 0x0016 | `P_L3` | Active Power L3 | int32 | 10.0 | W | realtime |
+| 24 / 0x0018 | `S_L1` | Apparent Power L1 | int32 | 10.0 | VA | normal |
+| 26 / 0x001A | `S_L2` | Apparent Power L2 | int32 | 10.0 | VA | normal |
+| 28 / 0x001C | `S_L3` | Apparent Power L3 | int32 | 10.0 | VA | normal |
+| 30 / 0x001E | `Q_L1` | Reactive Power L1 | int32 | 10.0 | var | normal |
+| 32 / 0x0020 | `Q_L2` | Reactive Power L2 | int32 | 10.0 | var | normal |
+| 34 / 0x0022 | `Q_L3` | Reactive Power L3 | int32 | 10.0 | var | normal |
+| 36 / 0x0024 | `V_LN_sys` | Voltage L-N sys | int32 | 10.0 | V | normal |
+| 38 / 0x0026 | `V_LL_sys` | Voltage L-L sys | int32 | 10.0 | V | normal |
+| 40 / 0x0028 | `P_total` | Active Power Total | int32 | 10.0 | W | realtime |
+| 42 / 0x002A | `S_total` | Apparent Power Total | int32 | 10.0 | VA | normal |
+| 44 / 0x002C | `Q_total` | Reactive Power Total | int32 | 10.0 | var | normal |
+| 49 / 0x0031 | `Freq` | Frequency | uint16 | 10.0 | Hz | normal |
+| 51 / 0x0033 | `PF_sys` | Power Factor sys | int16 | 1000.0 | — | normal |
+| 52 / 0x0034 | `Energy_Import` | Energy Import Total | int32 | 10.0 | kWh | slow |
+| 78 / 0x004E | `Energy_Export` | Energy Export Total | int32 | 10.0 | kWh | slow |
+| 4096 / 0x1000 | `Firmware_Rev` | Firmware / revision | uint16 | 1.0 | — | slow |
 
 ## Generic MQTT (JSON)
 
