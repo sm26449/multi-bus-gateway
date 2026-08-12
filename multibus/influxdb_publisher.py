@@ -550,6 +550,15 @@ class InfluxDBPublisher:
         if register.influxdb_measurement:
             return register.influxdb_measurement
 
+        # A canonical register name is the authoritative source — consult the
+        # dictionary before the unit heuristic, which otherwise misfiles fields
+        # the unit can't disambiguate (power_factor/diagnostics → 'janitza',
+        # apparent energy 'kVAh' → 'power_apparent' via the 'va' substring).
+        from .canonical_fields import measurement_for
+        m = measurement_for(getattr(register, 'name', '') or '')
+        if m:
+            return m
+
         unit = register.unit.lower() if register.unit else ''
         # MOST-SPECIFIC first: 'v' is a substring of 'va'/'var'/'varh', 'w' of
         # 'wh', 'var' of 'varh' — so energy (…h) and reactive/apparent must be

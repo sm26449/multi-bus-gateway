@@ -124,3 +124,155 @@ def suggest(name: str) -> Optional[str]:
 def non_canonical(names: List[str]) -> List[str]:
     """The subset of ``names`` that are not canonical."""
     return [n for n in names if not is_canonical(n)]
+
+
+# ── Canonical-name inference (drives the "auto-canonicalize" button) ──────────
+# Conservative by design: every composed candidate is validated against the
+# dictionary, and anything ambiguous or not representable returns None rather
+# than a plausible-but-wrong name — because this RENAMES live registers feeding
+# MQTT/InfluxDB/automations. A wrong rename is far worse than no rename.
+import re as _re  # noqa: E402
+
+# Anchored unit tokens — matching the whole unit (not a substring) is what stops
+# 'kvar' from being read as apparent power ('va') and 'W/m²' as active power.
+_UNIT_RX: Dict[str, "_re.Pattern"] = {
+    'voltage':         _re.compile(r'^k?v$'),
+    'current':         _re.compile(r'^k?a$'),
+    'power_active':    _re.compile(r'^[km]?w$'),
+    'power_apparent':  _re.compile(r'^k?va$'),
+    'power_reactive':  _re.compile(r'^(k?var|mvar)$'),
+    'frequency':       _re.compile(r'^hz$'),
+    'energy_active':   _re.compile(r'^[km]?wh$'),
+    'energy_reactive': _re.compile(r'^k?varh$'),
+    'energy_apparent': _re.compile(r'^k?vah$'),
+}
+
+
+def _phase_pair(a: str, b: str) -> Optional[str]:
+    return {'12': 'l1_l2', '23': 'l2_l3', '13': 'l3_l1'}.get(''.join(sorted([a, b])))
+
+
+def guess_canonical(name: str = '', label: str = '', unit: str = '',
+                    description: str = '') -> Optional[str]:
+    """Infer the canonical field name for a register from its descriptors, or
+    None. Conservative: ambiguous direction words (delivered/forward/consumed —
+    vendor-specific polarity), per-phase/tariff energy the dictionary can't
+    represent, and weak position signals all yield None instead of a wrong name.
+    """
+    name = str(name or '')
+    if is_canonical(name):
+        return name.lower()
+    hay = f'{label} {name} {description}'.lower()
+    u = str(unit or '').strip().lower()
+
+    def cand(n: Optional[str]) -> Optional[str]:
+        return n if (n and is_canonical(n)) else None
+
+    # diagnostics — require a specific token; guard 'serial' against comms config
+    if _re.search(r'\bserial\b', hay) and not _re.search(
+            r'port|address|baud|parity|rs.?485|rs.?232|config|comm', hay):
+        return 'serial'
+    if _re.search(r'firmware|\bfw\b', hay):
+        return 'firmware_rev'
+    if _re.search(r'\bmodel\b', hay):
+        return 'model_id'
+    if _re.search(r'temperature', hay) or (_re.search(r'\btemp\b', hay) and 'c' in u):
+        return 'temperature'
+    if _re.search(r'\buptime\b', hay):
+        return 'uptime'
+    if _re.search(r'\bthd\b', hay):
+        sub = 'current' if _re.search(r'current|\bamp|thd[\s_-]*i\b|\bi[123]\b', hay) else 'voltage'
+        m = _re.search(r'l\s*([123])\b|phase\s*([123])', hay)
+        ph = m and (m.group(1) or m.group(2))
+        return cand(f'thd_{sub}_l{ph}') if ph else None
+
+    def um(q: str) -> bool:
+        return bool(u) and bool(_UNIT_RX[q].match(u))
+
+    # quantity — energy before power (unit substrings), reactive/apparent before base
+    q = None
+    if um('energy_reactive') or (_re.search(r'reactive', hay) and _re.search(r'energ', hay)):
+        q = 'energy_reactive'
+    elif um('energy_apparent') or (_re.search(r'apparent', hay) and _re.search(r'energ', hay)):
+        q = 'energy_apparent'
+    elif um('energy_active') or (_re.search(r'energ', hay) and not _re.search(r'reactive|apparent', hay)
+                                 and _re.search(r'import|export|\bnet\b|\btotal\b|active', hay)):
+        q = 'energy_active'
+    elif um('power_reactive') or (_re.search(r'reactive', hay) and _re.search(r'power', hay)):
+        q = 'power_reactive'
+    elif um('power_apparent') or (_re.search(r'apparent', hay) and not _re.search(r'energ', hay)):
+        q = 'power_apparent'
+    elif um('frequency') or _re.search(r'frequency|\bfreq\b', hay):
+        return 'frequency'
+    elif _re.search(r'power\s*factor|cos[\s._-]*(?:phi|φ)|\bpf\b', hay):
+        q = 'power_factor'
+    elif um('power_active') or _re.search(r'active\s*power|real\s*power', hay):
+        q = 'power_active'
+    elif um('voltage') or _re.search(r'voltage|\bvolt', hay):
+        q = 'voltage'
+    elif um('current') or _re.search(r'current|\bamp', hay):
+        q = 'current'
+    if not q:
+        return None
+
+    # position
+    phases = _re.findall(r'l\s*([123])\b', hay) + _re.findall(r'phase\s*([123])', hay)
+    distinct = sorted(set(phases))
+    single_ph = phases[0] if phases else None
+    is_total = bool(_re.search(r'\btotal\b|\bsum\b|sum3|\bsys\b|system', hay))
+    is_avg = bool(_re.search(r'average|\bavg\b', hay))
+    is_neutral = bool(_re.search(r'neutral', hay)) or (single_ph is None and bool(_re.search(r'\bn\b', hay)))
+    line_line = bool(_re.search(
+        r'ull|l\s*[123]\s*(?:-|_|,|/|to|and)\s*l?\s*[123]|line[\s-]*to[\s-]*line'
+        r'|line[\s-]*line|phase[\s-]*to[\s-]*phase', hay))
+
+    if q == 'voltage':
+        if is_avg:
+            return cand('voltage_ll_avg' if line_line else 'voltage_ln_avg')
+        if line_line:
+            if len(distinct) >= 2:
+                return cand(f'voltage_{_phase_pair(distinct[0], distinct[1])}')
+            return None
+        if single_ph and len(distinct) == 1:
+            return cand(f'voltage_l{single_ph}_n')
+        return None
+    if q == 'current':
+        if is_neutral:
+            return cand('current_n')
+        if is_avg:
+            return cand('current_avg')
+        if single_ph and len(distinct) == 1:
+            return cand(f'current_l{single_ph}')
+        if is_total:
+            return cand('current_total')
+        return None
+    if q in ('power_active', 'power_reactive', 'power_apparent', 'power_factor'):
+        if single_ph and len(distinct) == 1:
+            return cand(f'{q}_l{single_ph}')
+        if is_total:
+            return cand(f'{q}_total')
+        return None
+    if q in ('energy_active', 'energy_reactive'):
+        has_imp, has_exp = bool(_re.search(r'\bimport\b', hay)), bool(_re.search(r'\bexport\b', hay))
+        if has_imp and has_exp:
+            dir_ = 'total'                       # both mentioned → the combined counter
+        elif has_imp:
+            dir_ = 'import'
+        elif has_exp:
+            dir_ = 'export'
+        elif _re.search(r'\bnet\b', hay):
+            dir_ = 'net'
+        elif is_total:
+            dir_ = 'total'
+        else:
+            return None
+        # per-phase energy is representable ONLY for active import/export;
+        # reactive/apparent per-phase would collide → leave for the human
+        if q == 'energy_active' and dir_ in ('import', 'export') and single_ph and len(distinct) == 1:
+            return cand(f'{q}_{dir_}_l{single_ph}')
+        if q == 'energy_reactive' and single_ph:
+            return None
+        return cand(f'{q}_{dir_}')
+    if q == 'energy_apparent':
+        return cand('energy_apparent')
+    return None

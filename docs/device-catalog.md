@@ -44,16 +44,16 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
-| 20480 / 0x5000 | `Import_kWh` | Active energy import (total) | uint64 | 100 | kWh | slow |
-| 20484 / 0x5004 | `Export_kWh` | Active energy export (total) | uint64 | 100 | kWh | slow |
-| 20488 / 0x5008 | `Net_kWh` | Active energy net (total) | int64 | 100 | kWh | slow |
-| 23296 / 0x5B00 | `V` | Voltage L-N | uint32 | 10 | V | realtime |
-| 23308 / 0x5B0C | `I` | Current | uint32 | 100 | A | realtime |
-| 23316 / 0x5B14 | `P` | Active power | int32 | 100 | W | realtime |
-| 23324 / 0x5B1C | `Q` | Reactive power | int32 | 100 | var | normal |
-| 23332 / 0x5B24 | `S` | Apparent power | int32 | 100 | VA | normal |
-| 23340 / 0x5B2C | `Freq` | Frequency | uint16 | 100 | Hz | realtime |
-| 23354 / 0x5B3A | `PF` | Power factor | int16 | 1000 | — | normal |
+| 20480 / 0x5000 | `energy_active_import` | Active energy import (total) | uint64 | 100 | kWh | slow |
+| 20484 / 0x5004 | `energy_active_export` | Active energy export (total) | uint64 | 100 | kWh | slow |
+| 20488 / 0x5008 | `energy_active_net` | Active energy net (total) | int64 | 100 | kWh | slow |
+| 23296 / 0x5B00 | `voltage_l1_n` | Voltage L-N | uint32 | 10 | V | realtime |
+| 23308 / 0x5B0C | `current_l1` | Current | uint32 | 100 | A | realtime |
+| 23316 / 0x5B14 | `power_active_total` | Active power | int32 | 100 | W | realtime |
+| 23324 / 0x5B1C | `power_reactive_total` | Reactive power | int32 | 100 | var | normal |
+| 23332 / 0x5B24 | `power_apparent_total` | Apparent power | int32 | 100 | VA | normal |
+| 23340 / 0x5B2C | `frequency` | Frequency | uint16 | 100 | Hz | realtime |
+| 23354 / 0x5B3A | `power_factor_total` | Power factor | int16 | 1000 | — | normal |
 
 ## ABB B23 (3-phase)
 
@@ -66,38 +66,38 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
-| 20480 / 0x5000 | `Import_kWh` | Active energy import (total) | uint64 | 100 | kWh | slow |
-| 20484 / 0x5004 | `Export_kWh` | Active energy export (total) | uint64 | 100 | kWh | slow |
-| 20488 / 0x5008 | `Net_kWh` | Active energy net (total) | int64 | 100 | kWh | slow |
-| 20492 / 0x500C | `Import_kvarh` | Reactive energy import (total) | uint64 | 100 | kvarh | slow |
-| 20496 / 0x5010 | `Export_kvarh` | Reactive energy export (total) | uint64 | 100 | kvarh | slow |
-| 23296 / 0x5B00 | `V_L1` | Voltage L1-N | uint32 | 10 | V | realtime |
-| 23298 / 0x5B02 | `V_L2` | Voltage L2-N | uint32 | 10 | V | realtime |
-| 23300 / 0x5B04 | `V_L3` | Voltage L3-N | uint32 | 10 | V | realtime |
-| 23302 / 0x5B06 | `V_L1_L2` | Voltage L1-L2 | uint32 | 10 | V | normal |
-| 23304 / 0x5B08 | `V_L3_L2` | Voltage L3-L2 | uint32 | 10 | V | normal |
-| 23306 / 0x5B0A | `V_L1_L3` | Voltage L1-L3 | uint32 | 10 | V | normal |
-| 23308 / 0x5B0C | `I_L1` | Current L1 | uint32 | 100 | A | realtime |
-| 23310 / 0x5B0E | `I_L2` | Current L2 | uint32 | 100 | A | realtime |
-| 23312 / 0x5B10 | `I_L3` | Current L3 | uint32 | 100 | A | realtime |
-| 23314 / 0x5B12 | `I_N` | Current Neutral | uint32 | 100 | A | normal |
-| 23316 / 0x5B14 | `P_total` | Active power total | int32 | 100 | W | realtime |
-| 23318 / 0x5B16 | `P_L1` | Active power L1 | int32 | 100 | W | realtime |
-| 23320 / 0x5B18 | `P_L2` | Active power L2 | int32 | 100 | W | realtime |
-| 23322 / 0x5B1A | `P_L3` | Active power L3 | int32 | 100 | W | realtime |
-| 23324 / 0x5B1C | `Q_total` | Reactive power total | int32 | 100 | var | normal |
-| 23326 / 0x5B1E | `Q_L1` | Reactive power L1 | int32 | 100 | var | normal |
-| 23328 / 0x5B20 | `Q_L2` | Reactive power L2 | int32 | 100 | var | normal |
-| 23330 / 0x5B22 | `Q_L3` | Reactive power L3 | int32 | 100 | var | normal |
-| 23332 / 0x5B24 | `S_total` | Apparent power total | int32 | 100 | VA | normal |
-| 23334 / 0x5B26 | `S_L1` | Apparent power L1 | int32 | 100 | VA | normal |
-| 23336 / 0x5B28 | `S_L2` | Apparent power L2 | int32 | 100 | VA | normal |
-| 23338 / 0x5B2A | `S_L3` | Apparent power L3 | int32 | 100 | VA | normal |
-| 23340 / 0x5B2C | `Freq` | Frequency | uint16 | 100 | Hz | realtime |
-| 23354 / 0x5B3A | `PF_total` | Power factor total | int16 | 1000 | — | normal |
-| 23355 / 0x5B3B | `PF_L1` | Power factor L1 | int16 | 1000 | — | normal |
-| 23356 / 0x5B3C | `PF_L2` | Power factor L2 | int16 | 1000 | — | normal |
-| 23357 / 0x5B3D | `PF_L3` | Power factor L3 | int16 | 1000 | — | normal |
+| 20480 / 0x5000 | `energy_active_import` | Active energy import (total) | uint64 | 100 | kWh | slow |
+| 20484 / 0x5004 | `energy_active_export` | Active energy export (total) | uint64 | 100 | kWh | slow |
+| 20488 / 0x5008 | `energy_active_net` | Active energy net (total) | int64 | 100 | kWh | slow |
+| 20492 / 0x500C | `energy_reactive_import` | Reactive energy import (total) | uint64 | 100 | kvarh | slow |
+| 20496 / 0x5010 | `energy_reactive_export` | Reactive energy export (total) | uint64 | 100 | kvarh | slow |
+| 23296 / 0x5B00 | `voltage_l1_n` | Voltage L1-N | uint32 | 10 | V | realtime |
+| 23298 / 0x5B02 | `voltage_l2_n` | Voltage L2-N | uint32 | 10 | V | realtime |
+| 23300 / 0x5B04 | `voltage_l3_n` | Voltage L3-N | uint32 | 10 | V | realtime |
+| 23302 / 0x5B06 | `voltage_l1_l2` | Voltage L1-L2 | uint32 | 10 | V | normal |
+| 23304 / 0x5B08 | `voltage_l2_l3` | Voltage L3-L2 | uint32 | 10 | V | normal |
+| 23306 / 0x5B0A | `voltage_l3_l1` | Voltage L1-L3 | uint32 | 10 | V | normal |
+| 23308 / 0x5B0C | `current_l1` | Current L1 | uint32 | 100 | A | realtime |
+| 23310 / 0x5B0E | `current_l2` | Current L2 | uint32 | 100 | A | realtime |
+| 23312 / 0x5B10 | `current_l3` | Current L3 | uint32 | 100 | A | realtime |
+| 23314 / 0x5B12 | `current_n` | Current Neutral | uint32 | 100 | A | normal |
+| 23316 / 0x5B14 | `power_active_total` | Active power total | int32 | 100 | W | realtime |
+| 23318 / 0x5B16 | `power_active_l1` | Active power L1 | int32 | 100 | W | realtime |
+| 23320 / 0x5B18 | `power_active_l2` | Active power L2 | int32 | 100 | W | realtime |
+| 23322 / 0x5B1A | `power_active_l3` | Active power L3 | int32 | 100 | W | realtime |
+| 23324 / 0x5B1C | `power_reactive_total` | Reactive power total | int32 | 100 | var | normal |
+| 23326 / 0x5B1E | `power_reactive_l1` | Reactive power L1 | int32 | 100 | var | normal |
+| 23328 / 0x5B20 | `power_reactive_l2` | Reactive power L2 | int32 | 100 | var | normal |
+| 23330 / 0x5B22 | `power_reactive_l3` | Reactive power L3 | int32 | 100 | var | normal |
+| 23332 / 0x5B24 | `power_apparent_total` | Apparent power total | int32 | 100 | VA | normal |
+| 23334 / 0x5B26 | `power_apparent_l1` | Apparent power L1 | int32 | 100 | VA | normal |
+| 23336 / 0x5B28 | `power_apparent_l2` | Apparent power L2 | int32 | 100 | VA | normal |
+| 23338 / 0x5B2A | `power_apparent_l3` | Apparent power L3 | int32 | 100 | VA | normal |
+| 23340 / 0x5B2C | `frequency` | Frequency | uint16 | 100 | Hz | realtime |
+| 23354 / 0x5B3A | `power_factor_total` | Power factor total | int16 | 1000 | — | normal |
+| 23355 / 0x5B3B | `power_factor_l1` | Power factor L1 | int16 | 1000 | — | normal |
+| 23356 / 0x5B3C | `power_factor_l2` | Power factor L2 | int16 | 1000 | — | normal |
+| 23357 / 0x5B3D | `power_factor_l3` | Power factor L3 | int16 | 1000 | — | normal |
 
 ## BLE sensor (Theengs / BTHome → MQTT)
 
@@ -127,22 +127,22 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
-| 0 / 0x0000 | `V_L1` | Voltage L1-N | int32 | 10 | V | realtime |
-| 2 / 0x0002 | `V_L2` | Voltage L2-N | int32 | 10 | V | realtime |
-| 4 / 0x0004 | `V_L3` | Voltage L3-N | int32 | 10 | V | realtime |
-| 12 / 0x000C | `I_L1` | Current L1 | int32 | 1000 | A | realtime |
-| 14 / 0x000E | `I_L2` | Current L2 | int32 | 1000 | A | realtime |
-| 16 / 0x0010 | `I_L3` | Current L3 | int32 | 1000 | A | realtime |
-| 18 / 0x0012 | `P_L1` | Active power L1 | int32 | 10 | W | realtime |
-| 20 / 0x0014 | `P_L2` | Active power L2 | int32 | 10 | W | realtime |
-| 22 / 0x0016 | `P_L3` | Active power L3 | int32 | 10 | W | realtime |
-| 40 / 0x0028 | `P_total` | Total active power | int32 | 10 | W | realtime |
-| 51 / 0x0033 | `Freq` | Frequency | uint16 | 10 | Hz | realtime |
-| 52 / 0x0034 | `Import_kWh` | Import active energy (total) | int32 | 10 | kWh | slow |
-| 64 / 0x0040 | `Energy_L1_Import` | Import active energy L1 | int32 | 10 | kWh | slow |
-| 66 / 0x0042 | `Energy_L2_Import` | Import active energy L2 | int32 | 10 | kWh | slow |
-| 68 / 0x0044 | `Energy_L3_Import` | Import active energy L3 | int32 | 10 | kWh | slow |
-| 78 / 0x004E | `Export_kWh` | Export active energy (total) | int32 | 10 | kWh | slow |
+| 0 / 0x0000 | `voltage_l1_n` | Voltage L1-N | int32 | 10 | V | realtime |
+| 2 / 0x0002 | `voltage_l2_n` | Voltage L2-N | int32 | 10 | V | realtime |
+| 4 / 0x0004 | `voltage_l3_n` | Voltage L3-N | int32 | 10 | V | realtime |
+| 12 / 0x000C | `current_l1` | Current L1 | int32 | 1000 | A | realtime |
+| 14 / 0x000E | `current_l2` | Current L2 | int32 | 1000 | A | realtime |
+| 16 / 0x0010 | `current_l3` | Current L3 | int32 | 1000 | A | realtime |
+| 18 / 0x0012 | `power_active_l1` | Active power L1 | int32 | 10 | W | realtime |
+| 20 / 0x0014 | `power_active_l2` | Active power L2 | int32 | 10 | W | realtime |
+| 22 / 0x0016 | `power_active_l3` | Active power L3 | int32 | 10 | W | realtime |
+| 40 / 0x0028 | `power_active_total` | Total active power | int32 | 10 | W | realtime |
+| 51 / 0x0033 | `frequency` | Frequency | uint16 | 10 | Hz | realtime |
+| 52 / 0x0034 | `energy_active_import` | Import active energy (total) | int32 | 10 | kWh | slow |
+| 64 / 0x0040 | `energy_active_import_l1` | Import active energy L1 | int32 | 10 | kWh | slow |
+| 66 / 0x0042 | `energy_active_import_l2` | Import active energy L2 | int32 | 10 | kWh | slow |
+| 68 / 0x0044 | `energy_active_import_l3` | Import active energy L3 | int32 | 10 | kWh | slow |
+| 78 / 0x004E | `energy_active_export` | Export active energy (total) | int32 | 10 | kWh | slow |
 
 ## Eastron SDM120 (single-phase)
 
@@ -155,16 +155,16 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
-| 0 / 0x0000 | `V` | Voltage | float | 1 | V | realtime |
-| 6 / 0x0006 | `I` | Current | float | 1 | A | realtime |
-| 12 / 0x000C | `P` | Active power | float | 1 | W | realtime |
-| 18 / 0x0012 | `S` | Apparent power | float | 1 | VA | normal |
-| 24 / 0x0018 | `Q` | Reactive power | float | 1 | var | normal |
-| 30 / 0x001E | `PF` | Power factor | float | 1 | — | normal |
-| 70 / 0x0046 | `Freq` | Frequency | float | 1 | Hz | realtime |
-| 72 / 0x0048 | `Import_kWh` | Import active energy | float | 1 | kWh | slow |
-| 74 / 0x004A | `Export_kWh` | Export active energy | float | 1 | kWh | slow |
-| 342 / 0x0156 | `Total_kWh` | Total active energy | float | 1 | kWh | slow |
+| 0 / 0x0000 | `voltage_l1_n` | Voltage | float | 1 | V | realtime |
+| 6 / 0x0006 | `current_l1` | Current | float | 1 | A | realtime |
+| 12 / 0x000C | `power_active_total` | Active power | float | 1 | W | realtime |
+| 18 / 0x0012 | `power_apparent_total` | Apparent power | float | 1 | VA | normal |
+| 24 / 0x0018 | `power_reactive_total` | Reactive power | float | 1 | var | normal |
+| 30 / 0x001E | `power_factor_total` | Power factor | float | 1 | — | normal |
+| 70 / 0x0046 | `frequency` | Frequency | float | 1 | Hz | realtime |
+| 72 / 0x0048 | `energy_active_import` | Import active energy | float | 1 | kWh | slow |
+| 74 / 0x004A | `energy_active_export` | Export active energy | float | 1 | kWh | slow |
+| 342 / 0x0156 | `energy_active_total` | Total active energy | float | 1 | kWh | slow |
 
 ## Eastron SDM630 (3-phase)
 
@@ -177,35 +177,35 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
-| 0 / 0x0000 | `V_L1` | Voltage L1-N | float | 1 | V | realtime |
-| 2 / 0x0002 | `V_L2` | Voltage L2-N | float | 1 | V | realtime |
-| 4 / 0x0004 | `V_L3` | Voltage L3-N | float | 1 | V | realtime |
-| 6 / 0x0006 | `I_L1` | Current L1 | float | 1 | A | realtime |
-| 8 / 0x0008 | `I_L2` | Current L2 | float | 1 | A | realtime |
-| 10 / 0x000A | `I_L3` | Current L3 | float | 1 | A | realtime |
-| 12 / 0x000C | `P_L1` | Active power L1 | float | 1 | W | realtime |
-| 14 / 0x000E | `P_L2` | Active power L2 | float | 1 | W | realtime |
-| 16 / 0x0010 | `P_L3` | Active power L3 | float | 1 | W | realtime |
-| 18 / 0x0012 | `S_L1` | Apparent power L1 | float | 1 | VA | normal |
-| 20 / 0x0014 | `S_L2` | Apparent power L2 | float | 1 | VA | normal |
-| 22 / 0x0016 | `S_L3` | Apparent power L3 | float | 1 | VA | normal |
-| 24 / 0x0018 | `Q_L1` | Reactive power L1 | float | 1 | var | normal |
-| 26 / 0x001A | `Q_L2` | Reactive power L2 | float | 1 | var | normal |
-| 28 / 0x001C | `Q_L3` | Reactive power L3 | float | 1 | var | normal |
-| 30 / 0x001E | `PF_L1` | Power factor L1 | float | 1 | — | normal |
-| 32 / 0x0020 | `PF_L2` | Power factor L2 | float | 1 | — | normal |
-| 34 / 0x0022 | `PF_L3` | Power factor L3 | float | 1 | — | normal |
-| 52 / 0x0034 | `P_total` | Total active power | float | 1 | W | realtime |
-| 56 / 0x0038 | `S_total` | Total apparent power | float | 1 | VA | normal |
-| 60 / 0x003C | `Q_total` | Total reactive power | float | 1 | var | normal |
-| 62 / 0x003E | `PF_total` | Total power factor | float | 1 | — | normal |
-| 70 / 0x0046 | `Freq` | Frequency | float | 1 | Hz | realtime |
-| 72 / 0x0048 | `Import_kWh` | Import active energy | float | 1 | kWh | slow |
-| 74 / 0x004A | `Export_kWh` | Export active energy | float | 1 | kWh | slow |
-| 76 / 0x004C | `Import_kvarh` | Import reactive energy | float | 1 | kvarh | slow |
-| 78 / 0x004E | `Export_kvarh` | Export reactive energy | float | 1 | kvarh | slow |
-| 342 / 0x0156 | `Total_kWh` | Total active energy | float | 1 | kWh | slow |
-| 344 / 0x0158 | `Total_kvarh` | Total reactive energy | float | 1 | kvarh | slow |
+| 0 / 0x0000 | `voltage_l1_n` | Voltage L1-N | float | 1 | V | realtime |
+| 2 / 0x0002 | `voltage_l2_n` | Voltage L2-N | float | 1 | V | realtime |
+| 4 / 0x0004 | `voltage_l3_n` | Voltage L3-N | float | 1 | V | realtime |
+| 6 / 0x0006 | `current_l1` | Current L1 | float | 1 | A | realtime |
+| 8 / 0x0008 | `current_l2` | Current L2 | float | 1 | A | realtime |
+| 10 / 0x000A | `current_l3` | Current L3 | float | 1 | A | realtime |
+| 12 / 0x000C | `power_active_l1` | Active power L1 | float | 1 | W | realtime |
+| 14 / 0x000E | `power_active_l2` | Active power L2 | float | 1 | W | realtime |
+| 16 / 0x0010 | `power_active_l3` | Active power L3 | float | 1 | W | realtime |
+| 18 / 0x0012 | `power_apparent_l1` | Apparent power L1 | float | 1 | VA | normal |
+| 20 / 0x0014 | `power_apparent_l2` | Apparent power L2 | float | 1 | VA | normal |
+| 22 / 0x0016 | `power_apparent_l3` | Apparent power L3 | float | 1 | VA | normal |
+| 24 / 0x0018 | `power_reactive_l1` | Reactive power L1 | float | 1 | var | normal |
+| 26 / 0x001A | `power_reactive_l2` | Reactive power L2 | float | 1 | var | normal |
+| 28 / 0x001C | `power_reactive_l3` | Reactive power L3 | float | 1 | var | normal |
+| 30 / 0x001E | `power_factor_l1` | Power factor L1 | float | 1 | — | normal |
+| 32 / 0x0020 | `power_factor_l2` | Power factor L2 | float | 1 | — | normal |
+| 34 / 0x0022 | `power_factor_l3` | Power factor L3 | float | 1 | — | normal |
+| 52 / 0x0034 | `power_active_total` | Total active power | float | 1 | W | realtime |
+| 56 / 0x0038 | `power_apparent_total` | Total apparent power | float | 1 | VA | normal |
+| 60 / 0x003C | `power_reactive_total` | Total reactive power | float | 1 | var | normal |
+| 62 / 0x003E | `power_factor_total` | Total power factor | float | 1 | — | normal |
+| 70 / 0x0046 | `frequency` | Frequency | float | 1 | Hz | realtime |
+| 72 / 0x0048 | `energy_active_import` | Import active energy | float | 1 | kWh | slow |
+| 74 / 0x004A | `energy_active_export` | Export active energy | float | 1 | kWh | slow |
+| 76 / 0x004C | `energy_reactive_import` | Import reactive energy | float | 1 | kvarh | slow |
+| 78 / 0x004E | `energy_reactive_export` | Export reactive energy | float | 1 | kvarh | slow |
+| 342 / 0x0156 | `energy_active_total` | Total active energy | float | 1 | kWh | slow |
+| 344 / 0x0158 | `energy_reactive_total` | Total reactive energy | float | 1 | kvarh | slow |
 
 ## Fronius Smart Meter 65A-3 (RTU)
 
@@ -274,28 +274,28 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
-| 2999 / 0x0BB7 | `I_L1` | Current L1 | float | 1 | A | realtime |
-| 3001 / 0x0BB9 | `I_L2` | Current L2 | float | 1 | A | realtime |
-| 3003 / 0x0BBB | `I_L3` | Current L3 | float | 1 | A | realtime |
-| 3009 / 0x0BC1 | `I_avg` | Current average | float | 1 | A | normal |
-| 3027 / 0x0BD3 | `V_L1` | Voltage L1-N | float | 1 | V | realtime |
-| 3029 / 0x0BD5 | `V_L2` | Voltage L2-N | float | 1 | V | realtime |
-| 3031 / 0x0BD7 | `V_L3` | Voltage L3-N | float | 1 | V | realtime |
-| 3035 / 0x0BDB | `V_avg` | Voltage L-N average | float | 1 | V | normal |
-| 3053 / 0x0BED | `P_L1` | Active power L1 | float | 0.001 | W | realtime |
-| 3055 / 0x0BEF | `P_L2` | Active power L2 | float | 0.001 | W | realtime |
-| 3057 / 0x0BF1 | `P_L3` | Active power L3 | float | 0.001 | W | realtime |
-| 3059 / 0x0BF3 | `P_total` | Active power total | float | 0.001 | W | realtime |
-| 3067 / 0x0BFB | `Q_total` | Reactive power total | float | 0.001 | var | normal |
-| 3075 / 0x0C03 | `S_total` | Apparent power total | float | 0.001 | VA | normal |
-| 3109 / 0x0C25 | `Freq` | Frequency | float | 1 | Hz | realtime |
-| 3203 / 0x0C83 | `Import_kWh` | Active energy import (total) | int64 | 1000 | kWh | slow |
-| 3207 / 0x0C87 | `Export_kWh` | Active energy export (total) | int64 | 1000 | kWh | slow |
-| 3219 / 0x0C93 | `Import_kvarh` | Reactive energy import (total) | int64 | 1000 | kvarh | slow |
-| 3223 / 0x0C97 | `Export_kvarh` | Reactive energy export (total) | int64 | 1000 | kvarh | slow |
-| 3517 / 0x0DBD | `Import_L1_kWh` | Active energy import L1 | int64 | 1000 | kWh | slow |
-| 3521 / 0x0DC1 | `Import_L2_kWh` | Active energy import L2 | int64 | 1000 | kWh | slow |
-| 3525 / 0x0DC5 | `Import_L3_kWh` | Active energy import L3 | int64 | 1000 | kWh | slow |
+| 2999 / 0x0BB7 | `current_l1` | Current L1 | float | 1 | A | realtime |
+| 3001 / 0x0BB9 | `current_l2` | Current L2 | float | 1 | A | realtime |
+| 3003 / 0x0BBB | `current_l3` | Current L3 | float | 1 | A | realtime |
+| 3009 / 0x0BC1 | `current_avg` | Current average | float | 1 | A | normal |
+| 3027 / 0x0BD3 | `voltage_l1_n` | Voltage L1-N | float | 1 | V | realtime |
+| 3029 / 0x0BD5 | `voltage_l2_n` | Voltage L2-N | float | 1 | V | realtime |
+| 3031 / 0x0BD7 | `voltage_l3_n` | Voltage L3-N | float | 1 | V | realtime |
+| 3035 / 0x0BDB | `voltage_ln_avg` | Voltage L-N average | float | 1 | V | normal |
+| 3053 / 0x0BED | `power_active_l1` | Active power L1 | float | 0.001 | W | realtime |
+| 3055 / 0x0BEF | `power_active_l2` | Active power L2 | float | 0.001 | W | realtime |
+| 3057 / 0x0BF1 | `power_active_l3` | Active power L3 | float | 0.001 | W | realtime |
+| 3059 / 0x0BF3 | `power_active_total` | Active power total | float | 0.001 | W | realtime |
+| 3067 / 0x0BFB | `power_reactive_total` | Reactive power total | float | 0.001 | var | normal |
+| 3075 / 0x0C03 | `power_apparent_total` | Apparent power total | float | 0.001 | VA | normal |
+| 3109 / 0x0C25 | `frequency` | Frequency | float | 1 | Hz | realtime |
+| 3203 / 0x0C83 | `energy_active_import` | Active energy import (total) | int64 | 1000 | kWh | slow |
+| 3207 / 0x0C87 | `energy_active_export` | Active energy export (total) | int64 | 1000 | kWh | slow |
+| 3219 / 0x0C93 | `energy_reactive_import` | Reactive energy import (total) | int64 | 1000 | kvarh | slow |
+| 3223 / 0x0C97 | `energy_reactive_export` | Reactive energy export (total) | int64 | 1000 | kvarh | slow |
+| 3517 / 0x0DBD | `energy_active_import_l1` | Active energy import L1 | int64 | 1000 | kWh | slow |
+| 3521 / 0x0DC1 | `energy_active_import_l2` | Active energy import L2 | int64 | 1000 | kWh | slow |
+| 3525 / 0x0DC5 | `energy_active_import_l3` | Active energy import L3 | int64 | 1000 | kWh | slow |
 
 ## Zigbee sensor (zigbee2mqtt)
 

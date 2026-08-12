@@ -1396,11 +1396,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             """MQTT topic + InfluxDB measurement + UI for a seeded register.
             Precedence: the template's explicit per-register ``defaults`` win;
             else derive from the canonical dictionary (name → hierarchical MQTT
-            topic + InfluxDB measurement) so every device names the same
-            physical quantity the same way; else fall back to the register's
-            own name/category. A non-canonical name (e.g. a raw vendor map)
-            yields '' → the publisher falls back to the flat register name,
-            exactly as before — so this is a no-op for non-canonical templates."""
+            topic + InfluxDB measurement). A non-canonical name (e.g. a raw
+            vendor map) leaves BOTH empty so the publisher owns the fallback
+            uniformly — MQTT to the flat register name, InfluxDB to the
+            name/unit heuristic in ``_get_measurement`` — instead of pinning the
+            measurement to the raw ``category`` (often 'other'), which would
+            shadow that heuristic and collapse every series into one measurement."""
             d = r.defaults or {}
             dm, di, du = d.get('mqtt') or {}, d.get('influxdb') or {}, d.get('ui') or {}
             return {
@@ -1408,7 +1409,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                          'topic': dm.get('topic') or mqtt_topic_for(r.name) or ''},
                 'influxdb': {'enabled': di.get('enabled', True),
                              'measurement': (di.get('measurement')
-                                             or measurement_for(r.name) or r.category),
+                                             or measurement_for(r.name) or ''),
                              'tags': di.get('tags') or {}},
                 'ui': {'show_on_dashboard': du.get('show_on_dashboard', True),
                        'widget': du.get('widget', 'value')},

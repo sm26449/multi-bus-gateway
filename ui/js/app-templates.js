@@ -226,6 +226,7 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     async csvPreview(btn) {
+        await this._loadCanonicalFields();   // ensure the dict is ready for the canonical count
         const csv = document.getElementById('csvText').value;
         const box = document.getElementById('csvPreviewResult');
         if (!csv.trim()) { box.innerHTML = `<span class="field-hint">${this.t('csv.noData', 'Paste a CSV or open a file first.')}</span>`; return; }
@@ -578,21 +579,43 @@ Object.assign(JanitzaMonitor.prototype, {
     // Conservative: only renames on a confident, dictionary-validated guess and
     // never creates a duplicate (a colliding guess is left for the human). Purely
     // in-memory — the user reviews the grid and still has to Save.
-    tplAutoCanonicalize() {
+    async tplAutoCanonicalize() {
         this._tplCollectMeta();
         const regs = this._tplEdit.data.registers;
-        // names that will exist, seeded with the rows already canonical
+        // classify the non-canonical rows on the server (the single, unit-tested
+        // source of truth — the classifier deliberately returns null when unsure)
+        const idx = [], batch = [];
+        regs.forEach((r, i) => {
+            if (this._isCanonical(r.name)) return;
+            idx.push(i);
+            batch.push({ name: r.name, label: r.label, unit: r.unit, description: r.description });
+        });
+        let guesses = [];
+        if (batch.length) {
+            try {
+                const rsp = await fetch('/api/canonical-fields/guess', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ registers: batch }),
+                });
+                if (!rsp.ok) throw new Error(`HTTP ${rsp.status}`);
+                guesses = (await rsp.json()).guesses || [];
+            } catch (e) {
+                this.showToast('error', this.t('devtpl.autoCanon', 'Auto-canonicalize'), e.message);
+                return;
+            }
+        }
+        // apply, never creating a duplicate name (a colliding guess is left amber)
         const taken = new Set(regs.filter(r => this._isCanonical(r.name))
                                   .map(r => String(r.name).toLowerCase()));
         let mapped = 0, conflict = 0, unresolved = 0;
-        for (const r of regs) {
-            if (this._isCanonical(r.name)) continue;
-            const g = this._guessCanonical(r);
-            if (!g) { unresolved++; continue; }
-            if (taken.has(g)) { conflict++; continue; }   // would duplicate — skip
-            r.name = g; taken.add(g); mapped++;
-        }
+        idx.forEach((ri, k) => {
+            const g = guesses[k];
+            if (!g) { unresolved++; return; }
+            if (taken.has(g)) { conflict++; return; }
+            regs[ri].name = g; taken.add(g); mapped++;
+        });
         if (mapped) this._tplEdit.data.canonical = true;   // opt into validation
+        this._tplEdit.search = '';                         // show all rows so renames are visible
         this._tplEditorRender();
         const parts = [`${mapped} ${this.t('devtpl.canonMapped', 'renamed')}`];
         if (conflict) parts.push(`${conflict} ${this.t('devtpl.canonConflict', 'conflicts')}`);

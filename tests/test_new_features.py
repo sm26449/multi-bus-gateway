@@ -304,8 +304,8 @@ def test_influx_unit_heuristic_precedence():
     from types import SimpleNamespace
     from multibus.influxdb_publisher import InfluxDBPublisher
     pub = InfluxDBPublisher.__new__(InfluxDBPublisher)
-    def m(unit):
-        r = SimpleNamespace(influxdb_measurement="", unit=unit)
+    def m(unit, name=""):
+        r = SimpleNamespace(influxdb_measurement="", unit=unit, name=name)
         return InfluxDBPublisher._get_measurement(pub, r)
     assert m("VA") == "power_apparent"       # was misclassified as voltage
     assert m("kVA") == "power_apparent"
@@ -316,3 +316,8 @@ def test_influx_unit_heuristic_precedence():
     assert m("V") == "voltage"
     assert m("A") == "current"
     assert m("Hz") == "frequency"
+    # a canonical NAME is authoritative over the unit heuristic (fixes the
+    # cases the unit can't disambiguate)
+    assert m("", "power_factor_total") == "power_factor"     # empty unit → would be 'janitza'
+    assert m("kVAh", "energy_apparent") == "energy_apparent"  # 'va' substring → would be power_apparent
+    assert m("", "serial") == "diagnostic"                    # diagnostics keep their measurement

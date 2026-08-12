@@ -25,7 +25,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 
 from ._models import RegisterBatchQuery, RegisterQuery, SelectedRegisterUpdate
@@ -376,5 +376,21 @@ def build(ctx) -> APIRouter:
                 for name, (meas, unit, topic, desc) in CANONICAL_FIELDS.items()
             }
         }
+
+    @r.post("/api/canonical-fields/guess")
+    async def guess_canonical_names(payload: Dict = Body(...)):
+        """Batch canonical-name inference for the 'auto-canonicalize' editor
+        button. Input: {registers:[{name,label,unit,description}]}. Returns a
+        {guesses:[name|null]} list aligned by index — null where the classifier
+        isn't confident (a wrong rename is worse than none). This is the single,
+        unit-tested source of truth (the UI no longer classifies client-side)."""
+        from ..canonical_fields import guess_canonical
+        regs = payload.get("registers") or []
+        if not isinstance(regs, list):
+            raise HTTPException(status_code=422, detail="registers must be a list")
+        guesses = [guess_canonical(name=r.get("name", ""), label=r.get("label", ""),
+                                   unit=r.get("unit", ""), description=r.get("description", ""))
+                   for r in regs[:5000] if isinstance(r, dict)]
+        return {"guesses": guesses}
 
     return r

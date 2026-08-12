@@ -565,7 +565,7 @@ Object.assign(JanitzaMonitor.prototype, {
             if (s) {
                 hint.innerHTML = '⚠ ' + this._esc(this.t('registers.canon.non', 'Non-canonical name')) +
                     ' — ' + this._esc(this.t('registers.canon.didYouMean', 'did you mean')) +
-                    ` <a href="#" onclick="app._applyCanonicalSuggestion('${this._esc(s)}');return false;"><code>${this._esc(s)}</code></a>?`;
+                    ` <a href="#" data-canon-suggest="${this._esc(s)}" onclick="app._applyCanonicalSuggestion(this.dataset.canonSuggest);return false;"><code>${this._esc(s)}</code></a>?`;
             } else {
                 hint.textContent = '⚠ ' + this.t('registers.canon.non', 'Non-canonical name') +
                     ' — ' + this.t('registers.canon.pickFromList', 'pick a canonical name from the list for uniform output.');
@@ -576,97 +576,6 @@ Object.assign(JanitzaMonitor.prototype, {
     _applyCanonicalSuggestion(name) {
         const nameEl = document.getElementById('addNameInput');
         if (nameEl) { nameEl.value = name; this._checkCanonicalName(); nameEl.focus(); }
-    },
-
-    // Conservative classifier: infer the canonical name for a register from its
-    // label/name/unit. Returns a canonical name or null — a composed guess is
-    // always validated against the dictionary, so a wrong inference yields null
-    // (leave it for the human) rather than a plausible-but-wrong name.
-    _guessCanonical(reg) {
-        const name = String(reg.name || '');
-        if (this._isCanonical(name)) return name.toLowerCase();
-        const hay = `${reg.label || ''} ${name} ${reg.description || ''}`.toLowerCase();
-        const unit = String(reg.unit || '').toLowerCase().trim();
-        const cand = (n) => (this._isCanonical(n) ? n : null);
-        const pair = (a, b) => ({ '12': 'l1_l2', '23': 'l2_l3', '13': 'l3_l1' }[[a, b].sort().join('')] || null);
-
-        // direct diagnostics
-        if (/thd/.test(hay)) {
-            const sub = /current/.test(hay) ? 'current' : 'voltage';
-            const p = hay.match(/l\s*([123])|phase\s*([123])/);
-            const ph = p && (p[1] || p[2]);
-            return ph ? cand(`thd_${sub}_l${ph}`) : null;
-        }
-        if (/serial/.test(hay)) return 'serial';
-        if (/firmware|revision|\bfw\b/.test(hay)) return 'firmware_rev';
-        if (/\bmodel\b|model.?id/.test(hay)) return 'model_id';
-        if (/temperature|\btemp\b/.test(hay)) return 'temperature';
-        if (/uptime/.test(hay)) return 'uptime';
-
-        // quantity — unit first (most reliable), then keywords; most-specific units first
-        let q = null;
-        if (/varh/.test(unit) || /reactive\s+energy/.test(hay)) q = 'energy_reactive';
-        else if (/wh\b|kwh/.test(unit) || /active\s+energy|energy.*(import|export|forward|reverse|consumed|delivered|produced|net|total)/.test(hay)) q = 'energy_active';
-        else if (/\bvah?\b|kvah/.test(unit) && /h\b/.test(unit)) q = 'energy_apparent';
-        else if (/\bvar\b/.test(unit) || /reactive\s+power/.test(hay)) q = 'power_reactive';
-        else if (/\bva\b|kva/.test(unit) || /apparent/.test(hay)) q = 'power_apparent';
-        else if (/\bhz\b/.test(unit) || /frequency|freq/.test(hay)) return 'frequency';
-        else if (/power\s*factor|cos.?phi|\bpf\b/.test(hay)) q = 'power_factor';
-        else if (/\bw\b|kw\b/.test(unit) || /active\s+power|real\s+power/.test(hay)) q = 'power_active';
-        else if (/\bv\b|kv\b/.test(unit) || /voltage|volt/.test(hay)) q = 'voltage';
-        else if (/\ba\b/.test(unit) || /current|amp/.test(hay)) q = 'current';
-        if (!q) return null;
-
-        const digits = hay.match(/[123]/g) || [];
-        const phaseTok = hay.match(/l\s*([123])\b|phase\s*([123])|\bl([123])[-_ ]?n\b/);
-        const ph = phaseTok && (phaseTok[1] || phaseTok[2] || phaseTok[3]);
-        const isTotal = /total|sum|_sum3|\bsys\b|system/.test(hay);
-        const isAvg = /average|avg/.test(hay);
-        const isNeutral = /neutral|\bn\b/.test(hay) && !/l[123]/.test(hay);
-        const bracket = name.match(/\[([012])\]/);
-
-        if (q === 'voltage') {
-            const lineLine = /ull|l[123][-_ ]?l[123]|line[-\s]?line|phase[-\s]?phase|\d[-_ ]\d/.test(hay);
-            if (isAvg) return cand(lineLine ? 'voltage_ll_avg' : 'voltage_ln_avg');
-            if (lineLine) {
-                const uniq = [...new Set(digits)];
-                if (uniq.length >= 2) { const p = pair(uniq[0], uniq[1]); return p ? cand(`voltage_${p}`) : null; }
-                if (bracket) return cand(`voltage_${['l1_l2', 'l2_l3', 'l3_l1'][+bracket[1]]}`);
-                return null;
-            }
-            if (ph) return cand(`voltage_l${ph}_n`);
-            if (bracket) return cand(`voltage_l${+bracket[1] + 1}_n`);
-            return null;
-        }
-        if (q === 'current') {
-            if (isNeutral) return cand('current_n');
-            if (isAvg) return cand('current_avg');
-            if (ph) return cand(`current_l${ph}`);
-            if (bracket) return cand(`current_l${+bracket[1] + 1}`);
-            if (isTotal) return cand('current_total');
-            return null;
-        }
-        if (q === 'power_active' || q === 'power_reactive' || q === 'power_apparent' || q === 'power_factor') {
-            if (ph) return cand(`${q}_l${ph}`);
-            if (bracket) return cand(`${q}_l${+bracket[1] + 1}`);
-            if (isTotal) return cand(`${q}_total`);
-            return null;
-        }
-        if (q === 'energy_active' || q === 'energy_reactive') {
-            let dir = null;
-            if (/import|consumed|forward|drawn/.test(hay)) dir = 'import';
-            else if (/export|delivered|produced|reverse|fed/.test(hay)) dir = 'export';
-            else if (/\bnet\b/.test(hay)) dir = 'net';
-            else if (isTotal) dir = 'total';
-            if (!dir) return null;
-            // per-phase energy exists only for ACTIVE energy, and only for a
-            // single phase (not an 'L1..L3' aggregate range)
-            if ((dir === 'import' || dir === 'export') && q === 'energy_active' && ph
-                && !/\.\.|l1.*l2.*l3/.test(hay)) return cand(`${q}_${dir}_l${ph}`);
-            return cand(`${q}_${dir}`);
-        }
-        if (q === 'energy_apparent') return cand('energy_apparent');
-        return null;
     },
 
     openCustomRegisterModal() {

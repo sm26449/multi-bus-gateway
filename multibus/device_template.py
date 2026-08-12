@@ -357,17 +357,28 @@ class TemplateRegistry:
                             f"id {t.id!r} already provided by "
                             f"{self._templates[t.id].path}")
                     self._templates[t.id] = t
-                    # opt-in canonical check: flag register names not in the
-                    # canonical dictionary (a warning, not a load failure).
+                    # opt-in canonical checks (warnings, not load failures):
+                    # flag non-canonical names, and duplicate names — which
+                    # collide on one MQTT topic / InfluxDB field (raw vendor maps
+                    # like Janitza legitimately repeat cryptic names, so this is
+                    # scoped to canonical templates only).
                     if t.canonical:
+                        from collections import Counter
                         from .canonical_fields import non_canonical, suggest
+                        warns = []
                         nc = non_canonical([r.name for r in t.registers])
                         if nc:
                             hints = ", ".join(
                                 f"{n}→{suggest(n)}" if suggest(n) else n for n in nc[:8])
                             more = f" (+{len(nc) - 8} more)" if len(nc) > 8 else ""
-                            self.load_warnings[f.name] = (
-                                f"{len(nc)} non-canonical field name(s): {hints}{more}")
+                            warns.append(f"{len(nc)} non-canonical field name(s): {hints}{more}")
+                        dups = [n for n, c in Counter(
+                            r.name.lower() for r in t.registers if r.name).items() if c > 1]
+                        if dups:
+                            warns.append(f"{len(dups)} duplicate name(s) (MQTT/InfluxDB "
+                                         f"collision): {', '.join(dups[:8])}")
+                        if warns:
+                            self.load_warnings[f.name] = " · ".join(warns)
                 except Exception as e:  # noqa: BLE001
                     self.load_errors[f.name] = str(e)
                     logger.warning("device template %s skipped: %s", f.name, e)
