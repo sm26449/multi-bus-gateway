@@ -759,6 +759,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     name = (dev_cfg.name or dev_cfg.id) if dev_cfg else 'Modbus'
                     note(name, st.get('events'))
                     transition('dev:' + did, name, bool(st.get('connected')), 'device')
+                    # feed the per-device HA connectivity binary_sensor (publishes
+                    # only on change; non-primary devices have their own prefix)
+                    if mqtt_publisher and dev_cfg and not dev_cfg.primary:
+                        mqtt_publisher.publish_device_availability(
+                            dev_cfg.mqtt_topic_prefix, bool(st.get('connected')))
                     lat = st.get('last_latency_ms')
                     if alert_mgr.sig_latency and lat and lat > alert_mgr.latency_ms:
                         alert_mgr.fire('warn', 'lat:' + did, name,

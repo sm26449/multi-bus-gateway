@@ -173,6 +173,9 @@ class MQTTPublisher:
         # callback hands a command to. Empty + no-op unless allow_write_entities.
         self._command_map: Dict[str, tuple] = {}
         self._write_handler = None
+        # per-device availability (drives the HA connectivity binary_sensor);
+        # publish only on change so a steady device doesn't churn the topic
+        self._availability_last: Dict[str, str] = {}
 
         # Reconnection thread
         self._stop_reconnect = threading.Event()
@@ -586,6 +589,19 @@ class MQTTPublisher:
             published.add(disc)
             if self._publish(disc, json.dumps(config), retain=True):
                 count += 1
+        # per-device connectivity binary_sensor (online/offline), fed by
+        # publish_device_availability() from the health harvester
+        bs = {
+            "name": "Connectivity", "state_topic": f"{topic_prefix}/availability",
+            "payload_on": "online", "payload_off": "offline",
+            "device_class": "connectivity", "entity_category": "diagnostic",
+            "availability_topic": f"{self.config.topic_prefix}/status",
+            "unique_id": f"mbg_dev_{device_id}_connectivity", "device": device_info,
+        }
+        bs_disc = f"{self.config.ha_discovery_prefix}/binary_sensor/mbg_dev_{device_id}/connectivity/config"
+        published.add(bs_disc)
+        if self._publish(bs_disc, json.dumps(bs), retain=True):
+            count += 1
         # clear this device's configs for registers it no longer exposes
         cleared = self._clear_stale_discovery(
             self._device_discovery_topics.get(device_id, set()) - published)
@@ -632,6 +648,18 @@ class MQTTPublisher:
                     self.client.unsubscribe(topic)
                 except Exception:  # noqa: BLE001
                     pass
+
+    def publish_device_availability(self, topic_prefix: str, online: bool) -> None:
+        """Publish a device's online/offline state (retained) for its HA
+        connectivity binary_sensor. No-op when disconnected or unchanged."""
+        if not self.connected or not topic_prefix:
+            return
+        topic = f"{topic_prefix}/availability"
+        payload = "online" if online else "offline"
+        if self._availability_last.get(topic) == payload:
+            return
+        self._availability_last[topic] = payload
+        self._publish(topic, payload, retain=True)
 
     def set_command_write_handler(self, fn) -> None:
         """Install the gated executor for HA write commands. ``fn(device_id,

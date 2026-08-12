@@ -18,9 +18,15 @@ def _pub(**cfg):
     p._captured = {}
 
     def _cap(topic, payload, retain=True):
-        # an empty payload is HA's "remove this entity" (stale-clear) — record
-        # the removal instead of parsing it as JSON
-        p._captured[topic] = json.loads(payload) if payload else None
+        # empty payload = HA "remove entity"; a plain string (e.g. "online") is a
+        # non-JSON state — record raw instead of choking on json.loads
+        if not payload:
+            p._captured[topic] = None
+        else:
+            try:
+                p._captured[topic] = json.loads(payload)
+            except (ValueError, TypeError):
+                p._captured[topic] = payload
         return True
     p._publish = _cap
     return p
@@ -122,6 +128,29 @@ def test_rebuild_unsubscribes_removed_commands():
     pub.publish_device_discovery("dev1", "Dev", "meters/dev1", [reg], write_rules={})
     assert pub._command_map == {}
     pub.client.unsubscribe.assert_any_call("meters/dev1/power_limit/set")
+
+
+# ── per-device connectivity binary_sensor + availability ─────────────────────
+
+def test_discovery_includes_connectivity_binary_sensor():
+    pub = _pub()
+    pub.publish_device_discovery("dev1", "Dev", "meters/dev1", [_reg()])
+    topic = next((t for t in pub._captured if "/binary_sensor/" in t), None)
+    assert topic is not None
+    cfg = pub._captured[topic]
+    assert cfg["device_class"] == "connectivity"
+    assert cfg["state_topic"] == "meters/dev1/availability"
+
+
+def test_availability_published_only_on_change():
+    pub = _pub()
+    pub.publish_device_availability("meters/dev1", True)
+    assert pub._captured["meters/dev1/availability"] == "online"
+    pub._captured.clear()
+    pub.publish_device_availability("meters/dev1", True)      # unchanged
+    assert pub._captured == {}                                # no re-publish
+    pub.publish_device_availability("meters/dev1", False)     # changed
+    assert pub._captured["meters/dev1/availability"] == "offline"
 
 
 # ── the gated command handler (the security boundary) ────────────────────────

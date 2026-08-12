@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.19.0
+
+### 2026-08-13 — Backlog close-out (3/3): HA connectivity + coverage
+
+- **Per-device connectivity binary_sensor** — each non-primary device now
+  publishes a retained `…/availability` (online/offline, only on change, driven
+  by the health harvester) and a matching HA `binary_sensor` with
+  `device_class: connectivity`, so a source device going down is visible in Home
+  Assistant as a diagnostic entity, not just in the gateway's Status page.
+- Closes the Home-Assistant polish set: explicit `enabled_by_default` (3.7.0),
+  enum/text sensors flow as text with numeric typing suppressed (3.10.0), and now
+  connectivity. The `value_template |default` guard is N/A — MBG publishes raw
+  values to the state topic, not templated payloads.
+
 ## 3.18.0
 
 ### 2026-08-13 — Backlog close-out (2/3): config self-healing, alert hygiene

@@ -300,10 +300,10 @@ def test_non_primary_ha_discovery_namespaced(tmp_path, monkeypatch):
     reg = SelectedRegister(address=100, name="_V1", label="Voltage", unit="V",
                            data_type="float", poll_group="normal")
     n = pub.publish_device_discovery("em24", "Warehouse EM24", "meters/em24", [reg], model="cg_em24")
-    assert n == 1
-    topic, payload = next(iter(published.items()))
+    assert n == 2                                       # the register sensor + a connectivity binary_sensor
     import json as _j
-    cfg = _j.loads(payload)
+    topic = next(t for t in published if "/sensor/" in t)
+    cfg = _j.loads(published[topic])
     # namespaced so it never collides with device #1
     assert "mbg_dev_em24" in topic
     assert cfg["unique_id"] == "mbg_dev_em24_100__v1"
@@ -311,6 +311,9 @@ def test_non_primary_ha_discovery_namespaced(tmp_path, monkeypatch):
     assert cfg["device"]["identifiers"] == ["mbg_dev_em24"]
     assert cfg["device"]["via_device"] == "janitza_umg512"
     assert cfg["availability_topic"] == "janitza/umg512/status"
+    # and the per-device connectivity binary_sensor
+    bs_topic = next(t for t in published if "/binary_sensor/" in t)
+    assert _j.loads(published[bs_topic])["device_class"] == "connectivity"
 
 
 @needs_tc
