@@ -89,11 +89,13 @@ ui:
   host: "0.0.0.0"
   # Web UI port
   port: 8080
-  # Enable authentication (optional)
+  # Enable authentication (optional). Set a username and a strong password before
+  # setting enabled: true — the gateway refuses to enable auth while the password
+  # is empty or default.
   auth:
     enabled: false
     username: "admin"
-    password: "admin"
+    password: ""          # CHANGE ME — required before enabling auth
 
 # Alerting hooks (optional, off by default). When enabled, notable Status-page
 # conditions are delivered over the channels below so alertd / Home Assistant /

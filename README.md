@@ -363,14 +363,15 @@ multi-bus-gateway/
 └── CHANGELOG.md
 ```
 
-## Integrare pv-stack (Docker Services Manager)
+## Folosirea unui stack MQTT / InfluxDB existent
 
-Pentru deploy în stack-ul pv-stack cu mosquitto și influxdb partajate:
+Ca să conectezi gateway-ul la brokere/baze pe care le rulezi deja (în locul
+celor incluse), setează detaliile de conexiune în `.env` sau din UI — de ex.
+`MQTT_BROKER`, `MQTT_PORT`, `INFLUXDB_URL`, `INFLUXDB_TOKEN` (vezi
+`.env.example` pentru lista completă) — și pornește doar serviciul gateway:
 
 ```bash
-cp -r multi-bus-gateway/* docker-setup/templates/multi-bus-gateway/
-docker compose -f docker-compose.pv-stack.yml build multi-bus-gateway
-docker compose -f docker-compose.pv-stack.yml up -d multi-bus-gateway
+docker compose up -d multi-bus-gateway
 ```
 
 Variabilele de mediu sunt **fără prefix** (aplicația citește `MODBUS_HOST`)

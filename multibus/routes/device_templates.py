@@ -139,6 +139,11 @@ def build(ctx) -> APIRouter:
         csv_text = str(payload.get('csv', '') or '')
         if not csv_text.strip():
             raise HTTPException(status_code=422, detail={"errors": ["csv is empty"]})
+        # bound the input — a register map is at most a few thousand short rows;
+        # anything past this is a paste error or an abuse attempt, not a real map.
+        if len(csv_text) > 1_000_000:
+            raise HTTPException(status_code=413, detail={"errors": [
+                "csv too large (max 1 MB) — a register map should be a few thousand rows"]})
         parsed = parse_csv(
             csv_text,
             default_data_type=str(payload.get('default_data_type', 'float')),

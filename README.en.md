@@ -366,19 +366,20 @@ multi-bus-gateway/
 └── CHANGELOG.md
 ```
 
-## pv-stack integration (Docker Services Manager)
+## Using an existing MQTT / InfluxDB stack
 
-For deployment in the pv-stack with shared mosquitto and influxdb:
+To point the gateway at brokers/databases you already run (instead of the
+bundled ones), set the connection details in `.env` or the UI — e.g.
+`MQTT_BROKER`, `MQTT_PORT`, `INFLUXDB_URL`, `INFLUXDB_TOKEN` (see
+`.env.example` for the full list) — and start only the gateway service:
 
 ```bash
-cp -r multi-bus-gateway/* docker-setup/templates/multi-bus-gateway/
-docker compose -f docker-compose.pv-stack.yml build multi-bus-gateway
-docker compose -f docker-compose.pv-stack.yml up -d multi-bus-gateway
+docker compose up -d multi-bus-gateway
 ```
 
-Environment variables are **unprefixed** (the app reads `MODBUS_HOST`) and
-all **optional** — prefer configuring from the UI. `API_KEY` is also
-honoured as `JANITZA_API_KEY` (historical compatibility).
+Environment variables are **unprefixed** (the app reads `MODBUS_HOST`) and all
+**optional** — prefer configuring from the UI. `API_KEY` is also honoured as
+`JANITZA_API_KEY` (historical compatibility).
 
 ## Development
 

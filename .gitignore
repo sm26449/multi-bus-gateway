@@ -51,9 +51,14 @@ node_modules/
 
 # Internal dev tools / docs — kept in the private repo, not published to the public one
 tools/capture-screenshots.js
+tools/run-backfill.sh
+tools/mqtt_capture_schema.py
 docs/PUBLISHING.md
 docs/ROADMAP.md
 docs/vendor/
+# Internal engineering notes & planning (leak the private pv-stack/Victron topology)
+reviews/
+perf/
 # Internal audit prompts & history — never published (see git history caveat before going public)
 .audit/
 config/audit.jsonl*

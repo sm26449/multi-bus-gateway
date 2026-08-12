@@ -497,9 +497,9 @@ setează pe ambele capete deodată.)
 
 Un YAML importat manual poate folosi ORICE componentă ESPHome (inclusiv
 canbus/BLE) încă de azi — limitele de mai sus privesc doar **generatorul**
-automat din template-uri. Planul detaliat pentru ce urmează (BLE, CAN pe
-ambele căi, noduri cu I/O, plăci integrate gen LilyGO T-CAN485):
-**[builder-roadmap.md](builder-roadmap.md)**.
+automat din template-uri. Extinderea generatorului (BLE, CAN pe ambele căi,
+noduri cu I/O, plăci integrate gen LilyGO T-CAN485) este pe foaia de parcurs
+a proiectului.
 
 **De reținut:**
 

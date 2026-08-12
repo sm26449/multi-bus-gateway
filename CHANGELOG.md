@@ -6,8 +6,7 @@
 
 RTU now has two modes, both shipped and validated live against a real Fronius
 Smart Meter 65A-3 (rebranded Carlo Gavazzi EM24) on an FTDI USB-RS485 adapter.
-See [`docs/rtu-serial.md`](docs/rtu-serial.md) and the design at
-[`reviews/rtu-serial-bridge-design.md`](reviews/rtu-serial-bridge-design.md).
+See [`docs/rtu-serial.md`](docs/rtu-serial.md).
 
 - **New `rtu-tcp` transport** (`modbus_client._build_client`): `ModbusTcpClient`
   + `ModbusRtuFramer` tunnels RTU frames over a raw TCP socket, so a device can

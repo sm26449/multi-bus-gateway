@@ -136,5 +136,3 @@ slave per adapter, or one adapter per bus.
 | Test connection times out | wrong unit ID, wrong baud (bridge is 9600 8N1), A/B wires swapped, or no termination on a long bus. |
 | Values decode wrong (freq/scale off) | template register map / byte order mismatch — RTU vs TCP is *not* the cause; the frames are identical. Check the template. |
 | Adapter renumbered after replug (direct mode) | expected — that is exactly what the bridge avoids. Move to bridge mode. |
-
-See also the full design: [`reviews/rtu-serial-bridge-design.md`](../reviews/rtu-serial-bridge-design.md).

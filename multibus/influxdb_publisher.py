@@ -748,13 +748,13 @@ class InfluxDBPublisher:
         if self.write_api:
             try:
                 self.write_api.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort close on shutdown
                 pass
 
         if self.client:
             try:
                 self.client.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort close on shutdown
                 pass
 
         self.connected = False
