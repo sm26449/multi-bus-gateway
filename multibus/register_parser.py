@@ -93,8 +93,27 @@ class RegisterParser:
         return regs
 
     def get_register_count(self, data_type: str) -> int:
-        """Get number of 16-bit registers needed for a data type."""
-        return self.REGISTER_COUNTS.get(data_type.lower(), 2)
+        """Get number of 16-bit registers needed for a data type. A string
+        carries its length in the type — ``string:7`` = 7 registers (14 bytes)."""
+        dt = str(data_type).lower()
+        if dt.startswith('string'):
+            import re
+            m = re.search(r'(\d+)', dt)
+            return int(m.group(1)) if m else 1
+        return self.REGISTER_COUNTS.get(dt, 2)
+
+    def _parse_string(self, registers: List[int]) -> Optional[str]:
+        """Decode an ASCII string from consecutive registers (2 bytes/register,
+        big-endian on the wire, read in natural order — NOT word/byte swapped,
+        which is a numeric concern only). Non-printable bytes are dropped and the
+        result is whitespace-stripped; empty → None."""
+        b = bytearray()
+        for r in registers:
+            r = int(r) & 0xFFFF
+            b.append((r >> 8) & 0xFF)
+            b.append(r & 0xFF)
+        s = ''.join(chr(c) for c in b if 32 <= c < 127)
+        return s.strip() or None
 
     def parse_value(self, registers: List[int], data_type: str) -> Optional[Any]:
         """
@@ -129,6 +148,8 @@ class RegisterParser:
                 return self._parse_int64(registers)
             elif data_type == 'uint64':
                 return self._parse_uint64(registers)
+            elif data_type.startswith('string'):
+                return self._parse_string(registers)
             else:
                 # Default to float
                 return self._parse_float(registers)

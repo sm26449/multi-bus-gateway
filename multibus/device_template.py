@@ -51,10 +51,10 @@ VALID_DATA_TYPES = {
     'int16', 'uint16', 'short',
     'int32', 'uint32',
     'int64', 'uint64', 'long64',
-    # NOTE: 'string' is intentionally NOT here for input maps — the register
-    # reader has no string decoder (it would silently decode as float) and
-    # strings need a per-register length the schema does not carry. Re-add only
-    # alongside real length-aware string parsing in RegisterParser.
+    'string',
+    # 'string' carries its length in the type: 'string:7' = 7 registers (ASCII,
+    # 2 bytes/register). RegisterParser decodes it (length-aware); the validator
+    # below accepts the 'string:N' form.
 }
 
 _ID_RE = re.compile(r'^[a-z0-9][a-z0-9_-]{1,63}$')
@@ -234,9 +234,15 @@ def validate_template(data: Dict[str, Any]) -> List[str]:
                           f"(each register address must be unique)")
         seen.add(addr)
         dt = str(r.get('data_type', 'float')).lower()
-        if dt not in VALID_DATA_TYPES:
+        # a string carries its length: 'string:7'. Validate the base + the length.
+        _dt_base = dt.split(':', 1)[0] if dt.startswith('string') else dt
+        if _dt_base not in VALID_DATA_TYPES:
             errors.append(f"{where}: data_type {dt!r} not supported "
                           f"({', '.join(sorted(VALID_DATA_TYPES))})")
+        elif dt.startswith('string'):
+            _m = re.search(r'(\d+)', dt)
+            if not _m or int(_m.group(1)) < 1:
+                errors.append(f"{where}: string needs a register length, e.g. 'string:7'")
         cat = r.get('category', 'other')
         if categories and cat not in categories:
             errors.append(f"{where}: category {cat!r} not declared in categories")

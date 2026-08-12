@@ -15,7 +15,7 @@ Every built-in device map, with its Modbus transport (function code + byte/word 
 | [Carlo Gavazzi EM24 (AV5/AV53, 3-phase)](#carlo-gavazzi-em24-av5av53-3-phase) | Carlo Gavazzi | EM24-DIN AV5(3) | 16 | FC03 / little |
 | [Eastron SDM120 (single-phase)](#eastron-sdm120-single-phase) | Eastron | SDM120 Modbus | 10 | FC04 / big |
 | [Eastron SDM630 (3-phase)](#eastron-sdm630-3-phase) | Eastron | SDM630 Modbus V2 | 29 | FC04 / big |
-| [Fronius Smart Meter 65A-3 (RTU)](#fronius-smart-meter-65a-3-rtu) | Fronius | Smart Meter 65A-3 | 29 | FC03 / little |
+| [Fronius Smart Meter 65A-3 (RTU)](#fronius-smart-meter-65a-3-rtu) | Fronius | Smart Meter 65A-3 | 30 | FC03 / little |
 | [Generic MQTT (JSON)](#generic-mqtt-json) | Generic | MQTT JSON source | 3 | FC03 / big |
 | [Schneider iEM3000 (3-phase)](#schneider-iem3000-3-phase) | Schneider Electric | iEM3155 / iEM3255 / iEM3455 / iEM3555 | 22 | FC03 / big |
 | [Zigbee sensor (zigbee2mqtt)](#zigbee-sensor-zigbee2mqtt) | Zigbee2MQTT | climate / battery sensor | 6 | FC03 / big |
@@ -209,7 +209,7 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 
 ## Fronius Smart Meter 65A-3 (RTU)
 
-**id** `fronius_smart_meter_65a` · **vendor** Fronius · **model** Smart Meter 65A-3 · **version** 1.0.0 · **registers** 29
+**id** `fronius_smart_meter_65a` · **vendor** Fronius · **model** Smart Meter 65A-3 · **version** 1.0.0 · **registers** 30
 
 - **Transport:** FC03 (read holding registers) · byte order **little-endian, low word first (CDAB / word-swapped)**
 - **Source / provenance:** Field-verified against a physical Fronius Smart Meter 65A-3 over Modbus RTU (2026-08-11): |P|<=S per phase, S^2~=P^2+Q^2, PF=P/S, Freq=50Hz.
@@ -247,6 +247,7 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 52 / 0x0034 | `Energy_Import` | Energy Import Total | int32 | 10.0 | kWh | slow |
 | 78 / 0x004E | `Energy_Export` | Energy Export Total | int32 | 10.0 | kWh | slow |
 | 4096 / 0x1000 | `Firmware_Rev` | Firmware / revision | uint16 | 1.0 | — | slow |
+| 20480 / 0x5000 | `Serial_ASCII` | Serial / ID (ASCII) | string:7 | 1.0 | — | slow |
 
 ## Generic MQTT (JSON)
 

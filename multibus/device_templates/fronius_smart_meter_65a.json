@@ -376,6 +376,18 @@
     "description": "Firmware / revision code (register 0x1000).",
     "scale": 1.0,
     "poll_group": "slow"
+   },
+   {
+    "address": 20480,
+    "name": "Serial_ASCII",
+    "label": "Serial / ID (ASCII)",
+    "unit": "",
+    "data_type": "string:7",
+    "access": "RD",
+    "category": "diagnostic",
+    "description": "ASCII identification block at 0x5000 (7 registers). This unit reads '224026U'. A binary suffix follows at 0x5007-0x5008.",
+    "scale": 1.0,
+    "poll_group": "slow"
    }
   ]
  }

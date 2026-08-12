@@ -129,11 +129,18 @@ def test_validate_rejects_duplicate_address():
     assert any("duplicate address" in e for e in errs)
 
 
-def test_validate_rejects_string_type():
+def test_validate_string_type_needs_length():
+    # 'string' now has a real length-aware decoder — but a BARE 'string' (no
+    # register count) is still rejected; it must carry its length as 'string:N'.
     errs = validate_template(_tpl([
         {"address": 0, "name": "serial", "data_type": "string"},
     ]))
-    assert any("string" in e and "not supported" in e for e in errs)
+    assert any("string" in e and "length" in e for e in errs)
+    # the 'string:N' form is accepted (N = register count, ASCII decode).
+    errs_ok = validate_template(_tpl([
+        {"address": 0, "name": "serial", "data_type": "string:7"},
+    ]))
+    assert not any("string" in e for e in errs_ok)
 
 
 def test_validate_requires_bounds_on_writable_holding():
