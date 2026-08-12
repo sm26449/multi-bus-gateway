@@ -135,18 +135,24 @@ class GatewayApp:
                 logger.info(f"Device '{device.id}': MQTT input, {len(regs)} registers, "
                             f"broker {device.mqtt_in.get('broker', '')}:{device.mqtt_in.get('port', 1883)} "
                             f"topic {device.mqtt_in.get('topic', '')}")
-            elif device.protocol not in ('tcp', 'rtu'):
+            elif device.protocol not in ('tcp', 'rtu', 'rtu-tcp'):
                 logger.warning(f"Device '{device.id}': unknown protocol "
                                f"'{device.protocol}' — idle")
                 client = None
             else:
+                # tcp / rtu / rtu-tcp all build a ModbusClient — its _build_client
+                # picks the transport (rtu-tcp = RTU frames over the bridge TCP
+                # socket). Without rtu-tcp here the device would go idle on every
+                # restart even though the runtime add path started it fine.
                 regs, groups = self.config.load_device_registers(device)
                 _bo = self.template_registry.byte_order_for(device.template)
                 client = ModbusClient(config=device.connection,
                                       registers=regs, poll_groups=groups,
                                       byte_order=_bo, device_id=device.id)
+                _where = (f"{device.connection.serial_port}" if device.protocol == 'rtu'
+                          else f"{device.connection.host}:{device.connection.port}")
                 logger.info(f"Device '{device.id}': {len(regs)} registers, "
-                            f"{device.connection.host}:{device.connection.port} ({_bo})")
+                            f"{device.protocol} {_where} ({_bo})")
             self.devices.append((device, client))
 
         # Create API
