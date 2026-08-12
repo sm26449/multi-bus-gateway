@@ -424,3 +424,21 @@ def test_save_poll_groups_rejects_zero_interval(tmp_path):
         cfg.save_device_poll_groups("umg512", {"realtime": {"interval": 0}})
     # 250 ms is accepted (ESS control cadence)
     cfg.save_device_poll_groups("umg512", {"realtime": {"interval": 0.25}})
+
+
+def test_dns_resolution_is_bounded_by_timeout(monkeypatch):
+    """A slow/hung resolver must not block a poller past its timeout (flaky-link
+    hardening) — socket.getaddrinfo ignores timeouts, so we bound it ourselves."""
+    import time
+    from multibus import http_client
+
+    def _slow(host, *a, **k):
+        time.sleep(2.0)
+        return [(2, 1, 6, "", ("192.168.1.50", 0))]
+
+    monkeypatch.setattr(http_client.socket, "getaddrinfo", _slow)
+    t0 = time.monotonic()
+    _pinned, _host, err = http_client.resolve_lan_ip("http://slowhost.lan", timeout=0.2)
+    dt = time.monotonic() - t0
+    assert err and "does not resolve" in err    # timed out → treated as unresolved
+    assert dt < 1.5                               # returned well before the 2 s hang

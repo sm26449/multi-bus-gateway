@@ -1350,85 +1350,27 @@ class Config:
 
         logger.info(f"Saved config to {self.config_path}")
 
-    def update_modbus(self, host: str = None, port: int = None, unit_id: int = None,
-                      timeout: int = None, retry_attempts: int = None, retry_delay: float = None):
-        """Update Modbus configuration."""
-        if host is not None:
-            self.modbus.host = host
-        if port is not None:
-            self.modbus.port = port
-        if unit_id is not None:
-            self.modbus.unit_id = unit_id
-        if timeout is not None:
-            self.modbus.timeout = timeout
-        if retry_attempts is not None:
-            self.modbus.retry_attempts = retry_attempts
-        if retry_delay is not None:
-            self.modbus.retry_delay = retry_delay
+    @staticmethod
+    def _apply_updates(target, fields: dict) -> None:
+        """Set each provided non-None field on ``target`` — the shared body of
+        the update_* section setters. They used to hand-list every field; the
+        Pydantic request model and the dataclass already enumerate them, so this
+        stays field-agnostic (an unknown field is a programming error -> raise)."""
+        for k, v in fields.items():
+            if v is None:
+                continue
+            if not hasattr(target, k):
+                raise AttributeError(f"unknown config field {k!r}")
+            setattr(target, k, v)
 
-    def update_mqtt(self, enabled: bool = None, broker: str = None, port: int = None,
-                    username: str = None, password: str = None, topic_prefix: str = None,
-                    retain: bool = None, qos: int = None, publish_mode: str = None,
-                    ha_discovery_enabled: bool = None, ha_discovery_prefix: str = None,
-                    ha_device_name: str = None, tls_enabled: bool = None,
-                    tls_ca_cert: str = None, tls_client_cert: str = None,
-                    tls_client_key: str = None, tls_insecure: bool = None,
-                    default_topic_pattern: str = None):
-        """Update MQTT configuration."""
-        if enabled is not None:
-            self.mqtt.enabled = enabled
-        if broker is not None:
-            self.mqtt.broker = broker
-        if port is not None:
-            self.mqtt.port = port
-        if username is not None:
-            self.mqtt.username = username
-        if password is not None:
-            self.mqtt.password = password
-        if topic_prefix is not None:
-            self.mqtt.topic_prefix = topic_prefix
-        if retain is not None:
-            self.mqtt.retain = retain
-        if qos is not None:
-            self.mqtt.qos = qos
-        if publish_mode is not None:
-            self.mqtt.publish_mode = publish_mode
-        if ha_discovery_enabled is not None:
-            self.mqtt.ha_discovery_enabled = ha_discovery_enabled
-        if ha_discovery_prefix is not None:
-            self.mqtt.ha_discovery_prefix = ha_discovery_prefix
-        if ha_device_name is not None:
-            self.mqtt.ha_device_name = ha_device_name
-        if tls_enabled is not None:
-            self.mqtt.tls_enabled = tls_enabled
-        if tls_ca_cert is not None:
-            self.mqtt.tls_ca_cert = tls_ca_cert
-        if tls_client_cert is not None:
-            self.mqtt.tls_client_cert = tls_client_cert
-        if tls_client_key is not None:
-            self.mqtt.tls_client_key = tls_client_key
-        if tls_insecure is not None:
-            self.mqtt.tls_insecure = tls_insecure
-        if default_topic_pattern is not None:
-            self.mqtt.default_topic_pattern = default_topic_pattern
+    def update_modbus(self, **fields):
+        """Update Modbus configuration (non-None fields only)."""
+        self._apply_updates(self.modbus, fields)
 
-    def update_influxdb(self, enabled: bool = None, url: str = None, token: str = None,
-                        org: str = None, bucket: str = None, write_interval: int = None,
-                        publish_mode: str = None, default_bucket_pattern: str = None):
-        """Update InfluxDB configuration."""
-        if enabled is not None:
-            self.influxdb.enabled = enabled
-        if url is not None:
-            self.influxdb.url = url
-        if token is not None:
-            self.influxdb.token = token
-        if org is not None:
-            self.influxdb.org = org
-        if bucket is not None:
-            self.influxdb.bucket = bucket
-        if write_interval is not None:
-            self.influxdb.write_interval = write_interval
-        if publish_mode is not None:
-            self.influxdb.publish_mode = publish_mode
-        if default_bucket_pattern is not None:
-            self.influxdb.default_bucket_pattern = default_bucket_pattern
+    def update_mqtt(self, **fields):
+        """Update MQTT configuration (non-None fields only)."""
+        self._apply_updates(self.mqtt, fields)
+
+    def update_influxdb(self, **fields):
+        """Update InfluxDB configuration (non-None fields only)."""
+        self._apply_updates(self.influxdb, fields)

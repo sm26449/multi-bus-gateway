@@ -203,12 +203,18 @@ class WebSocketManager:
         if not conns:
             return
         data = json.dumps(message)
-        disconnected = []
-        for connection in conns:
+
+        # Fan out CONCURRENTLY: a sequential loop makes one slow client add its
+        # full 5 s timeout to every client behind it (up to MAX_CONNECTIONS×5 s
+        # per broadcast, backing up the event loop). gather bounds the whole
+        # fan-out to the slowest single send instead.
+        async def _send(conn):
             try:
-                await asyncio.wait_for(connection.send_text(data), timeout=5)
+                await asyncio.wait_for(conn.send_text(data), timeout=5)
+                return None
             except Exception:  # noqa: BLE001 — timeout or send error → drop it
-                disconnected.append(connection)
+                return conn
+        disconnected = [c for c in await asyncio.gather(*(_send(c) for c in conns)) if c]
         if disconnected:
             async with self.lock:
                 for conn in disconnected:

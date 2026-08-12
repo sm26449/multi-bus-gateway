@@ -311,6 +311,31 @@ def test_non_primary_ha_discovery_namespaced(tmp_path, monkeypatch):
 
 
 @needs_tc
+def test_ha_discovery_clears_removed_registers(tmp_path):
+    """Re-publishing discovery after a register is removed must clear its
+    retained config (empty payload) so HA doesn't keep a ghost sensor."""
+    from multibus.mqtt_publisher import MQTTPublisher
+    from multibus.config import MQTTConfig, SelectedRegister
+    pub = MQTTPublisher(MQTTConfig(enabled=False, topic_prefix="meters/em24",
+                                   ha_discovery_enabled=True), [], publish_mode="changed")
+    published = {}
+    pub.connected = True
+    pub._publish = lambda topic, payload, retain=None: published.__setitem__(topic, payload) or True
+    a = SelectedRegister(address=100, name="V1", label="V1", unit="V",
+                         data_type="float", poll_group="normal")
+    b = SelectedRegister(address=102, name="V2", label="V2", unit="V",
+                         data_type="float", poll_group="normal")
+    pub.publish_device_discovery("em24", "EM24", "meters/em24", [a, b])
+    b_topic = next(t for t in published if t.endswith("102_v2/config"))
+    assert published[b_topic] != ""                       # b's config was set
+    published.clear()
+    # b removed → its retained config must be cleared with an empty payload
+    pub.publish_device_discovery("em24", "EM24", "meters/em24", [a])
+    assert published.get(b_topic) == ""                   # ghost sensor deleted
+    assert not any(t.endswith("100_v1/config") and p == "" for t, p in published.items())  # a kept
+
+
+@needs_tc
 def test_values_per_device(tmp_path):
     cfg, client = make_app(tmp_path, extra_yaml="""
 devices:

@@ -25,6 +25,7 @@ unchanged. Mirrors the parts of ModbusClient the API/UI rely on
 
 Values come from JSON already in engineering units, so there is no scale-factor
 or block-size handling to worry about (unlike a fragile Modbus gateway)."""
+import concurrent.futures as _futures
 import http.client
 import ipaddress
 import json
@@ -60,7 +61,20 @@ def _classify_lan(addrs) -> Optional[str]:
     return None
 
 
-def lan_url_error(url: str) -> Optional[str]:
+# Bound DNS resolution by the caller's timeout: socket.getaddrinfo ignores any
+# timeout, so a slow/unreachable resolver (a flaky link) can wedge a poller
+# thread for tens of seconds past its configured timeout. Run it in a small pool
+# and stop waiting on time-out — the orphaned lookup finishes on its own and
+# frees its worker; we never block on it.
+_RESOLVER_POOL = _futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="dns-resolve")
+
+
+def _getaddrinfo(host: str, timeout: float):
+    """``socket.getaddrinfo(host, None)`` bounded by ``timeout`` seconds."""
+    return _RESOLVER_POOL.submit(socket.getaddrinfo, host, None).result(timeout=timeout)
+
+
+def lan_url_error(url: str, timeout: float = 5.0) -> Optional[str]:
     """SSRF guard for server-side HTTP device fetches: return an error string if
     the URL's host does not resolve to ONLY private/LAN addresses, else None.
     Blocks reaching the public internet, loopback services, and link-local /
@@ -69,8 +83,8 @@ def lan_url_error(url: str) -> Optional[str]:
     if not host:
         return "could not parse a host from the URL"
     try:
-        infos = socket.getaddrinfo(host, None)
-    except Exception:  # noqa: BLE001
+        infos = _getaddrinfo(host, timeout)
+    except Exception:  # noqa: BLE001 — unresolved OR resolver timed out
         return f"host {host!r} does not resolve"
     addrs = {i[4][0] for i in infos}
     if not addrs:
@@ -78,7 +92,7 @@ def lan_url_error(url: str) -> Optional[str]:
     return _classify_lan(addrs)
 
 
-def resolve_lan_ip(url: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+def resolve_lan_ip(url: str, timeout: float = 5.0) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """Resolve+validate the URL's host ONCE and return ``(pinned_ip, host, error)``.
 
     The caller connects to ``pinned_ip`` (a literal address that passed the LAN
@@ -90,8 +104,8 @@ def resolve_lan_ip(url: str) -> Tuple[Optional[str], Optional[str], Optional[str
     if not host:
         return None, None, "could not parse a host from the URL"
     try:
-        infos = socket.getaddrinfo(host, None)
-    except Exception:  # noqa: BLE001
+        infos = _getaddrinfo(host, timeout)
+    except Exception:  # noqa: BLE001 — unresolved OR resolver timed out
         return None, host, f"host {host!r} does not resolve"
     addrs = {i[4][0] for i in infos}
     if not addrs:
@@ -378,7 +392,7 @@ class HttpClient:
             # Resolve+validate ONCE, then connect to that literal IP (not the
             # hostname) so a low-TTL DNS rebind can't swap the target between the
             # check and the connect. Cross-origin redirects are refused.
-            pinned, _host, err = resolve_lan_ip(self.url)
+            pinned, _host, err = resolve_lan_ip(self.url, timeout=self.timeout)
             if err:
                 raise RuntimeError(f"SSRF guard: {err}")
             opener = urllib.request.build_opener(

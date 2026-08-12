@@ -82,6 +82,12 @@ class MQTTPublisher:
         self.connected = False
         self.last_values: Dict[str, Any] = {}
         self.lock = threading.Lock()
+        # HA discovery configs we've published, so a later republish can clear the
+        # ones for registers that were removed/disabled (else HA keeps a ghost
+        # sensor forever on the retained config topic). Primary = a flat set;
+        # non-primary = per-device sets.
+        self._ha_discovery_topics: set = set()
+        self._device_discovery_topics: Dict[str, set] = {}
 
         # Build register lookup by address
         self._register_map: Dict[int, SelectedRegister] = {
@@ -425,6 +431,7 @@ class MQTTPublisher:
         count = 0
         device_info = self._build_ha_device_info()
 
+        published: set = set()
         for register in self.registers:
             if not register.mqtt_enabled:
                 continue
@@ -433,12 +440,25 @@ class MQTTPublisher:
             if config:
                 safe_id = f"{register.address}_{register.name.lower().replace('[', '_').replace(']', '')}"
                 discovery_topic = f"{self.config.ha_discovery_prefix}/sensor/multibus/{safe_id}/config"
-
+                published.add(discovery_topic)
                 if self._publish(discovery_topic, json.dumps(config), retain=True):
                     count += 1
 
-        logger.info(f"Published {count} HA discovery configs")
+        # clear configs we published before but no longer do → no ghost sensor
+        cleared = self._clear_stale_discovery(self._ha_discovery_topics - published)
+        self._ha_discovery_topics = published
+        logger.info(f"Published {count} HA discovery configs" +
+                    (f" (cleared {cleared} stale)" if cleared else ""))
         return count
+
+    def _clear_stale_discovery(self, topics) -> int:
+        """Delete retained HA discovery configs by publishing an empty payload
+        (HA treats an empty retained config as 'remove this entity')."""
+        n = 0
+        for topic in topics:
+            if self._publish(topic, "", retain=True):
+                n += 1
+        return n
 
     def publish_device_discovery(self, device_id: str, device_name: str,
                                  topic_prefix: str, registers: List[SelectedRegister],
@@ -457,6 +477,7 @@ class MQTTPublisher:
             "via_device": "janitza_umg512",
         }
         count = 0
+        published: set = set()
         for register in registers:
             if not register.mqtt_enabled:
                 continue
@@ -478,9 +499,15 @@ class MQTTPublisher:
             if sc:
                 config["state_class"] = sc
             disc = f"{self.config.ha_discovery_prefix}/sensor/mbg_dev_{device_id}/{register.address}_{safe_name}/config"
+            published.add(disc)
             if self._publish(disc, json.dumps(config), retain=True):
                 count += 1
-        logger.info(f"Published {count} HA discovery configs for device {device_id}")
+        # clear this device's configs for registers it no longer exposes
+        cleared = self._clear_stale_discovery(
+            self._device_discovery_topics.get(device_id, set()) - published)
+        self._device_discovery_topics[device_id] = published
+        logger.info(f"Published {count} HA discovery configs for device {device_id}" +
+                    (f" (cleared {cleared} stale)" if cleared else ""))
         return count
 
     def publish_vmeter_discovery(self, meters: List[Dict]) -> int:

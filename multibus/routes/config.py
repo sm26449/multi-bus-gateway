@@ -64,14 +64,7 @@ def build(ctx) -> APIRouter:
     async def update_modbus_config(update: ModbusConfigUpdate):
         """Update Modbus configuration."""
         try:
-            config.update_modbus(
-                host=update.host,
-                port=update.port,
-                unit_id=update.unit_id,
-                timeout=update.timeout,
-                retry_attempts=update.retry_attempts,
-                retry_delay=update.retry_delay,
-            )
+            config.update_modbus(**update.model_dump())
             config.save_yaml_config()
             return {"status": "ok", "message": "Modbus config updated. Apply to reconnect."}
         except Exception as e:
@@ -104,26 +97,7 @@ def build(ctx) -> APIRouter:
     async def update_mqtt_config(update: MQTTConfigUpdate):
         """Update MQTT configuration."""
         try:
-            config.update_mqtt(
-                enabled=update.enabled,
-                broker=update.broker,
-                port=update.port,
-                username=update.username,
-                password=update.password,
-                topic_prefix=update.topic_prefix,
-                retain=update.retain,
-                qos=update.qos,
-                publish_mode=update.publish_mode,
-                ha_discovery_enabled=update.ha_discovery_enabled,
-                ha_discovery_prefix=update.ha_discovery_prefix,
-                ha_device_name=update.ha_device_name,
-                tls_enabled=update.tls_enabled,
-                tls_ca_cert=update.tls_ca_cert,
-                tls_client_cert=update.tls_client_cert,
-                tls_client_key=update.tls_client_key,
-                tls_insecure=update.tls_insecure,
-                default_topic_pattern=update.default_topic_pattern,
-            )
+            config.update_mqtt(**update.model_dump())
             config.save_yaml_config()
             return {"status": "ok", "message": "MQTT config updated. Apply to reconnect."}
         except Exception as e:
@@ -296,16 +270,7 @@ def build(ctx) -> APIRouter:
     async def update_influxdb_config(update: InfluxDBConfigUpdate):
         """Update InfluxDB configuration."""
         try:
-            config.update_influxdb(
-                enabled=update.enabled,
-                url=update.url,
-                token=update.token,
-                org=update.org,
-                bucket=update.bucket,
-                write_interval=update.write_interval,
-                publish_mode=update.publish_mode,
-                default_bucket_pattern=update.default_bucket_pattern,
-            )
+            config.update_influxdb(**update.model_dump())
             config.save_yaml_config()
             return {"status": "ok", "message": "InfluxDB config updated. Apply to reconnect."}
         except Exception as e:
