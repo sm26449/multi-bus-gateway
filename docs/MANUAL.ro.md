@@ -244,6 +244,32 @@ pentru alarme pe valori.
 
 Salvarea selecției re-încarcă hot doar pollerele acelui dispozitiv.
 
+### 6.1 Nume canonice de câmpuri
+
+Ca automatizările, dashboard-urile și predicțiile să fie predictibile, **numele**
+unui registru vine dintr-un dicționar comun — aceeași mărime fizică e denumită la
+fel pe orice dispozitiv (`voltage_l1_n` peste tot, nu `ull_0` pe un meter și
+`v_l1` pe altul). Numele devine leaf-ul topicului MQTT, field-ul InfluxDB și
+tag-ul `name`; topicul MQTT e ierarhic (`voltage/l1_n`), iar field-ul InfluxDB e
+numele canonic plat. Lista completă e în
+[`docs/canonical-fields.md`](canonical-fields.md) (56 câmpuri). Convenție:
+`<mărime>_<poziție>` — `voltage_l1_n`, `current_l2`, `power_active_total`,
+`energy_active_import`, `frequency`, …
+
+- **În editorul de registre**, câmpul *Name* autocompletează din dicționar,
+  marchează un nume non-canonic cu „did you mean …?" și pre-completează topicul
+  MQTT + măsurătoarea InfluxDB când numele e canonic.
+- **În editorul de template** (Templates → *New map* / *Edit*), fiecare rând e
+  verificat live, se afișează un sumar „**N/M canonice**", iar **Auto-canonicalize**
+  deduce numele canonice pentru o hartă criptică importată din label/unit-ul
+  fiecărui rând. E deliberat conservator — orice caz incert rămâne amber ca
+  să-l setezi tu, niciodată redenumit greșit. Verifici grila, apoi Salvezi.
+- Un template promite nume canonice cu `"canonical": true`; numele non-canonice
+  sau duplicate apar apoi ca avertisment în managerul de template-uri.
+
+Hărțile de referință vendor (ex. Janitza UMG512) preced această schemă și-și
+păstrează numele native — schema se aplică template-urilor pe care le creezi/imporți.
+
 ---
 
 ## 7. Registre calculate

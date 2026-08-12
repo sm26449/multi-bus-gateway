@@ -226,6 +226,32 @@ see §12 (infrastructure) or use a downstream system for value alarms.
 
 Saving the selection hot-reloads only that device's pollers.
 
+### 6.1 Canonical field names
+
+So automations, dashboards and predictions stay predictable, a register's
+**name** is drawn from a shared dictionary — the same physical quantity is named
+the same on every device (`voltage_l1_n` everywhere, not `ull_0` on one meter
+and `v_l1` on another). The name becomes the MQTT topic leaf, the InfluxDB
+field, and the `name` tag; the MQTT topic is hierarchical (`voltage/l1_n`) while
+the InfluxDB field is the flat canonical name. The full list is in
+[`docs/canonical-fields.md`](canonical-fields.md) (56 fields). Convention:
+`<quantity>_<position>` — `voltage_l1_n`, `current_l2`, `power_active_total`,
+`energy_active_import`, `frequency`, …
+
+- **In the register editor**, the *Name* field autocompletes from the
+  dictionary, flags a non-canonical name with a "did you mean …?" hint, and
+  auto-fills the MQTT topic + InfluxDB measurement when the name is canonical.
+- **In the template editor** (Templates → *New map* / *Edit*), each row's name
+  is checked live, a "**N/M canonical**" summary is shown, and **Auto-canonicalize**
+  infers canonical names for a cryptic imported map from each row's label/unit.
+  It is deliberately conservative — anything it isn't sure about is left amber
+  for you to set, never renamed to the wrong thing. Review the grid, then Save.
+- A template promises canonical names with `"canonical": true`; non-canonical or
+  duplicate names then show as a warning in the Template manager.
+
+Vendor reference maps (e.g. the Janitza UMG512) predate this and keep their
+native names — the scheme applies to the templates you build/import.
+
 ---
 
 ## 7. Calculated registers

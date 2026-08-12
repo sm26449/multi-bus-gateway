@@ -1,5 +1,44 @@
 # Changelog
 
+## 3.6.0
+
+### 2026-08-12 — Canonical field naming, auto-canonicalize, reliability hardening
+
+**Uniform field names across every device.** A register's `name` is now drawn
+from a canonical dictionary (`docs/canonical-fields.md`, 56 fields) so the same
+physical quantity is named the same everywhere — `voltage_l1_n` on every meter
+instead of `ull_0` on one and `v_l1` on another. MQTT topics are hierarchical
+(`voltage/l1_n`), the InfluxDB field stays the flat canonical name, and
+auto-select applies both from the dictionary. A template opts in with
+`"canonical": true`; non-canonical or duplicate names surface as load warnings.
+All bundled vendor maps (ABB B21/B23, Carlo Gavazzi EM24, Eastron SDM120/630,
+Schneider iEM3000) + the Fronius Smart Meter template are canonical.
+
+- **Auto-canonicalize** — one click infers canonical names for a cryptic
+  register map from each row's label/name/unit, via a conservative server-side
+  classifier (`/api/canonical-fields/guess`) that returns *nothing* when unsure
+  rather than a plausible-but-wrong name (verified 0 wrong renames across the
+  real vendor maps). In the register + template editors: datalist autocomplete,
+  an inline "did you mean …?" hint, and auto-filled MQTT topic + measurement;
+  CSV import reports the canonical count.
+- **Virtual-meter fail-safe** — `on_stale: fail` option so a vanished/renamed
+  source register makes the meter fail safe instead of serving a stale/0 value
+  as live into a downstream ESS.
+- **Reliability** — the per-device connection lock is released during a read's
+  retry backoff, so a slow poll group no longer stalls the realtime group;
+  WebSocket broadcast fans out concurrently; DNS resolution is bounded by the
+  device timeout; an HTTP fetch that overruns its interval backs off instead of
+  tight-looping; HA discovery clears the retained config of a removed register
+  (no ghost sensor).
+- **Maintainability** — device commissioning + config endpoints extracted from
+  `create_api` into `routes/` modules; the soft-delete lifecycle moved to a
+  `TombstoneStore` collaborator; the config section setters collapsed to one
+  helper. New test coverage for the backfill tool, the tombstone store, and the
+  canonical classifier (adversarial cases).
+- **Open-source readiness** — `SECURITY.md`, `CONTRIBUTING.md`,
+  `CODE_OF_CONDUCT.md`, and GitHub issue/PR templates; internal engineering
+  notes kept out of the published tree.
+
 ## 3.5.0
 
 ### 2026-08-11 — Modbus RTU as a first-class citizen + serial-over-TCP bridge

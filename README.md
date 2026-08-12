@@ -90,6 +90,10 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
   ABB B21/B23, Carlo Gavazzi EM24, Eastron SDM120/SDM630, Schneider iEM3000
   + 3 hărți MQTT (Zigbee2MQTT, Theengs BLE, JSON generic). Editor + upload +
   export + **import CSV** ([ghid](docs/csv-import.md)).
+- **Nume canonice de câmpuri** — nume uniforme de registre pe orice dispozitiv
+  (`voltage_l1_n` peste tot), deci topicele MQTT și field-urile InfluxDB sunt
+  predictibile. **Auto-canonicalize** dintr-un click le deduce pentru o hartă
+  criptică importată, conservator ([dicționar](docs/canonical-fields.md)).
 - **Wizard cu discovery** — scanare CIDR pe portul Modbus, sweep de unit-ID
   (TCP și RTU), **SunSpec model walk**, răsfoire de topicuri MQTT cu preview,
   Fronius Solar API discover, **scanare noduri ESPHome** (API nativ 6053,

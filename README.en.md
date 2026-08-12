@@ -89,6 +89,10 @@ all the same. No vendor lock-in, no per-box cost.
   Schneider iEM3000 + 3 MQTT maps (Zigbee2MQTT, Theengs BLE, generic JSON).
   In-UI editor + upload + export + **CSV import**
   ([guide](docs/csv-import.md)).
+- **Canonical field naming** — uniform register names across every device
+  (`voltage_l1_n` everywhere), so MQTT topics and InfluxDB fields are
+  predictable. One-click **Auto-canonicalize** infers them for a cryptic
+  imported map, conservatively ([dictionary](docs/canonical-fields.md)).
 - **Discovery wizard** — CIDR scan on the Modbus port, unit-ID sweep (TCP
   and RTU), **SunSpec model walk**, MQTT topic browse with payload previews,
   Fronius Solar API discover, **ESPHome node scan** (native API 6053, works
