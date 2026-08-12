@@ -246,39 +246,58 @@ def build(ctx) -> APIRouter:
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
+    def _read_client(device_id):
+        """The Modbus client an on-demand query must read from: the named
+        device's OWN client, or the primary when unset/primary. Without this a
+        secondary device's 'Query now' would read the primary's bus and return
+        the wrong device's data (and, for rtu-tcp, the wrong wire framing)."""
+        if not device_id:
+            if not modbus_client:
+                raise HTTPException(status_code=503, detail="Modbus client not available")
+            return modbus_client
+        _i, dev_cfg, dev_client = registry.find(device_id)
+        if dev_cfg is None:
+            raise HTTPException(status_code=404, detail=f"device {device_id!r} not found")
+        if dev_cfg.primary:
+            if not modbus_client:
+                raise HTTPException(status_code=503, detail="Modbus client not available")
+            return modbus_client
+        if dev_client is None or not hasattr(dev_client, 'read_register'):
+            raise HTTPException(status_code=409,
+                                detail=f"device {device_id!r} is not a live Modbus device")
+        return dev_client
+
     @r.post("/api/query/register")
     async def query_register(query: RegisterQuery):
-        """Query a single register on-demand."""
-        if not modbus_client:
-            raise HTTPException(status_code=503, detail="Modbus client not available")
-
+        """Query a single register on-demand (on the primary or a named device)."""
+        client = _read_client(query.device_id)
         rt = 'input' if str(query.register_type).lower() in ('input', 'ir', 'fc4', '4') else 'holding'
-        value = modbus_client.read_register(query.address, query.data_type, rt)
+        value = client.read_register(query.address, query.data_type, rt)
         if value is not None:
             return {
                 "address": query.address,
                 "value": value,
                 "data_type": query.data_type,
                 "register_type": rt,
+                "device_id": query.device_id,
                 "timestamp": datetime.now().isoformat(),
             }
         raise HTTPException(status_code=500, detail="Failed to read register")
 
     @r.post("/api/query/batch")
     async def query_batch(query: RegisterBatchQuery):
-        """Query multiple registers on-demand."""
-        if not modbus_client:
-            raise HTTPException(status_code=503, detail="Modbus client not available")
-
+        """Query multiple registers on-demand (on the primary or a named device)."""
+        client = _read_client(query.device_id)
         registers = [{"address": x.address, "data_type": x.data_type,
                       "register_type": ('input' if str(x.register_type).lower() in ('input', 'ir', 'fc4', '4') else 'holding')}
                      for x in query.registers]
-        results = modbus_client.read_registers_batch(registers)
+        results = client.read_registers_batch(registers)
 
         return {
             "values": {
                 str(addr): value for addr, value in results.items()
             },
+            "device_id": query.device_id,
             "timestamp": datetime.now().isoformat(),
         }
 

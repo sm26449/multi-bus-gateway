@@ -281,7 +281,9 @@ Object.assign(JanitzaMonitor.prototype, {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     address: reg.address,
-                    data_type: reg.data_type || 'float'
+                    data_type: reg.data_type || 'float',
+                    register_type: reg.register_type || 'holding',
+                    ...(this._regDeviceIdOrNull() ? { device_id: this._regDeviceIdOrNull() } : {})
                 })
             });
 
@@ -747,7 +749,8 @@ Object.assign(JanitzaMonitor.prototype, {
             const response = await fetch('/api/query/register', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ address, data_type: dataType })
+                body: JSON.stringify({ address, data_type: dataType,
+                    ...(this._regDeviceIdOrNull() ? { device_id: this._regDeviceIdOrNull() } : {}) })
             });
 
             if (!response.ok) {
@@ -1125,6 +1128,13 @@ Object.assign(JanitzaMonitor.prototype, {
         // currently edited device; empty for device #1 (legacy endpoints).
         const id = this._regDevice;
         return (id && id !== this._primaryDeviceId()) ? `${sep}device=${encodeURIComponent(id)}` : '';
+    },
+
+    // The currently-scoped device id for POST bodies (on-demand queries), or
+    // null for the primary — so 'Query now' reads the RIGHT device's bus.
+    _regDeviceIdOrNull() {
+        const id = this._regDevice;
+        return (id && id !== this._primaryDeviceId()) ? id : null;
     },
 
     _renderRegDeviceSelectors() {

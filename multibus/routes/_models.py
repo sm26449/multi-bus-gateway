@@ -28,11 +28,16 @@ class RegisterQuery(BaseModel):
     address: int
     data_type: str = "float"
     register_type: str = "holding"
+    # Which device to read from. None / the primary id → the primary client;
+    # any other id routes the read to that device's own client (so a secondary
+    # device's Measurements 'Query now' reads the RIGHT bus, not the primary).
+    device_id: Optional[str] = None
 
 
 class RegisterBatchQuery(BaseModel):
     """Request model for batch register query."""
     registers: List[RegisterQuery]
+    device_id: Optional[str] = None
 
 
 class ThresholdConfig(BaseModel):
