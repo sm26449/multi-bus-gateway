@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class RegisterQuery(BaseModel):
@@ -75,3 +75,47 @@ class SelectedRegisterUpdate(BaseModel):
     ui_widget: str = "value"
     ui_config: Dict[str, Any] = {}
     thresholds: Optional[ThresholdConfig] = None
+
+
+class ModbusConfigUpdate(BaseModel):
+    """Request model for Modbus configuration update."""
+    host: Optional[str] = None
+    port: Optional[int] = None
+    unit_id: Optional[int] = None
+    timeout: Optional[int] = None
+    retry_attempts: Optional[int] = None
+    retry_delay: Optional[float] = None
+
+
+class MQTTConfigUpdate(BaseModel):
+    """Request model for MQTT configuration update."""
+    enabled: Optional[bool] = None
+    broker: Optional[str] = None
+    port: Optional[int] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+    topic_prefix: Optional[str] = None
+    retain: Optional[bool] = None
+    qos: Optional[int] = Field(default=None, ge=0, le=2)   # MQTT qos is 0, 1 or 2
+    publish_mode: Optional[str] = None
+    ha_discovery_enabled: Optional[bool] = None
+    ha_discovery_prefix: Optional[str] = None
+    ha_device_name: Optional[str] = None
+    tls_enabled: Optional[bool] = None
+    tls_ca_cert: Optional[str] = None
+    tls_client_cert: Optional[str] = None
+    tls_client_key: Optional[str] = None
+    tls_insecure: Optional[bool] = None
+    default_topic_pattern: Optional[str] = None
+
+
+class InfluxDBConfigUpdate(BaseModel):
+    """Request model for InfluxDB configuration update."""
+    enabled: Optional[bool] = None
+    url: Optional[str] = None
+    token: Optional[str] = None
+    org: Optional[str] = None
+    bucket: Optional[str] = None
+    write_interval: Optional[int] = None
+    publish_mode: Optional[str] = None
+    default_bucket_pattern: Optional[str] = None
