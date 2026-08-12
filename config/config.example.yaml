@@ -67,6 +67,13 @@ mqtt:
   # In "changed" mode, republish an UNCHANGED value after this many seconds so it
   # keeps a fresh timestamp and HA doesn't grey the entity out (0 = off)
   heartbeat_interval: 0
+  # Expose WRITABLE registers as Home Assistant number/select entities and act on
+  # their commands (perform the Modbus write). OFF by default — this turns
+  # broker-publish access into hardware-write access. DOUBLE-gated: a command is
+  # executed only when this AND security.allow_writes are true, the register is
+  # declared writable in its template, and the value is within write_min/max.
+  # Only non-primary devices (the primary is always read-only) get controls.
+  allow_write_entities: false
   # Enable Home Assistant MQTT autodiscovery
   ha_discovery:
     enabled: true

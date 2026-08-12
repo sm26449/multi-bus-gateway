@@ -99,6 +99,7 @@ class MQTTConfigUpdate(BaseModel):
     qos: Optional[int] = Field(default=None, ge=0, le=2)   # MQTT qos is 0, 1 or 2
     publish_mode: Optional[str] = None
     heartbeat_interval: Optional[int] = Field(default=None, ge=0)
+    allow_write_entities: Optional[bool] = None
     ha_discovery_enabled: Optional[bool] = None
     ha_discovery_prefix: Optional[str] = None
     ha_device_name: Optional[str] = None

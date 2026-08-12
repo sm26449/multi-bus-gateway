@@ -128,6 +128,12 @@ class MQTTConfig:
     ha_discovery_enabled: bool = True
     ha_discovery_prefix: str = "homeassistant"
     ha_device_name: str = "Janitza UMG 512-PRO"
+    # Expose writable registers as HA number/select entities AND subscribe to
+    # their command topics to perform the write. OFF by default: this turns
+    # broker-publish access into hardware-write access, so it is DOUBLE-gated —
+    # a command is only executed when this AND security.allow_writes are true,
+    # the register is declared writable, and the value is within its envelope.
+    allow_write_entities: bool = False
     # Default topic prefix pattern for NEW devices ({device} = the device id).
     # Device #1 keeps its migrated prefix; this only seeds new devices.
     default_topic_pattern: str = "meters/{device}"
@@ -793,6 +799,8 @@ class Config:
                     ha_discovery_enabled=ha.get('enabled', self.mqtt.ha_discovery_enabled),
                     ha_discovery_prefix=ha.get('prefix', self.mqtt.ha_discovery_prefix),
                     ha_device_name=ha.get('device_name', self.mqtt.ha_device_name),
+                    allow_write_entities=bool(m.get('allow_write_entities',
+                                                    self.mqtt.allow_write_entities)),
                     tls_enabled=m.get('tls_enabled', self.mqtt.tls_enabled),
                     tls_ca_cert=m.get('tls_ca_cert', self.mqtt.tls_ca_cert),
                     tls_client_cert=m.get('tls_client_cert', self.mqtt.tls_client_cert),
@@ -1119,6 +1127,7 @@ class Config:
                 "qos": self.mqtt.qos,
                 "publish_mode": self.mqtt.publish_mode,
                 "heartbeat_interval": self.mqtt.heartbeat_interval,
+                "allow_write_entities": self.mqtt.allow_write_entities,
                 "ha_discovery_enabled": self.mqtt.ha_discovery_enabled,
                 "ha_discovery_prefix": self.mqtt.ha_discovery_prefix,
                 "ha_device_name": self.mqtt.ha_device_name,
@@ -1217,6 +1226,7 @@ class Config:
                 'qos': self.mqtt.qos,
                 'publish_mode': self.mqtt.publish_mode,
                 'heartbeat_interval': self.mqtt.heartbeat_interval,
+                'allow_write_entities': self.mqtt.allow_write_entities,
                 'ha_discovery': {
                     'enabled': self.mqtt.ha_discovery_enabled,
                     'prefix': self.mqtt.ha_discovery_prefix,

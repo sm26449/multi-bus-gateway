@@ -168,6 +168,12 @@ class MQTTPublisher:
         # publisher itself doesn't know about. Each hook is a no-arg callable.
         self.discovery_hooks: List = []
 
+        # HA write-entities (number/select): command_topic → (device_id, register)
+        # built while publishing discovery, plus the gated executor the on_message
+        # callback hands a command to. Empty + no-op unless allow_write_entities.
+        self._command_map: Dict[str, tuple] = {}
+        self._write_handler = None
+
         # Reconnection thread
         self._stop_reconnect = threading.Event()
         self._reconnect_thread = None
@@ -215,6 +221,7 @@ class MQTTPublisher:
 
         self.client.on_connect = self._on_connect
         self.client.on_disconnect = self._on_disconnect
+        self.client.on_message = self._on_message
         self.client.reconnect_delay_set(min_delay=1, max_delay=60)
 
     def _on_connect(self, client, userdata, flags, reason_code, properties=None):
@@ -531,13 +538,20 @@ class MQTTPublisher:
 
     def publish_device_discovery(self, device_id: str, device_name: str,
                                  topic_prefix: str, registers: List[SelectedRegister],
-                                 model: str = "") -> int:
+                                 model: str = "", write_rules: Dict = None) -> int:
         """HA autodiscovery for a NON-primary device: each becomes its own HA
         device (linked to the app via via_device=janitza_umg512), with sensors
         namespaced by device id so nothing collides with device #1 or other
-        devices. Device #1 keeps using publish_ha_discovery() unchanged."""
+        devices. Device #1 keeps using publish_ha_discovery() unchanged.
+
+        ``write_rules`` (address → write rule) is supplied by the caller ONLY
+        when writes are fully enabled (allow_write_entities + allow_writes); a
+        register present there is published as a controllable number/select and
+        its command topic is subscribed. The caller owns the gate; the actual
+        write is re-validated by the command handler."""
         if not self.connected or not self.config.ha_discovery_enabled:
             return 0
+        write_rules = write_rules or {}
         device_info = {
             "identifiers": [f"mbg_dev_{device_id}"],
             "name": device_name or device_id,
@@ -547,6 +561,8 @@ class MQTTPublisher:
         }
         count = 0
         published: set = set()
+        # rebuild this device's command subscriptions from scratch
+        self._drop_device_commands(device_id)
         for register in registers:
             if not register.mqtt_enabled:
                 continue
@@ -559,8 +575,14 @@ class MQTTPublisher:
                 "unique_id": f"mbg_dev_{device_id}_{register.address}_{safe_name}",
                 "device": device_info,
             }
-            apply_ha_typing(config, register)
-            disc = f"{self.config.ha_discovery_prefix}/sensor/mbg_dev_{device_id}/{register.address}_{safe_name}/config"
+            component = "sensor"
+            rule = write_rules.get(register.address)
+            if rule is not None:
+                component = self._write_entity_config(config, register, rule,
+                                                      f"{topic}/set", device_id)
+            else:
+                apply_ha_typing(config, register)
+            disc = f"{self.config.ha_discovery_prefix}/{component}/mbg_dev_{device_id}/{register.address}_{safe_name}/config"
             published.add(disc)
             if self._publish(disc, json.dumps(config), retain=True):
                 count += 1
@@ -571,6 +593,67 @@ class MQTTPublisher:
         logger.info(f"Published {count} HA discovery configs for device {device_id}" +
                     (f" (cleared {cleared} stale)" if cleared else ""))
         return count
+
+    def _write_entity_config(self, config: Dict, register, rule,
+                             command_topic: str, device_id: str) -> str:
+        """Turn a sensor config into a controllable number/select, register its
+        command topic, and subscribe. Returns the HA component name. A register
+        with an enum map → select (options = its labels); else → number (bounds
+        from the write envelope). Enum/select carry no numeric typing."""
+        config["command_topic"] = command_topic
+        if getattr(register, "enum", None):
+            component = "select"
+            # options are the decoded labels — the state topic already carries
+            # the decoded text, so HA's current option matches a label
+            config["options"] = list(dict.fromkeys(str(v) for v in register.enum.values()))
+        else:
+            component = "number"
+            apply_ha_typing(config, register)
+            config.pop("state_class", None)      # invalid on a number entity
+            if getattr(rule, "write_min", None) is not None:
+                config["min"] = rule.write_min
+            if getattr(rule, "write_max", None) is not None:
+                config["max"] = rule.write_max
+            config["mode"] = "box"               # free numeric entry (step-agnostic)
+        self._command_map[command_topic] = (device_id, register)
+        if self.client is not None:
+            try:
+                self.client.subscribe(command_topic)
+            except Exception:  # noqa: BLE001
+                pass
+        return component
+
+    def _drop_device_commands(self, device_id: str) -> None:
+        """Forget (and unsubscribe) a device's command topics before a rebuild."""
+        for topic in [t for t, (d, _r) in self._command_map.items() if d == device_id]:
+            self._command_map.pop(topic, None)
+            if self.client is not None:
+                try:
+                    self.client.unsubscribe(topic)
+                except Exception:  # noqa: BLE001
+                    pass
+
+    def set_command_write_handler(self, fn) -> None:
+        """Install the gated executor for HA write commands. ``fn(device_id,
+        register, payload_str)`` performs the fully-validated write (re-checks
+        allow_writes + the template write envelope + rate limit + audit). Without
+        it, incoming commands are ignored."""
+        self._write_handler = fn
+
+    def _on_message(self, client, userdata, message):
+        """Route a retained-config command topic to the write handler. Every
+        gate lives in the handler; here we only look the topic up and decode the
+        payload. Never raises into the paho loop."""
+        try:
+            entry = self._command_map.get(message.topic)
+            if entry is None or self._write_handler is None:
+                return
+            device_id, register = entry
+            payload = message.payload.decode("utf-8", "replace").strip()
+            self._write_handler(device_id, register, payload)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("MQTT command on %s failed: %s",
+                           getattr(message, "topic", "?"), e)
 
     def publish_vmeter_discovery(self, meters: List[Dict]) -> int:
         """Publish HA autodiscovery for the virtual meters. Each meter becomes an

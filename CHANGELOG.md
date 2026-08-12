@@ -1,5 +1,31 @@
 # Changelog
 
+## 3.14.0
+
+### 2026-08-13 — Home Assistant write-entities (number / select)
+
+A **writable** register on a non-primary device can now be *controlled* from
+Home Assistant, not just read. **Off by default and double-gated** — turning
+broker-publish access into hardware-write access is deliberate.
+
+- **Discovery** — with `mqtt.allow_write_entities` on, a writable holding
+  register is published as an HA **`number`** (bounds from the template's
+  `write_min`/`write_max`, `mode: box`) or, if it has an `enum` map, a
+  **`select`** (options = the enum labels). Its command topic (`…/set`) is
+  subscribed. Everything else stays a plain sensor; the primary is never
+  writable.
+- **Command handler** — an incoming command is executed as a Modbus write only
+  after **re-validating everything** (the broker is not a trusted caller):
+  `mqtt.allow_write_entities` **and** `security.allow_writes` both on, the
+  register writable in its **template** (the allowlist — never the saved
+  register), the value within bounds (a select label is mapped to its code and
+  bounds-checked too), a per-device **rate limit**, and an **audit record**.
+- The write runs on the MQTT thread through the same `write_value` path (takes
+  the connection lock, serialized with the poller). Toggling the gates
+  re-publishes the affected entities and drops stale command subscriptions.
+- +12 tests (discovery number/select, command routing, and every gate on the
+  handler). Live behaviour unchanged unless both gates are enabled.
+
 ## 3.13.0
 
 ### 2026-08-13 — Per-register offset

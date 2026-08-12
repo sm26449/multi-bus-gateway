@@ -1283,8 +1283,21 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
             def _hook(d=dev_cfg):
                 regs, _g = config.load_device_registers(d)
+                # write-entities (number/select) only when FULLY enabled; the
+                # template is the write allowlist, so writability + bounds come
+                # from _write_rule, never from the saved register.
+                wrules = {}
+                if (config.mqtt.allow_write_entities and config.security.allow_writes
+                        and not d.primary and d.protocol != 'http'):
+                    for r in regs:
+                        if getattr(r, 'register_type', 'holding') != 'holding':
+                            continue
+                        rule = _write_rule(d, r.address, 'holding')
+                        if rule is not None and rule.writable:
+                            wrules[r.address] = rule
                 mqtt_publisher.publish_device_discovery(
-                    d.id, d.name, d.mqtt_topic_prefix, regs, model=d.template)
+                    d.id, d.name, d.mqtt_topic_prefix, regs, model=d.template,
+                    write_rules=wrules)
             hooks.append(_hook)
         mqtt_publisher.discovery_hooks = hooks
         if getattr(mqtt_publisher, "connected", False):
@@ -1293,6 +1306,69 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     h()
                 except Exception as e:  # noqa: BLE001
                     logger.warning(f"device discovery publish failed: {e}")
+
+    def _mqtt_write_command(device_id, register, payload):
+        """Execute an HA number/select command as a Modbus write. The broker is
+        NOT a trusted caller, so EVERYTHING is re-validated here regardless of
+        what discovery advertised: both write gates, the template write envelope
+        (writability + bounds), a rate limit, and an audit record. Runs on the
+        paho network thread; write_value takes the connection lock, so it is
+        serialized with the poller."""
+        import math as _math
+        if not (config.security.allow_writes and config.mqtt.allow_write_entities):
+            return
+        _idx, dev_cfg, client = _find_device(device_id)
+        if dev_cfg is None or client is None or dev_cfg.primary or dev_cfg.protocol == 'http':
+            return
+        rule = _write_rule(dev_cfg, register.address, 'holding')
+        if rule is None or not rule.writable:
+            logger.warning("MQTT write REJECTED (not writable): device=%s addr=%s", device_id, register.address)
+            return
+        enum_map = getattr(register, 'enum', None)
+        if enum_map:                                   # select: label → code
+            value = next((int(k) for k, v in enum_map.items() if str(v) == payload), None)
+            if value is None:
+                logger.warning("MQTT write REJECTED (unknown option %r): device=%s addr=%s",
+                               payload, device_id, register.address)
+                return
+        else:                                          # number: parse
+            try:
+                value = float(payload)
+            except (TypeError, ValueError):
+                logger.warning("MQTT write REJECTED (non-numeric %r): device=%s addr=%s",
+                               payload, device_id, register.address)
+                return
+        # bounds apply to BOTH a typed number and a mapped enum code
+        if not _math.isfinite(value):
+            return
+        if rule.write_min is not None and value < rule.write_min:
+            logger.warning("MQTT write REJECTED (%s < min %s): device=%s addr=%s",
+                           value, rule.write_min, device_id, register.address)
+            return
+        if rule.write_max is not None and value > rule.write_max:
+            logger.warning("MQTT write REJECTED (%s > max %s): device=%s addr=%s",
+                           value, rule.write_max, device_id, register.address)
+            return
+        if not _write_rate_ok('mqtt:' + device_id):
+            logger.warning("MQTT write RATE-LIMITED: device=%s", device_id)
+            return
+        data_type = (rule.data_type or 'uint16').lower()
+        scale = float(rule.scale if rule.scale is not None else 1.0)
+        ok, err, _words = client.write_value(register.address, 'holding', data_type,
+                                             value, scale=scale)
+        logger.warning("MODBUS WRITE %s (via HA): device=%s addr=%s dtype=%s value=%r%s",
+                       "OK" if ok else "FAILED", device_id, register.address, data_type,
+                       value, "" if ok else f" err={err}")
+        try:
+            audit_log.append(user="ha-mqtt", ip="mqtt", action="modbus write",
+                             status="ok" if ok else "fail",
+                             detail={"device": device_id, "address": register.address,
+                                     "value": value, "via": "ha-write-entity"})
+        except Exception:  # noqa: BLE001
+            pass
+
+    if mqtt_publisher:
+        mqtt_publisher.set_command_write_handler(_mqtt_write_command)
 
     def _apply_routing_defaults(raw: Dict) -> Dict:
         """Fill missing topic prefix / bucket from the configured {device}
