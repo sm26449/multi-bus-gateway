@@ -119,6 +119,14 @@ class ModbusConnection:
         self.lock = threading.Lock()
         self.successful_reads = 0
         self.failed_reads = 0
+        # Wedged-link backstop: a serial/PTY port (or a stuck ser2net bridge) can
+        # stay "open" while every read errors — is_socket_open() never trips, so
+        # the normal reconnect path never reopens it. After this many consecutive
+        # failed polls, force a close+reopen regardless. (TCP already self-heals;
+        # this is the belt-and-braces for RTU.)
+        self._consecutive_fail = 0
+        self._reopen_after_fails = 5
+        self.forced_reopens = 0
         # First-class dropout observability (mirrors VMeterStats.record_event):
         # a timestamped ring of read failures + last success/failure times, so a
         # Janitza comms loss leaves a record in the app, not just docker logs.
@@ -273,6 +281,7 @@ class ModbusConnection:
                             self.last_success_ts = time.time()
                             self.last_success_mono = time.monotonic()
                             self.last_latency_ms = round((time.perf_counter() - _t0) * 1000, 1)
+                            self._consecutive_fail = 0
                             self._note_reachable()
                             return result.registers
                         elif result.isError():
@@ -292,6 +301,20 @@ class ModbusConnection:
 
         with self.lock:                        # counter RMW shared across pollers
             self.failed_reads += 1
+            self._consecutive_fail += 1
+            # a wedged-but-"open" link never trips is_socket_open() → force a
+            # close so the next read reopens a fresh client
+            if self._consecutive_fail >= self._reopen_after_fails and self.client:
+                try:
+                    self.client.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                self.connected = False
+                self.forced_reopens += 1
+                self._consecutive_fail = 0
+                self.record_event('warn', 'forced_reopen',
+                                  f'link wedged — forced reopen after '
+                                  f'{self._reopen_after_fails} consecutive failures')
         self.last_failure_ts = time.time()
         self._note_unreachable(f"addr {address} count {count} — no response after "
                                f"{self.config.retry_attempts} attempts")

@@ -1307,6 +1307,19 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 except Exception as e:  # noqa: BLE001
                     logger.warning(f"device discovery publish failed: {e}")
 
+    def _push_readback_to_store(device_id, address, value):
+        """Write-then-refresh: push a just-written register's read-back value into
+        the live store so the vmeters / UI reflect the new value AT ONCE instead
+        of at the next poll (a slow-group setpoint could otherwise lag 60 s)."""
+        if value is None:
+            return
+        store = registry.store_for(device_id)
+        if store is not None and address in store:
+            e = store[address]
+            e['value'] = value
+            e['ts'] = time.time()
+            e['mono'] = time.monotonic()
+
     def _mqtt_write_command(device_id, register, payload):
         """Execute an HA number/select command as a Modbus write. The broker is
         NOT a trusted caller, so EVERYTHING is re-validated here regardless of
@@ -1359,6 +1372,14 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         logger.warning("MODBUS WRITE %s (via HA): device=%s addr=%s dtype=%s value=%r%s",
                        "OK" if ok else "FAILED", device_id, register.address, data_type,
                        value, "" if ok else f" err={err}")
+        if ok:                                          # write-then-refresh
+            try:
+                raw = client.read_register(register.address, data_type, 'holding')
+                if raw is not None:
+                    _push_readback_to_store(device_id, register.address,
+                                            float(raw) / (scale or 1.0))
+            except Exception:  # noqa: BLE001
+                pass
         try:
             audit_log.append(user="ha-mqtt", ip="mqtt", action="modbus write",
                              status="ok" if ok else "fail",
@@ -1919,6 +1940,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     # (otherwise `verified` is always false for any scale != 1).
                     read_back = float(raw_back) / (scale or 1.0)
                     verified = abs(read_back - float(want)) <= max(1e-6, abs(float(want)) * 1e-4)
+                # write-then-refresh: reflect the new value in the live store now
+                _push_readback_to_store(device_id, address, read_back)
         except Exception:  # noqa: BLE001
             pass
         return {"ok": True, "device": device_id, "address": address, "register_type": rtype,

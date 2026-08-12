@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.17.0
+
+### 2026-08-13 — Backlog close-out (1/3): decode, write-refresh, wedged link
+
+- **Signed-magnitude decode** — data types `sm16` / `sm32` (top bit = sign,
+  not two's complement) for meters that encode a direction bit that way.
+- **Write-then-refresh** — after a successful write (HTTP API *and* HA
+  write-entity), the register's read-back value is pushed into the live store,
+  so the virtual meters / UI reflect a setpoint immediately instead of at the
+  next poll (a slow-group setpoint could otherwise lag 60 s).
+- **Wedged-link forced reopen** — a serial/PTY port (or a stuck ser2net bridge)
+  can stay "open" while every read errors, so `is_socket_open()` never trips and
+  the normal reconnect never fires. After 5 consecutive failed polls the
+  connection now force-closes so the next read reopens a fresh client; the event
+  is recorded and counted (`forced_reopens`). TCP already self-heals — this is
+  the belt-and-braces for RTU.
+
 ## 3.16.0
 
 ### 2026-08-13 — Data-readiness gate (drop all-zero frames)

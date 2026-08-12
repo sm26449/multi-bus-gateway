@@ -151,6 +151,8 @@ class _FakeClient:
     def write_value(self, address, register_type, data_type, value, scale=1.0, prefer_fc6=False):
         self.reg[address] = value
         return True, None, [int(float(value))]
+    def read_register(self, address, data_type, register_type):
+        return self.reg.get(address)                     # raw == engineering (scale 1)
 
 
 def _handler_and_client(tmp_path):
@@ -167,6 +169,7 @@ def _handler_and_client(tmp_path):
                         devices=[(d, None) for d in cfg.devices] + [(dev, fake)])
     app.state.template_registry._templates["ctrl_tpl"] = _ctrl_tpl()
     handler = mock_mqtt.set_command_write_handler.call_args[0][0]
+    fake.app = app                                       # for store-refresh assertions
     return handler, fake, cfg
 
 
@@ -214,3 +217,14 @@ def test_handler_rejects_undeclared_register(tmp_path):
     handler, fake, _ = _handler_and_client(tmp_path)
     handler("ctrl", _reg(address=999, name="ghost"), "5")   # not in the template
     assert fake.reg == {}
+
+
+@pytest.mark.skipif(not _HAS_TC, reason="TestClient not installed")
+def test_write_then_refresh_updates_the_live_store(tmp_path):
+    handler, fake, _ = _handler_and_client(tmp_path)
+    store = fake.app.state.registry.ensure_store("ctrl")
+    store[100] = {"value": 0, "ts": 0, "mono": 0, "interval": 5}   # a prior poll
+    handler("ctrl", _reg(address=100, name="limit"), "42")
+    assert fake.reg[100] == 42                            # written
+    assert store[100]["value"] == 42                      # AND reflected at once
+    assert store[100]["ts"] > 0

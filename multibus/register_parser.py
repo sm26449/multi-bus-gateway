@@ -47,6 +47,10 @@ class RegisterParser:
         'long64': 4,
         'uint64': 4,
         'double': 4,
+        # signed-magnitude: the top bit is a sign flag, not two's complement
+        # (some meters encode a direction bit this way, e.g. reactive power)
+        'sm16': 1,
+        'sm32': 2,
     }
 
     # byte-order name -> (byteswap_within_word, word_swap). Each 16-bit register is
@@ -175,6 +179,10 @@ class RegisterParser:
                 val = self._parse_int64(registers)
             elif data_type == 'uint64':
                 val = self._parse_uint64(registers)
+            elif data_type == 'sm16':
+                val = self._parse_sm16(registers)
+            elif data_type == 'sm32':
+                val = self._parse_sm32(registers)
             elif data_type.startswith('string'):
                 return self._parse_string(registers)   # sentinels are numeric only
             else:
@@ -235,6 +243,23 @@ class RegisterParser:
         if len(registers) < 1:
             return None
         return self._canon(registers[:1])[0]
+
+    def _parse_sm16(self, registers: List[int]) -> Optional[int]:
+        """Signed-magnitude 16-bit: bit 15 = sign, bits 0-14 = magnitude."""
+        if len(registers) < 1:
+            return None
+        raw = self._canon(registers[:1])[0]
+        mag = raw & 0x7FFF
+        return -mag if (raw & 0x8000) else mag
+
+    def _parse_sm32(self, registers: List[int]) -> Optional[int]:
+        """Signed-magnitude 32-bit: bit 31 = sign, bits 0-30 = magnitude."""
+        if len(registers) < 2:
+            return None
+        r = self._canon(registers[:2])
+        raw = (r[0] << 16) | r[1]
+        mag = raw & 0x7FFFFFFF
+        return -mag if (raw & 0x80000000) else mag
 
     def _parse_int64(self, registers: List[int]) -> Optional[int]:
         """Parse signed 64-bit integer from 4 registers."""
