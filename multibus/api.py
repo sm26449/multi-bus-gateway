@@ -176,15 +176,18 @@ class WebSocketManager:
     async def connect(self, websocket: WebSocket) -> bool:
         await websocket.accept()
         async with self.lock:
-            if len(self.active_connections) >= self.MAX_CONNECTIONS:
-                # refuse rather than accumulate to FD exhaustion; the client
-                # sees a clean close and can retry
-                logger.warning("WebSocket refused: %d active (cap %d)",
-                               len(self.active_connections), self.MAX_CONNECTIONS)
-                await websocket.close(code=1013)   # try again later
-                return False
-            self.active_connections.add(websocket)
-        logger.info(f"WebSocket connected. Active: {len(self.active_connections)}")
+            n = len(self.active_connections)
+            refused = n >= self.MAX_CONNECTIONS
+            if not refused:
+                self.active_connections.add(websocket)
+        if refused:
+            # refuse rather than accumulate to FD exhaustion. Close OUTSIDE the
+            # lock — the close handshake against a wedged client must not hold
+            # self.lock and stall connect/disconnect/broadcast (all share it).
+            logger.warning("WebSocket refused: %d active (cap %d)", n, self.MAX_CONNECTIONS)
+            await websocket.close(code=1013)   # try again later
+            return False
+        logger.info(f"WebSocket connected. Active: {n + 1}")
         return True
 
     async def disconnect(self, websocket: WebSocket):

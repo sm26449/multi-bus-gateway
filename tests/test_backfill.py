@@ -76,8 +76,22 @@ def test_main_auto_backfills_on_gap(monkeypatch):
     assert seen and seen["e"] > seen["s"]   # a real window was passed to backfill
 
 
-def test_backfill_dry_run_writes_nothing(monkeypatch):
+def test_backfill_dry_run_fetches_but_makes_no_client(monkeypatch):
+    import influxdb_client
     monkeypatch.setattr(backfill, "meter_tz_offset", lambda: 0)
-    monkeypatch.setattr(backfill, "fetch_hist", lambda *a, **k: [(230.0, 1000.0)])
-    # dry=True → no InfluxDB client is created and nothing is written
+    calls = {"fetch": 0}
+
+    def _fetch(*a, **k):
+        calls["fetch"] += 1
+        return [(230.0, 1000.0)]
+
+    monkeypatch.setattr(backfill, "fetch_hist", _fetch)
+
+    def _boom(*a, **k):
+        raise AssertionError("dry-run must not construct an InfluxDB client")
+
+    monkeypatch.setattr(influxdb_client, "InfluxDBClient", _boom)
+    # dry → does the real fetch work (so a --dry-run report is accurate) but
+    # constructs no client and writes nothing
     assert backfill.backfill(0, 10_000, dry=True, verbose=True) == 0
+    assert calls["fetch"] == len(backfill.PARAMS)

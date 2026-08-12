@@ -46,9 +46,7 @@ POSITIVE = [
     # THD with phase
     ("THD_U_L1", "Voltage THD L1", "%", "thd_voltage_l1"),
     ("THD_I_L2", "THD current L2", "%", "thd_current_l2"),
-    # single-phase meters (SDM120 / ABB B21): a bare quantity is the single value
-    ("V", "Voltage", "V", "voltage_l1_n"),
-    ("I", "Current", "A", "current_l1"),
+    # single-phase / system power: a bare POWER is unambiguously the total
     ("P", "Active power", "W", "power_active_total"),
     ("Q", "Reactive power", "var", "power_reactive_total"),
     ("S", "Apparent power", "VA", "power_apparent_total"),
@@ -86,8 +84,18 @@ ADVERSARIAL = [
     ("cfg", "RS485 serial address", "", None),
     # F14 — composite unit must not read as active power
     ("Irr", "Irradiance", "W/m2", None),
-    # bare ENERGY (no direction) stays None — unlike bare power/voltage/current
+    # bare ENERGY (no direction) stays None
     ("E", "Active energy", "kWh", None),
+    # bare voltage/current is ambiguous (single-phase vs 3-phase aggregate) → None,
+    # never a silent mislabel of an average/total as L1
+    ("V", "Voltage", "V", None),
+    ("I", "Current", "A", None),
+    ("V", "AC Voltage", "V", None),          # SunSpec bare = average, not L1
+    ("V", "System Voltage", "V", None),
+    ("I", "AC Current", "A", None),          # SunSpec bare = total, not L1
+    ("IN", "IN", "A", None),                 # neutral shorthand without the word → None, not L1
+    # per-phase apparent energy has no canonical field → None, not the aggregate
+    ("EAp", "Apparent Energy L1", "kVAh", None),
 ]
 
 

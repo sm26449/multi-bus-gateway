@@ -388,9 +388,12 @@ def build(ctx) -> APIRouter:
         regs = payload.get("registers") or []
         if not isinstance(regs, list):
             raise HTTPException(status_code=422, detail="registers must be a list")
+        # None for a non-dict item (never SKIP it) so guesses[i] stays aligned
+        # with registers[i] — the caller renames registers[i] by that index.
         guesses = [guess_canonical(name=r.get("name", ""), label=r.get("label", ""),
                                    unit=r.get("unit", ""), description=r.get("description", ""))
-                   for r in regs[:5000] if isinstance(r, dict)]
+                   if isinstance(r, dict) else None
+                   for r in regs[:5000]]
         return {"guesses": guesses}
 
     return r

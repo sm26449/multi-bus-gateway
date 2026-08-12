@@ -256,7 +256,8 @@ class ModbusConnection:
             if retry_sleep:
                 time.sleep(retry_sleep)   # lock RELEASED → a realtime read can slip in
 
-        self.failed_reads += 1
+        with self.lock:                        # counter RMW shared across pollers
+            self.failed_reads += 1
         self.last_failure_ts = time.time()
         self.record_event("warn", "read_fail",
                           f"addr {address} count {count} — no response after "
@@ -311,7 +312,8 @@ class ModbusConnection:
                         retry_sleep = self.config.retry_delay
             if retry_sleep:
                 time.sleep(retry_sleep)   # lock RELEASED → another group can slip in
-        self.failed_reads += 1
+        with self.lock:                    # counter RMW shared across pollers
+            self.failed_reads += 1
         self.last_failure_ts = time.time()
         return None
 

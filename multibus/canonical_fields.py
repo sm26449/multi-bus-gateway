@@ -228,11 +228,13 @@ def guess_canonical(name: str = '', label: str = '', unit: str = '',
         r'ull|l\s*[123]\s*(?:-|_|,|/|to|and)\s*l?\s*[123]|line[\s-]*to[\s-]*line'
         r'|line[\s-]*line|phase[\s-]*to[\s-]*phase', hay))
 
-    # A "bare" quantity — no phase, average, line-line or neutral token — is the
-    # single value a single-phase meter (SDM120, ABB B21, …) reports: map it to
-    # the single-phase / total canonical. Three-phase maps always tag the phase
-    # or 'total', so they never hit this path.
-    bare = not phases and not is_avg and not line_line and not is_neutral
+    # A "bare" quantity — no phase / avg / line-line / neutral / total token.
+    # For POWER this is unambiguously the total (a single-phase meter's only
+    # value AND a 3-phase meter's system power are both 'total'). For VOLTAGE and
+    # CURRENT it is genuinely ambiguous — a bare 'Voltage' could be a single
+    # phase (SDM120) OR the system average / total (SunSpec 'AC Voltage'), so we
+    # return None rather than silently mislabel an aggregate as L1.
+    bare = not phases and not is_avg and not line_line and not is_neutral and not is_total
 
     if q == 'voltage':
         if is_avg:
@@ -243,9 +245,7 @@ def guess_canonical(name: str = '', label: str = '', unit: str = '',
             return None
         if single_ph and len(distinct) == 1:
             return cand(f'voltage_l{single_ph}_n')
-        if bare:
-            return cand('voltage_l1_n')
-        return None
+        return None                   # bare voltage is ambiguous → leave for the human
     if q == 'current':
         if is_neutral:
             return cand('current_n')
@@ -255,13 +255,11 @@ def guess_canonical(name: str = '', label: str = '', unit: str = '',
             return cand(f'current_l{single_ph}')
         if is_total:
             return cand('current_total')
-        if bare:
-            return cand('current_l1')
-        return None
+        return None                   # bare current is ambiguous → leave for the human
     if q in ('power_active', 'power_reactive', 'power_apparent', 'power_factor'):
         if single_ph and len(distinct) == 1:
             return cand(f'{q}_l{single_ph}')
-        if is_total or bare:          # bare power on a single-phase meter is the total
+        if is_total or bare:          # bare power = total (single-phase value or 3-phase system)
             return cand(f'{q}_total')
         return None
     if q in ('energy_active', 'energy_reactive'):
@@ -286,5 +284,7 @@ def guess_canonical(name: str = '', label: str = '', unit: str = '',
             return None
         return cand(f'{q}_{dir_}')
     if q == 'energy_apparent':
+        if single_ph:                 # no per-phase apparent-energy field → don't aggregate
+            return None
         return cand('energy_apparent')
     return None

@@ -65,12 +65,15 @@ def test_canonical_guess_endpoint(tmp_path):
         {"name": "V_L1", "label": "Voltage L1-N", "unit": "V"},
         {"name": "P_total", "label": "Active power total", "unit": "W"},
         {"name": "Import_kWh", "label": "Active energy import", "unit": "kWh"},
-        {"name": "V", "label": "Voltage", "unit": "V"},          # single-phase bare
-        {"name": "Xowef", "label": "Some vendor thing", "unit": ""},  # unclassifiable
+        {"name": "V", "label": "Voltage", "unit": "V"},          # bare → ambiguous → None
+        {"name": "Xowef", "label": "Some vendor thing", "unit": ""},  # unclassifiable → None
     ]
     got = client.post("/api/canonical-fields/guess", json={"registers": regs}).json()["guesses"]
-    assert got == ["voltage_l1_n", "power_active_total", "energy_active_import",
-                   "voltage_l1_n", None]
+    assert got == ["voltage_l1_n", "power_active_total", "energy_active_import", None, None]
+    # a non-dict item yields None (never dropped) so guesses stay index-aligned
+    aligned = client.post("/api/canonical-fields/guess", json={"registers": [
+        {"name": "V_L1", "label": "Voltage L1-N", "unit": "V"}, "junk"]}).json()["guesses"]
+    assert aligned == ["voltage_l1_n", None]
 
 
 @needs_tc
