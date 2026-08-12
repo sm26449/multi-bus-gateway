@@ -218,36 +218,36 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
-| 0 / 0x0000 | `V_L1` | Voltage L1-N | int32 | 10.0 | V | realtime |
-| 2 / 0x0002 | `V_L2` | Voltage L2-N | int32 | 10.0 | V | realtime |
-| 4 / 0x0004 | `V_L3` | Voltage L3-N | int32 | 10.0 | V | realtime |
-| 6 / 0x0006 | `V_L12` | Voltage L1-L2 | int32 | 10.0 | V | realtime |
-| 8 / 0x0008 | `V_L23` | Voltage L2-L3 | int32 | 10.0 | V | realtime |
-| 10 / 0x000A | `V_L31` | Voltage L3-L1 | int32 | 10.0 | V | realtime |
-| 11 / 0x000B | `Model_ID` | Meter model id | uint16 | 1.0 | — | slow |
-| 12 / 0x000C | `I_L1` | Current L1 | int32 | 1000.0 | A | realtime |
-| 14 / 0x000E | `I_L2` | Current L2 | int32 | 1000.0 | A | realtime |
-| 16 / 0x0010 | `I_L3` | Current L3 | int32 | 1000.0 | A | realtime |
-| 18 / 0x0012 | `P_L1` | Active Power L1 | int32 | 10.0 | W | realtime |
-| 20 / 0x0014 | `P_L2` | Active Power L2 | int32 | 10.0 | W | realtime |
-| 22 / 0x0016 | `P_L3` | Active Power L3 | int32 | 10.0 | W | realtime |
-| 24 / 0x0018 | `S_L1` | Apparent Power L1 | int32 | 10.0 | VA | normal |
-| 26 / 0x001A | `S_L2` | Apparent Power L2 | int32 | 10.0 | VA | normal |
-| 28 / 0x001C | `S_L3` | Apparent Power L3 | int32 | 10.0 | VA | normal |
-| 30 / 0x001E | `Q_L1` | Reactive Power L1 | int32 | 10.0 | var | normal |
-| 32 / 0x0020 | `Q_L2` | Reactive Power L2 | int32 | 10.0 | var | normal |
-| 34 / 0x0022 | `Q_L3` | Reactive Power L3 | int32 | 10.0 | var | normal |
-| 36 / 0x0024 | `V_LN_sys` | Voltage L-N sys | int32 | 10.0 | V | normal |
-| 38 / 0x0026 | `V_LL_sys` | Voltage L-L sys | int32 | 10.0 | V | normal |
-| 40 / 0x0028 | `P_total` | Active Power Total | int32 | 10.0 | W | realtime |
-| 42 / 0x002A | `S_total` | Apparent Power Total | int32 | 10.0 | VA | normal |
-| 44 / 0x002C | `Q_total` | Reactive Power Total | int32 | 10.0 | var | normal |
-| 49 / 0x0031 | `Freq` | Frequency | uint16 | 10.0 | Hz | normal |
-| 51 / 0x0033 | `PF_sys` | Power Factor sys | int16 | 1000.0 | — | normal |
-| 52 / 0x0034 | `Energy_Import` | Energy Import Total | int32 | 10.0 | kWh | slow |
-| 78 / 0x004E | `Energy_Export` | Energy Export Total | int32 | 10.0 | kWh | slow |
-| 4096 / 0x1000 | `Firmware_Rev` | Firmware / revision | uint16 | 1.0 | — | slow |
-| 20480 / 0x5000 | `Serial_ASCII` | Serial / ID (ASCII) | string:7 | 1.0 | — | slow |
+| 0 / 0x0000 | `voltage_l1_n` | Voltage L1-N | int32 | 10.0 | V | realtime |
+| 2 / 0x0002 | `voltage_l2_n` | Voltage L2-N | int32 | 10.0 | V | realtime |
+| 4 / 0x0004 | `voltage_l3_n` | Voltage L3-N | int32 | 10.0 | V | realtime |
+| 6 / 0x0006 | `voltage_l1_l2` | Voltage L1-L2 | int32 | 10.0 | V | realtime |
+| 8 / 0x0008 | `voltage_l2_l3` | Voltage L2-L3 | int32 | 10.0 | V | realtime |
+| 10 / 0x000A | `voltage_l3_l1` | Voltage L3-L1 | int32 | 10.0 | V | realtime |
+| 11 / 0x000B | `model_id` | Meter model id | uint16 | 1.0 | — | slow |
+| 12 / 0x000C | `current_l1` | Current L1 | int32 | 1000.0 | A | realtime |
+| 14 / 0x000E | `current_l2` | Current L2 | int32 | 1000.0 | A | realtime |
+| 16 / 0x0010 | `current_l3` | Current L3 | int32 | 1000.0 | A | realtime |
+| 18 / 0x0012 | `power_active_l1` | Active Power L1 | int32 | 10.0 | W | realtime |
+| 20 / 0x0014 | `power_active_l2` | Active Power L2 | int32 | 10.0 | W | realtime |
+| 22 / 0x0016 | `power_active_l3` | Active Power L3 | int32 | 10.0 | W | realtime |
+| 24 / 0x0018 | `power_apparent_l1` | Apparent Power L1 | int32 | 10.0 | VA | normal |
+| 26 / 0x001A | `power_apparent_l2` | Apparent Power L2 | int32 | 10.0 | VA | normal |
+| 28 / 0x001C | `power_apparent_l3` | Apparent Power L3 | int32 | 10.0 | VA | normal |
+| 30 / 0x001E | `power_reactive_l1` | Reactive Power L1 | int32 | 10.0 | var | normal |
+| 32 / 0x0020 | `power_reactive_l2` | Reactive Power L2 | int32 | 10.0 | var | normal |
+| 34 / 0x0022 | `power_reactive_l3` | Reactive Power L3 | int32 | 10.0 | var | normal |
+| 36 / 0x0024 | `voltage_ln_avg` | Voltage L-N sys | int32 | 10.0 | V | normal |
+| 38 / 0x0026 | `voltage_ll_avg` | Voltage L-L sys | int32 | 10.0 | V | normal |
+| 40 / 0x0028 | `power_active_total` | Active Power Total | int32 | 10.0 | W | realtime |
+| 42 / 0x002A | `power_apparent_total` | Apparent Power Total | int32 | 10.0 | VA | normal |
+| 44 / 0x002C | `power_reactive_total` | Reactive Power Total | int32 | 10.0 | var | normal |
+| 49 / 0x0031 | `frequency` | Frequency | uint16 | 10.0 | Hz | normal |
+| 51 / 0x0033 | `power_factor_total` | Power Factor sys | int16 | 1000.0 | — | normal |
+| 52 / 0x0034 | `energy_active_import` | Energy Import Total | int32 | 10.0 | kWh | slow |
+| 78 / 0x004E | `energy_active_export` | Energy Export Total | int32 | 10.0 | kWh | slow |
+| 4096 / 0x1000 | `firmware_rev` | Firmware / revision | uint16 | 1.0 | — | slow |
+| 20480 / 0x5000 | `serial` | Serial / ID (ASCII) | string:7 | 1.0 | — | slow |
 
 ## Generic MQTT (JSON)
 
