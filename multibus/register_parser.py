@@ -115,16 +115,43 @@ class RegisterParser:
         s = ''.join(chr(c) for c in b if 32 <= c < 127)
         return s.strip() or None
 
-    def parse_value(self, registers: List[int], data_type: str) -> Optional[Any]:
+    # SunSpec "not implemented" / vendor "not available" sentinel per data type
+    # (the type's max/min). A register that decodes to this is unavailable, NOT
+    # a real reading — publishing the raw -32768 / 65535 / … pollutes MQTT/
+    # InfluxDB and can feed a downstream ESS a garbage value. Opt-in per register
+    # (`nan`), because for a raw counter/status 65535 CAN be legitimate. Float
+    # NaN/Inf is always dropped (in _parse_float) — it's never a valid reading.
+    _NOT_IMPLEMENTED = {
+        'int16': -32768, 'short': -32768, 'uint16': 65535,
+        'int32': -2147483648, 'uint32': 4294967295,
+        'int64': -(2 ** 63), 'long64': -(2 ** 63), 'uint64': 2 ** 64 - 1,
+    }
+
+    def _is_sentinel(self, value, data_type: str, nan) -> bool:
+        """True if ``value`` is the register's not-available sentinel. ``nan`` is
+        True (use the standard sentinel for the type), a number, or a list."""
+        if nan is True:
+            s = self._NOT_IMPLEMENTED.get(data_type)
+            return s is not None and value == s
+        if isinstance(nan, (list, tuple, set)):
+            return value in nan
+        if isinstance(nan, (int, float)) and not isinstance(nan, bool):
+            return value == nan
+        return False
+
+    def parse_value(self, registers: List[int], data_type: str,
+                    nan=None) -> Optional[Any]:
         """
         Parse register values according to data type.
 
         Args:
             registers: List of 16-bit register values
             data_type: Data type string
+            nan: optional not-available sentinel — True (standard for the type),
+                 a raw value, or a list; a match returns None (register missing)
 
         Returns:
-            Parsed value or None if parsing fails
+            Parsed value or None if parsing fails / the value is a sentinel
         """
         if not registers:
             return None
@@ -133,28 +160,32 @@ class RegisterParser:
 
         try:
             if data_type in ('float', 'float32'):
-                return self._parse_float(registers)
+                val = self._parse_float(registers)
             elif data_type == 'double':
-                return self._parse_double(registers)
+                val = self._parse_double(registers)
             elif data_type == 'int32':
-                return self._parse_int32(registers)
+                val = self._parse_int32(registers)
             elif data_type == 'uint32':
-                return self._parse_uint32(registers)
+                val = self._parse_uint32(registers)
             elif data_type in ('int16', 'short'):
-                return self._parse_int16(registers)
+                val = self._parse_int16(registers)
             elif data_type == 'uint16':
-                return self._parse_uint16(registers)
+                val = self._parse_uint16(registers)
             elif data_type in ('int64', 'long64'):
-                return self._parse_int64(registers)
+                val = self._parse_int64(registers)
             elif data_type == 'uint64':
-                return self._parse_uint64(registers)
+                val = self._parse_uint64(registers)
             elif data_type.startswith('string'):
-                return self._parse_string(registers)
+                return self._parse_string(registers)   # sentinels are numeric only
             else:
-                # Default to float
-                return self._parse_float(registers)
+                val = self._parse_float(registers)      # default to float
         except Exception:
             return None
+
+        if (nan is not None and nan is not False and isinstance(val, (int, float))
+                and self._is_sentinel(val, data_type, nan)):
+            return None                                 # not-available → missing
+        return val
 
     def _parse_float(self, registers: List[int]) -> Optional[float]:
         """Parse 32-bit IEEE 754 float from 2 registers."""

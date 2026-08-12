@@ -1336,6 +1336,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             'poll_group': r.poll_group or 'normal', 'json_path': r.json_path,
             'topic': getattr(r, 'topic', ''), 'scale': r.scale,
             'register_type': getattr(r, 'register_type', 'holding'),
+            **({'nan': r.nan} if getattr(r, 'nan', None) is not None else {}),
             **_seed_output(r),
         } for r in chosen]
         tpg = {n: {'interval': g.get('interval', 5), 'description': g.get('description', '')}

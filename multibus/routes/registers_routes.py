@@ -50,6 +50,7 @@ def build(ctx) -> APIRouter:
             "json_path": getattr(x, "json_path", ""),
             "topic": getattr(x, "topic", ""),
             "scale": getattr(x, "scale", 1.0),
+            "nan": getattr(x, "nan", None),
             "register_type": getattr(x, "register_type", "holding"),
             "mqtt_enabled": x.mqtt_enabled,
             "mqtt_topic": x.mqtt_topic,
@@ -89,6 +90,7 @@ def build(ctx) -> APIRouter:
                 "description": x.description or x.label,
                 "data_type": x.data_type, "access": x.access,
                 "json_path": x.json_path, "topic": getattr(x, "topic", ""), "scale": x.scale,
+                "nan": getattr(x, "nan", None),
                 "register_type": getattr(x, 'register_type', 'holding'),
                 "poll_group": x.poll_group,
             })
@@ -181,6 +183,7 @@ def build(ctx) -> APIRouter:
                     "json_path": x.json_path,
                     "topic": getattr(x, "topic", ""),
                     "scale": x.scale,
+                    "nan": getattr(x, "nan", None),
                     "register_type": getattr(x, "register_type", "holding"),
                     "mqtt": {
                         "enabled": x.mqtt_enabled,

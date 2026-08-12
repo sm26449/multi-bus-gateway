@@ -251,6 +251,7 @@ class SelectedRegister:
     json_path: str = ""   # HTTP/JSON + MQTT input: dot/bracket path into the JSON payload
     topic: str = ""       # MQTT input: the topic this register reads from (else device base topic)
     scale: float = 1.0    # Modbus input: engineering_value = raw / scale (SunSpec 10^-SF etc.)
+    nan: Any = None       # not-available sentinel (True=std for type / value / list) → missing
     register_type: str = "holding"   # Modbus: 'holding' (FC3) or 'input' (FC4)
     mqtt_enabled: bool = True
     mqtt_topic: str = ""
@@ -918,6 +919,7 @@ class Config:
                 json_path=reg.get('json_path', ''),
                 topic=reg.get('topic', ''),
                 scale=float(reg.get('scale', 1) or 1),
+                nan=reg.get('nan'),
                 register_type=normalize_register_type(reg.get('register_type') or reg.get('fc')),
                 mqtt_enabled=mqtt.get('enabled', True),
                 mqtt_topic=mqtt.get('topic', ''),

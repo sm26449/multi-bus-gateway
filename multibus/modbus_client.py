@@ -510,7 +510,8 @@ class RegisterPoller(threading.Thread):
 
                 if offset + reg_count <= len(raw_data):
                     reg_values = raw_data[offset:offset + reg_count]
-                    value = self.parser.parse_value(reg_values, reg.data_type)
+                    value = self.parser.parse_value(reg_values, reg.data_type,
+                                                    nan=getattr(reg, 'nan', None))
                     if value is not None:
                         # engineering value = raw / scale (SunSpec int+SF meters,
                         # transformer ratios, …). scale defaults to 1.0 so the
@@ -752,7 +753,8 @@ class ModbusClient:
                     reg_count = self.parser.get_register_count(reg.get('data_type', 'float'))
                     if offset + reg_count <= len(raw_data):
                         reg_values = raw_data[offset:offset + reg_count]
-                        value = self.parser.parse_value(reg_values, reg.get('data_type', 'float'))
+                        value = self.parser.parse_value(reg_values, reg.get('data_type', 'float'),
+                                                        nan=reg.get('nan'))
                         if value is not None:
                             results[reg['address']] = value
 

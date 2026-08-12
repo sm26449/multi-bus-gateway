@@ -87,6 +87,9 @@ class TemplateRegister:
     write_min: Optional[float] = None        # reject engineering values below this
     write_max: Optional[float] = None        # reject engineering values above this
     write_safe: Optional[float] = None       # value to revert to when a write-lease expires
+    # not-available sentinel: True = the type's SunSpec not-implemented value
+    # (0x8000/0xFFFF/…), or a raw value / list; a match reads as missing, not data
+    nan: Any = None
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {
@@ -115,6 +118,8 @@ class TemplateRegister:
                 d['write_max'] = self.write_max
             if self.write_safe is not None:
                 d['write_safe'] = self.write_safe
+        if self.nan is not None:
+            d['nan'] = self.nan
         return d
 
 
@@ -293,6 +298,7 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         write_min=(float(r['write_min']) if r.get('write_min') is not None else None),
         write_max=(float(r['write_max']) if r.get('write_max') is not None else None),
         write_safe=(float(r['write_safe']) if r.get('write_safe') is not None else None),
+        nan=r.get('nan'),
     ) for r in t['registers']]
     return DeviceTemplate(
         id=t['id'], name=t['name'],
