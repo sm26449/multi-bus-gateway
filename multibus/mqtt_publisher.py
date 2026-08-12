@@ -71,7 +71,13 @@ def apply_ha_typing(config: Dict, register) -> None:
     literal ``"none"`` explicitly SUPPRESSES an inferred device_class/state_class
     (e.g. a text/diagnostic sensor that must carry neither). Mutates ``config``.
     """
-    if register.unit:
+    # an enum/bitfield register decodes to TEXT — a unit, device_class or
+    # state_class on it is invalid (HA rejects a measurement without a number),
+    # so the numeric inference is suppressed unless the template is explicit.
+    from .value_decode import is_textual
+    textual = is_textual(register)
+
+    if register.unit and not textual:
         config["unit_of_measurement"] = register.unit
 
     # device_class: explicit override → inference; "none" suppresses
@@ -80,7 +86,7 @@ def apply_ha_typing(config: Dict, register) -> None:
         pass
     elif dc:
         config["device_class"] = dc
-    else:
+    elif not textual:
         inferred = HA_DEVICE_CLASSES.get(register.unit)
         if inferred:
             config["device_class"] = inferred
@@ -94,7 +100,7 @@ def apply_ha_typing(config: Dict, register) -> None:
         pass
     elif sc:
         config["state_class"] = sc
-    else:
+    elif not textual:
         config["state_class"] = HA_STATE_CLASSES.get(register.unit, "measurement")
 
     ec = (getattr(register, "entity_category", "") or "").strip()

@@ -93,6 +93,11 @@ class TemplateRegister:
     # cumulative counter (energy Wh/kWh/varh): reject a downward glitch so it
     # never looks like a counter reset to HA/Victron/InfluxDB difference()
     monotonic: bool = False
+    # status-register decode (raw int → text): enum (one state) or bits (flags)
+    enum: Optional[Dict[Any, str]] = None
+    bits: Optional[Dict[Any, str]] = None
+    mask: Optional[int] = None
+    shift: Optional[int] = None
     # ── explicit Home Assistant entity typing (override the unit heuristic) ──
     device_class: str = ""
     state_class: str = ""
@@ -132,6 +137,14 @@ class TemplateRegister:
             d['nan'] = self.nan
         if self.monotonic:
             d['monotonic'] = True
+        if self.enum:
+            d['enum'] = self.enum
+        if self.bits:
+            d['bits'] = self.bits
+        if self.mask is not None:
+            d['mask'] = self.mask
+        if self.shift is not None:
+            d['shift'] = self.shift
         if self.device_class:
             d['device_class'] = self.device_class
         if self.state_class:
@@ -324,6 +337,10 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         write_safe=(float(r['write_safe']) if r.get('write_safe') is not None else None),
         nan=r.get('nan'),
         monotonic=bool(r.get('monotonic', False)),
+        enum=r.get('enum'),
+        bits=r.get('bits'),
+        mask=r.get('mask'),
+        shift=r.get('shift'),
         device_class=str(r.get('device_class', '') or ''),
         state_class=str(r.get('state_class', '') or ''),
         entity_category=str(r.get('entity_category', '') or ''),

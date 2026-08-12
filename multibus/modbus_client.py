@@ -30,6 +30,7 @@ from . import bus_trace
 from .config import ModbusConfig, SelectedRegister, PollGroup
 from .counter_filter import MonotonicFilter
 from .register_parser import RegisterParser
+from .value_decode import decode_register
 
 # Suppress pymodbus exception logging
 logging.getLogger("pymodbus").setLevel(logging.CRITICAL)
@@ -555,25 +556,30 @@ class RegisterPoller(threading.Thread):
                     value = self.parser.parse_value(reg_values, reg.data_type,
                                                     nan=getattr(reg, 'nan', None))
                     if value is not None:
-                        # engineering value = raw / scale (SunSpec int+SF meters,
-                        # transformer ratios, …). scale defaults to 1.0 so the
-                        # Janitza primary is byte-identical.
-                        sc = getattr(reg, 'scale', 1.0) or 1.0
-                        if sc != 1.0 and isinstance(value, (int, float)):
-                            value = value / sc
-                        # cumulative-counter hygiene: a downward glitch on an
-                        # energy register would read as a counter reset downstream
-                        # (HA Energy, Victron, InfluxDB difference()). Drop it and
-                        # let the cache keep serving the last-good value.
-                        if getattr(reg, 'monotonic', False):
-                            f = self._counter_filters.get(reg.address)
-                            if f is None:
-                                f = self._counter_filters[reg.address] = MonotonicFilter()
-                            value = f.feed(value)
-                            if value is None:
-                                logger.debug(f"{self._tag}{reg.name}@{reg.address}: "
-                                             f"dropped downward counter glitch (held)")
-                                continue
+                        if getattr(reg, 'enum', None) or getattr(reg, 'bits', None):
+                            # status register → decode raw int to text; scale and
+                            # the monotonic filter are numeric-only, so skip them.
+                            value = decode_register(value, reg)
+                        else:
+                            # engineering value = raw / scale (SunSpec int+SF
+                            # meters, transformer ratios, …). scale defaults to
+                            # 1.0 so the Janitza primary is byte-identical.
+                            sc = getattr(reg, 'scale', 1.0) or 1.0
+                            if sc != 1.0 and isinstance(value, (int, float)):
+                                value = value / sc
+                            # cumulative-counter hygiene: a downward glitch on an
+                            # energy register reads as a counter reset downstream
+                            # (HA Energy, Victron, InfluxDB difference()). Drop it
+                            # and let the cache keep serving the last-good value.
+                            if getattr(reg, 'monotonic', False):
+                                f = self._counter_filters.get(reg.address)
+                                if f is None:
+                                    f = self._counter_filters[reg.address] = MonotonicFilter()
+                                value = f.feed(value)
+                                if value is None:
+                                    logger.debug(f"{self._tag}{reg.name}@{reg.address}: "
+                                                 f"dropped downward counter glitch (held)")
+                                    continue
                         results[reg.address] = {
                             'value': value,
                             'register': reg,

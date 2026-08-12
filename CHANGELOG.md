@@ -1,5 +1,30 @@
 # Changelog
 
+## 3.10.0
+
+### 2026-08-13 — Enum / bitfield decode for status registers
+
+A register can now turn a raw **status** value into meaning instead of serving a
+bare number that means nothing to a human, to Home Assistant, or to the
+threshold engine.
+
+- **`enum`** — `{code: label}` maps one state to text (`7` → `Fault`); an
+  unmapped value becomes `"unknown (<n>)"`, never a silent wrong label and never
+  the bare number. Optional `mask` + `shift` extract a packed sub-field first
+  (`(raw & mask) >> shift`) for status words.
+- **`bits`** — `{bit: name}` expands a status word into the joined names of its
+  set bits (`0b1101` → `overvoltage, overtemp, overcurrent`); no bit set → the
+  idle label (default empty).
+- Decoded on the Modbus poll path right after parsing; the value becomes a
+  **string** and flows through MQTT / InfluxDB / HA exactly like the existing
+  string registers (scale and the monotonic filter are numeric-only and skipped).
+- **Pairs with HA typing + alerting** — an enum/bits register is recognised as a
+  text sensor, so the invalid numeric `state_class`/`device_class`/unit
+  inference is suppressed automatically; and the threshold engine / alertd can
+  now act on a decoded state instead of a raw code.
+- Threaded through template → autoselect → save → load; +13 tests. Purely
+  additive — a register without `enum`/`bits` is unchanged.
+
 ## 3.9.0
 
 ### 2026-08-13 — Redundant-source failover for virtual meters

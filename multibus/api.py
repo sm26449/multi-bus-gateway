@@ -1370,6 +1370,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             'register_type': getattr(r, 'register_type', 'holding'),
             **({'nan': r.nan} if getattr(r, 'nan', None) is not None else {}),
             **({'monotonic': True} if getattr(r, 'monotonic', False) else {}),
+            **{k: getattr(r, k) for k in ('enum', 'bits', 'mask', 'shift')
+               if getattr(r, k, None) is not None},
             **{k: getattr(r, k) for k in
                ('device_class', 'state_class', 'entity_category', 'icon')
                if getattr(r, k, '')},

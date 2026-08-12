@@ -257,6 +257,11 @@ class SelectedRegister:
     scale: float = 1.0    # Modbus input: engineering_value = raw / scale (SunSpec 10^-SF etc.)
     nan: Any = None       # not-available sentinel (True=std for type / value / list) → missing
     monotonic: bool = False   # cumulative counter (energy): reject downward glitches → HA/Victron safe
+    # status-register decode (mutually exclusive): raw int → text
+    enum: Optional[Dict[Any, str]] = None   # {code: label}; unmapped → "unknown (n)"
+    bits: Optional[Dict[Any, str]] = None   # {bit: name}; joined names of set bits
+    mask: Optional[int] = None              # enum sub-field: (raw & mask) >> shift
+    shift: Optional[int] = None
     # ── explicit Home Assistant entity typing (each overrides the unit heuristic;
     # unset ("" / None) falls back to inference; "none" suppresses that key) ──
     device_class: str = ""            # HA device_class (e.g. power, energy, voltage)
@@ -935,6 +940,10 @@ class Config:
                 scale=float(reg.get('scale', 1) or 1),
                 nan=reg.get('nan'),
                 monotonic=bool(reg.get('monotonic', False)),
+                enum=reg.get('enum'),
+                bits=reg.get('bits'),
+                mask=reg.get('mask'),
+                shift=reg.get('shift'),
                 device_class=str(reg.get('device_class', '') or ''),
                 state_class=str(reg.get('state_class', '') or ''),
                 entity_category=str(reg.get('entity_category', '') or ''),
