@@ -283,6 +283,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     address: reg.address,
                     data_type: reg.data_type || 'float',
                     register_type: reg.register_type || 'holding',
+                    scale: reg.scale,
                     ...(this._regDeviceIdOrNull() ? { device_id: this._regDeviceIdOrNull() } : {})
                 })
             });
@@ -749,7 +750,7 @@ Object.assign(JanitzaMonitor.prototype, {
             const response = await fetch('/api/query/register', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ address, data_type: dataType,
+                body: JSON.stringify({ address, data_type: dataType, scale: regInfo?.scale,
                     ...(this._regDeviceIdOrNull() ? { device_id: this._regDeviceIdOrNull() } : {}) })
             });
 

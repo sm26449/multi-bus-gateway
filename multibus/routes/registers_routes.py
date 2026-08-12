@@ -267,6 +267,15 @@ def build(ctx) -> APIRouter:
                                 detail=f"device {device_id!r} is not a live Modbus device")
         return dev_client
 
+    def _apply_scale(value, scale):
+        """Engineering value = raw / scale (a divisor). None/0/1 → raw."""
+        if value is None or not scale or scale in (1, 1.0):
+            return value
+        try:
+            return value / scale
+        except TypeError:
+            return value            # non-numeric (e.g. a bit) — leave as-is
+
     @r.post("/api/query/register")
     async def query_register(query: RegisterQuery):
         """Query a single register on-demand (on the primary or a named device)."""
@@ -276,7 +285,7 @@ def build(ctx) -> APIRouter:
         if value is not None:
             return {
                 "address": query.address,
-                "value": value,
+                "value": _apply_scale(value, query.scale),
                 "data_type": query.data_type,
                 "register_type": rt,
                 "device_id": query.device_id,
@@ -292,10 +301,12 @@ def build(ctx) -> APIRouter:
                       "register_type": ('input' if str(x.register_type).lower() in ('input', 'ir', 'fc4', '4') else 'holding')}
                      for x in query.registers]
         results = client.read_registers_batch(registers)
+        scale_by_addr = {x.address: x.scale for x in query.registers}
 
         return {
             "values": {
-                str(addr): value for addr, value in results.items()
+                str(addr): _apply_scale(value, scale_by_addr.get(addr))
+                for addr, value in results.items()
             },
             "device_id": query.device_id,
             "timestamp": datetime.now().isoformat(),

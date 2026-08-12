@@ -32,6 +32,10 @@ class RegisterQuery(BaseModel):
     # any other id routes the read to that device's own client (so a secondary
     # device's Measurements 'Query now' reads the RIGHT bus, not the primary).
     device_id: Optional[str] = None
+    # The register's scale DIVISOR (engineering value = raw / scale). None/0/1 →
+    # raw. Applied to on-demand reads so 'Query now' matches the polled value
+    # (e.g. a voltage with scale 10: raw 2429 → 242.9 V, not 2429).
+    scale: Optional[float] = None
 
 
 class RegisterBatchQuery(BaseModel):
