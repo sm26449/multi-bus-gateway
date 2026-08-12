@@ -442,3 +442,41 @@ def test_dns_resolution_is_bounded_by_timeout(monkeypatch):
     dt = time.monotonic() - t0
     assert err and "does not resolve" in err    # timed out → treated as unresolved
     assert dt < 1.5                               # returned well before the 2 s hang
+
+
+def test_read_lock_released_during_retry_backoff(monkeypatch):
+    """M1: a failing read must NOT hold the shared connection lock during its
+    retry backoff — else a slow/failing poll group stalls the realtime group
+    waiting on the same device connection."""
+    import multibus.modbus_client as mc
+    from multibus.modbus_client import ModbusConnection, ModbusConfig
+
+    class _Err:
+        registers = []
+        def isError(self): return True
+
+    class _ErrClient:
+        def is_socket_open(self): return True
+        def connect(self): return True
+        def close(self): pass
+        def read_holding_registers(self, address, count, slave): return _Err()
+        def read_input_registers(self, address, count, slave): return _Err()
+
+    conn = ModbusConnection(ModbusConfig())
+    conn.config.retry_attempts = 2
+    conn.config.retry_delay = 1.0
+    conn.client = _ErrClient()
+    conn.connected = True
+
+    held_during_sleep = []
+
+    def _fake_sleep(_dt):
+        got = conn.lock.acquire(blocking=False)   # grabbable mid-backoff?
+        held_during_sleep.append(not got)          # True == lock was HELD (the bug)
+        if got:
+            conn.lock.release()
+
+    monkeypatch.setattr(mc.time, "sleep", _fake_sleep)
+    assert conn.read_registers(0, 2) is None       # fails after its retries
+    assert held_during_sleep                        # a backoff actually happened
+    assert not any(held_during_sleep)               # lock was FREE during every backoff

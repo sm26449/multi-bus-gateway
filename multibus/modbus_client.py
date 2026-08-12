@@ -197,9 +197,18 @@ class ModbusConnection:
 
     def read_registers(self, address: int, count: int,
                        register_type: str = "holding") -> Optional[List[int]]:
-        """Read holding (FC3) or input (FC4) registers, thread-safe, with retry."""
-        with self.lock:
-            for attempt in range(self.config.retry_attempts):
+        """Read holding (FC3) or input (FC4) registers, thread-safe, with retry.
+
+        The lock is held only around each attempt's actual bus transaction and
+        is RELEASED during the inter-retry backoff sleep — so a slow/failing read
+        in one poll group (e.g. 'slow') can't hold the shared connection for its
+        whole retry budget and stall a 'realtime' read waiting behind it. Modbus
+        transactions still never overlap (each is serialized by the lock); they
+        just interleave between retries. Re-checking the socket at the top of
+        every attempt makes this safe against a peer thread reconnecting."""
+        for attempt in range(self.config.retry_attempts):
+            retry_sleep: Optional[float] = None
+            with self.lock:
                 try:
                     # Reconnect if needed — close the dead client first so its
                     # socket FD is released now, not whenever GC gets to it.
@@ -213,43 +222,46 @@ class ModbusConnection:
                         self.connected = self.client.connect()
                         if not self.connected:
                             self._count_error("connect refused")
-                            time.sleep(0.1)
-                            continue
+                            retry_sleep = 0.1
 
-                    # Janitza uses 0-based addressing in documentation
-                    # but Modbus protocol is 0-indexed, so we use address directly
-                    _t0 = time.perf_counter()
-                    _read = (self.client.read_input_registers if register_type == "input"
-                             else self.client.read_holding_registers)
-                    try:
-                        result = _read(address=address, count=count, slave=self.config.unit_id)
-                    finally:
-                        bus_trace.trace.commit(self.client)
+                    if retry_sleep is None:
+                        # Janitza uses 0-based addressing in documentation
+                        # but Modbus protocol is 0-indexed, so we use address directly
+                        _t0 = time.perf_counter()
+                        _read = (self.client.read_input_registers if register_type == "input"
+                                 else self.client.read_holding_registers)
+                        try:
+                            result = _read(address=address, count=count, slave=self.config.unit_id)
+                        finally:
+                            bus_trace.trace.commit(self.client)
 
-                    if not result.isError() and result.registers:
-                        self.successful_reads += 1
-                        self.last_success_ts = time.time()
-                        self.last_success_mono = time.monotonic()
-                        self.last_latency_ms = round((time.perf_counter() - _t0) * 1000, 1)
-                        return result.registers
-                    elif result.isError():
-                        self._count_error(result)
-                        if attempt < self.config.retry_attempts - 1:
-                            time.sleep(self.config.retry_delay)
+                        if not result.isError() and result.registers:
+                            self.successful_reads += 1
+                            self.last_success_ts = time.time()
+                            self.last_success_mono = time.monotonic()
+                            self.last_latency_ms = round((time.perf_counter() - _t0) * 1000, 1)
+                            return result.registers
+                        elif result.isError():
+                            self._count_error(result)
+                            if attempt < self.config.retry_attempts - 1:
+                                retry_sleep = self.config.retry_delay
 
                 except Exception as e:
                     logger.debug(f"Read error at address {address}: {e}")
                     self._count_error(e)
                     self.connected = False
                     if attempt < self.config.retry_attempts - 1:
-                        time.sleep(self.config.retry_delay)
+                        retry_sleep = self.config.retry_delay
 
-            self.failed_reads += 1
-            self.last_failure_ts = time.time()
-            self.record_event("warn", "read_fail",
-                              f"addr {address} count {count} — no response after "
-                              f"{self.config.retry_attempts} attempts")
-            return None
+            if retry_sleep:
+                time.sleep(retry_sleep)   # lock RELEASED → a realtime read can slip in
+
+        self.failed_reads += 1
+        self.last_failure_ts = time.time()
+        self.record_event("warn", "read_fail",
+                          f"addr {address} count {count} — no response after "
+                          f"{self.config.retry_attempts} attempts")
+        return None
 
     def _ensure_connected(self) -> bool:
         """(Re)establish the socket; close a dead client first. Caller holds lock."""
@@ -265,37 +277,43 @@ class ModbusConnection:
 
     def read_bits(self, address: int, count: int,
                   register_type: str = "coil") -> Optional[List[bool]]:
-        """Read coils (FC1) or discrete inputs (FC2). Returns a list of bools."""
-        with self.lock:
-            for attempt in range(self.config.retry_attempts):
+        """Read coils (FC1) or discrete inputs (FC2). Returns a list of bools.
+
+        Lock released during the retry backoff sleep — same fairness fix as
+        ``read_registers`` so a slow bit-read can't stall another poll group."""
+        for attempt in range(self.config.retry_attempts):
+            retry_sleep: Optional[float] = None
+            with self.lock:
                 try:
                     if not self._ensure_connected():
                         self._count_error("connect refused")
-                        time.sleep(0.1)
-                        continue
-                    _read = (self.client.read_discrete_inputs if register_type == "discrete"
-                             else self.client.read_coils)
-                    try:
-                        result = _read(address=address, count=count, slave=self.config.unit_id)
-                    finally:
-                        bus_trace.trace.commit(self.client)
-                    if not result.isError():
-                        self.successful_reads += 1
-                        self.last_success_ts = time.time()
-                        self.last_success_mono = time.monotonic()
-                        return list(result.bits)[:count]
-                    self._count_error(result)
-                    if attempt < self.config.retry_attempts - 1:
-                        time.sleep(self.config.retry_delay)
+                        retry_sleep = 0.1
+                    else:
+                        _read = (self.client.read_discrete_inputs if register_type == "discrete"
+                                 else self.client.read_coils)
+                        try:
+                            result = _read(address=address, count=count, slave=self.config.unit_id)
+                        finally:
+                            bus_trace.trace.commit(self.client)
+                        if not result.isError():
+                            self.successful_reads += 1
+                            self.last_success_ts = time.time()
+                            self.last_success_mono = time.monotonic()
+                            return list(result.bits)[:count]
+                        self._count_error(result)
+                        if attempt < self.config.retry_attempts - 1:
+                            retry_sleep = self.config.retry_delay
                 except Exception as e:  # noqa: BLE001
                     logger.debug(f"Read-bits error at address {address}: {e}")
                     self._count_error(e)
                     self.connected = False
                     if attempt < self.config.retry_attempts - 1:
-                        time.sleep(self.config.retry_delay)
-            self.failed_reads += 1
-            self.last_failure_ts = time.time()
-            return None
+                        retry_sleep = self.config.retry_delay
+            if retry_sleep:
+                time.sleep(retry_sleep)   # lock RELEASED → another group can slip in
+        self.failed_reads += 1
+        self.last_failure_ts = time.time()
+        return None
 
     def write(self, address: int, *, register_type: str = "holding",
               values: Optional[List[int]] = None, coils=None,
