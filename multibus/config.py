@@ -25,6 +25,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
 
+from .tombstone_store import TombstoneStore
+
 logger = logging.getLogger(__name__)
 
 
@@ -268,6 +270,9 @@ class Config:
         self.config_path = Path(config_path)
         self.registers_path = self.config_path.parent / "selected_registers.json"
         self.all_registers_path = Path("docs/modbus_data.json")
+        # soft-delete lifecycle lives in a collaborator (see tombstone_store.py)
+        self._tombstones = TombstoneStore(self.config_path.parent / 'devices',
+                                          self._safe_device_id)
 
         self.modbus = ModbusConfig()
         self.mqtt = MQTTConfig()
@@ -515,75 +520,16 @@ class Config:
         self.save_yaml_config()
         return True
 
-    def _tombstone_path(self, device_id: str) -> Path:
-        return (self.config_path.parent / 'devices'
-                / self._safe_device_id(device_id) / 'device.json')
-
     def _write_device_tombstone(self, device_id: str, raw: Dict) -> None:
-        """Persist a deleted device's full definition (secrets included, like
-        config.yaml itself — the file is created 0600). Non-fatal on error: a
-        failed tombstone must not block the delete."""
-        try:
-            import time
-            path = self._tombstone_path(device_id)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            payload = {"device": raw, "deleted_ts": round(time.time(), 3)}
-            tmp = path.with_suffix('.json.tmp')
-            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, 'w') as f:
-                json.dump(payload, f, indent=2, ensure_ascii=False)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp, path)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"device {device_id}: could not write restore tombstone: {e}")
+        self._tombstones.write(device_id, raw)
 
     def list_deleted_devices(self) -> List[Dict]:
-        """Restorable devices: a devices/<id>/device.json tombstone whose id is
-        NOT currently active. Returns compact summaries for the UI."""
-        active = {d.id for d in self.devices}
-        base = self.config_path.parent / 'devices'
-        out: List[Dict] = []
-        if not base.is_dir():
-            return out
-        for child in sorted(base.iterdir()):
-            if not child.is_dir() or child.name in active:
-                continue
-            tomb = child / 'device.json'
-            if not tomb.is_file():
-                continue
-            try:
-                data = json.loads(tomb.read_text(encoding='utf-8'))
-                dev = data.get('device', {}) or {}
-            except (OSError, ValueError):
-                continue
-            regs_p = child / 'selected_registers.json'
-            n_regs = 0
-            if regs_p.is_file():
-                try:
-                    n_regs = len(json.loads(regs_p.read_text()).get('registers', []))
-                except (OSError, ValueError):
-                    pass
-            out.append({
-                "id": child.name,
-                "name": dev.get('name') or child.name,
-                "template": dev.get('template', ''),
-                "protocol": (dev.get('connection') or {}).get('protocol', ''),
-                "registers": n_regs,
-                "deleted_ts": data.get('deleted_ts'),
-            })
-        return out
+        """Restorable devices (a tombstone whose id is not currently active)."""
+        return self._tombstones.list({d.id for d in self.devices})
 
     def load_deleted_device(self, device_id: str) -> Optional[Dict]:
-        """The raw devices[] dict from a tombstone (None if no restorable id)."""
-        tomb = self._tombstone_path(device_id)
-        if not tomb.is_file():
-            return None
-        try:
-            return (json.loads(tomb.read_text(encoding='utf-8')).get('device')
-                    or None)
-        except (OSError, ValueError):
-            return None
+        """The raw devices[] dict from a tombstone (None if absent)."""
+        return self._tombstones.load(device_id)
 
     def forget_deleted_device(self, device_id: str) -> bool:
         """Permanently remove a deleted device's kept dir (tombstone + registers).
@@ -591,12 +537,7 @@ class Config:
         did = self._safe_device_id(device_id)
         if did in {d.id for d in self.devices} or did == PRIMARY_DEVICE_ID:
             raise ValueError("device is active — delete it first")
-        d = self.config_path.parent / 'devices' / did
-        if not d.is_dir():
-            return False
-        import shutil
-        shutil.rmtree(d, ignore_errors=True)
-        return True
+        return self._tombstones.forget(device_id)
 
     def save_device_registers(self, device_id: str, registers: List[Dict],
                               poll_groups: Optional[Dict] = None) -> None:
