@@ -257,6 +257,14 @@ class SelectedRegister:
     scale: float = 1.0    # Modbus input: engineering_value = raw / scale (SunSpec 10^-SF etc.)
     nan: Any = None       # not-available sentinel (True=std for type / value / list) → missing
     monotonic: bool = False   # cumulative counter (energy): reject downward glitches → HA/Victron safe
+    # ── explicit Home Assistant entity typing (each overrides the unit heuristic;
+    # unset ("" / None) falls back to inference; "none" suppresses that key) ──
+    device_class: str = ""            # HA device_class (e.g. power, energy, voltage)
+    state_class: str = ""             # HA state_class (measurement | total | total_increasing)
+    entity_category: str = ""         # "diagnostic" | "config" → HA groups it out of the main view
+    enabled_by_default: Optional[bool] = None   # False → HA hides the entity until enabled
+    icon: str = ""                    # mdi icon, e.g. "mdi:flash"
+    suggested_display_precision: Optional[int] = None   # HA decimal places
     register_type: str = "holding"   # Modbus: 'holding' (FC3) or 'input' (FC4)
     mqtt_enabled: bool = True
     mqtt_topic: str = ""
@@ -927,6 +935,12 @@ class Config:
                 scale=float(reg.get('scale', 1) or 1),
                 nan=reg.get('nan'),
                 monotonic=bool(reg.get('monotonic', False)),
+                device_class=str(reg.get('device_class', '') or ''),
+                state_class=str(reg.get('state_class', '') or ''),
+                entity_category=str(reg.get('entity_category', '') or ''),
+                enabled_by_default=reg.get('enabled_by_default'),
+                icon=str(reg.get('icon', '') or ''),
+                suggested_display_precision=reg.get('suggested_display_precision'),
                 register_type=normalize_register_type(reg.get('register_type') or reg.get('fc')),
                 mqtt_enabled=mqtt.get('enabled', True),
                 mqtt_topic=mqtt.get('topic', ''),

@@ -93,6 +93,13 @@ class TemplateRegister:
     # cumulative counter (energy Wh/kWh/varh): reject a downward glitch so it
     # never looks like a counter reset to HA/Victron/InfluxDB difference()
     monotonic: bool = False
+    # ── explicit Home Assistant entity typing (override the unit heuristic) ──
+    device_class: str = ""
+    state_class: str = ""
+    entity_category: str = ""
+    enabled_by_default: Optional[bool] = None
+    icon: str = ""
+    suggested_display_precision: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {
@@ -125,6 +132,18 @@ class TemplateRegister:
             d['nan'] = self.nan
         if self.monotonic:
             d['monotonic'] = True
+        if self.device_class:
+            d['device_class'] = self.device_class
+        if self.state_class:
+            d['state_class'] = self.state_class
+        if self.entity_category:
+            d['entity_category'] = self.entity_category
+        if self.enabled_by_default is not None:
+            d['enabled_by_default'] = self.enabled_by_default
+        if self.icon:
+            d['icon'] = self.icon
+        if self.suggested_display_precision is not None:
+            d['suggested_display_precision'] = self.suggested_display_precision
         return d
 
 
@@ -305,6 +324,12 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         write_safe=(float(r['write_safe']) if r.get('write_safe') is not None else None),
         nan=r.get('nan'),
         monotonic=bool(r.get('monotonic', False)),
+        device_class=str(r.get('device_class', '') or ''),
+        state_class=str(r.get('state_class', '') or ''),
+        entity_category=str(r.get('entity_category', '') or ''),
+        enabled_by_default=r.get('enabled_by_default'),
+        icon=str(r.get('icon', '') or ''),
+        suggested_display_precision=r.get('suggested_display_precision'),
     ) for r in t['registers']]
     return DeviceTemplate(
         id=t['id'], name=t['name'],

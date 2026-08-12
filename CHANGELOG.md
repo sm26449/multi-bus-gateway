@@ -31,6 +31,15 @@ behave exactly as before until a template or setting turns it on.
 - **Publish max-interval heartbeat** — `mqtt.heartbeat_interval` (0 = off,
   default): in `changed` mode a steady value is republished after N seconds so
   it keeps a fresh timestamp and Home Assistant does not grey the entity out.
+- **Explicit per-register Home Assistant typing** — a register may now declare
+  `device_class`, `state_class`, `entity_category`, `enabled_by_default`,
+  `icon`, and `suggested_display_precision`; each overrides the unit heuristic,
+  and the literal `"none"` suppresses an inferred class. The two discovery
+  builders now share one typing helper. Diagnostic registers (model id, firmware
+  revision, serial) on the Fronius Smart Meter template are typed as
+  `entity_category: diagnostic` with no `state_class` — a text serial no longer
+  ships an invalid `measurement` state class. Reactive-energy counters (`kvarh`,
+  `kVAh`) are now correctly `total_increasing` instead of `measurement`.
 
 ## 3.6.0
 

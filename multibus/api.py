@@ -1338,6 +1338,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             'register_type': getattr(r, 'register_type', 'holding'),
             **({'nan': r.nan} if getattr(r, 'nan', None) is not None else {}),
             **({'monotonic': True} if getattr(r, 'monotonic', False) else {}),
+            **{k: getattr(r, k) for k in
+               ('device_class', 'state_class', 'entity_category', 'icon')
+               if getattr(r, k, '')},
+            **({'enabled_by_default': r.enabled_by_default}
+               if getattr(r, 'enabled_by_default', None) is not None else {}),
+            **({'suggested_display_precision': r.suggested_display_precision}
+               if getattr(r, 'suggested_display_precision', None) is not None else {}),
             **_seed_output(r),
         } for r in chosen]
         tpg = {n: {'interval': g.get('interval', 5), 'description': g.get('description', '')}

@@ -54,9 +54,61 @@ HA_DEVICE_CLASSES = {
 HA_STATE_CLASSES = {
     'Wh': 'total_increasing',
     'kWh': 'total_increasing',
+    'MWh': 'total_increasing',
     'varh': 'total_increasing',
+    'kvarh': 'total_increasing',
     'VAh': 'total_increasing',
+    'kVAh': 'total_increasing',
 }
+
+
+def apply_ha_typing(config: Dict, register) -> None:
+    """Fill a discovery config's entity-typing keys for one register.
+
+    Explicit per-register fields (device_class/state_class/entity_category/
+    enabled_by_default/icon/suggested_display_precision) win; where a field is
+    unset the unit heuristic fills device_class + state_class as before. The
+    literal ``"none"`` explicitly SUPPRESSES an inferred device_class/state_class
+    (e.g. a text/diagnostic sensor that must carry neither). Mutates ``config``.
+    """
+    if register.unit:
+        config["unit_of_measurement"] = register.unit
+
+    # device_class: explicit override → inference; "none" suppresses
+    dc = (getattr(register, "device_class", "") or "").strip()
+    if dc.lower() == "none":
+        pass
+    elif dc:
+        config["device_class"] = dc
+    else:
+        inferred = HA_DEVICE_CLASSES.get(register.unit)
+        if inferred:
+            config["device_class"] = inferred
+
+    # state_class: explicit override → inference; "none" suppresses. The
+    # heuristic default of "measurement" is unchanged (a unit-less real
+    # measurement such as power factor must keep it to stay in HA statistics);
+    # a text/diagnostic register opts out with an explicit state_class "none".
+    sc = (getattr(register, "state_class", "") or "").strip()
+    if sc.lower() == "none":
+        pass
+    elif sc:
+        config["state_class"] = sc
+    else:
+        config["state_class"] = HA_STATE_CLASSES.get(register.unit, "measurement")
+
+    ec = (getattr(register, "entity_category", "") or "").strip()
+    if ec:
+        config["entity_category"] = ec
+    ebd = getattr(register, "enabled_by_default", None)
+    if ebd is not None:
+        config["enabled_by_default"] = bool(ebd)
+    icon = (getattr(register, "icon", "") or "").strip()
+    if icon:
+        config["icon"] = icon
+    sdp = getattr(register, "suggested_display_precision", None)
+    if sdp is not None:
+        config["suggested_display_precision"] = int(sdp)
 
 
 class MQTTPublisher:
@@ -501,14 +553,7 @@ class MQTTPublisher:
                 "unique_id": f"mbg_dev_{device_id}_{register.address}_{safe_name}",
                 "device": device_info,
             }
-            if register.unit:
-                config["unit_of_measurement"] = register.unit
-            dc = HA_DEVICE_CLASSES.get(register.unit)
-            if dc:
-                config["device_class"] = dc
-            sc = HA_STATE_CLASSES.get(register.unit, "measurement")
-            if sc:
-                config["state_class"] = sc
+            apply_ha_typing(config, register)
             disc = f"{self.config.ha_discovery_prefix}/sensor/mbg_dev_{device_id}/{register.address}_{safe_name}/config"
             published.add(disc)
             if self._publish(disc, json.dumps(config), retain=True):
@@ -604,17 +649,7 @@ class MQTTPublisher:
             "device": device_info,
         }
 
-        if register.unit:
-            config["unit_of_measurement"] = register.unit
-
-        device_class = HA_DEVICE_CLASSES.get(register.unit)
-        if device_class:
-            config["device_class"] = device_class
-
-        state_class = HA_STATE_CLASSES.get(register.unit, "measurement")
-        if state_class:
-            config["state_class"] = state_class
-
+        apply_ha_typing(config, register)
         return config
 
     def update_config(self, new_config: MQTTConfig):

@@ -365,7 +365,11 @@
     "category": "diagnostic",
     "description": "Meter model identification code (register 0x000B). This unit reports 731.",
     "scale": 1.0,
-    "poll_group": "slow"
+    "poll_group": "slow",
+    "entity_category": "diagnostic",
+    "state_class": "none",
+    "enabled_by_default": false,
+    "icon": "mdi:identifier"
    },
    {
     "address": 4096,
@@ -377,7 +381,11 @@
     "category": "diagnostic",
     "description": "Firmware / revision code (register 0x1000).",
     "scale": 1.0,
-    "poll_group": "slow"
+    "poll_group": "slow",
+    "entity_category": "diagnostic",
+    "state_class": "none",
+    "enabled_by_default": false,
+    "icon": "mdi:chip"
    },
    {
     "address": 20480,
@@ -389,7 +397,11 @@
     "category": "diagnostic",
     "description": "ASCII identification block at 0x5000 (7 registers). This unit reads '224026U'. A binary suffix follows at 0x5007-0x5008.",
     "scale": 1.0,
-    "poll_group": "slow"
+    "poll_group": "slow",
+    "entity_category": "diagnostic",
+    "state_class": "none",
+    "enabled_by_default": false,
+    "icon": "mdi:barcode-scan"
    }
   ],
   "canonical": true
