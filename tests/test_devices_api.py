@@ -42,6 +42,21 @@ def make_app(tmp_path, extra_yaml=""):
 
 
 @needs_tc
+def test_canonical_fields_endpoint(tmp_path):
+    """The register editor's canonical-guidance source: the endpoint mirrors the
+    dictionary module exactly (name -> measurement + hierarchical MQTT topic)."""
+    from multibus.canonical_fields import CANONICAL_FIELDS
+    _cfg, client = make_app(tmp_path)
+    fields = client.get("/api/canonical-fields").json()["fields"]
+    assert len(fields) == len(CANONICAL_FIELDS)
+    assert fields["voltage_l1_n"]["mqtt_topic"] == "voltage/l1_n"
+    assert fields["voltage_l1_n"]["measurement"] == "voltage"
+    assert fields["power_active_total"]["mqtt_topic"] == "power/active/total"
+    # the fields added during the vendor-map roll-out are exposed too
+    assert "energy_active_total" in fields and "current_avg" in fields
+
+
+@needs_tc
 def test_devices_crud_roundtrip(tmp_path):
     cfg, client = make_app(tmp_path)
 

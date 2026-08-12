@@ -362,4 +362,19 @@ def build(ctx) -> APIRouter:
             for name, g in config.poll_groups.items()
         }
 
+    @r.get("/api/canonical-fields")
+    async def get_canonical_fields():
+        """The canonical field dictionary — the single source of truth for
+        register naming. The register editor reads it for inline autocomplete +
+        'did you mean' guidance and to auto-fill the hierarchical MQTT topic +
+        InfluxDB measurement, so a user names fields uniformly across devices."""
+        from ..canonical_fields import CANONICAL_FIELDS
+        return {
+            "fields": {
+                name: {"measurement": meas, "unit": unit,
+                       "mqtt_topic": topic, "description": desc}
+                for name, (meas, unit, topic, desc) in CANONICAL_FIELDS.items()
+            }
+        }
+
     return r

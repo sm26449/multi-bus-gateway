@@ -1705,7 +1705,10 @@
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label" for="addNameInput" data-i18n="registers.custom.name">Name</label>
-                            <input type="text" id="addNameInput" class="input" placeholder="_G_MY_REG">
+                            <input type="text" id="addNameInput" class="input" placeholder="voltage_l1_n"
+                                   list="canonicalNamesList" autocomplete="off" oninput="app._checkCanonicalName()">
+                            <datalist id="canonicalNamesList"></datalist>
+                            <span class="field-hint" id="canonicalNameHint"></span>
                         </div>
                         <div class="form-group">
                             <label class="form-label" for="addUnitInput" data-i18n="registers.custom.unit">Unit</label>

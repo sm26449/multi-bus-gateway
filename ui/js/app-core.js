@@ -435,6 +435,7 @@ Object.assign(JanitzaMonitor.prototype, {
         await this.loadStatus();
         await this.loadAllRegisters();
         await this.loadSelectedRegisters();
+        this._loadCanonicalFields();   // canonical dictionary for register-editor guidance
         // dashboard device dimension: restore the persisted selection (its
         // registers + value snapshot), then render
         await this._setDashDevice(this.dashDevice || null);

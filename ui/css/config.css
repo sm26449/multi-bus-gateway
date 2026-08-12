@@ -761,6 +761,11 @@
 .wiz-eyebrow { font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-tertiary); margin: 16px 0 5px; }
 .field-hint { font-size: 10.5px; color: var(--text-tertiary); margin-top: 2px; }
 .field-hint b { color: var(--text-secondary); font-weight: 600; }
+/* canonical-name guidance in the register editor */
+.field-hint.canon-ok { color: var(--success-text, #30a46c); font-weight: 550; }
+.field-hint.canon-warn { color: var(--warning-text, #e2a336); font-weight: 550; }
+.field-hint.canon-warn a { color: inherit; text-decoration: underline; }
+.field-hint.canon-warn code, .field-hint.canon-ok code { font-size: 10.5px; }
 .field-error { font-size: 11px; color: var(--danger-text, #e5484d); font-weight: 550; margin-top: 2px; }
 #devWizBody .input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
 .input.invalid, .input[aria-invalid="true"] { border-color: var(--danger); box-shadow: 0 0 0 3px rgba(255,69,58,.15); }

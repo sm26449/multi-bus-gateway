@@ -332,7 +332,10 @@ Object.assign(JanitzaMonitor.prototype, {
         // 2. Generate clean label from description
         const label = desc;
 
-        // 3. Generate MQTT topic: category/cleaned_description
+        // 3+4. MQTT topic + InfluxDB measurement. Prefer the canonical
+        // dictionary when the register name is canonical (uniform output across
+        // devices); otherwise fall back to the category/description heuristic.
+        const canon = this._canonicalFields && this._canonicalFields[(reg.name || '').toLowerCase()];
         const topicBase = cat.replace(/\s+/g, '_').toLowerCase();
         const topicName = desc
             .toLowerCase()
@@ -341,10 +344,8 @@ Object.assign(JanitzaMonitor.prototype, {
             .replace(/[^a-z0-9_]/g, '')
             .replace(/_+/g, '_')
             .replace(/^_|_$/g, '');
-        const mqttTopic = `${topicBase}/${topicName}`;
-
-        // 4. Generate InfluxDB measurement from category
-        const measurement = cat.replace(/\s+/g, '_').toLowerCase();
+        const mqttTopic = canon ? canon.mqtt_topic : `${topicBase}/${topicName}`;
+        const measurement = canon ? canon.measurement : cat.replace(/\s+/g, '_').toLowerCase();
 
         // 5. Extract tags from description
         const tags = {};
@@ -467,7 +468,118 @@ Object.assign(JanitzaMonitor.prototype, {
         return dev?.protocol === 'mqtt';
     },
 
+    // ============ Canonical field guidance ============
+
+    // Load the canonical dictionary once (the single source of truth for field
+    // naming) and wire the register editor to it: datalist autocomplete on Name
+    // + a hint that flags non-canonical names, and manual-edit tracking so we
+    // stop auto-overwriting the topic/measurement once the user touches them.
+    async _loadCanonicalFields() {
+        if (this._canonicalFields) return this._canonicalFields;
+        try {
+            const r = await fetch('/api/canonical-fields');
+            if (!r.ok) return null;
+            const data = await r.json();
+            this._canonicalFields = data.fields || {};
+            this._canonicalNames = Object.keys(this._canonicalFields);
+            const dl = document.getElementById('canonicalNamesList');
+            if (dl) {
+                dl.innerHTML = this._canonicalNames.map(n => {
+                    const f = this._canonicalFields[n];
+                    return `<option value="${this._esc(n)}">${this._esc(f.description || '')}</option>`;
+                }).join('');
+            }
+            // once the user edits topic/measurement by hand, stop auto-filling it
+            ['addMqttTopic', 'addInfluxMeasurement'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el && !el._canonWired) {
+                    el.addEventListener('input', () => { el.dataset.canonAuto = ''; });
+                    el._canonWired = true;
+                }
+            });
+        } catch (e) { /* guidance is best-effort */ }
+        return this._canonicalFields;
+    },
+
+    _isCanonical(name) {
+        return !!(this._canonicalFields && this._canonicalFields[String(name).toLowerCase()]);
+    },
+
+    // Closest canonical name (client-side "did you mean"), or null — mirrors the
+    // server's difflib cutoff of 0.6 with a normalized Levenshtein ratio.
+    _canonicalSuggest(name) {
+        if (!this._canonicalNames) return null;
+        const a = String(name).toLowerCase();
+        let best = null, bestScore = 0;
+        for (const c of this._canonicalNames) {
+            const d = this._levenshtein(a, c);
+            const score = 1 - d / Math.max(a.length, c.length, 1);
+            if (score > bestScore) { bestScore = score; best = c; }
+        }
+        return bestScore >= 0.6 ? best : null;
+    },
+
+    _levenshtein(a, b) {
+        const m = a.length, n = b.length;
+        if (!m) return n; if (!n) return m;
+        let prev = Array.from({ length: n + 1 }, (_, i) => i);
+        for (let i = 1; i <= m; i++) {
+            let cur = [i];
+            for (let j = 1; j <= n; j++) {
+                cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1,
+                    prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+            }
+            prev = cur;
+        }
+        return prev[n];
+    },
+
+    // React to typing in the custom-register Name field: show canonical status
+    // and auto-fill the hierarchical MQTT topic + InfluxDB measurement from the
+    // dictionary (only while the user hasn't overridden them by hand).
+    _checkCanonicalName() {
+        const nameEl = document.getElementById('addNameInput');
+        const hint = document.getElementById('canonicalNameHint');
+        if (!nameEl || !hint) return;
+        const raw = nameEl.value.trim();
+        const name = raw.toLowerCase();
+        if (!raw) { hint.textContent = ''; hint.className = 'field-hint'; return; }
+
+        const f = this._canonicalFields && this._canonicalFields[name];
+        const topicEl = document.getElementById('addMqttTopic');
+        const measEl = document.getElementById('addInfluxMeasurement');
+        if (f) {
+            hint.className = 'field-hint canon-ok';
+            hint.textContent = '✓ ' + this.t('registers.canon.ok', 'Canonical field') +
+                (f.description ? ' — ' + f.description : '');
+            // auto-fill topic/measurement unless the user typed their own
+            if (topicEl && (!topicEl.value || topicEl.dataset.canonAuto === '1')) {
+                topicEl.value = f.mqtt_topic; topicEl.dataset.canonAuto = '1';
+            }
+            if (measEl && (!measEl.value || measEl.dataset.canonAuto === '1')) {
+                measEl.value = f.measurement; measEl.dataset.canonAuto = '1';
+            }
+        } else {
+            const s = this._canonicalSuggest(name);
+            hint.className = 'field-hint canon-warn';
+            if (s) {
+                hint.innerHTML = '⚠ ' + this._esc(this.t('registers.canon.non', 'Non-canonical name')) +
+                    ' — ' + this._esc(this.t('registers.canon.didYouMean', 'did you mean')) +
+                    ` <a href="#" onclick="app._applyCanonicalSuggestion('${this._esc(s)}');return false;"><code>${this._esc(s)}</code></a>?`;
+            } else {
+                hint.textContent = '⚠ ' + this.t('registers.canon.non', 'Non-canonical name') +
+                    ' — ' + this.t('registers.canon.pickFromList', 'pick a canonical name from the list for uniform output.');
+            }
+        }
+    },
+
+    _applyCanonicalSuggestion(name) {
+        const nameEl = document.getElementById('addNameInput');
+        if (nameEl) { nameEl.value = name; this._checkCanonicalName(); nameEl.focus(); }
+    },
+
     openCustomRegisterModal() {
+        this._loadCanonicalFields();
         const modal = document.getElementById('addRegisterModal');
         modal.dataset.mode = 'custom';
         modal.dataset.description = '';
@@ -482,6 +594,12 @@ Object.assign(JanitzaMonitor.prototype, {
         // clear editable identity
         ['addAddressInput', 'addNameInput', 'addUnitInput', 'addCategoryInput', 'addDescInput', 'addJsonPathInput', 'addScaleInput', 'addTopicInput']
             .forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; });
+        // reset canonical guidance for a fresh custom register
+        const _ch = document.getElementById('canonicalNameHint');
+        if (_ch) { _ch.textContent = ''; _ch.className = 'field-hint'; }
+        ['addMqttTopic', 'addInfluxMeasurement'].forEach(id => {
+            const e = document.getElementById(id); if (e) e.dataset.canonAuto = '';
+        });
         const _jpp = document.getElementById('jsonPathPicker');
         if (_jpp) _jpp.style.display = 'none';
         document.getElementById('addDataTypeInput').value = 'float';
