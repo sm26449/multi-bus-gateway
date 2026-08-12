@@ -348,7 +348,8 @@
     "register_type": "holding",
     "category": "energy_active",
     "poll_group": "slow",
-    "description": "Total imported active energy"
+    "description": "Total imported active energy",
+    "monotonic": true
    },
    {
     "address": 20484,
@@ -360,7 +361,8 @@
     "register_type": "holding",
     "category": "energy_active",
     "poll_group": "slow",
-    "description": "Total exported active energy"
+    "description": "Total exported active energy",
+    "monotonic": true
    },
    {
     "address": 20488,
@@ -384,7 +386,8 @@
     "register_type": "holding",
     "category": "energy_reactive",
     "poll_group": "slow",
-    "description": "Total imported reactive energy"
+    "description": "Total imported reactive energy",
+    "monotonic": true
    },
    {
     "address": 20496,
@@ -396,7 +399,8 @@
     "register_type": "holding",
     "category": "energy_reactive",
     "poll_group": "slow",
-    "description": "Total exported reactive energy"
+    "description": "Total exported reactive energy",
+    "monotonic": true
    }
   ],
   "canonical": true

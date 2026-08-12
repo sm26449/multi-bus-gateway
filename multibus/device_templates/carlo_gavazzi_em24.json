@@ -156,7 +156,8 @@
     "register_type": "holding",
     "category": "energy_active",
     "poll_group": "slow",
-    "description": "L1 imported active energy"
+    "description": "L1 imported active energy",
+    "monotonic": true
    },
    {
     "address": 66,
@@ -168,7 +169,8 @@
     "register_type": "holding",
     "category": "energy_active",
     "poll_group": "slow",
-    "description": "L2 imported active energy"
+    "description": "L2 imported active energy",
+    "monotonic": true
    },
    {
     "address": 68,
@@ -180,7 +182,8 @@
     "register_type": "holding",
     "category": "energy_active",
     "poll_group": "slow",
-    "description": "L3 imported active energy"
+    "description": "L3 imported active energy",
+    "monotonic": true
    },
    {
     "address": 52,
@@ -192,7 +195,8 @@
     "register_type": "holding",
     "category": "energy_active",
     "poll_group": "slow",
-    "description": "Total imported active energy"
+    "description": "Total imported active energy",
+    "monotonic": true
    },
    {
     "address": 78,
@@ -204,7 +208,8 @@
     "register_type": "holding",
     "category": "energy_active",
     "poll_group": "slow",
-    "description": "Total exported active energy"
+    "description": "Total exported active energy",
+    "monotonic": true
    }
   ],
   "canonical": true

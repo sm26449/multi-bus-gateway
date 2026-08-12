@@ -339,7 +339,8 @@
     "category": "energy",
     "description": "Total imported active energy",
     "scale": 10.0,
-    "poll_group": "slow"
+    "poll_group": "slow",
+    "monotonic": true
    },
    {
     "address": 78,
@@ -351,7 +352,8 @@
     "category": "energy",
     "description": "Total exported active energy",
     "scale": 10.0,
-    "poll_group": "slow"
+    "poll_group": "slow",
+    "monotonic": true
    },
    {
     "address": 11,

@@ -28,6 +28,7 @@ from pymodbus.exceptions import ModbusException
 
 from . import bus_trace
 from .config import ModbusConfig, SelectedRegister, PollGroup
+from .counter_filter import MonotonicFilter
 from .register_parser import RegisterParser
 
 # Suppress pymodbus exception logging
@@ -434,6 +435,12 @@ class RegisterPoller(threading.Thread):
         # Optimize reads by grouping consecutive addresses
         self._read_groups = self._create_read_groups()
 
+        # Per-register monotonic guard for cumulative energy counters (opt-in via
+        # `monotonic: true`). Keyed by address; re-seeds on the first read after a
+        # reload since a fresh poller is built each time. Empty unless a register
+        # opts in, so the default poll path is untouched.
+        self._counter_filters: Dict[int, MonotonicFilter] = {}
+
     def _create_read_groups(self) -> List[Dict]:
         """
         Group consecutive register addresses for optimized batch reads.
@@ -554,6 +561,19 @@ class RegisterPoller(threading.Thread):
                         sc = getattr(reg, 'scale', 1.0) or 1.0
                         if sc != 1.0 and isinstance(value, (int, float)):
                             value = value / sc
+                        # cumulative-counter hygiene: a downward glitch on an
+                        # energy register would read as a counter reset downstream
+                        # (HA Energy, Victron, InfluxDB difference()). Drop it and
+                        # let the cache keep serving the last-good value.
+                        if getattr(reg, 'monotonic', False):
+                            f = self._counter_filters.get(reg.address)
+                            if f is None:
+                                f = self._counter_filters[reg.address] = MonotonicFilter()
+                            value = f.feed(value)
+                            if value is None:
+                                logger.debug(f"{self._tag}{reg.name}@{reg.address}: "
+                                             f"dropped downward counter glitch (held)")
+                                continue
                         results[reg.address] = {
                             'value': value,
                             'register': reg,

@@ -90,6 +90,9 @@ class TemplateRegister:
     # not-available sentinel: True = the type's SunSpec not-implemented value
     # (0x8000/0xFFFF/…), or a raw value / list; a match reads as missing, not data
     nan: Any = None
+    # cumulative counter (energy Wh/kWh/varh): reject a downward glitch so it
+    # never looks like a counter reset to HA/Victron/InfluxDB difference()
+    monotonic: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {
@@ -120,6 +123,8 @@ class TemplateRegister:
                 d['write_safe'] = self.write_safe
         if self.nan is not None:
             d['nan'] = self.nan
+        if self.monotonic:
+            d['monotonic'] = True
         return d
 
 
@@ -299,6 +304,7 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         write_max=(float(r['write_max']) if r.get('write_max') is not None else None),
         write_safe=(float(r['write_safe']) if r.get('write_safe') is not None else None),
         nan=r.get('nan'),
+        monotonic=bool(r.get('monotonic', False)),
     ) for r in t['registers']]
     return DeviceTemplate(
         id=t['id'], name=t['name'],

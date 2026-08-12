@@ -1,5 +1,37 @@
 # Changelog
 
+## 3.7.0
+
+### 2026-08-12 — Reliability batch: decode & transport hygiene
+
+Correctness at the wire→value boundary and quieter, truthful transport
+logging. Every item is **off by default or opt-in**, so existing deployments
+behave exactly as before until a template or setting turns it on.
+
+- **Not-available sentinel decode** — a register may declare `nan` (True = the
+  data type's SunSpec not-implemented value such as `0x8000`/`0xFFFF`, or an
+  explicit raw value / list). A match now reads as *missing* rather than a
+  garbage number (e.g. −32768 °C), so a disconnected phase or an unpopulated
+  SunSpec model no longer poisons a chart or an average. Float NaN/Inf are
+  always dropped.
+- **Cumulative-counter hygiene** — an energy register may declare
+  `monotonic: true`. A downward glitch on a Wh/kWh/varh counter would look to
+  the Home Assistant Energy Dashboard, Victron, or an InfluxDB `difference()`
+  like a counter *reset* and inject a huge phantom delta; the guard now drops a
+  single downward read (the cache keeps serving the last-good value) while still
+  accepting a genuine, sustained reset (meter replaced/rebooted). Enabled on the
+  cumulative import/export/total registers of the bundled meter templates (ABB
+  B21/B23, Carlo Gavazzi EM24, Eastron SDM120/630, Schneider iEM3000, Fronius
+  Smart Meter); `net` registers are left unguarded since they legitimately fall.
+- **Edge-triggered reachability logging** — a device going unreachable now logs
+  one WARN and emits one `unreachable` event; recovery logs one INFO and a
+  `recovered` event; the noisy per-poll-group failure lines dropped to DEBUG. On
+  flaky Wi-Fi / an RTU-over-network bridge the log tells you *when* a link
+  flapped instead of burying it in repetition.
+- **Publish max-interval heartbeat** — `mqtt.heartbeat_interval` (0 = off,
+  default): in `changed` mode a steady value is republished after N seconds so
+  it keeps a fresh timestamp and Home Assistant does not grey the entity out.
+
 ## 3.6.0
 
 ### 2026-08-12 — Canonical field naming, auto-canonicalize, reliability hardening

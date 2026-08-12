@@ -100,7 +100,8 @@
     "register_type": "input",
     "category": "energy_active",
     "poll_group": "slow",
-    "description": "Total imported active energy"
+    "description": "Total imported active energy",
+    "monotonic": true
    },
    {
     "address": 74,
@@ -111,7 +112,8 @@
     "register_type": "input",
     "category": "energy_active",
     "poll_group": "slow",
-    "description": "Total exported active energy"
+    "description": "Total exported active energy",
+    "monotonic": true
    },
    {
     "address": 342,
@@ -122,7 +124,8 @@
     "register_type": "input",
     "category": "energy_active",
     "poll_group": "slow",
-    "description": "Total active energy (import + export)"
+    "description": "Total active energy (import + export)",
+    "monotonic": true
    }
   ],
   "canonical": true

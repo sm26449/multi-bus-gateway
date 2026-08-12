@@ -108,7 +108,8 @@
     "register_type": "holding",
     "category": "energy_active",
     "poll_group": "slow",
-    "description": "Total imported active energy"
+    "description": "Total imported active energy",
+    "monotonic": true
    },
    {
     "address": 20484,
@@ -120,7 +121,8 @@
     "register_type": "holding",
     "category": "energy_active",
     "poll_group": "slow",
-    "description": "Total exported active energy"
+    "description": "Total exported active energy",
+    "monotonic": true
    },
    {
     "address": 20488,
