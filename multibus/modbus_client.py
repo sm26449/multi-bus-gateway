@@ -451,6 +451,10 @@ class RegisterPoller(threading.Thread):
         # opts in, so the default poll path is untouched.
         self._counter_filters: Dict[int, MonotonicFilter] = {}
 
+        # Data-readiness gate: drop an all-zero frame (sleepy device) — opt-in.
+        self._drop_all_zero = bool(getattr(
+            getattr(connection, 'config', None), 'drop_all_zero', False))
+
     def _create_read_groups(self) -> List[Dict]:
         """
         Group consecutive register addresses for optimized batch reads.
@@ -617,6 +621,20 @@ class RegisterPoller(threading.Thread):
                             # vmeter derives a per-row freshness bound from it
                             'interval': self.interval,
                         }
+
+        # Data-readiness gate: a device that answers a read while asleep (an
+        # inverter at night) returns ALL zeros; published that reads as real
+        # 0 V/0 W. Drop the frame (cache keeps last-good) when every numeric
+        # value is exactly zero — requiring >=2 so a lone legitimate 0 isn't
+        # withheld (voltage/frequency are never 0 on an awake device, so an
+        # all-zero measurement frame is the asleep signature).
+        if self._drop_all_zero and results:
+            nums = [d['value'] for d in results.values()
+                    if isinstance(d['value'], (int, float)) and not isinstance(d['value'], bool)]
+            if len(nums) >= 2 and all(v == 0 for v in nums):
+                logger.debug(f"{self._tag}{self.poll_group_name}: all-zero frame "
+                             f"dropped (device not ready)")
+                return {}
 
         return results
 

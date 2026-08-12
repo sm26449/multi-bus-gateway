@@ -30,6 +30,13 @@ modbus:
   #   illegal_registers: [0x0032, 214]
   # (A per-device override goes under that device's `connection:` block.)
   illegal_registers: []
+  # Data-readiness gate. A sleepy device (an inverter at night) can answer a read
+  # with an ALL-ZERO frame instead of an error; published as-is it reads as real
+  # 0 V / 0 W. With this on, a poll group whose numeric values are ALL exactly
+  # zero (>=2 of them) is dropped — the cache keeps the last-good values until the
+  # device wakes. Off by default (a legitimately all-zero group would be
+  # withheld); enable only for devices that sleep.
+  drop_all_zero: false
 
 polling:
   # Default poll interval in seconds

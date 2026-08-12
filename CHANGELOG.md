@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.16.0
+
+### 2026-08-13 — Data-readiness gate (drop all-zero frames)
+
+- **`modbus.drop_all_zero`** — a sleepy device (an inverter at night) can answer
+  a read with an ALL-ZERO frame instead of an error; published as-is that reads
+  as real 0 V / 0 W data and pollutes charts + averages. With this on, a poll
+  group whose numeric values are **all exactly zero** (and there are ≥2 of them)
+  is dropped — the cache keeps the last-good values until the device wakes. The
+  ≥2 guard means a lone legitimate zero is never withheld, and voltage/frequency
+  are never 0 on an awake device, so an all-zero measurement frame is a reliable
+  asleep signature (a cumulative energy group stays non-zero, so it isn't
+  affected). Per-device; off by default; +5 tests.
+
 ## 3.15.0
 
 ### 2026-08-13 — Per-device illegal-register skip-list

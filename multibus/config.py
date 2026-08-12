@@ -58,6 +58,13 @@ class ModbusConfig:
     # can't poison a whole block. Use when max_gap=0 isn't enough (a hole INSIDE
     # a contiguous run). Per-device.
     illegal_registers: List[int] = field(default_factory=list)
+    # Data-readiness gate: a sleepy device (an inverter at night) can answer a
+    # read with an ALL-ZERO frame instead of an error; published as-is that reads
+    # as real 0 V / 0 W data. With this on, a poll group whose numeric values are
+    # ALL exactly zero (and there are >=2 of them) is DROPPED — the cache keeps
+    # the last-good values until the device wakes. Off by default (a legitimately
+    # all-zero group would be withheld); enable for devices that sleep.
+    drop_all_zero: bool = False
     # transport: "tcp" (host/port) or "rtu" (serial line below)
     protocol: str = "tcp"
     serial_port: str = ""             # e.g. /dev/ttyUSB0
@@ -424,6 +431,7 @@ class Config:
                     startup_jitter_s=float(conn.get('startup_jitter_s',
                         self.modbus.startup_jitter_s) or 0.0),
                     illegal_registers=parse_address_list(conn.get('illegal_registers')),
+                    drop_all_zero=bool(conn.get('drop_all_zero', False)),
                     protocol=str(conn.get('protocol', 'tcp')).lower(),
                     serial_port=conn.get('serial_port', ''),
                     baudrate=int(conn.get('baudrate', 9600)),
@@ -802,6 +810,7 @@ class Config:
                     startup_jitter_s=float(m.get('startup_jitter_s',
                         data.get('polling', {}).get('startup_jitter_s', 0.0)) or 0.0),
                     illegal_registers=parse_address_list(m.get('illegal_registers')),
+                    drop_all_zero=bool(m.get('drop_all_zero', False)),
                 )
 
             # MQTT
@@ -1140,6 +1149,7 @@ class Config:
                 "max_gap": self.modbus.max_gap,
                 "startup_jitter_s": self.modbus.startup_jitter_s,
                 "illegal_registers": list(self.modbus.illegal_registers),
+                "drop_all_zero": self.modbus.drop_all_zero,
             },
             "mqtt": {
                 "enabled": self.mqtt.enabled,
@@ -1239,6 +1249,7 @@ class Config:
                 'max_gap': self.modbus.max_gap,
                 'startup_jitter_s': self.modbus.startup_jitter_s,
                 'illegal_registers': list(self.modbus.illegal_registers),
+                'drop_all_zero': self.modbus.drop_all_zero,
             },
             'mqtt': {
                 'enabled': self.mqtt.enabled,
