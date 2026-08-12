@@ -46,6 +46,13 @@ POSITIVE = [
     # THD with phase
     ("THD_U_L1", "Voltage THD L1", "%", "thd_voltage_l1"),
     ("THD_I_L2", "THD current L2", "%", "thd_current_l2"),
+    # single-phase meters (SDM120 / ABB B21): a bare quantity is the single value
+    ("V", "Voltage", "V", "voltage_l1_n"),
+    ("I", "Current", "A", "current_l1"),
+    ("P", "Active power", "W", "power_active_total"),
+    ("Q", "Reactive power", "var", "power_reactive_total"),
+    ("S", "Apparent power", "VA", "power_apparent_total"),
+    ("PF", "Power factor", "", "power_factor_total"),
 ]
 
 # Adversarial: must NEVER return a wrong-but-valid name. Expected value is the
@@ -59,9 +66,10 @@ ADVERSARIAL = [
     ("Q_tot", "Total reactive power", "kvar", "power_reactive_total"),
     # F3 — 'total (import + export)' is the total counter, not import
     ("E", "Total active energy (import + export)", "kWh", "energy_active_total"),
-    # F4 — 'consumption' must not become 'total' via a 'sum' substring
+    # F4 — energy 'consumption' must not silently become the 'total' counter
+    # (direction unknown → None). Instantaneous power consumption IS total power.
     ("E", "Active energy consumption", "kWh", None),
-    ("P", "Power consumption", "W", None),
+    ("P", "Power consumption", "W", "power_active_total"),
     # F5 — per-phase reactive energy isn't representable → None, never a collision
     ("Er1", "Reactive energy import L1", "varh", None),
     # F6 — line-line described in words
@@ -78,8 +86,8 @@ ADVERSARIAL = [
     ("cfg", "RS485 serial address", "", None),
     # F14 — composite unit must not read as active power
     ("Irr", "Irradiance", "W/m2", None),
-    # bare quantity with no position → None (ambiguous)
-    ("V", "Voltage", "V", None),
+    # bare ENERGY (no direction) stays None — unlike bare power/voltage/current
+    ("E", "Active energy", "kWh", None),
 ]
 
 

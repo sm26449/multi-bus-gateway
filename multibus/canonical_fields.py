@@ -221,10 +221,18 @@ def guess_canonical(name: str = '', label: str = '', unit: str = '',
     single_ph = phases[0] if phases else None
     is_total = bool(_re.search(r'\btotal\b|\bsum\b|sum3|\bsys\b|system', hay))
     is_avg = bool(_re.search(r'average|\bavg\b', hay))
-    is_neutral = bool(_re.search(r'neutral', hay)) or (single_ph is None and bool(_re.search(r'\bn\b', hay)))
+    # 'neutral' the quantity (neutral current) — NOT the '-N' in an 'L-N'
+    # line-to-neutral voltage reference, so key on the word, not a bare 'n'.
+    is_neutral = bool(_re.search(r'neutral', hay))
     line_line = bool(_re.search(
         r'ull|l\s*[123]\s*(?:-|_|,|/|to|and)\s*l?\s*[123]|line[\s-]*to[\s-]*line'
         r'|line[\s-]*line|phase[\s-]*to[\s-]*phase', hay))
+
+    # A "bare" quantity — no phase, average, line-line or neutral token — is the
+    # single value a single-phase meter (SDM120, ABB B21, …) reports: map it to
+    # the single-phase / total canonical. Three-phase maps always tag the phase
+    # or 'total', so they never hit this path.
+    bare = not phases and not is_avg and not line_line and not is_neutral
 
     if q == 'voltage':
         if is_avg:
@@ -235,6 +243,8 @@ def guess_canonical(name: str = '', label: str = '', unit: str = '',
             return None
         if single_ph and len(distinct) == 1:
             return cand(f'voltage_l{single_ph}_n')
+        if bare:
+            return cand('voltage_l1_n')
         return None
     if q == 'current':
         if is_neutral:
@@ -245,11 +255,13 @@ def guess_canonical(name: str = '', label: str = '', unit: str = '',
             return cand(f'current_l{single_ph}')
         if is_total:
             return cand('current_total')
+        if bare:
+            return cand('current_l1')
         return None
     if q in ('power_active', 'power_reactive', 'power_apparent', 'power_factor'):
         if single_ph and len(distinct) == 1:
             return cand(f'{q}_l{single_ph}')
-        if is_total:
+        if is_total or bare:          # bare power on a single-phase meter is the total
             return cand(f'{q}_total')
         return None
     if q in ('energy_active', 'energy_reactive'):

@@ -57,6 +57,23 @@ def test_canonical_fields_endpoint(tmp_path):
 
 
 @needs_tc
+def test_canonical_guess_endpoint(tmp_path):
+    """The 'auto-canonicalize' HTTP path: cryptic vendor names in, canonical
+    names out (null where unsure), aligned by index."""
+    _cfg, client = make_app(tmp_path)
+    regs = [
+        {"name": "V_L1", "label": "Voltage L1-N", "unit": "V"},
+        {"name": "P_total", "label": "Active power total", "unit": "W"},
+        {"name": "Import_kWh", "label": "Active energy import", "unit": "kWh"},
+        {"name": "V", "label": "Voltage", "unit": "V"},          # single-phase bare
+        {"name": "Xowef", "label": "Some vendor thing", "unit": ""},  # unclassifiable
+    ]
+    got = client.post("/api/canonical-fields/guess", json={"registers": regs}).json()["guesses"]
+    assert got == ["voltage_l1_n", "power_active_total", "energy_active_import",
+                   "voltage_l1_n", None]
+
+
+@needs_tc
 def test_devices_crud_roundtrip(tmp_path):
     cfg, client = make_app(tmp_path)
 
