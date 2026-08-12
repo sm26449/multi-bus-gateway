@@ -88,6 +88,11 @@ class AlertManager:
         self.sig_sink = bool(sig.get("sink", True))
         self.sig_latency = bool(sig.get("latency", True))
         self.sig_buffer = bool(sig.get("buffer", True))
+        # value-based alerting off the dashboard's per-register thresholds
+        # (off by default — a separate ThresholdEngine does the evaluation)
+        self.sig_threshold = bool(sig.get("threshold", False))
+        self.threshold_deadband_pct = float(cfg.get("threshold_deadband_pct", 2.0))
+        self.threshold_alert_on_start = bool(cfg.get("threshold_alert_on_start", True))
 
     # ── introspection (Status page) ───────────────────────────────────────
     def status(self) -> dict:
@@ -102,7 +107,9 @@ class AlertManager:
             "min_interval_s": self.min_interval_s,
             "thresholds": {"latency_ms": self.latency_ms, "buffer_points": self.buffer_points},
             "signals": {"device": self.sig_device, "sink": self.sig_sink,
-                        "latency": self.sig_latency, "buffer": self.sig_buffer},
+                        "latency": self.sig_latency, "buffer": self.sig_buffer,
+                        "threshold": self.sig_threshold},
+            "threshold_deadband_pct": self.threshold_deadband_pct,
         }
 
     def recent(self, n: int = 50) -> List[dict]:

@@ -127,12 +127,19 @@ alerts:
   # Thresholds
   latency_ms: 1000        # alert when a source's read latency exceeds this
   buffer_points: 1000     # alert when the InfluxDB store-and-forward buffer grows past this
+  # Per-register value alerting (the `threshold` signal below). Turns the
+  # dashboard's warning/danger limits into alert EVENTS. Fires when a value
+  # crosses INTO a warning/danger band and again when it clears to normal, with
+  # hysteresis so a value hovering at a limit cannot flap.
+  threshold_deadband_pct: 2.0     # clear-side hysteresis, % of the limit value
+  threshold_alert_on_start: true  # surface a value already in alarm at startup
   # Which signals raise an alert
   signals:
     device: true          # a source device goes down / recovers
     sink: true            # MQTT or InfluxDB disconnects / reconnects
     latency: true         # sustained high read latency
     buffer: true          # InfluxDB buffer backlog or dropped points
+    threshold: false      # per-register value crossings (warning/danger limits)
 
 # Device Builder — authoring/compiling/flashing ESP32/ESP8266 node firmware
 # from the UI, with an ESPHome dashboard as the build engine. The bundled

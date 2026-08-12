@@ -701,6 +701,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     app.state.event_log = event_log
     alert_mgr = AlertManager(getattr(config, 'alerts', {}), mqtt_publisher, event_log)
     app.state.alert_manager = alert_mgr
+    from .threshold_engine import ThresholdEngine
+    threshold_engine = ThresholdEngine(
+        deadband_pct=alert_mgr.threshold_deadband_pct,
+        alert_on_start=alert_mgr.threshold_alert_on_start)
+    app.state.threshold_engine = threshold_engine
 
     # /api/events, /api/alerts(+test), /api/config/alerts → routes/system.py
 
@@ -739,6 +744,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         while not harvester_stop.is_set():
             try:
                 pairs = registry.pairs() or ([(None, modbus_client)] if modbus_client else [])
+                # keep the threshold engine's tunables in sync with live config
+                threshold_engine.deadband_pct = alert_mgr.threshold_deadband_pct
+                threshold_engine.alert_on_start = alert_mgr.threshold_alert_on_start
+                thr_seen: Set = set()
                 for dev_cfg, client in pairs:
                     if not client or not hasattr(client, 'get_stats'):
                         continue
@@ -754,6 +763,29 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     if alert_mgr.sig_latency and lat and lat > alert_mgr.latency_ms:
                         alert_mgr.fire('warn', 'lat:' + did, name,
                                        f'read latency {lat} ms exceeds {int(alert_mgr.latency_ms)} ms')
+                    # per-register threshold crossings → alert events (off by
+                    # default). Read-only over the device's live value store, so
+                    # this never touches the poll hot path.
+                    if alert_mgr.sig_threshold:
+                        store = registry.store_for(did) or {}
+                        for reg in getattr(client, 'registers', None) or []:
+                            th = getattr(reg, 'thresholds', None)
+                            entry = store.get(reg.address) if th else None
+                            if not entry:
+                                continue
+                            key = f'thr:{did}:{reg.address}'
+                            thr_seen.add(key)
+                            ev = threshold_engine.evaluate(
+                                key, entry.get('value'), th, source=name,
+                                label=(reg.label or reg.name),
+                                unit=getattr(reg, 'unit', ''))
+                            if ev:
+                                alert_mgr.fire(ev['severity'], ev['key'],
+                                               ev['source'], ev['message'])
+                if alert_mgr.sig_threshold:
+                    # drop band state for registers/devices that went away, so a
+                    # removed threshold can't leave a stuck alarm behind
+                    threshold_engine.retain(thr_seen)
                 if mqtt_publisher:
                     transition('mqtt', 'MQTT', bool(mqtt_publisher.get_stats().get('connected')), 'sink')
                 if influxdb_publisher:

@@ -1,5 +1,32 @@
 # Changelog
 
+## 3.8.0
+
+### 2026-08-13 — Value-based alerting (threshold engine)
+
+Turns each register's **visual** thresholds — the same `warningLow/dangerLow/
+warningHigh/dangerHigh` limits that colour the dashboard — into alert **events**,
+delivered over the existing alert path (MQTT + webhook + event log) and onward to
+`pv-stack-alerts` (alertd) for Telegram/SMS. **Off by default**
+(`alerts.signals.threshold: false`).
+
+- **Hysteresis state machine** (`multibus/threshold_engine.py`) — *fast to alarm,
+  slow to clear*: escalation fires on the raw limit (safety), while clearing to
+  normal requires the value to retreat past the boundary by `threshold_deadband_pct`
+  (default 2 %). A value hovering at a limit cannot flap. One band per value, so a
+  higher severity inherently suppresses the lower one; events fire only on band
+  transitions, never on steady state.
+- **Reuses the existing `AlertManager`** — a crossing calls the same rate-limited
+  `fire()` path as the device/sink/latency/buffer signals; no new channels. Point
+  `alerts.webhook_url` at an alertd webhook input and the events flow to whatever
+  channels alertd already has. alertd itself is unchanged.
+- **Read-only, off the hot path** — evaluation runs in the existing 5 s event
+  harvester over each device's live value store; the poll loop is untouched.
+- **Live-tunable** from Settings → Alerts (`signals.threshold`,
+  `threshold_deadband_pct`, `threshold_alert_on_start`); band state is pruned when
+  a register or device goes away so a removed limit can't leave a stuck alarm.
+- +36 tests (exhaustive band/hysteresis matrix + AlertManager integration).
+
 ## 3.7.0
 
 ### 2026-08-12 — Reliability batch: decode & transport hygiene

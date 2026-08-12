@@ -129,6 +129,8 @@ def build(ctx) -> APIRouter:
             "buffer_points": a.get("buffer_points", 1000),
             "signals": a.get("signals") or {"device": True, "sink": True,
                                             "latency": True, "buffer": True},
+            "threshold_deadband_pct": a.get("threshold_deadband_pct", 2.0),
+            "threshold_alert_on_start": bool(a.get("threshold_alert_on_start", True)),
         }
 
     @r.post("/api/config/alerts")
@@ -157,6 +159,15 @@ def build(ctx) -> APIRouter:
             a["buffer_points"] = int(payload["buffer_points"] or 1000)
         if isinstance(payload.get("signals"), dict):
             a["signals"] = {k: bool(v) for k, v in payload["signals"].items()}
+        if "threshold_deadband_pct" in payload:
+            try:
+                a["threshold_deadband_pct"] = max(0.0, float(payload["threshold_deadband_pct"]))
+            except (TypeError, ValueError):
+                errors.append("threshold_deadband_pct must be a number")
+        if "threshold_alert_on_start" in payload:
+            a["threshold_alert_on_start"] = bool(payload["threshold_alert_on_start"])
+        if errors:
+            raise HTTPException(status_code=422, detail={"errors": errors})
         if "webhook_headers" in payload:
             new = payload["webhook_headers"] or {}
             old = (config.alerts or {}).get("webhook_headers") or {}
