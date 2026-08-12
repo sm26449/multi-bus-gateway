@@ -37,6 +37,7 @@ from pydantic import BaseModel, Field
 from . import __version__
 from .mqtt_publisher import MQTTPublisher
 from .influxdb_publisher import InfluxDBPublisher
+from .canonical_fields import mqtt_topic_for, measurement_for
 
 logger = logging.getLogger(__name__)
 
@@ -1390,15 +1391,36 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                                f"{len(chosen)} registers and no curated defaults — "
                                "auto-selecting none (pick registers in the UI)")
                 return
+
+        def _seed_output(r):
+            """MQTT topic + InfluxDB measurement + UI for a seeded register.
+            Precedence: the template's explicit per-register ``defaults`` win;
+            else derive from the canonical dictionary (name → hierarchical MQTT
+            topic + InfluxDB measurement) so every device names the same
+            physical quantity the same way; else fall back to the register's
+            own name/category. A non-canonical name (e.g. a raw vendor map)
+            yields '' → the publisher falls back to the flat register name,
+            exactly as before — so this is a no-op for non-canonical templates."""
+            d = r.defaults or {}
+            dm, di, du = d.get('mqtt') or {}, d.get('influxdb') or {}, d.get('ui') or {}
+            return {
+                'mqtt': {'enabled': dm.get('enabled', True),
+                         'topic': dm.get('topic') or mqtt_topic_for(r.name) or ''},
+                'influxdb': {'enabled': di.get('enabled', True),
+                             'measurement': (di.get('measurement')
+                                             or measurement_for(r.name) or r.category),
+                             'tags': di.get('tags') or {}},
+                'ui': {'show_on_dashboard': du.get('show_on_dashboard', True),
+                       'widget': du.get('widget', 'value')},
+            }
+
         reg_list = [{
             'address': r.address, 'name': r.name, 'label': r.label or r.name,
             'unit': r.unit, 'data_type': r.data_type,
             'poll_group': r.poll_group or 'normal', 'json_path': r.json_path,
             'topic': getattr(r, 'topic', ''), 'scale': r.scale,
             'register_type': getattr(r, 'register_type', 'holding'),
-            'mqtt': {'enabled': True, 'topic': ''},
-            'influxdb': {'enabled': True, 'measurement': r.category, 'tags': {}},
-            'ui': {'show_on_dashboard': True, 'widget': 'value'},
+            **_seed_output(r),
         } for r in chosen]
         tpg = {n: {'interval': g.get('interval', 5), 'description': g.get('description', '')}
                for n, g in (tpl.poll_groups or {}).items()} or None

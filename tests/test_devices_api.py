@@ -409,6 +409,32 @@ def test_autoselect_uses_curated_defaults(tmp_path):
 
 
 @needs_tc
+def test_autoselect_applies_canonical_topics_and_measurement(tmp_path):
+    """A canonical template seeds each register with its hierarchical MQTT topic
+    + canonical InfluxDB measurement from the canonical dictionary, so a new
+    device is uniform with every other device out of the box — not the flat
+    register name / unit-derived measurement the seed used to hardcode."""
+    cfg, client = make_app(tmp_path)
+    r = client.post("/api/devices", json={"id": "fr1", "enabled": False,
+                    "template": "fronius_smart_meter_65a",
+                    "connection": {"protocol": "rtu-tcp", "host": "192.0.2.60",
+                                   "port": 502}})
+    assert r.status_code == 200, r.text
+    regs = client.get("/api/registers/selected?device=fr1").json()["registers"]
+    by = {x["name"]: x for x in regs}
+    # hierarchical MQTT topic + canonical measurement, not the flat name
+    assert by["voltage_l1_n"]["mqtt_topic"] == "voltage/l1_n"
+    assert by["voltage_l1_n"]["influxdb_measurement"] == "voltage"
+    assert by["power_active_total"]["mqtt_topic"] == "power/active/total"
+    assert by["power_active_total"]["influxdb_measurement"] == "power_active"
+    # a unitless field the unit-fallback would misfile under 'janitza'
+    assert by["power_factor_total"]["influxdb_measurement"] == "power_factor"
+    # energy: canonical measurement, not the template's 'energy' category
+    assert by["energy_active_import"]["influxdb_measurement"] == "energy_active"
+    assert by["serial"]["mqtt_topic"] == "diagnostic/serial"
+
+
+@needs_tc
 def test_scale_roundtrip_and_ssrf_and_csrf(tmp_path):
     cfg, client = make_app(tmp_path)
     # scale survives the selected-registers round-trip
