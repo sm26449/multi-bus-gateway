@@ -128,6 +128,36 @@ class ModbusConnection:
         # the wire): {"timeout": n, "exception_2": n, "connection": n, ...}
         self.error_counts: Dict[str, int] = {}
         self._ev_lock = threading.Lock()
+        # Edge-triggered reachability: log ONE warning when the device drops and
+        # ONE info when it recovers, staying quiet (debug) while down — a flaky
+        # link would otherwise spam a warning per failed batch × poll group.
+        self._reachable = True
+
+    def _note_reachable(self) -> None:
+        """A successful read — announce recovery once if we were down. Hot path:
+        the plain-bool read short-circuits without a lock; only the rare
+        transition takes _ev_lock (double-checked, so peer pollers log once)."""
+        if self._reachable:
+            return
+        with self._ev_lock:
+            if self._reachable:
+                return
+            self._reachable = True
+        logger.info("Modbus device recovered (%s)", _endpoint(self.config))
+        self.record_event("info", "recovered", "device reachable again")
+
+    def _note_unreachable(self, reason: str) -> None:
+        """A read that exhausted its retries — announce the drop once, then stay
+        quiet (debug) until recovery so an outage doesn't flood the log."""
+        if not self._reachable:
+            logger.debug("Modbus still unreachable (%s): %s", _endpoint(self.config), reason)
+            return
+        with self._ev_lock:
+            if not self._reachable:
+                return
+            self._reachable = False
+        logger.warning("Modbus device unreachable (%s): %s", _endpoint(self.config), reason)
+        self.record_event("warn", "unreachable", reason)
 
     def _count_error(self, obj) -> None:
         """Tally one failed attempt into the taxonomy. Never raises."""
@@ -240,6 +270,7 @@ class ModbusConnection:
                             self.last_success_ts = time.time()
                             self.last_success_mono = time.monotonic()
                             self.last_latency_ms = round((time.perf_counter() - _t0) * 1000, 1)
+                            self._note_reachable()
                             return result.registers
                         elif result.isError():
                             self._count_error(result)
@@ -259,9 +290,8 @@ class ModbusConnection:
         with self.lock:                        # counter RMW shared across pollers
             self.failed_reads += 1
         self.last_failure_ts = time.time()
-        self.record_event("warn", "read_fail",
-                          f"addr {address} count {count} — no response after "
-                          f"{self.config.retry_attempts} attempts")
+        self._note_unreachable(f"addr {address} count {count} — no response after "
+                               f"{self.config.retry_attempts} attempts")
         return None
 
     def _ensure_connected(self) -> bool:
@@ -300,6 +330,7 @@ class ModbusConnection:
                             self.successful_reads += 1
                             self.last_success_ts = time.time()
                             self.last_success_mono = time.monotonic()
+                            self._note_reachable()
                             return list(result.bits)[:count]
                         self._count_error(result)
                         if attempt < self.config.retry_attempts - 1:
@@ -315,6 +346,8 @@ class ModbusConnection:
         with self.lock:                    # counter RMW shared across pollers
             self.failed_reads += 1
         self.last_failure_ts = time.time()
+        self._note_unreachable(f"bits addr {address} — no response after "
+                               f"{self.config.retry_attempts} attempts")
         return None
 
     def write(self, address: int, *, register_type: str = "holding",
@@ -485,7 +518,9 @@ class RegisterPoller(threading.Thread):
             if gtype in ('coil', 'discrete'):
                 bits = self.connection.read_bits(group['start'], group['count'], gtype)
                 if bits is None:
-                    logger.warning(f"{self._tag}Failed to read {gtype}s {group['start']}-{group['end']}")
+                    # per-group detail is DEBUG; the device-level edge warning
+                    # (_note_unreachable) is the one-line "device down" signal
+                    logger.debug(f"{self._tag}Failed to read {gtype}s {group['start']}-{group['end']}")
                     continue
                 for reg in group['registers']:
                     off = reg.address - group['start']
@@ -500,7 +535,7 @@ class RegisterPoller(threading.Thread):
                 group['start'], group['count'], gtype)
 
             if raw_data is None:
-                logger.warning(f"{self._tag}Failed to read registers {group['start']}-{group['end']}")
+                logger.debug(f"{self._tag}Failed to read registers {group['start']}-{group['end']}")
                 continue
 
             # Parse each register in this group
