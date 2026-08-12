@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.12.0
+
+### 2026-08-13 — Enum / bitfield builder in the template editor
+
+The decode maps added in 3.10.0 were JSON-only; now they have a UI. Each
+register row in the template editor gets a **States** button (badged when a map
+is set) that opens a builder modal:
+
+- Toggle **Enum** (value → label) or **Bitfield** (bit position → name); add /
+  remove rows in a small table instead of hand-writing JSON.
+- **Validation on Apply** — integer keys (decimal or `0x…`), unique, in range
+  (bits 0-63), non-empty labels — so an invalid map can never be saved.
+- Enum **Advanced**: `mask` + `shift` for a packed sub-field.
+- Writes `enum`/`bits`/`mask`/`shift` onto the register; **Clear** removes them.
+  Persists through the existing save path (parse → to_dict → disk); +1 test
+  pins the round-trip.
+
 ## 3.11.0
 
 ### 2026-08-13 — Poller startup jitter

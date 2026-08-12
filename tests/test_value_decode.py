@@ -115,3 +115,18 @@ def test_round_trip_through_template():
     assert t.registers[0].enum == STATE
     assert t.registers[0].to_dict()["enum"] == STATE
     assert t.registers[1].to_dict()["bits"] == ALARM
+
+
+def test_enum_survives_save_user_and_reload(tmp_path):
+    # the editor's Apply → POST /api/device-templates → save_user path must
+    # persist enum/bits/mask/shift through parse_template → to_dict → disk
+    from pathlib import Path
+    from multibus.device_template import TemplateRegistry
+    reg = TemplateRegistry(builtin_dir=tmp_path / "builtin", user_dir=tmp_path / "user")
+    reg.save_user({"device_template": {
+        "id": "inv1", "name": "Inv", "protocol": {},
+        "registers": [{"address": 40, "name": "operating_state", "unit": "",
+                       "data_type": "uint16", "enum": STATE, "mask": 0x0F00, "shift": 8}]}})
+    reloaded = TemplateRegistry(builtin_dir=tmp_path / "builtin", user_dir=tmp_path / "user")
+    r0 = reloaded.get("inv1").registers[0]
+    assert r0.enum == STATE and r0.mask == 0x0F00 and r0.shift == 8

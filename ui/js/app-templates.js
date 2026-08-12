@@ -475,7 +475,10 @@ Object.assign(JanitzaMonitor.prototype, {
                 <td><input class="input tpl-cell" data-f="write_min" type="number" step="any" value="${r.write_min ?? ''}" style="width:60px" placeholder="min" aria-label="Write min"></td>
                 <td><input class="input tpl-cell" data-f="write_max" type="number" step="any" value="${r.write_max ?? ''}" style="width:60px" placeholder="max" aria-label="Write max"></td>
                 <td><input class="input tpl-cell" data-f="write_safe" type="number" step="any" value="${r.write_safe ?? ''}" style="width:60px" placeholder="safe" aria-label="Write safe (auto-revert)"></td>
-                <td><button class="btn btn-ghost btn-sm" ${this._act('tplDelRow', [i])} title="${this.t('common.delete', 'Delete')}" aria-label="Delete row"><i class="bi bi-trash"></i></button></td>
+                <td style="white-space:nowrap;">
+                    <button class="btn btn-ghost btn-sm" ${this._act('tplEditStates', [i])} title="${this.t('devtpl.editStates', 'Decode states (enum / bitfield)')}" aria-label="Decode states" style="${(r.enum || r.bits) ? 'color:var(--accent,#3b82f6);' : ''}"><i class="bi bi-list-ol"></i>${(r.enum || r.bits) ? ` <span style="font-size:10px;">${r.bits ? 'bits' : Object.keys(r.enum).length}</span>` : ''}</button>
+                    <button class="btn btn-ghost btn-sm" ${this._act('tplDelRow', [i])} title="${this.t('common.delete', 'Delete')}" aria-label="Delete row"><i class="bi bi-trash"></i></button>
+                </td>
             </tr>`).join('');
         document.getElementById('devTplBody').innerHTML = `
         <div class="form-row">
@@ -640,6 +643,136 @@ Object.assign(JanitzaMonitor.prototype, {
     tplDelRow(idx) {
         this._tplCollectMeta();
         this._tplEdit.data.registers.splice(idx, 1);
+        this._tplEditorRender();
+    },
+
+    // ── enum / bitfield state builder ────────────────────────────────────────
+    // Build a register's decode map from a small table instead of hand-writing
+    // JSON, so the format is always valid (unique integer keys, non-empty
+    // labels). Writes reg.enum / reg.bits on the in-memory working copy; Save
+    // ships it like any other register field.
+    _enumParseInt(s) {
+        s = String(s).trim();
+        if (!s) return NaN;
+        return /^0x[0-9a-f]+$/i.test(s) ? parseInt(s, 16) : parseInt(s, 10);
+    },
+
+    tplEditStates(idx) {
+        this._tplCollectMeta();
+        const reg = this._tplEdit.data.registers[idx];
+        let mode = 'enum', map = reg.enum;
+        if (reg.bits) { mode = 'bits'; map = reg.bits; }
+        const rows = Object.keys(map || {})
+            .sort((a, b) => this._enumParseInt(a) - this._enumParseInt(b))
+            .map(k => ({ v: k, label: map[k] }));
+        if (!rows.length) rows.push({ v: '', label: '' });
+        this._enumBuilder = { idx, mode, rows,
+                              mask: reg.mask != null ? '0x' + Number(reg.mask).toString(16) : '',
+                              shift: reg.shift != null ? String(reg.shift) : '' };
+        document.getElementById('enumBuilderTitle').textContent =
+            `Decode states · ${reg.name || reg.label || ('0x' + Number(reg.address || 0).toString(16))}`;
+        document.querySelector(`input[name="enumMode"][value="${mode}"]`).checked = true;
+        const el = id => document.getElementById(id);
+        el('enumMask').value = this._enumBuilder.mask;
+        el('enumShift').value = this._enumBuilder.shift;
+        el('enumBuilderError').style.display = 'none';
+        this._enumBuilderSyncMode();
+        this.enumBuilderRenderRows();
+        this.openModal('enumBuilderModal');
+    },
+
+    _enumBuilderSyncMode() {
+        const bits = this._enumBuilder.mode === 'bits';
+        document.getElementById('enumValCol').textContent = bits ? 'Bit (0-63)' : 'Value';
+        document.getElementById('enumAdvanced').style.display = bits ? 'none' : '';
+    },
+
+    enumBuilderSetMode(mode) {
+        this._enumBuilderCollect();               // keep what's typed
+        this._enumBuilder.mode = mode;
+        this._enumBuilderSyncMode();
+        this.enumBuilderRenderRows();
+    },
+
+    enumBuilderRenderRows() {
+        const body = document.getElementById('enumBuilderRows');
+        body.innerHTML = this._enumBuilder.rows.map((row, i) => `
+            <tr>
+              <td><input class="input enum-cell" data-f="v" data-i="${i}" value="${this._esc(row.v)}" style="width:120px;" placeholder="${this._enumBuilder.mode === 'bits' ? '0' : 'e.g. 4'}"></td>
+              <td><input class="input enum-cell" data-f="label" data-i="${i}" value="${this._esc(row.label)}" placeholder="e.g. ${this._enumBuilder.mode === 'bits' ? 'overtemp' : 'MPPT'}"></td>
+              <td><button class="btn btn-ghost btn-sm" onclick="app.enumBuilderDelRow(${i})" aria-label="Remove"><i class="bi bi-x-lg"></i></button></td>
+            </tr>`).join('');
+        body.querySelectorAll('.enum-cell').forEach(inp => inp.addEventListener('change', () => {
+            const r = this._enumBuilder.rows[parseInt(inp.dataset.i, 10)];
+            if (r) r[inp.dataset.f] = inp.value;
+        }));
+    },
+
+    _enumBuilderCollect() {
+        document.querySelectorAll('#enumBuilderRows .enum-cell').forEach(inp => {
+            const r = this._enumBuilder.rows[parseInt(inp.dataset.i, 10)];
+            if (r) r[inp.dataset.f] = inp.value;
+        });
+    },
+
+    enumBuilderAddRow() {
+        this._enumBuilderCollect();
+        this._enumBuilder.rows.push({ v: '', label: '' });
+        this.enumBuilderRenderRows();
+    },
+
+    enumBuilderDelRow(i) {
+        this._enumBuilderCollect();
+        this._enumBuilder.rows.splice(i, 1);
+        if (!this._enumBuilder.rows.length) this._enumBuilder.rows.push({ v: '', label: '' });
+        this.enumBuilderRenderRows();
+    },
+
+    enumBuilderClear() {
+        const reg = this._tplEdit.data.registers[this._enumBuilder.idx];
+        delete reg.enum; delete reg.bits; delete reg.mask; delete reg.shift;
+        this.closeModal('enumBuilderModal');
+        this._tplEditorRender();
+    },
+
+    enumBuilderApply() {
+        this._enumBuilderCollect();
+        const b = this._enumBuilder;
+        const errBox = document.getElementById('enumBuilderError');
+        const fail = msg => { errBox.textContent = msg; errBox.style.display = 'block'; };
+        const map = {}, seen = new Set();
+        const nonEmpty = b.rows.filter(r => String(r.v).trim() !== '' || String(r.label).trim() !== '');
+        if (!nonEmpty.length) return this.enumBuilderClear();   // emptied → remove the map
+        for (const r of nonEmpty) {
+            const n = this._enumParseInt(r.v);
+            if (!Number.isInteger(n) || n < 0) return fail(`Value "${r.v}" must be a non-negative integer (decimal or 0x…).`);
+            if (b.mode === 'bits' && n > 63) return fail(`Bit ${n} is out of range (0-63).`);
+            if (seen.has(n)) return fail(`Duplicate ${b.mode === 'bits' ? 'bit' : 'value'} ${n}.`);
+            const label = String(r.label).trim();
+            if (!label) return fail(`${b.mode === 'bits' ? 'Bit' : 'Value'} ${n} needs a label.`);
+            seen.add(n);
+            map[n] = label;
+        }
+        const reg = this._tplEdit.data.registers[b.idx];
+        delete reg.enum; delete reg.bits; delete reg.mask; delete reg.shift;
+        if (b.mode === 'bits') {
+            reg.bits = map;
+        } else {
+            reg.enum = map;
+            const mask = document.getElementById('enumMask').value.trim();
+            const shift = document.getElementById('enumShift').value.trim();
+            if (mask) {
+                const m = this._enumParseInt(mask);
+                if (!Number.isInteger(m) || m < 0) return fail(`mask "${mask}" is not a valid integer.`);
+                reg.mask = m;
+            }
+            if (shift) {
+                const s = parseInt(shift, 10);
+                if (!Number.isInteger(s) || s < 0) return fail('shift must be a non-negative integer.');
+                reg.shift = s;
+            }
+        }
+        this.closeModal('enumBuilderModal');
         this._tplEditorRender();
     },
 
