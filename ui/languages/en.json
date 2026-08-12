@@ -500,6 +500,7 @@
   "templates.noMatch": "No templates match your search.",
   "templates.none": "No device maps yet.",
   "templates.loadErrors": "template file(s) failed to load",
+  "templates.canonicalWarn": "Non-canonical field names (see docs/canonical-fields.md)",
   "templates.search": "Search maps…",
   "templates.upload": "Upload JSON",
   "templates.new": "New map",

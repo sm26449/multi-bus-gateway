@@ -500,6 +500,7 @@
   "templates.noMatch": "Niciun șablon nu se potrivește căutării.",
   "templates.none": "Încă nicio hartă de dispozitiv.",
   "templates.loadErrors": "fișier(e) de șablon nu s-au încărcat",
+  "templates.canonicalWarn": "Nume de câmp non-canonice (vezi docs/canonical-fields.md)",
   "templates.search": "Caută hărți…",
   "templates.upload": "Încarcă JSON",
   "templates.new": "Hartă nouă",

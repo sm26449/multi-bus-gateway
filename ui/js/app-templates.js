@@ -14,10 +14,10 @@ Object.assign(JanitzaMonitor.prototype, {
             refreshBtn._wired = true;
             refreshBtn.addEventListener('click', () => this.renderTemplateManager());
         }
-        let devTpls = [], vmTpls = [], loadErrors = {};
+        let devTpls = [], vmTpls = [], loadErrors = {}, loadWarnings = {};
         try {
             const d = await (await fetch('/api/device-templates')).json();
-            devTpls = d.templates || []; loadErrors = d.load_errors || {};
+            devTpls = d.templates || []; loadErrors = d.load_errors || {}; loadWarnings = d.load_warnings || {};
         } catch (e) {}
         try { vmTpls = (await (await fetch('/api/virtual-meters/templates')).json()).templates || []; } catch (e) {}
 
@@ -60,6 +60,10 @@ Object.assign(JanitzaMonitor.prototype, {
         const errBanner = errKeys.length
             ? `<div class="settings-card" style="border-left:3px solid #c0392b;padding:8px 12px;margin-bottom:10px;color:var(--danger-text,#c0392b);font-size:12.5px;"><i class="bi bi-exclamation-triangle"></i> ${errKeys.length} ${t('templates.loadErrors', 'template file(s) failed to load')}: ${errKeys.map(k => this._esc(k)).join(', ')}</div>`
             : '';
+        const warnKeys = Object.keys(loadWarnings);
+        const warnBanner = warnKeys.length
+            ? `<div class="settings-card" style="border-left:3px solid #f59e0b;padding:8px 12px;margin-bottom:10px;color:var(--warning-text,#b45309);font-size:12.5px;"><i class="bi bi-exclamation-circle"></i> ${t('templates.canonicalWarn', 'Non-canonical field names (see docs/canonical-fields.md)')}: ${warnKeys.map(k => `<b>${this._esc(k)}</b> — ${this._esc(loadWarnings[k])}`).join(' · ')}</div>`
+            : '';
         const devToolbar = `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
             <input type="search" id="tmSearch" placeholder="${t('templates.search', 'Search maps…')}" value="${this._esc(this._tmSearch || '')}" style="max-width:240px;padding:6px 10px;border:1px solid var(--border-color,#ccc);border-radius:6px;background:var(--input-bg,transparent);color:inherit;">
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
@@ -93,7 +97,7 @@ Object.assign(JanitzaMonitor.prototype, {
               <button class="config-main-tab ${activeTab === 'devmaps' ? 'active' : ''}" data-tmtab="devmaps"><i class="bi bi-table"></i> ${t('templates.tab.devmaps', 'Device maps')} <span style="opacity:.6;">(${devTpls.length})</span></button>
               <button class="config-main-tab ${activeTab === 'emulations' ? 'active' : ''}" data-tmtab="emulations"><i class="bi bi-hdd-network"></i> ${t('templates.tab.emu', 'Meter emulations')} <span style="opacity:.6;">(${vmTpls.length})</span></button>
             </div>
-            <div data-tmpanel="devmaps" ${activeTab === 'devmaps' ? '' : 'hidden'}>${errBanner}${devToolbar}${devCards}</div>
+            <div data-tmpanel="devmaps" ${activeTab === 'devmaps' ? '' : 'hidden'}>${errBanner}${warnBanner}${devToolbar}${devCards}</div>
             <div data-tmpanel="emulations" ${activeTab === 'emulations' ? '' : 'hidden'}>${vmToolbar}${vmCards}</div>`;
 
         // tab switch

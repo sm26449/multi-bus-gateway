@@ -50,7 +50,8 @@ def build(ctx) -> APIRouter:
             s = t.summary()
             s['used_by'] = used.get(t.id, [])
             out.append(s)
-        return {"templates": out, "load_errors": template_registry.load_errors}
+        return {"templates": out, "load_errors": template_registry.load_errors,
+                "load_warnings": getattr(template_registry, "load_warnings", {})}
 
     @r.get("/api/device-templates/{template_id}")
     def get_device_template(template_id: str):

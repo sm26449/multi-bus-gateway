@@ -389,6 +389,7 @@
     "scale": 1.0,
     "poll_group": "slow"
    }
-  ]
+  ],
+  "canonical": true
  }
 }

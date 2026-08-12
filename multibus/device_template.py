@@ -132,6 +132,9 @@ class DeviceTemplate:
     protocol: Dict[str, Any] = field(default_factory=dict)
     poll_groups: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     categories: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    # opt in to canonical field-name validation: when true, register names that
+    # are not in multibus/canonical_fields are surfaced as load warnings.
+    canonical: bool = False
     registers: List[TemplateRegister] = field(default_factory=list)
     # provenance (not serialized into exports)
     builtin: bool = False
@@ -149,6 +152,7 @@ class DeviceTemplate:
             'protocol': self.protocol,
             'poll_groups': self.poll_groups,
             'categories': self.categories,
+            'canonical': self.canonical,
             'registers': [r.to_dict() for r in self.registers],
         }}
 
@@ -300,6 +304,7 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         protocol=t.get('protocol', {}) or {},
         poll_groups=t.get('poll_groups', {}) or {},
         categories=t.get('categories', {}) or {},
+        canonical=bool(t.get('canonical', False)),
         registers=regs, builtin=builtin, path=path,
     )
 
@@ -332,11 +337,13 @@ class TemplateRegistry:
         self.user_dir = Path(user_dir or USER_DIR)
         self._templates: Dict[str, DeviceTemplate] = {}
         self.load_errors: Dict[str, str] = {}      # filename -> error (surfaced in UI)
+        self.load_warnings: Dict[str, str] = {}    # filename -> advisory (non-blocking)
         self.reload()
 
     def reload(self) -> None:
         self._templates.clear()
         self.load_errors.clear()
+        self.load_warnings.clear()
         for d, builtin in ((self.builtin_dir, True), (self.user_dir, False)):
             if not d.is_dir():
                 continue
@@ -350,6 +357,17 @@ class TemplateRegistry:
                             f"id {t.id!r} already provided by "
                             f"{self._templates[t.id].path}")
                     self._templates[t.id] = t
+                    # opt-in canonical check: flag register names not in the
+                    # canonical dictionary (a warning, not a load failure).
+                    if t.canonical:
+                        from .canonical_fields import non_canonical, suggest
+                        nc = non_canonical([r.name for r in t.registers])
+                        if nc:
+                            hints = ", ".join(
+                                f"{n}→{suggest(n)}" if suggest(n) else n for n in nc[:8])
+                            more = f" (+{len(nc) - 8} more)" if len(nc) > 8 else ""
+                            self.load_warnings[f.name] = (
+                                f"{len(nc)} non-canonical field name(s): {hints}{more}")
                 except Exception as e:  # noqa: BLE001
                     self.load_errors[f.name] = str(e)
                     logger.warning("device template %s skipped: %s", f.name, e)
