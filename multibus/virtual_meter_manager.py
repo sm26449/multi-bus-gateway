@@ -665,6 +665,9 @@ class VirtualMeterManager:
                 src = r.source
             elif r.source_kind == "sum":
                 src = "Σ " + "+".join(r.source) if isinstance(r.source, list) else "sum"
+            elif r.source_kind == "failover":
+                # ordered priority: first fresh source wins (→ shows the order)
+                src = "⇢ " + " → ".join(r.source) if isinstance(r.source, list) else "failover"
             elif r.source_kind == "const_str":
                 src = f'"{r.source}"'
             else:

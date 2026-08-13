@@ -1,5 +1,28 @@
 # Changelog
 
+## 3.21.0
+
+### 2026-08-13 — Redundant-source failover, editable from the UI
+
+- **Failover is now a first-class source kind in the vmeter template editor.**
+  The measurement-source dropdown gains **Failover (live…)** alongside
+  Const/Live/Sum; the value field takes a comma-separated list in priority order
+  (`primary, fallback, …`, `device.register` for a cross-device source). The
+  editor round-trips it as `source: {failover: […]}` — the runtime resolver
+  (3.9.0) serves the first *fresh* candidate, auto-switches to the next when the
+  primary goes stale, and switches back the instant the primary recovers, logging
+  each switch as a vmeter event.
+- **Fixes a data-loss trap:** before this, a template already carrying a
+  `failover:` source had no matching dropdown option, so opening it in the editor
+  silently reset the row to `const` on save. The option now binds correctly, and
+  the soft "unknown source device" check extends to each name in a sum/failover
+  list (catches a typo'd `device.register` prefix on any redundant source).
+- **Decode panel** now renders a failover register as `⇢ a → b → c` (priority
+  order) instead of mislabeling the source list as a constant.
+- Backend (normalize/validate/serialize/resolve) already supported failover; this
+  release wires it end-to-end through the operator UI. Additive — existing
+  templates and the const/live/sum paths are unchanged.
+
 ## 3.20.0
 
 ### 2026-08-13 — Community YAML template import

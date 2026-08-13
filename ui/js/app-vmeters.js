@@ -738,6 +738,7 @@ Object.assign(JanitzaMonitor.prototype, {
               </table>
             </div>
             <p class="hint-text">Address in hex (e.g. <code>0x0028</code>) or decimal. Scale: raw = value × scale (consumer reads raw ÷ scale). Length applies to <code>string</code> only.</p>
+            <p class="hint-text"><b>Sum</b> adds every listed live value (any missing → the register goes stale). <b>Failover</b> takes a comma-separated list in priority order and serves the first <em>fresh</em> one — it auto-switches to the next source when the primary goes stale and switches back the moment the primary recovers. Use <code>device.register</code> to pull a redundant source from another device.</p>
           </div>`;
         (tpl.registers || []).forEach(r => this._addTemplateRow(r));
         if (!(tpl.registers || []).length) this._addTemplateRow();
@@ -784,6 +785,9 @@ Object.assign(JanitzaMonitor.prototype, {
         const addrHex = '0x' + Number(reg.addr || 0).toString(16).padStart(4, '0');
         const isLive = reg.source_kind === 'live';
         const srcVal = isLive ? '' : (Array.isArray(reg.source) ? reg.source.join(', ') : String(reg.source ?? ''));
+        // both list kinds take a comma-separated name list; the hint differs
+        // (sum = unordered addends, failover = priority order primary→fallback)
+        const listPh = k => k === 'sum' ? 'name1, name2, …' : k === 'failover' ? 'primary, fallback, …' : '';
         tr.innerHTML = `
           <td style="padding:3px 6px;"><input class="input input-sm vm-addr" style="width:82px;" value="${addrHex}"></td>
           <td><select class="input input-sm vm-type" style="width:92px;">${typeOpts}</select></td>
@@ -791,11 +795,12 @@ Object.assign(JanitzaMonitor.prototype, {
             <option value="const" ${reg.source_kind === 'const' ? 'selected' : ''}>${this.t('lbl.constNum', "Const num")}</option>
             <option value="const_str" ${reg.source_kind === 'const_str' ? 'selected' : ''}>${this.t('lbl.constText', "Const text")}</option>
             <option value="live" ${isLive ? 'selected' : ''}>${this.t('lbl.liveValue', "Live value")}</option>
-            <option value="sum" ${reg.source_kind === 'sum' ? 'selected' : ''}>Sum (live…)</option>
+            <option value="sum" ${reg.source_kind === 'sum' ? 'selected' : ''}>${this.t('lbl.sumLive', "Sum (live…)")}</option>
+            <option value="failover" ${reg.source_kind === 'failover' ? 'selected' : ''}>${this.t('lbl.failoverLive', "Failover (live…)")}</option>
           </select></td>
           <td>
             <select class="input input-sm vm-src-live" style="min-width:240px;${isLive ? '' : 'display:none;'}">${srcOpts || '<option value="">(no live values)</option>'}</select>
-            <input class="input input-sm vm-src-val" style="width:200px;${isLive ? 'display:none;' : ''}" placeholder="${reg.source_kind === 'sum' ? 'name1, name2, …' : ''}" value="${this._esc(srcVal)}">
+            <input class="input input-sm vm-src-val" style="width:200px;${isLive ? 'display:none;' : ''}" placeholder="${listPh(reg.source_kind)}" value="${this._esc(srcVal)}">
           </td>
           <td><input class="input input-sm vm-scale" style="width:64px;" value="${reg.scale ?? 1}"></td>
           <td><input class="input input-sm vm-len" type="number" style="width:52px;" value="${reg.length ?? 1}"></td>
@@ -810,7 +815,7 @@ Object.assign(JanitzaMonitor.prototype, {
             const live = kindSel.value === 'live';
             liveSel.style.display = live ? '' : 'none';
             valInp.style.display = live ? 'none' : '';
-            valInp.placeholder = kindSel.value === 'sum' ? 'name1, name2, …' : '';
+            valInp.placeholder = listPh(kindSel.value);
         });
         tr.querySelector('.vm-row-del').addEventListener('click', () => tr.remove());
         // duplicate: copy every field, give the clone the next free address
@@ -857,10 +862,13 @@ Object.assign(JanitzaMonitor.prototype, {
             const st = tr.querySelector('.vm-stale')?.value;
             if (st) row.stale_after_s = Number(st);
             // soft validation: a dotted source whose prefix is not a known
-            // device would resolve as a bare name (or come up missing at runtime)
-            if (kind === 'live' && source.includes('.') && this._vmDeviceIds
-                && !this._vmDeviceIds.has(source.split('.')[0])) {
-                unknownDevs.add(source.split('.')[0]);
+            // device would resolve as a bare name (or come up missing at runtime).
+            // live = one name; sum/failover = a comma-separated list of names.
+            if (this._vmDeviceIds) {
+                const names = kind === 'live' ? [source]
+                    : (kind === 'sum' || kind === 'failover') ? source.split(',') : [];
+                names.map(s => s.trim()).filter(s => s.includes('.'))
+                    .forEach(s => { if (!this._vmDeviceIds.has(s.split('.')[0])) unknownDevs.add(s.split('.')[0]); });
             }
             registers.push(row);
         });
