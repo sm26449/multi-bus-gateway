@@ -312,6 +312,15 @@ class VirtualMeterManager:
                     "freshness_age_s": st.get("freshness_age_s"),
                     "uptime_s": st.get("uptime_s"),
                     "last_error": st.get("last_error"),
+                    # Staleness policy + bounds so a monitor (alertd/HA) sees HOW a
+                    # meter degrades, not just that it did: fail/sentinel/hold, the
+                    # freshness window, and (hold only) the grace cap.
+                    "on_stale": st.get("on_stale"),
+                    "stale_after_s": st.get("stale_after_s"),
+                    "max_hold_s": st.get("max_hold_s"),
+                    # per-rebuild quality counts + live redundant-source routing
+                    "quality": st.get("quality", {}),
+                    "failover": st.get("failover", []),
                     "ts": int(time.time()),
                 }
                 pub.publish_state(f"vmeter/{st.get('id')}/state", json.dumps(payload))

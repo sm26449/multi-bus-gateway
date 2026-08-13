@@ -1126,9 +1126,12 @@ class VirtualMeter:
                 "errors": self.stats.errors,
                 "bytes_rx": self.stats.bytes_rx, "bytes_tx": self.stats.bytes_tx,
                 "last_error": self.stats.last_error(),
-                # Composite staleness policy + last rebuild's per-register quality
-                # (legacy instances report policy='legacy' and all-zero quality).
+                # Composite staleness policy + its bounds + last rebuild's
+                # per-register quality (legacy instances report policy='legacy'
+                # and all-zero quality). max_hold_s is only meaningful for 'hold'.
                 "on_stale": self.on_stale,
+                "stale_after_s": self.stale_after_s,
+                "max_hold_s": self.max_hold_s,
                 "quality": dict(self._quality),
                 # Live redundant-source routing: for each failover register, its
                 # candidates in priority order and which one is feeding it now —

@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.23.0
+
+### 2026-08-13 — Staleness policy + routing in the published meter state
+
+- The retained vmeter state (`vmeter/<id>/state`) now carries the **staleness
+  policy and its bounds** (`on_stale`, `stale_after_s`, `max_hold_s`), the last
+  rebuild's **quality** counts (fresh/stale/missing), and live **failover**
+  routing (per register: candidates + which source is active + on_primary). A
+  monitor (alertd / HA / dashboards) can now see HOW a meter degrades and which
+  redundant source is feeding it — not just that it went stale. `status()` gains
+  `stale_after_s` / `max_hold_s` to back this. Additive; no electrical data
+  duplicated.
+
 ## 3.22.0
 
 ### 2026-08-13 — Instance-level redundant source device (device_fallback)
