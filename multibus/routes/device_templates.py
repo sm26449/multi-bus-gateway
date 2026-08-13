@@ -166,4 +166,41 @@ def build(ctx) -> APIRouter:
             "validation_errors": validate_template(tpl),
         }
 
+    @r.post("/api/device-templates/import-yaml")
+    def import_yaml_template(payload: Dict = Body(...)):
+        """Convert an upstream/community YAML register map into a device-template
+        PREVIEW (not saved). Richer than CSV — per-register enum/bits/thresholds/
+        write envelope pass through. The UI reviews register_count/warnings/
+        validation_errors, then POSTs the returned device_template to
+        /api/device-templates/upload to save it."""
+        from ..yaml_import import parse_yaml
+        from ..device_template import validate_template
+        yaml_text = str(payload.get('yaml', '') or '')
+        if not yaml_text.strip():
+            raise HTTPException(status_code=422, detail={"errors": ["yaml is empty"]})
+        if len(yaml_text) > 2_000_000:
+            raise HTTPException(status_code=413, detail={"errors": [
+                "yaml too large (max 2 MB) — a register map should be a few thousand entries"]})
+        parsed = parse_yaml(
+            yaml_text,
+            default_data_type=str(payload.get('default_data_type', 'float')),
+            default_poll_group=str(payload.get('default_poll_group', '')))
+        if parsed['errors']:
+            raise HTTPException(status_code=422, detail={"errors": parsed['errors']})
+        m = parsed.get('meta') or {}
+        tpl = {"device_template": {
+            "id": str(payload.get('id') or m.get('id') or 'imported_device').strip(),
+            "name": str(payload.get('name') or m.get('name') or m.get('title') or 'Imported device').strip(),
+            "vendor": str(payload.get('vendor') or m.get('vendor') or ''),
+            "model": str(payload.get('model') or m.get('model') or ''),
+            "source_document": "YAML import",
+            "registers": parsed['registers'],
+        }}
+        return {
+            "device_template": tpl,
+            "register_count": len(parsed['registers']),
+            "warnings": parsed['warnings'],
+            "validation_errors": validate_template(tpl),
+        }
+
     return r

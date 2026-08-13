@@ -1535,11 +1535,12 @@
     <div class="modal" id="csvImportModal">
         <div class="modal-content" style="max-width:720px;">
             <div class="modal-header">
-                <h3><i class="bi bi-filetype-csv"></i> <span data-i18n="csv.title">Import register map from CSV</span></h3>
+                <h3 id="csvModalTitle"><i class="bi bi-filetype-csv"></i> <span data-i18n="csv.title">Import register map from CSV</span></h3>
                 <button class="modal-close" aria-label="Close" onclick="app.closeModal('csvImportModal')">&times;</button>
             </div>
             <div class="modal-body">
-                <p class="field-hint" style="margin:0 0 10px;" data-i18n="csv.intro">A CSV register list from a vendor or the community becomes a device template. Columns are matched loosely — <b>address</b> and <b>name</b> are required; <b>label, unit, type, scale, category, json_path</b> are optional. Address accepts decimal or 0x hex.</p>
+                <p class="field-hint" id="csvIntroCsv" style="margin:0 0 10px;" data-i18n="csv.intro">A CSV register list from a vendor or the community becomes a device template. Columns are matched loosely — <b>address</b> and <b>name</b> are required; <b>label, unit, type, scale, category, json_path</b> are optional. Address accepts decimal or 0x hex.</p>
+                <p class="field-hint" id="csvIntroYaml" style="margin:0 0 10px;display:none;" data-i18n="csv.introYaml">A community/vendor YAML register map becomes a device template. Accepts a bare list, a <b>registers:</b> list, or a <b>device_template:</b> wrapper. Richer than CSV — per-register <b>enum, bits, thresholds</b> and the write envelope pass through untouched. Field names are matched loosely (reg/addr, type/datatype, factor/gain).</p>
                 <div class="form-row">
                     <div class="form-group"><label class="form-label" data-i18n="csv.id">Template id</label>
                         <input type="text" id="csvId" class="input" placeholder="eastron_sdm630"></div>
@@ -1558,9 +1559,9 @@
                             <option value="uint32">uint32</option></select></div>
                 </div>
                 <div class="form-group">
-                    <label class="form-label" for="csvText">CSV
-                        <a href="#" onclick="app.downloadCsvExample();return false;" style="font-weight:400;font-size:12px;margin-left:8px;" data-i18n="csv.example">download example</a>
-                        · <label for="csvFile" style="display:inline;cursor:pointer;color:var(--primary,#2563eb);font-size:12px;" data-i18n="csv.pickFile">open a .csv file</label>
+                    <label class="form-label" for="csvText"><span id="csvTextLabel">CSV</span>
+                        <a href="#" id="csvExampleLink" onclick="app.downloadCsvExample();return false;" style="font-weight:400;font-size:12px;margin-left:8px;" data-i18n="csv.example">download example</a>
+                        · <label for="csvFile" id="csvPickLabel" style="display:inline;cursor:pointer;color:var(--primary,#2563eb);font-size:12px;" data-i18n="csv.pickFile">open a .csv file</label>
                         <input type="file" id="csvFile" accept=".csv,text/csv" style="display:none;">
                     </label>
                     <textarea id="csvText" class="input" rows="8" style="font-family:monospace;font-size:12px;" placeholder="address,name,label,unit,type,scale&#10;0x0000,V_L1,Voltage L1-N,V,float,1"></textarea>

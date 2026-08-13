@@ -1,5 +1,25 @@
 # Changelog
 
+## 3.20.0
+
+### 2026-08-13 — Community YAML template import
+
+- **YAML register-map import** — a vendor/community device map in YAML becomes an
+  MBG device-template preview (reviewed, then saved), symmetric with the existing
+  CSV import. Richer than CSV: per-register `enum`/`bits`/`mask`/`shift`/`offset`/
+  `thresholds` and the full write envelope (`writable`, `write_min/max/safe`) pass
+  through untouched, so a map that already speaks MBG imports at full fidelity.
+- Accepts a bare list, a `registers:` list (also `points`/`signals`/`sensors`/…),
+  or a `device_template:` wrapper, and matches field names loosely (`reg`/`addr`,
+  `type`/`datatype`, `factor`/`gain`, `desc`→`label`) — reusing the CSV importer's
+  alias/address/type machinery. `id`/`name`/`vendor`/`model` fall back to the
+  document's own meta. Rows with no address (and no `json_path`), bad addresses, or
+  duplicates are skipped with a warning; unknown types coerce to the default.
+- New `POST /api/device-templates/import-yaml` (2 MB cap) returns the same preview
+  shape as import-csv (`register_count`/`warnings`/`validation_errors`). The
+  Template Manager gets an **Import YAML** button; the shared import modal is now
+  format-aware. Additive — no change to existing templates or the CSV path.
+
 ## 3.19.0
 
 ### 2026-08-13 — Backlog close-out (3/3): HA connectivity + coverage

@@ -68,6 +68,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <input type="search" id="tmSearch" placeholder="${t('templates.search', 'Search maps…')}" value="${this._esc(this._tmSearch || '')}" style="max-width:240px;padding:6px 10px;border:1px solid var(--border-color,#ccc);border-radius:6px;background:var(--input-bg,transparent);color:inherit;">
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
               <button class="btn btn-ghost btn-sm" id="tmImportCsvBtn"><i class="bi bi-filetype-csv"></i> ${t('registers.importCsv', 'Import CSV')}</button>
+              <button class="btn btn-ghost btn-sm" id="tmImportYamlBtn"><i class="bi bi-filetype-yml"></i> ${t('registers.importYaml', 'Import YAML')}</button>
               <button class="btn btn-ghost btn-sm" id="tmUploadBtn"><i class="bi bi-upload"></i> ${t('templates.upload', 'Upload JSON')}</button>
               <button class="btn btn-sm" id="tmNewBtn"><i class="bi bi-plus-lg"></i> ${t('templates.new', 'New map')}</button>
             </div></div>`;
@@ -120,7 +121,8 @@ Object.assign(JanitzaMonitor.prototype, {
         el.querySelectorAll('[data-tm-view]').forEach(b => b.addEventListener('click', () => this.viewTemplate(b.dataset.tmView)));
         document.getElementById('tmNewBtn')?.addEventListener('click', () => this.openTplEditor(null));
         document.getElementById('tmUploadBtn')?.addEventListener('click', () => this.tplUpload());
-        document.getElementById('tmImportCsvBtn')?.addEventListener('click', () => this.openCsvImport(true));
+        document.getElementById('tmImportCsvBtn')?.addEventListener('click', () => this.openCsvImport(true, 'csv'));
+        document.getElementById('tmImportYamlBtn')?.addEventListener('click', () => this.openCsvImport(true, 'yaml'));
         el.querySelectorAll('[data-tm-edit]').forEach(b => b.addEventListener('click', () => this.openTplEditor(b.dataset.tmEdit)));
         el.querySelectorAll('[data-tm-dup]').forEach(b => b.addEventListener('click', () => this.openTplEditor(b.dataset.tmDup, true)));
         el.querySelectorAll('[data-tm-exp]').forEach(b => b.addEventListener('click', () => this.tplExport(b.dataset.tmExp)));
@@ -196,8 +198,9 @@ Object.assign(JanitzaMonitor.prototype, {
     // managerMode: from the Template Manager the import SAVES a library template
     // (no device to assign to). From a device's Registers editor it imports and
     // assigns to that device (the original behaviour).
-    openCsvImport(managerMode = false) {
+    openCsvImport(managerMode = false, fmt = 'csv') {
         this._csvManagerMode = !!managerMode;
+        this._importFmt = fmt === 'yaml' ? 'yaml' : 'csv';
         if (!managerMode) {
             const id = this._regDevice || this._primaryDeviceId();
             if (id === this._primaryDeviceId()) {
@@ -210,6 +213,22 @@ Object.assign(JanitzaMonitor.prototype, {
         this._csvTemplate = null;
         ['csvId', 'csvName', 'csvVendor', 'csvModel', 'csvText'].forEach(k => { const e = document.getElementById(k); if (e) e.value = ''; });
         document.getElementById('csvPreviewResult').innerHTML = '';
+        // dress the shared modal for the chosen format
+        const yaml = this._importFmt === 'yaml';
+        const set = (id, prop, val) => { const e = document.getElementById(id); if (e) e[prop] = val; };
+        const show = (id, on) => { const e = document.getElementById(id); if (e) e.style.display = on ? '' : 'none'; };
+        set('csvModalTitle', 'innerHTML', yaml
+            ? '<i class="bi bi-filetype-yml"></i> ' + this._esc(this.t('yaml.title', 'Import register map from YAML'))
+            : '<i class="bi bi-filetype-csv"></i> ' + this._esc(this.t('csv.title', 'Import register map from CSV')));
+        show('csvIntroCsv', !yaml); show('csvIntroYaml', yaml);
+        show('csvExampleLink', !yaml);           // example download is CSV-only
+        set('csvTextLabel', 'textContent', yaml ? 'YAML' : 'CSV');
+        set('csvPickLabel', 'textContent', yaml ? this.t('yaml.pickFile', 'open a .yaml file')
+                                                : this.t('csv.pickFile', 'open a .csv file'));
+        set('csvFile', 'accept', yaml ? '.yaml,.yml,text/yaml' : '.csv,text/csv');
+        set('csvText', 'placeholder', yaml
+            ? 'registers:\n  - { address: 0x0000, name: voltage_l1_n, unit: V, data_type: float, scale: 1 }\n  - { address: 40, name: power_active_total, unit: W, data_type: int32, scale: 10 }'
+            : 'address,name,label,unit,type,scale\n0x0000,V_L1,Voltage L1-N,V,float,1');
         const impBtn = document.getElementById('csvImportBtn');
         impBtn.disabled = true;
         impBtn.textContent = managerMode ? this.t('csv.importLib', 'Import to library')
@@ -227,16 +246,24 @@ Object.assign(JanitzaMonitor.prototype, {
 
     async csvPreview(btn) {
         await this._loadCanonicalFields();   // ensure the dict is ready for the canonical count
-        const csv = document.getElementById('csvText').value;
+        const yaml = this._importFmt === 'yaml';
+        const text = document.getElementById('csvText').value;
         const box = document.getElementById('csvPreviewResult');
-        if (!csv.trim()) { box.innerHTML = `<span class="field-hint">${this.t('csv.noData', 'Paste a CSV or open a file first.')}</span>`; return; }
+        if (!text.trim()) {
+            box.innerHTML = `<span class="field-hint">${yaml
+                ? this.t('yaml.noData', 'Paste a YAML map or open a file first.')
+                : this.t('csv.noData', 'Paste a CSV or open a file first.')}</span>`;
+            return;
+        }
         const orig = btn ? btn.innerHTML : '';
         if (btn) { btn.disabled = true; btn.innerHTML = '<span class="btn-spinner"></span>'; }
         try {
-            const r = await fetch('/api/device-templates/import-csv', {
+            const r = await fetch(yaml ? '/api/device-templates/import-yaml'
+                                       : '/api/device-templates/import-csv', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    csv, id: document.getElementById('csvId').value.trim(),
+                    [yaml ? 'yaml' : 'csv']: text,
+                    id: document.getElementById('csvId').value.trim(),
                     name: document.getElementById('csvName').value.trim(),
                     vendor: document.getElementById('csvVendor').value.trim(),
                     model: document.getElementById('csvModel').value.trim(),
@@ -267,7 +294,7 @@ Object.assign(JanitzaMonitor.prototype, {
                   + `</div>`
                 : '';
             box.innerHTML = `<div class="settings-card" style="padding:10px 12px;">
-                <div><b style="color:${verr.length ? 'var(--danger-text,#c0392b)' : 'var(--success-text,#1a8f4c)'};">${res.register_count}</b> ${this.t('csv.parsed', 'measurements parsed')} · ${this.t('csv.cols', 'columns')}: ${(res.columns || []).map(c => this._esc(c)).join(', ')}</div>
+                <div><b style="color:${verr.length ? 'var(--danger-text,#c0392b)' : 'var(--success-text,#1a8f4c)'};">${res.register_count}</b> ${this.t('csv.parsed', 'measurements parsed')}${(res.columns && res.columns.length) ? ` · ${this.t('csv.cols', 'columns')}: ${res.columns.map(c => this._esc(c)).join(', ')}` : ''}</div>
                 ${canonLine}
                 ${verr.length ? `<div style="color:var(--danger-text,#c0392b);font-size:12.5px;margin-top:6px;">${this.t('csv.fixFirst', 'Fix before importing')}: ${verr.slice(0, 5).map(e => this._esc(e)).join('<br>')}</div>` : ''}
                 ${warn.length ? `<details style="margin-top:6px;"><summary style="cursor:pointer;color:var(--warning-text,#c77700);font-size:12.5px;">${warn.length} ${this.t('csv.warnings', 'skipped rows / coercions')}</summary><div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">${warn.slice(0, 20).map(w => this._esc(w)).join('<br>')}</div></details>` : ''}</div>`;
