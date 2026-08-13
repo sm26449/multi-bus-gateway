@@ -126,11 +126,34 @@ def _write_ser2net_config(adapters: list[dict]) -> None:
     os.replace(tmp, SER2NET_CFG)
 
 
+def _clear_stale_locks() -> None:
+    """Remove UUCP lockfiles (LCK..ttyUSB*) left behind by an unclean ser2net
+    shutdown (host freeze, container kill). Container PIDs restart from low
+    numbers, so a stale lock's PID can match a live process and gensio then
+    refuses every open with GE_INUSE ("Object was already in use") — surviving
+    even a host reboot, since the container layer persists. Only safe to call
+    while ser2net is NOT running: then any lock in this container is stale by
+    definition (the bridge is the sole serial user here)."""
+    seen = set()
+    for d in ("/run/lock", "/var/lock"):
+        for f in glob.glob(os.path.join(d, "LCK..*")):
+            real = os.path.realpath(f)
+            if real in seen:
+                continue
+            seen.add(real)
+            try:
+                os.unlink(f)
+                print(f"[supervisor] removed stale serial lock {f}", flush=True)
+            except OSError:
+                pass
+
+
 def _reload_ser2net() -> None:
     global _ser2net
     if _ser2net and _ser2net.poll() is None:
         _ser2net.send_signal(signal.SIGHUP)      # non-disruptive: only changed ports restart
     else:
+        _clear_stale_locks()                     # ser2net not running → locks are leftovers
         _ser2net = subprocess.Popen(["ser2net", "-n", "-c", SER2NET_CFG])
 
 
@@ -150,10 +173,12 @@ def reconcile() -> None:
                 # always populated (incl. the unchanged/early-return path)
                 a["tcp_port"] = _assign_port(a["stable_id"], pmap)
         managed = [a for a in new if a["available"]]
-        # only the MANAGED set drives ser2net; changes to it trigger a reload
+        # only the MANAGED set drives ser2net; changes to it trigger a reload.
+        # An unchanged set only short-circuits while ser2net is actually alive —
+        # otherwise a dead ser2net stayed dead until the next adapter change.
         sig = {a["stable_id"] for a in managed}
         prev = {a["stable_id"] for a in _adapters if a.get("available")}
-        if sig == prev and _adapters:
+        if sig == prev and _adapters and _ser2net and _ser2net.poll() is None:
             _adapters = new                      # refresh dev names; no config change
             return
         _save_map(pmap)

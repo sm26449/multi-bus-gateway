@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.23.1
+
+### 2026-08-13 — serial-bridge: survive unclean shutdowns (stale UUCP lock + dead ser2net)
+
+- **Stale UUCP lockfiles are cleared before (re)starting ser2net.** A host
+  freeze or container kill leaves `/run/lock/LCK..ttyUSB*` behind; container
+  PIDs restart from low numbers, so the stale lock's PID can match a live
+  process and gensio then refuses every serial open with GE_INUSE ("Object was
+  already in use") — surviving even a host reboot, because the container layer
+  persists. Incident 2026-08-13: `fronius_rtu` unreadable for ~7h. Locks are
+  only touched while ser2net is not running, when any lock in the container is
+  stale by definition.
+- **A dead ser2net is now respawned by the periodic reconcile.** The
+  unchanged-adapter-set early return only short-circuits while the ser2net
+  process is actually alive; before, a crashed ser2net stayed down until the
+  next adapter hotplug event.
+
 ## 3.23.0
 
 ### 2026-08-13 — Staleness policy + routing in the published meter state
