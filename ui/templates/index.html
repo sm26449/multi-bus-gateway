@@ -1402,6 +1402,11 @@
                     <small style="color:var(--text-secondary);" data-i18n="vmeter.whichDevice">Which device's live values this meter re-serves.</small>
                 </div>
                 <div class="form-group">
+                    <label class="form-label" for="vmEditFallback" data-i18n="vmeter.fallbackDevice">Secondary source device (failover)</label>
+                    <select id="vmEditFallback" class="input" aria-label="Secondary source device"></select>
+                    <small style="color:var(--text-secondary);" data-i18n="vmeter.fallbackHint">Optional. If the source device goes stale, each register transparently falls back to this twin device (same canonical field). Recovers to the source the moment it returns. Pick a device on a DIFFERENT physical path for real redundancy.</small>
+                </div>
+                <div class="form-group">
                     <label class="form-label" data-i18n="lbl.port">Port</label>
                     <input type="number" id="vmEditPort" class="input">
                     <small id="vmEditPortHint" style="color:var(--text-secondary);"></small>
@@ -1462,6 +1467,11 @@
                     <label class="form-label" for="vmAddDevice" data-i18n="vmeter.sourceDevice">Source device</label>
                     <select id="vmAddDevice" class="input" aria-label="Source device"></select>
                     <small style="color:var(--text-secondary);" data-i18n="vmeter.whoseDevice">Whose live values this meter re-serves.</small>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="vmAddFallback" data-i18n="vmeter.fallbackDevice">Secondary source device (failover)</label>
+                    <select id="vmAddFallback" class="input" aria-label="Secondary source device"></select>
+                    <small style="color:var(--text-secondary);" data-i18n="vmeter.fallbackHint">Optional. If the source device goes stale, each register transparently falls back to this twin device (same canonical field). Recovers to the source the moment it returns. Pick a device on a DIFFERENT physical path for real redundancy.</small>
                 </div>
                 <div class="form-group">
                     <label class="form-label" for="vmAddTemplate" data-i18n="lbl.template">Template</label>

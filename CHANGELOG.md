@@ -1,5 +1,37 @@
 # Changelog
 
+## 3.22.0
+
+### 2026-08-13 — Instance-level redundant source device (device_fallback)
+
+- **A virtual-meter instance can now name a secondary "twin" source device.**
+  One field on the instance (`device_fallback`) makes the WHOLE meter transparently
+  fail over per register when its source goes stale — no per-register template
+  edits, because canonical field names are identical across devices (`what's on
+  one is on the other, if it exists`). At start, each bare-name `live` register is
+  rewritten into a failover pair `[name, <fallback>.name]`, reusing the tested
+  failover resolver (first fresh wins, auto-recovers to the source). Const, sum,
+  already-failover, and explicit `device.register` registers are left untouched.
+- **Where:** the Add/Edit **instance** modal (🎚) gains a *Secondary source device
+  (failover)* dropdown next to the source device — the instance is where physical
+  sources are bound, so redundancy belongs there. The per-register **template**
+  failover (3.21.0) stays as the granular tool (different fallback per register /
+  arbitrary pairing); the instance field is the one-switch ergonomic layer on top.
+  Both drive the same engine — nothing is removed.
+- **Thorough observability (so a problem is traceable after the fact):** a
+  start-time coverage log per instance (`device_fallback X → Y — N registers
+  wired; twin has now: […]; armed/waiting: […]`); every runtime switch logs to
+  BOTH the event ring (UI Logs / alertd) AND the process log (grep-able), naming
+  the meter, register and both sources — warn on drop to a lower-priority source,
+  info on recovery; and `status()` exposes live `failover` routing (per register:
+  candidates + which is active + on_primary), surfaced as an on-card badge
+  (`✓ on primary` / `⇢ n/m on fallback`).
+- **Safety:** the fallback device is validated at save (must be a known device,
+  must differ from the source) and re-checked at start (a mis-set value is ignored
+  with a warning, never blocks a control-critical meter from starting). A
+  configured-but-offline twin validates and arms; failover engages the moment it
+  publishes. Off by default, fully back-compatible.
+
 ## 3.21.0
 
 ### 2026-08-13 — Redundant-source failover, editable from the UI

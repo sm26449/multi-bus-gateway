@@ -436,15 +436,22 @@ class VirtualMeter:
         return fallback if fallback is not None else (None, None, None, None)
 
     def _note_failover(self, reg: RegisterDef, name: str) -> None:
-        """Log a one-line event when a failover row changes which source feeds
-        it — a warn when it drops to a lower-priority source, an info when it
-        recovers toward the primary. Silent on the first bind and steady state."""
+        """Record + log which source currently feeds a failover row, so a switch
+        is traceable long after it happened. The first bind logs the initial
+        routing (process log only — no event, to keep the ring quiet at boot). A
+        later change writes BOTH an event (UI Logs / alertd via last_error) AND a
+        process-log line (container logs, grep-able), naming the meter, register
+        and both sources: warn when it drops to a lower-priority source, info
+        when it recovers toward the primary. Steady state is silent."""
         prev = self._failover_active.get(reg.addr)
         if prev == name:
             return
         self._failover_active[reg.addr] = name
-        if prev is None:
-            return                                        # first bind — no event
+        tag = f"vmeter '{self.t.id}' 0x{reg.addr:04x}"
+        if prev is None:                                  # first bind — no event
+            logger.info("%s: failover bound to '%s' (priority: %s)",
+                        tag, name, " > ".join(reg.source))
+            return
         try:
             recovering = reg.source.index(name) < reg.source.index(prev)
         except ValueError:
@@ -453,6 +460,11 @@ class VirtualMeter:
             "info" if recovering else "warn", "failover",
             f"0x{reg.addr:04x}: source {prev} → {name}"
             + (" (recovered)" if recovering else " (failover)"))
+        if recovering:
+            logger.info("%s: failover RECOVERED  %s → %s", tag, prev, name)
+        else:
+            logger.warning("%s: FAILOVER  %s → %s  (higher-priority source stale/missing)",
+                           tag, prev, name)
 
     def _row_bound(self, reg: RegisterDef, src_bound: Optional[float]) -> float:
         """Effective freshness bound for one row. An explicit row stale_after_s
@@ -1117,4 +1129,25 @@ class VirtualMeter:
                 # Composite staleness policy + last rebuild's per-register quality
                 # (legacy instances report policy='legacy' and all-zero quality).
                 "on_stale": self.on_stale,
-                "quality": dict(self._quality)}
+                "quality": dict(self._quality),
+                # Live redundant-source routing: for each failover register, its
+                # candidates in priority order and which one is feeding it now —
+                # so an operator can see at a glance if the meter is on primary or
+                # a fallback. Empty for meters with no failover rows.
+                "failover": self.failover_routes()}
+
+    def failover_routes(self) -> list[dict]:
+        """Per-failover-register routing: the candidate sources in priority order
+        and the one currently live (None until the row first binds)."""
+        out = []
+        for reg in self.t.registers:
+            if reg.source_kind != "failover" or not isinstance(reg.source, list):
+                continue
+            active = self._failover_active.get(reg.addr)
+            out.append({
+                "addr": reg.addr, "candidates": list(reg.source), "active": active,
+                # on_primary is True only once bound AND on the first candidate;
+                # None-active (not yet bound) is reported as not-on-primary.
+                "on_primary": bool(active) and active == reg.source[0],
+            })
+        return out

@@ -58,6 +58,7 @@ def build(ctx) -> APIRouter:
                 stale_after_s=float(payload.get("stale_after_s", 15)),
                 enabled=bool(payload.get("enabled", False)),
                 device=str(payload.get("device", "")),
+                device_fallback=str(payload.get("device_fallback", "")),
                 on_stale=str(payload.get("on_stale", "legacy")),
                 max_hold_s=float(payload.get("max_hold_s", 30)),
                 quality_block=bool(payload.get("quality_block", False)))
@@ -201,6 +202,7 @@ def build(ctx) -> APIRouter:
             stale_after_s=payload.get("stale_after_s"),
             update_interval_s=payload.get("update_interval_s"),
             device=payload.get("device"),
+            device_fallback=payload.get("device_fallback"),
             on_stale=payload.get("on_stale"),
             max_hold_s=payload.get("max_hold_s"),
             quality_block=payload.get("quality_block"))

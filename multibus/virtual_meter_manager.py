@@ -210,6 +210,76 @@ class VirtualMeterManager:
                        inst.get("template"), dev)
         return {}
 
+    def _fallback_store(self, dev: str) -> dict:
+        """Live cache of the failover device (primary cache if it IS the primary).
+        Empty dict if the device has no cache yet (configured but offline) — the
+        failover engine treats a missing candidate as 'skip', so an armed
+        fallback to an offline twin simply waits for it to come online."""
+        if dev == self.primary_device_id:
+            return self.current_values
+        return self.device_values.get(dev, {})
+
+    def _inst_fallback(self, inst: dict) -> str:
+        """Validated secondary (failover) source device for an instance, or ''.
+        Must be a KNOWN device id and differ from the primary source device; a
+        bad value is ignored with a warning (a mis-set fallback must never keep a
+        control-critical meter from starting). 'Known' = the primary device or a
+        registered device id, so a configured-but-offline twin still validates."""
+        fb = str(inst.get("device_fallback") or "").strip()
+        if not fb:
+            return ""
+        primary = self._inst_device(inst)
+        if fb == primary:
+            logger.warning("vmeter '%s': device_fallback == primary source '%s' — ignored",
+                           inst.get("template"), primary)
+            return ""
+        if not (fb == self.primary_device_id or fb in self.device_values):
+            logger.warning("vmeter '%s': device_fallback '%s' is not a known device — ignored",
+                           inst.get("template"), fb)
+            return ""
+        return fb
+
+    def _check_fallback(self, fb: str, src_device: str) -> Optional[str]:
+        """Validate a device_fallback at SAVE time — return an error string to
+        reject, or None if OK/empty. Stricter than :meth:`_inst_fallback` (which
+        silently ignores at start): a save-time typo should surface, not vanish."""
+        fb = str(fb or "").strip()
+        if not fb:
+            return None
+        if fb == (src_device or self.primary_device_id):
+            return "device_fallback must differ from the source device"
+        if not (fb == self.primary_device_id or fb in self.device_values):
+            return f"unknown device_fallback {fb!r} — pick a configured device"
+        return None
+
+    def _apply_device_fallback(self, template, inst: dict, fb: str) -> None:
+        """Rewrite each bare-name LIVE register into an ordered failover pair
+        [name, <fb>.name], so the whole meter transparently falls back to a twin
+        device — no per-register template edits, since canonical field names are
+        identical across devices. Reuses the (tested) failover resolver. Registers
+        that are const/sum/already-failover, or whose source is an explicit
+        device.register, are left untouched. Logs a one-line coverage summary:
+        which fields the twin currently publishes (live fallback ready) vs not
+        (armed, waiting for the twin to come online)."""
+        primary = self._inst_device(inst)
+        fb_store = self._fallback_store(fb)
+        wired, ready, waiting = 0, [], []
+        for reg in template.registers:
+            if reg.source_kind != "live" or not isinstance(reg.source, str):
+                continue
+            if "." in reg.source:                 # explicit cross-device — leave as authored
+                continue
+            reg.source_kind = "failover"
+            reg.source = [reg.source, f"{fb}.{reg.source}"]   # [primary bare, twin dotted]
+            wired += 1
+            field = reg.source[0]
+            (ready if _lookup(fb_store, field) is not None else waiting).append(field)
+        logger.info(
+            "vmeter '%s': device_fallback %s → %s — %d live registers wired; "
+            "twin has now: [%s]; armed/waiting: [%s]",
+            inst.get("template"), primary, fb, wired,
+            ", ".join(sorted(ready)) or "-", ", ".join(sorted(waiting)) or "-")
+
     # ── state → MQTT (so alertd rules can monitor the meters) ─────────────
     def _publish_states(self) -> None:
         """Publish each configured meter's health to MQTT (retained) so external
@@ -385,6 +455,7 @@ class VirtualMeterManager:
                    "stale_after_s": inst.get("stale_after_s", 15),
                    "update_interval_s": inst.get("update_interval_s", 1.0),
                    "device": self._inst_device(inst),
+                   "device_fallback": str(inst.get("device_fallback") or ""),
                    "on_stale": inst.get("on_stale", "legacy"),
                    "max_hold_s": inst.get("max_hold_s", 30),
                    "quality_block": bool(inst.get("quality_block", False)),
@@ -788,10 +859,13 @@ class VirtualMeterManager:
     def add_instance(self, template_id: str, port: int, unit_id: int = 1,
                      stale_after_s: float = 15.0, enabled: bool = False,
                      device: str = "", on_stale: str = "legacy",
-                     max_hold_s: float = 30.0, quality_block: bool = False) -> dict:
+                     max_hold_s: float = 30.0, quality_block: bool = False,
+                     device_fallback: str = "") -> dict:
         """Add a new virtual-meter instance (persist + optionally start).
         `device` is the SOURCE device whose live values feed the meter (absent →
-        the primary device). `on_stale` is the composite staleness policy
+        the primary device). `device_fallback` is an optional twin device the
+        meter transparently fails over to per register when the source goes
+        stale. `on_stale` is the composite staleness policy
         (legacy|fail|sentinel|hold); `max_hold_s` bounds the hold policy."""
         if on_stale not in ("legacy", "fail", "sentinel", "hold"):
             return {"error": f"on_stale must be legacy|fail|sentinel|hold, not {on_stale!r}"}
@@ -823,6 +897,11 @@ class VirtualMeterManager:
                 "stale_after_s": float(stale_after_s)}
         if device and device != self.primary_device_id:
             inst["device"] = device
+        fb_err = self._check_fallback(device_fallback, device or self.primary_device_id)
+        if fb_err:
+            return {"error": fb_err}
+        if str(device_fallback or "").strip():
+            inst["device_fallback"] = str(device_fallback).strip()
         if on_stale != "legacy":                       # legacy = absent (back-compat)
             inst["on_stale"] = on_stale
             if on_stale == "hold":
@@ -890,7 +969,7 @@ class VirtualMeterManager:
     def update_instance(self, template_id: str, port=None, unit_id=None,
                         stale_after_s=None, update_interval_s=None,
                         device=None, on_stale=None, max_hold_s=None,
-                        quality_block=None) -> dict:
+                        quality_block=None, device_fallback=None) -> dict:
         """Edit an existing instance's port / unit_id / stale_after_s /
         update_interval_s / source device / staleness policy (partial — only
         provided fields change). Persists, then live-restarts the meter if it
@@ -927,6 +1006,16 @@ class VirtualMeterManager:
                 inst["device"] = device
             else:
                 inst.pop("device", None)
+        if device_fallback is not None:
+            fb = str(device_fallback).strip()
+            if fb:
+                # validate against the (possibly just-updated) source device
+                err = self._check_fallback(fb, inst.get("device") or self.primary_device_id)
+                if err:
+                    return {"error": err}
+                inst["device_fallback"] = fb
+            else:
+                inst.pop("device_fallback", None)      # empty = clear (back-compat)
         if port is not None:
             try:
                 port = int(port)
@@ -1003,6 +1092,12 @@ class VirtualMeterManager:
             raise ValueError(f"invalid template id {inst.get('template')!r} "
                              "in virtual_meters.yaml — instance not started")
         template = load_template(str(tmpl_path))
+        # instance-level redundant source: rewrite bare-name live registers into
+        # failover pairs against a twin device (validated; canonical names make
+        # the twin fields identical). No-op when no valid device_fallback is set.
+        fb = self._inst_fallback(inst)
+        if fb:
+            self._apply_device_fallback(template, inst, fb)
         if "port" in inst:
             template.transport["port"] = int(inst["port"])
         if "unit_id" in inst:

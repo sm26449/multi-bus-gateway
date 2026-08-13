@@ -142,3 +142,72 @@ def test_empty_failover_list_rejected():
     _, err = mgr._normalize_registers(
         [{"addr": 0, "type": "float", "source_kind": "failover", "source": " , "}], "big")
     assert err and "failover needs at least one" in err
+
+
+# ── instance-level device_fallback (rewrite bare-name live → failover pair) ──
+
+def _mgr(primary="janitza", devices=None, current=None):
+    m = VirtualMeterManager.__new__(VirtualMeterManager)
+    m.primary_device_id = primary
+    m.current_values = current if current is not None else {}
+    m.device_values = devices if devices is not None else {}
+    return m
+
+
+def _entry(name, value=1.0, mono=None, interval=None):
+    return {"name": name, "value": value, "mono": mono, "interval": interval}
+
+
+def test_inst_fallback_validation():
+    m = _mgr(primary="janitza", devices={"fronius": {}})
+    assert m._inst_fallback({"template": "t"}) == ""                        # none set
+    assert m._inst_fallback({"template": "t", "device_fallback": "fronius"}) == "fronius"
+    assert m._inst_fallback({"template": "t", "device_fallback": "janitza"}) == ""   # == primary
+    assert m._inst_fallback({"template": "t", "device_fallback": "nope"}) == ""      # unknown
+
+
+def test_check_fallback_save_errors():
+    m = _mgr(primary="janitza", devices={"fronius": {}})
+    assert m._check_fallback("", "janitza") is None
+    assert m._check_fallback("fronius", "janitza") is None
+    assert "differ" in m._check_fallback("janitza", "janitza")
+    assert "unknown" in m._check_fallback("nope", "janitza")
+
+
+def test_apply_device_fallback_rewrites_only_bare_live():
+    # twin (fronius) currently publishes power_active_total, not frequency
+    m = _mgr(primary="janitza",
+             devices={"fronius": {1: _entry("power_active_total", 1234.0, mono=1.0)}})
+    tmpl = T([
+        RegisterDef(addr=0x00, type="int32", source_kind="live", source="power_active_total"),
+        RegisterDef(addr=0x02, type="uint16", source_kind="live", source="frequency"),
+        RegisterDef(addr=0x04, type="uint16", source_kind="const", source=50),
+        RegisterDef(addr=0x06, type="float", source_kind="live", source="acme.voltage"),  # explicit x-dev
+    ])
+    m._apply_device_fallback(tmpl, {"template": "em24", "device_fallback": "fronius"}, "fronius")
+    by = {r.addr: r for r in tmpl.registers}
+    # bare-name live → failover pair
+    assert by[0x00].source_kind == "failover"
+    assert by[0x00].source == ["power_active_total", "fronius.power_active_total"]
+    assert by[0x02].source_kind == "failover"
+    assert by[0x02].source == ["frequency", "fronius.frequency"]
+    # const + explicit device.register untouched
+    assert by[0x04].source_kind == "const" and by[0x04].source == 50
+    assert by[0x06].source_kind == "live" and by[0x06].source == "acme.voltage"
+
+
+def test_device_fallback_resolves_primary_then_twin():
+    now = time.monotonic()
+    # primary store (janitza) fresh; twin (fronius) fresh too
+    primary = {1: _entry("power_active_total", 230.0, mono=now)}
+    fronius = {1: _entry("power_active_total", 231.0, mono=now)}
+    from multibus.virtual_meter_manager import make_multi_provider
+    prov = make_multi_provider(primary, {"fronius": fronius}, primary, "janitza")
+    reg = failover(0x00, ["power_active_total", "fronius.power_active_total"], typ="float")
+    vm = VirtualMeter(T([reg]), prov, stale_after_s=15, on_stale="fail")
+    vm._rebuild_block()
+    assert abs(f32(words_at(vm, 0x00)) - 230.0) < 0.01          # primary wins when fresh
+    # primary goes stale (old mono), twin still fresh → serve twin
+    primary[1]["mono"] = now - 100
+    vm._rebuild_block()
+    assert abs(f32(words_at(vm, 0x00)) - 231.0) < 0.01          # failover to twin

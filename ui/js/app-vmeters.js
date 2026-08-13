@@ -84,6 +84,7 @@ Object.assign(JanitzaMonitor.prototype, {
             const overview = `
                 <div style="display:flex;gap:24px 30px;flex-wrap:wrap;font-size:13px;margin-bottom:14px;">
                   <div><div style="color:var(--text-secondary);font-size:11.5px;">${t('vmeter.sourceDevice', 'Source device')}</div><b>${this._esc(devName(m.device))}</b> <span class="dev-chip">${this._esc(m.device)}</span></div>
+                  ${m.device_fallback ? `<div><div style="color:var(--text-secondary);font-size:11.5px;">${t('vmeter.fallbackTo', 'Failover to')}</div><b>${this._esc(devName(m.device_fallback))}</b> <span class="dev-chip">${this._esc(m.device_fallback)}</span>${this._fbRouteBadge(m)}</div>` : ''}
                   <div><div style="color:var(--text-secondary);font-size:11.5px;">${this.t('lbl.template', "Template")}</div><b>${mid}</b></div>
                   <div><div style="color:var(--text-secondary);font-size:11.5px;">${this.t('lbl.serving', "Serving")}</div><b>:${m.port ?? '—'}</b> · unit <b>${m.unit_id ?? 1}</b></div>
                   <div><div style="color:var(--text-secondary);font-size:11.5px;">${this.t('lbl.status', "Status")}</div>${badge}</div>
@@ -255,6 +256,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const set = (id, v) => { const e = document.getElementById(id); if (e) e.value = v; };
         const html = (id, opts) => { const e = document.getElementById(id); if (e) e.innerHTML = opts; };
         html('vmAddDevice', devices.map(d => `<option value="${this._esc(d.id)}" ${d.id === primaryId ? 'selected' : ''}>${this._esc(d.name || d.id)}</option>`).join(''));
+        this._wireFallbackSelect('vmAddDevice', 'vmAddFallback', devices, '');
         html('vmAddTemplate', templates.length
             ? templates.map(t => `<option value="${this._esc(t.id)}">${this._esc(t.name)} · ${t.registers} measurements</option>`).join('')
             : '<option value="">— all templates already added —</option>');
@@ -283,9 +285,46 @@ Object.assign(JanitzaMonitor.prototype, {
         upd();
     },
 
+    // Live routing badge for a meter's failover: how many registers are being
+    // served from the fallback right now (warn) vs all on primary (ok).
+    _fbRouteBadge(m) {
+        const routes = m.failover || [];
+        if (!m.running || !routes.length) return '';
+        const onFb = routes.filter(r => r.active && !r.on_primary).length;
+        if (onFb > 0) return ` <span class="sink-pill warn" title="${onFb}/${routes.length} registers currently served from the failover device">⇢ ${onFb}/${routes.length} on fallback</span>`;
+        const bound = routes.filter(r => r.active).length;
+        return bound ? ` <span class="sink-pill" title="all ${routes.length} failover registers on the primary source">✓ on primary</span>` : '';
+    },
+
+    // Options for a failover-device <select>: "(none)" + every device EXCEPT the
+    // currently chosen source (a meter can't fail over to itself).
+    _fallbackOptions(devices, selectedId, excludeId) {
+        return `<option value="" ${!selectedId ? 'selected' : ''}>${this.t('vmeter.fbNone', '— none (single source) —')}</option>`
+            + (devices || []).filter(d => d.id !== excludeId)
+                .map(d => `<option value="${this._esc(d.id)}" ${d.id === selectedId ? 'selected' : ''}>${this._esc(d.name || d.id)}</option>`)
+                .join('');
+    },
+
+    // Populate a failover-device select and keep it in sync with its source-device
+    // select (the source is excluded, and switching source that matches the
+    // current fallback falls the fallback back to "none").
+    _wireFallbackSelect(devSelId, fbSelId, devices, selectedFb) {
+        const devSel = document.getElementById(devSelId);
+        const fbSel = document.getElementById(fbSelId);
+        if (!fbSel) return;
+        const rebuild = () => {
+            const src = devSel ? devSel.value : '';
+            const keep = fbSel.value || selectedFb || '';
+            fbSel.innerHTML = this._fallbackOptions(devices, keep, src);
+        };
+        rebuild();
+        if (devSel) devSel.onchange = rebuild;     // assignment (no listener stacking)
+    },
+
     async submitAddInstance(btn) {
         const template = document.getElementById('vmAddTemplate').value;
         const device = document.getElementById('vmAddDevice')?.value || '';
+        const device_fallback = document.getElementById('vmAddFallback')?.value || '';
         const port = parseInt(document.getElementById('vmAddPort').value, 10);
         const unit_id = parseInt(document.getElementById('vmAddUnit').value, 10) || 1;
         const pr = this._vmAddPr || {};
@@ -302,7 +341,7 @@ Object.assign(JanitzaMonitor.prototype, {
             const r = await fetch('/api/virtual-meters', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ template, port, unit_id, enabled: false, device,
-                                       on_stale, max_hold_s, quality_block })
+                                       device_fallback, on_stale, max_hold_s, quality_block })
             });
             if (r.ok) {
                 this.showToast('success', this.t('toast.vmeter', 'Virtual meter'), `${template} ${this.t('toast.addedLc', 'added')}`);
@@ -348,10 +387,11 @@ Object.assign(JanitzaMonitor.prototype, {
         set('vmEditInstTemplate', template);
         // source device selector
         const devSel = document.getElementById('vmEditDevice');
+        const _devices = (this._vmAddCtx && this._vmAddCtx.devices) || this._devices || [];
         if (devSel) {
-            const devices = (this._vmAddCtx && this._vmAddCtx.devices) || this._devices || [];
-            devSel.innerHTML = devices.map(d => `<option value="${this._esc(d.id)}" ${d.id === m.device ? 'selected' : ''}>${this._esc(d.name || d.id)}</option>`).join('');
+            devSel.innerHTML = _devices.map(d => `<option value="${this._esc(d.id)}" ${d.id === m.device ? 'selected' : ''}>${this._esc(d.name || d.id)}</option>`).join('');
         }
+        this._wireFallbackSelect('vmEditDevice', 'vmEditFallback', _devices, m.device_fallback || '');
         const portEl = document.getElementById('vmEditPort');
         set('vmEditPort', m.port ?? '');
         if (portEl && pr.start != null) { portEl.min = pr.start; portEl.max = pr.end; }
@@ -374,6 +414,8 @@ Object.assign(JanitzaMonitor.prototype, {
         const body = { port: num('vmEditPort'), unit_id: num('vmEditUnit'),
                        stale_after_s: num('vmEditStale'), update_interval_s: num('vmEditInterval'),
                        device,
+                       // always send (possibly '') so clearing the fallback persists
+                       device_fallback: document.getElementById('vmEditFallback')?.value || '',
                        on_stale: document.getElementById('vmEditOnStale')?.value || undefined,
                        quality_block: !!document.getElementById('vmEditQuality')?.checked,
                        max_hold_s: num('vmEditMaxHold') };
