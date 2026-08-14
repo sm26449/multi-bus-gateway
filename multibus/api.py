@@ -2274,6 +2274,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 modbus_client.update_config(config.modbus)
                 modbus_client.update_registers(config.selected_registers, config.poll_groups)
                 results["modbus"] = modbus_client.reconnect()
+                # drop store ghosts at deselected addresses (audit M2) — an
+                # apply after a config import/restore can change the register set
+                from .device_registry import purge_deselected
+                purge_deselected(current_values, config.selected_registers)
 
             # Handle MQTT - create if needed
             if config.mqtt.enabled:
@@ -2359,6 +2363,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             if modbus_client:
                 modbus_client.update_registers(config.selected_registers, config.poll_groups)
                 modbus_client.reload_registers()
+            # drop store ghosts at deselected addresses (audit M2)
+            from .device_registry import purge_deselected
+            purge_deselected(current_values, config.selected_registers)
 
             if mqtt_publisher:
                 mqtt_publisher.update_registers(config.selected_registers)

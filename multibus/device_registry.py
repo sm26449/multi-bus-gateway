@@ -139,3 +139,21 @@ class DeviceRegistry:
             self._pairs[:] = [
                 (dev, primary_client if dev.primary else clients.get(dev.id))
                 for dev in device_cfgs]
+
+
+def purge_deselected(store: dict, registers) -> int:
+    """Drop live-store entries whose ADDRESS is no longer in the selected set
+    (audit 2026-08-14 M2). A template re-select that moves a register to a new
+    address while keeping its canonical name left the OLD entry frozen in the
+    store; name-based lookup (vmeter sources) binds the first match in
+    insertion order, so rows read the ghost's frozen timestamp and fail-stop
+    the whole meter until a process restart. Synthetic calc addresses have
+    their own purge in CalcEngine.load() and are left alone here. Returns the
+    number of entries dropped."""
+    from .calc_engine import CALC_ADDR_BASE
+    keep = {r.address for r in (registers or [])}
+    stale = [a for a in list(store)
+             if isinstance(a, int) and a < CALC_ADDR_BASE and a not in keep]
+    for a in stale:
+        store.pop(a, None)
+    return len(stale)

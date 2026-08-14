@@ -219,11 +219,19 @@ def build(ctx) -> APIRouter:
                                "description": g.get("description", "")}
                            for n, g in tpl.poll_groups.items()}
                 config.save_device_registers(device, reg_list, poll_groups=tpg)
+                regs, groups = config.load_device_registers(dev_cfg)
                 if dev_client:
-                    regs, groups = config.load_device_registers(dev_cfg)
                     dev_client.update_registers(regs, groups)
                     if hasattr(dev_client, 'reload_registers'):
                         dev_client.reload_registers()
+                # drop store ghosts at deselected addresses (M2: a re-select
+                # keeping a name at a NEW address must not leave the old
+                # entry to shadow it in name-based vmeter lookup) — NOT gated
+                # on a live client: the store outlives client restarts
+                from ..device_registry import purge_deselected
+                _store = registry.store_for(device)
+                if _store is not None:
+                    purge_deselected(_store, regs)
                 return {"status": "ok", "count": len(reg_list), "device": device}
 
             config.save_selected_registers(reg_list)
@@ -232,6 +240,9 @@ def build(ctx) -> APIRouter:
             if modbus_client:
                 modbus_client.update_registers(config.selected_registers, config.poll_groups)
                 modbus_client.reload_registers()
+            # drop store ghosts at deselected addresses (M2 — see device path)
+            from ..device_registry import purge_deselected
+            purge_deselected(ctx.current_values, config.selected_registers)
 
             mqtt_publisher = ctx.mqtt_publisher              # request-time (rebindable)
             if mqtt_publisher:
