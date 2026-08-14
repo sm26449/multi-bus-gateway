@@ -30,7 +30,8 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 # Query keys whose *value* is a secret (matched case-insensitively, substring).
 _SECRET_KEYS = ("token", "key", "secret", "password", "passwd", "pwd", "sig",
-                "signature", "auth", "access", "credential", "sas")
+                "signature", "auth", "access", "credential", "sas",
+                "cookie", "session")
 
 
 def _is_secret_key(k: str) -> bool:

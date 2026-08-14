@@ -456,13 +456,17 @@ _DIFF_LIMIT = 400            # per file — enough for honesty, bounded for sani
 def _mask(path: str, value):
     """Mask the value when its key smells secret; DEEP-redact dict/list values
     (an added subtree like a whole mqtt section may carry secrets inside)."""
-    from .audit import redact_obj
-    from .redact import _is_secret_key
+    from .audit import _is_url_key, redact_obj
+    from .redact import _is_secret_key, redact_url
     leaf = path.rsplit(".", 1)[-1].split("[")[0]
     if _is_secret_key(leaf):
         return "***"
     if isinstance(value, (dict, list)):
         return redact_obj(value)
+    # a SCALAR at a url leaf can embed userinfo/query secrets — the diff is
+    # viewer-readable, so mask it like redact_obj does for url-keyed strings
+    if isinstance(value, str) and _is_url_key(leaf):
+        return redact_url(value)
     return value
 
 
