@@ -28,7 +28,6 @@ without one it uses the device's base topic.
 """
 import json
 import logging
-import threading
 import time
 from typing import Any, Dict, List, Optional
 

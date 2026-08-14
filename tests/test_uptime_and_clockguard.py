@@ -88,7 +88,8 @@ def test_up_since_tracks_health_transitions(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_snapshot_bundle_includes_new_artifacts(tmp_path):
-    import io, zipfile
+    import io
+    import zipfile
     from multibus.snapshots import SnapshotStore, write_bundle_files
     cfg = write_config(tmp_path)
     (tmp_path / "builder_profiles.json").write_text('[{"id": "p1"}]')

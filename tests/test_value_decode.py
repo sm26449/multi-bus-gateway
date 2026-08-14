@@ -120,7 +120,6 @@ def test_round_trip_through_template():
 def test_enum_survives_save_user_and_reload(tmp_path):
     # the editor's Apply → POST /api/device-templates → save_user path must
     # persist enum/bits/mask/shift through parse_template → to_dict → disk
-    from pathlib import Path
     from multibus.device_template import TemplateRegistry
     reg = TemplateRegistry(builtin_dir=tmp_path / "builtin", user_dir=tmp_path / "user")
     reg.save_user({"device_template": {

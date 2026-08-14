@@ -16,7 +16,6 @@
 #
 """Audit trail: redaction, rotation, capture middleware, admin gating."""
 import json
-import time
 
 import pytest
 

@@ -22,11 +22,9 @@ frame handling is pinned against actual socket behaviour, not mocks."""
 import socket
 import threading
 
-import pytest
 
 from multibus.discovery import _esphome_hello, _pb_fields, scan_esphome
 
-from tests.test_devices import write_config
 from tests.test_devices_api import make_app, needs_tc
 
 

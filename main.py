@@ -17,7 +17,6 @@
 #
 """Multi-Bus Gateway — main application."""
 
-import asyncio
 import time
 import logging
 import argparse
@@ -234,7 +233,7 @@ class GatewayApp:
                     s.close()
                     logger.info(f"Network ready, MQTT broker reachable at {broker}:{port}")
                     break
-                except Exception as e:
+                except Exception:
                     if i < 29:
                         time.sleep(1)
                     else:
@@ -266,7 +265,7 @@ class GatewayApp:
                         s.close()
                         logger.info(f"Network ready, {label} device reachable at {host}:{port}")
                         break
-                    except Exception as e:
+                    except Exception:
                         if i < 29:
                             time.sleep(1)
                         else:
@@ -455,7 +454,6 @@ def main():
 def _ensure_self_signed(cert_path: str, key_path: str):
     """Create a self-signed cert/key pair at the given paths if absent.
     Uses the `cryptography` lib if present, else falls back to openssl."""
-    from pathlib import Path
     cp, kp = Path(cert_path), Path(key_path)
     if cp.exists() and kp.exists():
         return

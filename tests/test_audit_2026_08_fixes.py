@@ -18,7 +18,6 @@
 missing-timestamp staleness laundering."""
 import pytest
 
-from multibus.config import Config
 
 from tests.test_devices import write_config
 from tests.test_devices_api import make_app, needs_tc
@@ -218,7 +217,8 @@ def test_json_view_uses_guarded_clock():
 
 
 def test_identity_files_tightened_on_load(tmp_path):
-    import os, stat
+    import os
+    import stat
     from multibus.audit import AuditLog
     from multibus.passkeys import PasskeyStore
     ap = tmp_path / "audit.jsonl"; ap.write_text("{}\n"); os.chmod(ap, 0o644)
@@ -236,7 +236,8 @@ def test_identity_files_tightened_on_load(tmp_path):
 def test_discovery_timeout_not_reported_as_encrypted():
     """A silent service that accepts the connection but never answers the hello
     must NOT be reported as an encrypted ESPHome device."""
-    import socket, threading
+    import socket
+    import threading
     from multibus.discovery import _esphome_hello
     srv = socket.socket(); srv.bind(("127.0.0.1", 0)); srv.listen(1)
     port = srv.getsockname()[1]

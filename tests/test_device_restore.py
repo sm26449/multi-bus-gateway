@@ -20,7 +20,6 @@ Deleting a device keeps its FULL definition (a tombstone) so the UI can
 rebuild the exact device — connection, template AND register selection —
 instead of the old behaviour where only a stray registers file survived and
 was reusable solely on an exact id-collision."""
-import json
 
 from tests.test_devices_api import make_app, needs_tc
 

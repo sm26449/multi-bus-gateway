@@ -25,7 +25,6 @@ from typing import Dict, List, Optional, Callable, Any
 
 from pymodbus.client import ModbusTcpClient, ModbusSerialClient
 from pymodbus.transaction import ModbusRtuFramer
-from pymodbus.exceptions import ModbusException
 
 from . import bus_trace
 from .config import ModbusConfig, SelectedRegister, PollGroup

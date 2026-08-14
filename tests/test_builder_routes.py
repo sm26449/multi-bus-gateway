@@ -581,7 +581,9 @@ def test_adopt_resolves_password_sentinel(tmp_path, fake, monkeypatch):
 
 @needs_tc
 def test_export_strips_esphome_password_and_webhook_url(tmp_path, fake):
-    import io, zipfile, yaml as _y
+    import io
+    import zipfile
+    import yaml as _y
     extra = (ESPHOME_YAML.rstrip() + "\n  password: dashsecret\n"
              + "alerts:\n  enabled: true\n  webhook_url: https://h/x?token=SECRET\n")
     _, client = make_app(tmp_path, extra_yaml=extra)

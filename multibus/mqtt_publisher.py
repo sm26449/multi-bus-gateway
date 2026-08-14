@@ -20,7 +20,7 @@ import math
 import time
 import json
 import threading
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List
 
 import paho.mqtt.client as mqtt
 

@@ -30,7 +30,6 @@ device-template snippet with the real numbers.
 
 port default 502 (inverter Modbus-TCP), base default 40000 (SunSpec map base).
 """
-import struct
 import sys
 
 from pymodbus.client import ModbusTcpClient
@@ -108,7 +107,7 @@ def find_control(host, port=502, unit=1, base=40000):
           f"= {cur_pct_raw * 10 ** sf:g} %)")
     print(f"  WMaxLim_Ena     address {wmaxlim_ena}   (currently {cur_ena})")
     print(f"  WMaxLimPct_SF   address {sf_addr}   value {sf}  ->  template scale {scale}")
-    print(f"\n  Template registers (VERIFY, then set write_safe from your fuse math):")
+    print("\n  Template registers (VERIFY, then set write_safe from your fuse math):")
     print(f"""    {{"address": {wmaxlimpct}, "name": "WMaxLimPct", "label": "Active power limit",
      "unit": "%", "data_type": "uint16", "register_type": "holding", "scale": {scale},
      "writable": true, "write_min": 0, "write_max": 100, "write_safe": 50}},

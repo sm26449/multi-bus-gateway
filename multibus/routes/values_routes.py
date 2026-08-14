@@ -23,7 +23,6 @@ time (rebindable via /api/config/apply).
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
 from typing import Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Query

@@ -20,7 +20,6 @@ Uses a temp templates dir so it never touches the shipped templates. Verifies
 that a template authored via the editor API reloads losslessly through
 load_template (the engine's own parser) — the guarantee the UI depends on.
 """
-import yaml
 
 from multibus.virtual_meter import load_template
 from multibus.virtual_meter_manager import VirtualMeterManager

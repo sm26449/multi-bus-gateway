@@ -16,7 +16,6 @@
 #
 """Security package: password hashing, AuthState (login/lockout/sessions),
 IP allowlist middleware, MQTT TLS wiring, and the login-gated API."""
-import time
 
 import pytest
 
@@ -278,8 +277,6 @@ def test_security_response_headers_present(tmp_path):
 
 
 def test_audit_csv_formula_injection_escaped():
-    from multibus.audit import AuditLog
-    import io, csv
     # simulate the export _safe helper contract
     def _safe(v):
         s = "" if v is None else str(v)

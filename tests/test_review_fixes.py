@@ -101,7 +101,8 @@ def test_ws_enforces_ip_allowlist(tmp_path):
 
 
 def test_redirect_ssrf_guard_blocks_public_target():
-    import urllib.request, urllib.error
+    import urllib.request
+    import urllib.error
     from multibus.http_client import _GuardedRedirect
     h = _GuardedRedirect(allow_nonlan=False)
     req = urllib.request.Request("http://192.168.1.5/a")
@@ -220,7 +221,8 @@ def test_pinned_fetch_connects_to_validated_ip_defeating_rebind(monkeypatch):
 
 
 def test_same_host_redirect_blocks_cross_origin():
-    import urllib.request, urllib.error
+    import urllib.request
+    import urllib.error
     from multibus.http_client import _SameHostRedirect
     h = _SameHostRedirect(allow_nonlan=False)
     req = urllib.request.Request("http://meter.local/a")

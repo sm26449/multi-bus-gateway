@@ -288,7 +288,6 @@ def test_buffer_persist_survives_restart(tmp_path):
     cfg = InfluxDBConfig(enabled=False, url="http://x:8086", token="t",
                          org="o", bucket="b", write_interval=0, buffer_persist=True)
     path = tmp_path / "influx_buffer.jsonl"
-    import multibus.influxdb_publisher as ip
     import os
     os.environ["INFLUX_BUFFER_PATH"] = str(path)
     try:
@@ -322,7 +321,8 @@ def test_buffer_persist_survives_restart(tmp_path):
 def test_buffer_persist_honors_age_bound_on_load(tmp_path):
     cfg = InfluxDBConfig(enabled=False, bucket="b", buffer_minutes=1, buffer_persist=True)
     path = tmp_path / "influx_buffer.jsonl"
-    import json as _json, os
+    import json as _json
+    import os
     old = time.time() - 3600
     fresh = time.time()
     path.write_text(_json.dumps([old, "b", "old 1"]) + "\n" +
@@ -367,7 +367,6 @@ def test_influx_reconnect_thread_clears_stop_before_alive_check():
     """Regression: a still-alive monitor thread past the join timeout must
     RESUME (stop flag cleared first), not see a stale set flag and die."""
     from multibus.influxdb_publisher import InfluxDBPublisher
-    from multibus.config import InfluxDBConfig
     pub = InfluxDBPublisher.__new__(InfluxDBPublisher)
     import threading
     pub._stop_reconnect = threading.Event()

@@ -296,7 +296,7 @@ def generate_node(payload: Dict[str, Any], template, poll_groups: Dict,
 
     # ---- firmware YAML -------------------------------------------------------------
     secrets = {"wifi_ssid": None, "wifi_password": None, "ota_password": None}
-    mqtt_lines = [f"mqtt:",
+    mqtt_lines = ["mqtt:",
                   f"  broker: {_yq(broker)}",
                   f"  port: {port}"]
     if username:

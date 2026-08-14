@@ -31,7 +31,6 @@ import re
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import pytest
 
 from multibus.api import create_api
 from multibus.config import SelectedRegister

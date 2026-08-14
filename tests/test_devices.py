@@ -24,15 +24,13 @@ change by one byte.
 """
 import json
 import time
-from pathlib import Path
 
 import pytest
 
-from multibus.config import Config, DeviceConfig, InfluxDBConfig, MQTTConfig, PRIMARY_DEVICE_ID
+from multibus.config import Config, MQTTConfig, PRIMARY_DEVICE_ID
 from multibus.device_template import (
     BUILTIN_DIR, TemplateRegistry, load_template, parse_template, validate_template,
 )
-from multibus.influxdb_publisher import InfluxDBPublisher
 from multibus.mqtt_publisher import MQTTPublisher
 from tests.test_reliability import make_publisher, make_register
 

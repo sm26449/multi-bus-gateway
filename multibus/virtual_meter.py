@@ -618,8 +618,7 @@ class VirtualMeter:
 
     # ── server lifecycle (isolated thread + own loop) ─────────────────────
     def _start_server(self) -> None:
-        from pymodbus.datastore import (ModbusServerContext, ModbusSlaveContext,
-                                         ModbusSequentialDataBlock)
+        from pymodbus.datastore import (ModbusServerContext, ModbusSequentialDataBlock)
         from pymodbus.server import ModbusTcpServer
 
         host = self.t.transport.get("bind", "0.0.0.0")

@@ -33,7 +33,7 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from .redact import _is_secret_key, redact_url
 
