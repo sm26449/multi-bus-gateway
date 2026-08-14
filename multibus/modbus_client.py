@@ -671,7 +671,15 @@ class RegisterPoller(threading.Thread):
             asyncio.set_event_loop(loop)
             created_loop = True
 
-        self.running = True
+        # The STOP EVENT is the single source of truth (audit 2026-08-14 M1).
+        # A stop() that lands between Thread.start() and this line used to be
+        # overwritten by `running = True` — and with the event already set,
+        # every `wait(interval)` returned instantly: an unkillable zombie
+        # poller hammering the bus back-to-back through the OLD callback.
+        if self._stop_event.is_set():
+            logger.info(f"{self._tag}Poller {self.poll_group_name}: stopped before first poll")
+            return
+        self.running = True                    # observability mirror only
         reg_addrs = [r.address for r in self.registers]
         logger.info(f"{self._tag}Poller {self.poll_group_name}: started with {len(self.registers)} registers, interval {self.interval}s")
         logger.debug(f"{self._tag}Poller {self.poll_group_name}: addresses {reg_addrs[:10]}...")
@@ -680,19 +688,19 @@ class RegisterPoller(threading.Thread):
             # Stagger the FIRST read by a random fraction of the interval so
             # several devices/groups don't fire in lock-step and collide on a
             # shared transport (RTU-over-TCP bridge) at boot. Interruptible: a
-            # stop() during the wait flips self.running, so the loop won't run.
+            # stop() during the wait sets the event, so the loop won't run.
             if self.startup_jitter_s > 0:
                 delay = random.uniform(0, self.startup_jitter_s)
                 logger.debug(f"{self._tag}Poller {self.poll_group_name}: startup jitter {delay:.2f}s")
                 self._stop_event.wait(delay)
-            while self.running:
+            while not self._stop_event.is_set():
                 try:
                     data = self._poll_registers()
 
-                    # a disconnect() during a slow read flips self.running — don't
+                    # a disconnect() during a slow read sets the event — don't
                     # publish a late batch (decoded against a possibly-old map)
                     # into the store the vmeters serve
-                    if not self.running:
+                    if self._stop_event.is_set():
                         break
                     if data:
                         self.publish_callback(self.poll_group_name, data)
@@ -715,6 +723,7 @@ class RegisterPoller(threading.Thread):
                     loop.close()
                 except Exception:  # noqa: BLE001
                     pass
+            self.running = False               # mirror follows the event
             logger.info(f"{self._tag}Poller {self.poll_group_name}: stopped")
 
     def stop(self):

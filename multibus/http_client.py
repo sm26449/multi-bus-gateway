@@ -288,19 +288,25 @@ class _JsonPoller(threading.Thread):
         self.publish_callback = publish_callback
         self._owner = owner
         self.running = False
+        self._stop_event = threading.Event()   # single stop primitive (M1)
         self.poll_count = 0
         self.last_poll_time = 0.0
 
     def run(self):
-        self.running = True
+        # Stop event is the single source of truth — a stop() landing between
+        # Thread.start() and here must never be overwritten (audit M1: the
+        # `running` flag alone lost that race and left a zombie poller).
+        if self._stop_event.is_set():
+            return
+        self.running = True                    # observability mirror only
         logger.info("HTTP poller %s: %d registers, interval %ss",
                     self.poll_group_name, len(self.registers), self.interval)
-        while self.running:
+        while not self._stop_event.is_set():
             t0 = time.time()
             t0_mono = time.monotonic()
             try:
                 doc = self._fetch()
-                if not self.running:            # stopped while blocked in the fetch
+                if self._stop_event.is_set():   # stopped while blocked in the fetch
                     break                        # → never publish after disconnect
                 if doc is not None:
                     data: Dict[int, Dict] = {}
@@ -336,13 +342,18 @@ class _JsonPoller(threading.Thread):
             self.poll_count += 1
             self.last_poll_time = time.time()
             dt = self.interval - (time.time() - t0)
-            # On time → sleep the remainder (exact cadence). If the fetch OVERRAN
+            # On time → wait the remainder (exact cadence). If the fetch OVERRAN
             # the interval (dt <= 0), still back off (up to 1 s) instead of
             # re-fetching immediately — a slow endpoint must not be hammered.
-            time.sleep(dt if dt > 0 else min(self.interval, 1.0))
+            # Event.wait, not time.sleep: a stop() interrupts the pause, so a
+            # 60 s group's thread no longer outlives its device by a full
+            # interval (audit L2 — join() always timed out on slow groups).
+            self._stop_event.wait(dt if dt > 0 else min(self.interval, 1.0))
+        self.running = False                    # mirror follows the event
 
     def stop(self):
         self.running = False
+        self._stop_event.set()
 
 
 class HttpClient:

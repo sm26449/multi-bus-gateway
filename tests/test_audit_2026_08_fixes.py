@@ -272,10 +272,12 @@ def test_esphome_client_closes_error_responses():
 
 
 def test_modbus_poller_no_publish_after_stop():
+    # since M1 (3.23.6) the stop EVENT is the single source of truth — the
+    # mid-read guard must check it (not the `running` mirror) and break
     import inspect
     from multibus.modbus_client import RegisterPoller
     src = inspect.getsource(RegisterPoller.run)
-    assert "if not self.running:" in src and "break" in src
+    assert "if self._stop_event.is_set():" in src and "break" in src
 
 
 def test_driver_staleness_is_monotonic_step_immune(monkeypatch):

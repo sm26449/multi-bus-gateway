@@ -44,7 +44,7 @@ def test_no_jitter_fires_immediately(monkeypatch):
 
     def fake_wait(d=None):
         waits.append(d)
-        p.running = False                    # stop after this wait
+        p.stop()                             # real primitive: sets the stop event
         return True
 
     monkeypatch.setattr(p._stop_event, "wait", fake_wait)
@@ -62,7 +62,7 @@ def test_jitter_waits_before_first_poll(monkeypatch):
 
     def fake_wait(d=None):
         waits.append(d)
-        p.running = False                     # stop → exit before any poll
+        p.stop()                              # stop → exit before any poll
         return True
 
     monkeypatch.setattr(p._stop_event, "wait", fake_wait)
