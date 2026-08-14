@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.24.1
+
+### 2026-08-15 — non-root containers (audit P2)
+
+- **MBG runs as uid 10001 (`mbg`), non-root.** The app tree stays root-owned
+  read-only; the only writable path is the mounted `/app/config` (host dir
+  chown'd once to 10001). The privileged `:502` bind is solved with the
+  compose-level per-container sysctl `net.ipv4.ip_unprivileged_port_start=0`
+  — scoped to the container's own network namespace, no capability grant,
+  no host-wide sysctl.
+- **serial-bridge runs as uid 10002 (`bridge`), non-root, in `dialout`**
+  (gid 20 matches the host's group on the bound tty nodes). Its writable
+  paths got explicit ownership: `/etc/ser2net/` (config moved out of `/etc`
+  proper — the atomic rewrite needs directory write permission;
+  `SER2NET_CFG` env-overridable), the UUCP lock dirs (stale-lock sweep +
+  ser2net's own lockfiles), `/data` (state volume, host-chown'd). The `/dev`
+  bind is now **read-only** (blocks node creation from inside; tty I/O on
+  existing nodes is unaffected) on top of the existing tty-only
+  device_cgroup_rules. Hotplug verified non-root (udev watch + the periodic
+  reconcile fallback); Seplos exclusion intact.
+- Both smoked as throwaway containers before the live window; live-verified
+  after: meters fresh, EM24 decodes, consumers reconnected, volume writes
+  land under the new uids.
+
 ## 3.24.0
 
 ### 2026-08-15 — pymodbus 3.6.9 → 3.15.0: vmeter serving core on SimData/SimDevice

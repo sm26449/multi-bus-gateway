@@ -27,7 +27,9 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 STATE_FILE = os.environ.get("BRIDGE_STATE", "/data/portmap.json")
-SER2NET_CFG = "/etc/ser2net.yaml"
+# Lives in its own directory (owned by the non-root user) because the atomic
+# rewrite (tmp + os.replace) needs write permission on the DIRECTORY.
+SER2NET_CFG = os.environ.get("SER2NET_CFG", "/etc/ser2net/ser2net.yaml")
 PORT_LOW, PORT_HIGH = 7001, 7099
 CONTROL_PORT = int(os.environ.get("BRIDGE_CONTROL_PORT", "7000"))
 # ser2net serial params applied to every adapter. Per-adapter baud is a later
