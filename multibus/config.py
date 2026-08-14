@@ -161,6 +161,13 @@ class MQTTConfig:
     # Default topic prefix pattern for NEW devices ({device} = the device id).
     # Device #1 keeps its migrated prefix; this only seeds new devices.
     default_topic_pattern: str = "meters/{device}"
+    # Compatibility aliases (topic migrations, e.g. janitza/… → meters/…):
+    # every publish whose topic starts with `from` is ALSO published under
+    # `to`, with `leaves` renaming individual topic tails (old consumers keep
+    # receiving byte-identical topics during a rename transition). Shape:
+    #   [{from: meters/umg512, to: janitza/umg512,
+    #     leaves: {energy/active/import: energy/active/consumed}}]
+    compat_aliases: List[Dict] = field(default_factory=list)
     # TLS (8883): encrypt the broker link. ca_cert verifies the broker;
     # client_cert+client_key add mutual TLS. tls_insecure skips hostname/cert
     # checks (test only). All paths are inside the container (config dir).
@@ -866,6 +873,7 @@ class Config:
                     tls_client_key=m.get('tls_client_key', self.mqtt.tls_client_key),
                     tls_insecure=m.get('tls_insecure', self.mqtt.tls_insecure),
                     default_topic_pattern=m.get('default_topic_pattern', self.mqtt.default_topic_pattern),
+                    compat_aliases=m.get('compat_aliases', self.mqtt.compat_aliases) or [],
                 )
 
             # InfluxDB
@@ -1348,6 +1356,7 @@ class Config:
                 'tls_client_key': self.mqtt.tls_client_key,
                 'tls_insecure': self.mqtt.tls_insecure,
                 'default_topic_pattern': self.mqtt.default_topic_pattern,
+                'compat_aliases': self.mqtt.compat_aliases,
             },
             'influxdb': {
                 'enabled': self.influxdb.enabled,

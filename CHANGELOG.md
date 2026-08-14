@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.25.0
+
+### 2026-08-15 — Migration B: `mqtt.compat_aliases` (topic-migration dual-publish)
+
+- **New `mqtt.compat_aliases`:** every publish whose topic starts with `from`
+  is ALSO published under `to`, with per-leaf renames — old consumers keep
+  receiving byte-identical topics during a prefix migration (zero-gap). One
+  choke point in `_publish` covers register data, vmeter state, data_health,
+  status and alerts; `publish_state` now funnels through `_publish` for
+  exactly that reason. Counted in stats (`messages_aliased`); survives a
+  config load→save round-trip. +6 tests; documented in config-reference.md.
+- Purpose-built for the janitza→meters prefix flip (the live config change
+  is operational, not in this repo): primary prefix `janitza/umg512` →
+  `meters/umg512`, four energy leaves canonicalized (`consumed`→`import`,
+  `delivered`→`export`, `iqh4`/`cqh4`→`reactive/import|export`), and the
+  latent per-phase energy leaf collision (six disabled registers all
+  pointing at the total's topic) fixed while in there.
+
 ## 3.24.2
 
 ### 2026-08-15 — config version stamp (audit MEDIUM-2)

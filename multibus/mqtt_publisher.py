@@ -185,6 +185,18 @@ class MQTTPublisher:
         self._command_queue: queue.Queue = queue.Queue(maxsize=COMMAND_QUEUE_MAX)
         self._stop_commands = threading.Event()
         self._command_worker = None
+        # Compatibility aliases (topic migrations): normalized once here so the
+        # hot path does prefix math only. Every publish under `from` is ALSO
+        # sent under `to` (leaf renames applied) — old consumers keep receiving
+        # byte-identical topics while they migrate. See MQTTConfig.compat_aliases.
+        self._compat_aliases: List[tuple] = []
+        for al in (getattr(config, 'compat_aliases', None) or []):
+            src = str(al.get('from', '')).rstrip('/')
+            dst = str(al.get('to', '')).rstrip('/')
+            if src and dst and src != dst:
+                self._compat_aliases.append(
+                    (src + '/', dst, dict(al.get('leaves') or {})))
+        self.messages_aliased = 0
         # per-device availability (drives the HA connectivity binary_sensor);
         # publish only on change so a steady device doesn't churn the topic
         self._availability_last: Dict[str, str] = {}
@@ -387,8 +399,10 @@ class MQTTPublisher:
         try:
             if not self.connected or not self.client:
                 return
-            self.client.publish(f"{self.config.topic_prefix}/{subtopic}", payload,
-                                 qos=0, retain=retain)
+            # via _publish so compat aliases apply (old-prefix consumers keep
+            # seeing the retained state topics during a migration)
+            self._publish(f"{self.config.topic_prefix}/{subtopic}", payload,
+                          retain=retain)
         except Exception as e:  # noqa: BLE001
             logger.debug("publish_state(%s) failed: %s", subtopic, e)
 
@@ -460,6 +474,20 @@ class MQTTPublisher:
             if result.rc == mqtt.MQTT_ERR_SUCCESS:
                 self.messages_published += 1
                 self.last_publish_ts = time.time()
+                # compat aliases: republish under the old prefix (leaf renames
+                # applied) so not-yet-migrated consumers see identical topics.
+                # Direct client.publish — never recursive, never affects the
+                # primary result or the change-detection cache.
+                for src, dst, leaves in self._compat_aliases:
+                    if topic.startswith(src):
+                        leaf = topic[len(src):]
+                        alias_topic = f"{dst}/{leaves.get(leaf, leaf)}"
+                        try:
+                            self.client.publish(alias_topic, payload,
+                                                qos=self.config.qos, retain=retain)
+                            self.messages_aliased += 1
+                        except Exception:  # noqa: BLE001
+                            pass
                 return True
             # NO_CONN/CONN_LOST: the socket died between the keepalive and this
             # publish. Connection state is owned by the paho callbacks
@@ -858,6 +886,7 @@ class MQTTPublisher:
             'last_contact_age_s': round(time.time() - self.last_publish_ts, 1) if self.last_publish_ts else None,
             'messages_skipped': self.messages_skipped,
             'messages_failed': self.messages_failed,
+            'messages_aliased': self.messages_aliased,
             'publish_mode': self.publish_mode,
             'connection_count': self.connection_count,
             'registered_topics': len(self._register_map),
