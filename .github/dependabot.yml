@@ -1,26 +1,30 @@
 # Dependency-update automation (audit 2026-08-14, M4). The runtime set is
 # LOCKED (requirements.lock) — these PRs are the deliberate-upgrade signal,
 # CI runs the full suite against each bump before it can land.
+#
+# MONTHLY + tight PR limits: each PR costs paid Actions minutes (push + PR
+# run per branch); the initial weekly config opened 8 PRs in one minute and
+# helped exhaust the month's budget on day one (2026-08-14).
 version: 2
 updates:
   - package-ecosystem: pip
     directory: /
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly
     groups:
       runtime-minor:
         applies-to: version-updates
         update-types: [minor, patch]
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
 
   - package-ecosystem: docker
     directory: /
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly
+    open-pull-requests-limit: 2
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+    open-pull-requests-limit: 2

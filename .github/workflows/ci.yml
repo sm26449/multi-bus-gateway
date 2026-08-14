@@ -1,7 +1,13 @@
 name: CI
 
+# Private repo → every run burns PAID minutes (the whole month's budget went
+# in one day, 2026-08-14: per-commit pushes + the Dependabot burst). Triggers
+# are therefore minimal: main + PRs only — feature branches validate LOCALLY
+# with the exact same commands (ruff check . && pytest -q --timeout=120
+# --cov=multibus --cov-fail-under=72) and CI confirms on the PR.
 on:
   push:
+    branches: [main]
   pull_request:
 
 # Cancel a superseded run when new commits land on the same ref.
