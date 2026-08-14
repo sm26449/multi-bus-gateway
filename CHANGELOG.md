@@ -1,5 +1,32 @@
 # Changelog
 
+## 3.23.7
+
+### 2026-08-14 — audit M3+M4: `enabled` default symmetry, HA writes off the paho thread
+
+- **M3 — a config row missing `enabled` now counts as ON on every path.**
+  Boot (`start_all`) has always defaulted a missing `enabled` key to on, but
+  `_reload_instance` and `update_instance` read the key with no default: a
+  hand-edited/legacy row started fine at boot, then the next template save
+  silently STOPPED the meter (reload stops first, checks after), and an
+  instance PATCH refused to live-restart it. One predicate
+  (`_inst_enabled`, default on) is now the single source of truth for all
+  seven readers. Also **`set_enabled(on=True)` rolls back on start failure**:
+  a bad port/bind used to answer HTTP 500 with `enabled: true` already
+  persisted — the next boot tripped over the same bad config; the flag now
+  reverts (mirroring `update_instance`'s revert) and the route answers 400
+  ("enable reverted"), keeping 404 for an unknown instance. +2 tests.
+- **M4 — HA write commands run on a dedicated worker, not paho's network
+  thread.** `_mqtt_write_command` does blocking Modbus I/O (write + read-back)
+  under the connection lock shared with the pollers; executed inside
+  `on_message`, one slow/retrying RTU device stalled the entire MQTT sink —
+  publishes, subscriptions and keepalives included. `_on_message` now only
+  decodes and enqueues; a single `mqtt-command-worker` thread drains commands
+  in arrival order (writes stay serialized). The queue is bounded (32): a
+  broker flood drops commands with a warning instead of building an unbounded
+  backlog of stale writes. Worker joins on `disconnect()`. +4 tests
+  (including an off-thread execution proof).
+
 ## 3.23.6
 
 ### 2026-08-14 — audit M1+M2: poller stop race, live-store ghosts (evening batch)
