@@ -85,11 +85,12 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
 - **MQTT-in** — abonare la un broker; valoare din payload JSON (`json_path`)
   sau payload brut; topic per registru cu wildcard-uri `+`/`#`.
 - **Template-uri de dispozitiv** — harta de registre ca fișier JSON portabil;
-  10 hărți incluse, field-tested, cu proveniență documentată
+  11 hărți incluse, field-tested, cu proveniență documentată
   ([catalog](docs/device-catalog.md)): Janitza UMG 512-PRO (4.126 registre),
-  ABB B21/B23, Carlo Gavazzi EM24, Eastron SDM120/SDM630, Schneider iEM3000
-  + 3 hărți MQTT (Zigbee2MQTT, Theengs BLE, JSON generic). Editor + upload +
-  export + **import CSV** ([ghid](docs/csv-import.md)).
+  ABB B21/B23, Carlo Gavazzi EM24, Eastron SDM120/SDM630, Schneider iEM3000,
+  Fronius Smart Meter 65A-3 + 3 hărți MQTT (Zigbee2MQTT, Theengs BLE, JSON
+  generic). Editor + upload + export + **import CSV**
+  ([ghid](docs/csv-import.md)).
 - **Nume canonice de câmpuri** — nume uniforme de registre pe orice dispozitiv
   (`voltage_l1_n` peste tot), deci topicele MQTT și field-urile InfluxDB sunt
   predictibile. **Auto-canonicalize** dintr-un click le deduce pentru o hartă
@@ -273,7 +274,11 @@ docker compose --profile influxdb --profile grafana up -d
 > sunt editabile live — salvate în `config/config.yaml` (volum montat) și
 > aplicate **fără restart**. Variabilele `.env` sunt **opționale**: doar
 > pre-populează un deploy nou sau fixează valori într-un setup imutabil. O
-> setare dată prin env are întâietate și apare **blocată** în UI.
+> setare dată prin env are întâietate și apare **blocată** în UI. Atenție:
+> în `docker-compose.yml` liniile de pass-through `environment:` pentru
+> Modbus/MQTT/InfluxDB vin **comentate** — decomentează-le pe cele dorite,
+> altfel o valoare din `.env` nu ajunge niciodată în container (cu `docker
+> run` simplu, `--env-file .env` le transmite direct pe toate).
 
 Esențialul din `.env` (lista completă în [manual](docs/MANUAL.ro.md#3-prima-configurare)):
 
@@ -370,17 +375,22 @@ multi-bus-gateway/
 ## Folosirea unui stack MQTT / InfluxDB existent
 
 Ca să conectezi gateway-ul la brokere/baze pe care le rulezi deja (în locul
-celor incluse), setează detaliile de conexiune în `.env` sau din UI — de ex.
-`MQTT_BROKER`, `MQTT_PORT`, `INFLUXDB_URL`, `INFLUXDB_TOKEN` (vezi
-`.env.example` pentru lista completă) — și pornește doar serviciul gateway:
+celor incluse), setează detaliile de conexiune din UI (Config → Settings) —
+se salvează în `config/config.yaml` și se aplică live, fără restart — și
+pornește doar serviciul gateway:
 
 ```bash
 docker compose up -d multi-bus-gateway
 ```
 
-Variabilele de mediu sunt **fără prefix** (aplicația citește `MODBUS_HOST`)
-și toate sunt **opționale** — de preferat le setezi din UI. `API_KEY` e
-acceptat și ca `JANITZA_API_KEY` (compatibilitate istorică).
+Preferi pre-popularea din environment? Liniile `environment:` aferente din
+`docker-compose.yml` vin **comentate**, deci întâi decomentează-le acolo pe
+cele necesare, apoi setează-le în `.env` — de ex. `MQTT_BROKER`, `MQTT_PORT`,
+`INFLUXDB_URL`, `INFLUXDB_TOKEN` (vezi `.env.example` pentru lista completă).
+Variabilele sunt **fără prefix** (aplicația citește `MODBUS_HOST`); o valoare
+din env are întâietate față de UI/yaml la fiecare pornire și apare **blocată**
+în UI. `API_KEY` e acceptat și ca `JANITZA_API_KEY` (compatibilitate
+istorică).
 
 ## Dezvoltare
 
@@ -409,8 +419,8 @@ proveniență verificabilă, vezi [docs/device-catalog.md](docs/device-catalog.m
 
 ## License
 
-**GNU Affero General Public License v3.0 (AGPL-3.0)** — software liber și
-open source.
+**GNU Affero General Public License v3.0 sau ulterioară (AGPL-3.0-or-later)**
+— software liber și open source.
 
 Copyright (c) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
 

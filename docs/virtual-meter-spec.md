@@ -81,3 +81,53 @@ declare **redundant sources**:
 This is the reliability guard for a control feed: bind the ESS grid-power row to
 the accurate primary meter with a second meter (or a derived value) as backup,
 and a single source outage no longer stops the meter.
+
+## Instance-level redundant source device (`device_fallback`)
+
+One field on the **instance** makes the *whole* meter fail over per register —
+no per-register template edits, because canonical field names are identical
+across devices (what's on one is on the other, if it exists):
+
+```yaml
+instances:
+  - template: em24_av53
+    port: 1502
+    unit_id: 1
+    device: grid_meter          # primary source device
+    device_fallback: grid_b     # twin device — per-register failover
+    on_stale: fail
+```
+
+Semantics (`add_instance` / `update_instance`; UI: the Add/Edit instance modal's
+*Secondary source device (failover)* dropdown):
+
+* **At start**, every bare-name `live` register of the template is rewritten
+  into the ordered failover pair `[name, <fallback>.name]` and resolved by the
+  same failover engine described above (first fresh wins, auto-recovers to the
+  primary). Registers that are `const`, `sum`, already `failover`, or an
+  explicit `device.register` source are left untouched.
+* **Validation** — at save time the fallback must be a *known* device id and
+  must differ from the source device (rejected with an error otherwise). At
+  start it is re-checked: a mis-set value is **ignored with a warning** — a bad
+  fallback never blocks a control-critical meter from starting. A
+  configured-but-offline twin validates and *arms*; failover engages the moment
+  the twin publishes.
+* **Staleness composes unchanged** — a failover pair only ever serves a fresh
+  candidate; when neither is fresh the row degrades through the instance's
+  `on_stale` policy exactly like a single stale source.
+* **Observability** — a start-time coverage log lists which fields the twin
+  already publishes vs. which are armed/waiting; every runtime switch is logged
+  to the event ring and the process log (`warn` on drop to a lower-priority
+  source, `info` on recovery), naming meter, register and both sources.
+
+## Published state (`<mqtt prefix>/vmeter/<id>/state`, retained)
+
+Beyond health/throughput, the retained state document carries the staleness
+policy and its bounds — `on_stale`, `stale_after_s`, `max_hold_s` — the last
+rebuild's per-register **quality** counts (`{fresh, stale, missing}`), and the
+live **failover routing**: one entry per failover register with
+`{addr, candidates, active, on_primary}` (`active` is `null` until the row
+first binds; `on_primary` is true only once bound to the first candidate).
+An external monitor can therefore see *how* a meter degrades and which
+redundant source is feeding it — not just that it went stale. The same fields
+appear in the instance's `status()` via the REST API.

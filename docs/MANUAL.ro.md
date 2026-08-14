@@ -1,4 +1,4 @@
-# Manual de utilizare — Multi-Bus Gateway 3.0.0
+# Manual de utilizare — Multi-Bus Gateway
 
 [🇬🇧 English](MANUAL.md) | 🇷🇴 **Română**
 
@@ -13,7 +13,8 @@ Documente însoțitoare:
 - **[device-catalog.md](device-catalog.md)** — fiecare hartă de registre
   inclusă și sursa față de care a fost verificată.
 - **[csv-import.md](csv-import.md)** — importul unei hărți de registre din CSV.
-- **[alerts-webhooks.md](alerts-webhooks.md)** — alertare de infrastructură.
+- **[alerts-webhooks.md](alerts-webhooks.md)** — alertare de infrastructură +
+  praguri pe valori.
 
 ## Cuprins
 1. [De ce ai nevoie](#1-de-ce-ai-nevoie)
@@ -173,8 +174,12 @@ Devices → *Discover devices*:
 
 1. **Conexiune** — alege protocolul:
    - **Modbus TCP**: host, port, unit ID, timeout.
-   - **Modbus RTU**: port serial (de ex. `/dev/ttyUSB0`), baud rate,
-     paritate, biți de stop — nu uita să treci adaptorul în container.
+   - **Modbus RTU**: două moduri (vezi [rtu-serial.md](rtu-serial.md)).
+     **Prin rețea (recomandat)** — apasă **Scan** și alege un adaptor USB de
+     pe serial bridge (îl bagi în priză → apare; îl scoți → dispare), MBG
+     rămâne neprivilegiat. **Serial direct** — port serial (de ex.
+     `/dev/ttyUSB0`), baud, paritate, biți de stop, cu adaptorul mapat în
+     container.
    - **HTTP/JSON**: un URL care întoarce JSON; fiecare registru își extrage
      valoarea cu un `json_path` (de ex. `Body.Data.PowerReal_P_Sum`).
      URL-urile trebuie să indice un host din LAN-ul privat, cu excepția
@@ -238,9 +243,9 @@ care refuză blocurile unite cu *illegal data address* trebuie setate cu
 `max_gap: 0`.
 
 **Pragurile** colorează o valoare (warningLow/High, dangerLow/High) pe
-dashboard și pe gauge-uri. Sunt per registru și doar vizuale — pentru
-*alertare* vezi §12 (infrastructură) sau folosește un sistem downstream
-pentru alarme pe valori.
+dashboard și pe gauge-uri. Sunt per registru — iar aceleași limite pot și
+declanșa **alerte** la traversare: activează motorul de praguri încorporat
+(`alerts.signals.threshold`, vezi §12).
 
 Salvarea selecției re-încarcă hot doar pollerele acelui dispozitiv.
 
@@ -269,6 +274,52 @@ numele canonic plat. Lista completă e în
 
 Hărțile de referință vendor (ex. Janitza UMG512) preced această schemă și-și
 păstrează numele native — schema se aplică template-urilor pe care le creezi/imporți.
+
+### 6.2 Igienă de polling & decodare (opt-in)
+
+Totul aici e **oprit implicit** — activezi global, per dispozitiv sau per
+registru, când hardware-ul o cere.
+
+- **Jitter la pornire** — `polling.startup_jitter_s` (implicit global) sau
+  `startup_jitter_s` sub `connection:`-ul unui dispozitiv. Fiecare grup de
+  poll așteaptă o întârziere aleatoare în `[0, min(interval, jitter)]`
+  înaintea **primei** citiri, ca mai multe dispozitive/grupuri să nu tragă în
+  pas de defilare și să lovească un transport partajat (mai ales un serial
+  bridge RTU-prin-rețea) la boot. `0` = oprit.
+- **Lista de registre ilegale** — `illegal_registers` sub `connection:`-ul
+  unui dispozitiv: adrese la care slave-ul răspunde cu *illegal data address*
+  (excepția 02). Citirile batch unite nu mai trec niciodată peste una, iar un
+  registru selectat care stă pe una e sărit — soluția pentru o gaură *în
+  interiorul* unei serii contigue, pe care `max_gap: 0` n-o poate rezolva.
+  Zecimal sau `0x…`.
+- **Poarta anti-cadru-tot-zero** — `drop_all_zero: true` pe un dispozitiv: un
+  dispozitiv adormit (un invertor noaptea) poate răspunde cu un cadru COMPLET
+  ZERO în loc de eroare; publicat ca atare, arată ca date reale de 0 V / 0 W.
+  Cu poarta pornită, un grup de poll cu toate valorile numerice exact zero
+  (și cel puțin 2 la număr) e aruncat, iar cache-ul păstrează ultimele valori
+  bune până se trezește dispozitivul.
+
+```yaml
+polling:
+  startup_jitter_s: 2          # implicit global pentru toate dispozitivele
+devices:
+  - id: inverter
+    connection:
+      host: 192.168.1.60
+      startup_jitter_s: 5      # override per dispozitiv
+      illegal_registers: [0x2100, 505]
+      drop_all_zero: true      # doarme noaptea
+```
+
+- **Opțiuni de decodare per registru** (editorul de registre/template sau
+  JSON-ul de template):
+
+| Cheie | Efect |
+|---|---|
+| `offset` | valoare inginerească = `raw / scale + offset` — deplasări de punct zero / unitate (ex. Kelvin×10 → °C cu `scale: 10, offset: -273.15`); sărit la rândurile enum/bitfield |
+| `nan` | santinelă not-available: `true` = valoarea SunSpec a tipului de date (`0x8000`/`0xFFFF`…), sau o valoare brută / listă explicită. O potrivire se citește ca *lipsă*, niciodată un număr-gunoi (−32768 °C). Float NaN/Inf e mereu aruncat |
+| `monotonic: true` | contoare cumulative (Wh/kWh/varh): un glitch descendent e aruncat (cache-ul ține ultima valoare bună), deci HA Energy / Victron / `difference()` nu văd niciodată un reset-fantomă de contor; un reset real, susținut, e totuși acceptat |
+| `enum` / `bits` (+ `mask`/`shift`) | decodează un cuvânt de stare brut în text — `enum: {7: "Fault"}` (nemapat → `unknown (n)`), `bits: {0: "overvoltage"}` unește numele biților setați; se construiește vizual din butonul **States** din editorul de template |
 
 ---
 
@@ -316,6 +367,10 @@ referențiază căile din container; „skip verification" e doar pentru teste).
   s-au schimbat; cache-ul de schimbări se confirmă doar după o publicare
   reușită, deci o pană de broker nu pierde nimic) sau `all` (fiecare
   citire).
+- **Heartbeat** — `mqtt.heartbeat_interval` (secunde, `0` = oprit, implicit):
+  în modul `changed`, forțează republicarea unei valori *neschimbate* după N
+  secunde, ca o citire stabilă să-și păstreze un timestamp proaspăt și Home
+  Assistant să nu îngrizeze entitatea în stările staționare lungi.
 - **Disponibilitate**: un Last-Will marchează `<prefix>/status` = `offline`
   dacă gateway-ul moare; `online` e publicat retained la conectare.
 - **Home Assistant discovery**: activat implicit. Fiecare dispozitiv devine
@@ -458,6 +513,46 @@ ca JSON la `/api/virtual-meters/<id>/values` sub convenția de agregator
 (`value: null` + `quality` + `age_s`, `last_value` separat) — un SCADA
 citește totul într-un singur poll.
 
+**11.7 — Surse redundante (failover).** Un meter care alimentează o buclă de
+control n-ar trebui să se oprească la căderea unei singure surse. Două
+straturi, același motor:
+
+- **Per registru** — în editorul de template, dropdown-ul de tip de sursă
+  oferă **Failover (live…)**: o listă de candidați separați prin virgulă, în
+  ordinea priorității (`dispozitiv.registru` pentru o sursă de pe alt
+  dispozitiv). YAML:
+  `source: { failover: ["_G_P_SUM3", "fronius.power_active_total"] }`
+  (`combined` e un alias acceptat). Fiecare rebuild servește **primul
+  candidat proaspăt**, sare peste cei lipsă/stale în ordine și revine la
+  primar în clipa în care e din nou proaspăt.
+- **Per instanță** — dropdown-ul *Secondary source device (failover)* din
+  modalul Add/Edit instance (`device_fallback:` pe instanță) numește un
+  **dispozitiv geamăn**. La pornire, fiecare registru live cu nume simplu e
+  rescris în perechea `[nume, <geamăn>.nume]` — fără editări de template,
+  pentru că numele canonice de câmpuri sunt identice între dispozitive.
+  Rândurile const, sum, deja-failover și cele cu `dispozitiv.registru`
+  explicit rămân cum au fost scrise. Fallback-ul e validat la salvare
+  (dispozitiv cunoscut, diferit de sursă) și re-verificat la pornire (o
+  valoare greșită e ignorată cu un warning — nu blochează niciodată meterul).
+  Un geamăn configurat-dar-offline se armează și intră în joc în clipa în
+  care publică.
+
+**Interacțiunea cu staleness:** failover-ul servește doar un candidat
+*proaspăt*; dacă niciunul nu e proaspăt, rândul degradează prin politica
+`on_stale` a instanței exact ca o singură sursă stale (sub `fail` citirea e
+refuzată). **Evenimente de comutare:** fiecare schimbare a sursei servite
+ajunge în jurnalul de evenimente și în logul de proces — `warn` la căderea pe
+o sursă cu prioritate mai mică, `info` la recuperare — iar cardul meterului
+arată `✓ on primary` / `⇢ n/m on fallback`.
+
+**Starea publicată.** Starea MQTT retained a fiecărui meter
+(`<prefix mqtt>/vmeter/<id>/state`) poartă politica de staleness și limitele
+ei (`on_stale`, `stale_after_s`, `max_hold_s`), contoarele de calitate ale
+ultimului rebuild (fresh/stale/missing) și rutarea failover live (per
+registru: candidații, sursa activă, `on_primary`) — un monitor extern vede
+*cum* degradează meterul și ce sursă îl alimentează, nu doar că a devenit
+stale.
+
 **Capcane:** meterul răspunde pe orice unit id (cel configurat e
 informativ); citirile în afara hărții emulate răspund *illegal data
 address* prin design (consumatorii identifică meterele sondând adresele
@@ -541,9 +636,18 @@ a proiectului.
 
 ## 12. Alerte & webhook-uri
 
-Alertare de sănătate a infrastructurii (un dispozitiv sau un sink pică,
-latența de citire rămâne mare, buffer-ul InfluxDB crește) — **nu** alarme pe
-valori. Se configurează din Config → Alerts sau blocul `alerts:`:
+Două familii de alerte pe o singură cale de livrare (MQTT + webhook):
+
+- **Sănătatea infrastructurii** — un dispozitiv sau un sink pică, latența de
+  citire rămâne mare, buffer-ul InfluxDB crește.
+- **Praguri pe valori** — limitele warning/danger per registru din §6 devin
+  evenimente de alertă printr-un motor cu histerezis încorporat (**oprit
+  implicit**, `signals.threshold`): cinci benzi, declanșează doar la
+  tranziții de bandă, *rapid la alarmare, lent la revenire* (deadband
+  `threshold_deadband_pct`, implicit 2 %), suprimat pe date stale ca o
+  pierdere de comunicație să nu poată declanșa o traversare-fantomă.
+
+Se configurează din Config → Alerts sau blocul `alerts:`:
 
 ```yaml
 alerts:
@@ -555,15 +659,21 @@ alerts:
   min_interval_s: 300
   latency_ms: 1000
   buffer_points: 1000
-  signals: { device: true, sink: true, latency: true, buffer: true }
+  signals: { device: true, sink: true, latency: true, buffer: true,
+             threshold: true }                 # threshold e implicit false
+  threshold_deadband_pct: 2.0
+  threshold_alert_on_start: true
 ```
 
 Alertele sunt limitate per cheie (`min_interval_s`), oglindite în jurnalul
-de evenimente și pe pagina Status. Butonul **Test** (sau
+de evenimente și pe pagina Status. Gateway-ul *detectează și livrează*;
+deduplicarea, rutarea și distribuția pe canale (Telegram/SMS/e-mail) țin de
+receiverul tău de webhook / sistemul tău de notificări. Butonul **Test** (sau
 `POST /api/alerts/test`) declanșează o alertă sintetică prin canalele reale
 — cere login sau cheie API și are cooldown, pentru că generează trafic real.
 Livrarea pe webhook e best-effort (fără retry) și refuză redirecturile.
-Detalii: [alerts-webhooks.md](alerts-webhooks.md).
+Forma payload-ului și motorul de praguri în detaliu:
+[alerts-webhooks.md](alerts-webhooks.md).
 
 ---
 
@@ -648,6 +758,13 @@ Config → **Backup & Snapshots**.
   singură. Un fișier corupt blochează și salvările (o copie rămâne ca
   `config.yaml.bad`), deci valorile implicite nu-ți pot suprascrie niciodată
   configurația reală.
+- **Auto-vindecarea configurației (`config.yaml.good`)** — independent de
+  snapshot-uri, fiecare încărcare reușită păstrează o copie
+  `config.yaml.good`; o editare coruptă ulterioară cade înapoi pe acel
+  **last-known-good** (niciodată pe defaults goale), deci primarul continuă
+  să citească hostul corect printr-o editare greșită. Condiția apare ca
+  `config.healthy` în `/api/status` și ridică o alertă; salvările rămân
+  blocate până repari fișierul.
 - **Backup export/import (ZIP)** — pentru portabilitate între hosturi.
   Exportul **elimină secretele** (credențiale MQTT/Influx, hash-uri de
   parole, headere de webhook/REST-push) și identitatea hostului implicit;

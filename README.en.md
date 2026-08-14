@@ -82,11 +82,12 @@ all the same. No vendor lock-in, no per-box cost.
 - **MQTT-in** — subscribe to a broker; value from the JSON payload
   (`json_path`) or the bare payload; per-register topics with `+`/`#`
   wildcards.
-- **Device templates** — the register map as a portable JSON file; 10
+- **Device templates** — the register map as a portable JSON file; 11
   bundled, field-tested maps with documented provenance
   ([catalog](docs/device-catalog.md)): Janitza UMG 512-PRO (4,126
   registers), ABB B21/B23, Carlo Gavazzi EM24, Eastron SDM120/SDM630,
-  Schneider iEM3000 + 3 MQTT maps (Zigbee2MQTT, Theengs BLE, generic JSON).
+  Schneider iEM3000, Fronius Smart Meter 65A-3 + 3 MQTT maps (Zigbee2MQTT,
+  Theengs BLE, generic JSON).
   In-UI editor + upload + export + **CSV import**
   ([guide](docs/csv-import.md)).
 - **Canonical field naming** — uniform register names across every device
@@ -274,7 +275,10 @@ docker compose --profile influxdb --profile grafana up -d
 > volume) and applied **without a restart**. The `.env` variables are
 > **optional**: use them to pre-seed a fresh deploy or to pin values in an
 > immutable setup. A setting provided via env takes precedence and shows as
-> **locked** in the UI.
+> **locked** in the UI. Note: `docker-compose.yml` ships with the
+> Modbus/MQTT/InfluxDB `environment:` pass-through lines **commented out** —
+> uncomment the ones you want, or a `.env` value never reaches the container
+> (with plain `docker run`, `--env-file .env` passes everything directly).
 
 The `.env` essentials (full list in the
 [manual](docs/MANUAL.md#3-first-configuration)):
@@ -373,17 +377,22 @@ multi-bus-gateway/
 ## Using an existing MQTT / InfluxDB stack
 
 To point the gateway at brokers/databases you already run (instead of the
-bundled ones), set the connection details in `.env` or the UI — e.g.
-`MQTT_BROKER`, `MQTT_PORT`, `INFLUXDB_URL`, `INFLUXDB_TOKEN` (see
-`.env.example` for the full list) — and start only the gateway service:
+bundled ones), set the connection details in the UI (Config → Settings) —
+they persist to `config/config.yaml` and apply live, no restart — and start
+only the gateway service:
 
 ```bash
 docker compose up -d multi-bus-gateway
 ```
 
-Environment variables are **unprefixed** (the app reads `MODBUS_HOST`) and all
-**optional** — prefer configuring from the UI. `API_KEY` is also honoured as
-`JANITZA_API_KEY` (historical compatibility).
+Prefer seeding from the environment instead? The matching `environment:`
+lines in `docker-compose.yml` ship **commented out**, so first uncomment the
+ones you need there, then set them in `.env` — e.g. `MQTT_BROKER`,
+`MQTT_PORT`, `INFLUXDB_URL`, `INFLUXDB_TOKEN` (see `.env.example` for the
+full list). Variable names are **unprefixed** (the app reads `MODBUS_HOST`);
+an env value overrides the UI/yaml on every start and shows as **locked** in
+the UI. `API_KEY` is also honoured as `JANITZA_API_KEY` (historical
+compatibility).
 
 ## Development
 
@@ -412,8 +421,8 @@ provenance, see [docs/device-catalog.md](docs/device-catalog.md).
 
 ## License
 
-**GNU Affero General Public License v3.0 (AGPL-3.0)** — free and open-source
-software.
+**GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)** —
+free and open-source software.
 
 Copyright (c) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
 

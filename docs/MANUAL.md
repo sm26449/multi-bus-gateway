@@ -1,4 +1,4 @@
-# User Manual — Multi-Bus Gateway 3.0.0
+# User Manual — Multi-Bus Gateway
 
 🇬🇧 **English** | [🇷🇴 Română](MANUAL.ro.md)
 
@@ -13,7 +13,7 @@ Companion documents:
 - **[device-catalog.md](device-catalog.md)** — every bundled register map and
   the source it was verified against.
 - **[csv-import.md](csv-import.md)** — importing a vendor CSV register map.
-- **[alerts-webhooks.md](alerts-webhooks.md)** — infrastructure alerting.
+- **[alerts-webhooks.md](alerts-webhooks.md)** — infrastructure + value-threshold alerting.
 
 ## Contents
 1. [What you need](#1-what-you-need)
@@ -27,6 +27,7 @@ Companion documents:
 9. [InfluxDB & Grafana](#9-influxdb--grafana)
 10. [REST push & the HTTP/JSON feed](#10-rest-push--the-httpjson-feed)
 11. [Virtual Meters — step by step](#11-virtual-meters--step-by-step)
+11b. [Device Builder — remote ESP32 nodes (ESPHome)](#11b-device-builder--remote-esp32-nodes-esphome)
 12. [Alerts & webhooks](#12-alerts--webhooks)
 13. [Diagnostics](#13-diagnostics)
 14. [Modbus writes & dead-man leases](#14-modbus-writes--dead-man-leases)
@@ -97,6 +98,10 @@ The optional env variables:
 | `UI_PORT` | Web UI port | `8080` |
 | `API_KEY` | require `X-API-Key` on mutating requests | — |
 | `VMETER_PORT_START` / `VMETER_PORT_END` | virtual-meter port range | `1502` / `1512` |
+| `TZ` | timezone for the bundled ESPHome container and timestamps | `Europe/Bucharest` |
+| `ESPHOME_URL` | where the gateway finds the ESPHome dashboard (Device Builder); on a fresh deploy it also enables the section | `http://esphome:6052` |
+| `ESPHOME_ENABLED` | force the Builder on/off at every start (otherwise the UI decides) | — |
+| `ESPHOME_DASHBOARD_USERNAME` / `ESPHOME_DASHBOARD_PASSWORD` | login on the ESPHome dashboard; the same values also configure the gateway's client | — |
 
 The status dots in the UI top bar (Modbus / MQTT / InfluxDB) turn green as
 each pipeline connects — click one for details.
@@ -146,6 +151,12 @@ Devices → *Discover devices*:
 - **SunSpec scan** — walks the SunSpec model chain (the `SunS` marker at
   40000/50000/0, then every declared model, identity block included). The
   natural first step for Fronius/SolarEdge/Huawei hardware.
+- **ESPHome scan** — sweeps the LAN on the native-API port (6053) and asks
+  each node for its identity (name, version; nodes with an encrypted API are
+  still detected). Works from Docker — the scan is unicast, so it doesn't
+  depend on mDNS/multicast, which doesn't cross the Docker bridge. Nodes that
+  announce their adoption package can be **imported directly** into the
+  Device Builder (they become managed nodes: build/OTA from here).
 - **MQTT topic browse** — connects to a broker and shows its speaking topics
   with payload previews (retained topics appear instantly; a short listen
   window catches live publishers), so you pick a topic instead of typing it.
@@ -221,8 +232,9 @@ Registers in one group are merged into batch reads bridging gaps up to
 *illegal data address* should set `max_gap: 0`.
 
 **Thresholds** color-code a value (warningLow/High, dangerLow/High) on the
-dashboard and gauges. They are per register, visual only — for *alerting*
-see §12 (infrastructure) or use a downstream system for value alarms.
+dashboard and gauges. They are per register — and the same limits can also
+fire **alerts** on crossings: enable the built-in threshold engine
+(`alerts.signals.threshold`, see §12).
 
 Saving the selection hot-reloads only that device's pollers.
 
@@ -251,6 +263,49 @@ the InfluxDB field is the flat canonical name. The full list is in
 
 Vendor reference maps (e.g. the Janitza UMG512) predate this and keep their
 native names — the scheme applies to the templates you build/import.
+
+### 6.2 Polling & decode hygiene (opt-in)
+
+Everything here is **off by default** — enable it globally, per device or per
+register when the hardware needs it.
+
+- **Startup jitter** — `polling.startup_jitter_s` (global default) or
+  `startup_jitter_s` under a device's `connection:`. Each poll group waits a
+  random delay in `[0, min(interval, jitter)]` before its **first** read, so
+  several devices/groups don't fire in lock-step and hammer a shared transport
+  (notably an RTU-over-network serial bridge) at boot. `0` = off.
+- **Illegal-register skip-list** — `illegal_registers` under a device's
+  `connection:`: addresses the slave answers with *illegal data address*
+  (exception 02). Merged batch reads never bridge across one, and a selected
+  register sitting on one is skipped — the fix for a hole *inside* a
+  contiguous run, which `max_gap: 0` can't solve. Decimal or `0x…`.
+- **All-zero frame gate** — `drop_all_zero: true` on a device: a sleepy device
+  (an inverter at night) can answer with an ALL-ZERO frame instead of an
+  error; published as-is that reads as real 0 V / 0 W. With the gate on, a
+  poll group whose numeric values are all exactly zero (and there are ≥2 of
+  them) is dropped and the cache keeps the last-good values until the device
+  wakes.
+
+```yaml
+polling:
+  startup_jitter_s: 2          # global default for all devices
+devices:
+  - id: inverter
+    connection:
+      host: 192.168.1.60
+      startup_jitter_s: 5      # per-device override
+      illegal_registers: [0x2100, 505]
+      drop_all_zero: true      # sleeps at night
+```
+
+- **Per-register decode options** (register/template editor or template JSON):
+
+| Key | Effect |
+|---|---|
+| `offset` | engineering value = `raw / scale + offset` — zero-point / unit shifts (e.g. Kelvin×10 → °C with `scale: 10, offset: -273.15`); skipped for enum/bitfield rows |
+| `nan` | not-available sentinel: `true` = the data type's SunSpec value (`0x8000`/`0xFFFF`…), or an explicit raw value / list. A match reads as *missing*, never a garbage number (−32768 °C). Float NaN/Inf is always dropped |
+| `monotonic: true` | cumulative counters (Wh/kWh/varh): a downward glitch is dropped (the cache holds last-good), so HA Energy / Victron / `difference()` never see a phantom counter reset; a genuine sustained reset is still accepted |
+| `enum` / `bits` (+ `mask`/`shift`) | decode a raw status word to text — `enum: {7: "Fault"}` (unmapped → `unknown (n)`), `bits: {0: "overvoltage"}` joins set-bit names; built visually via the **States** button in the template editor |
 
 ---
 
@@ -297,6 +352,10 @@ in-container paths; "skip verification" is for testing only).
 - **Publish mode**: `changed` (default — only values that changed publish;
   the change cache confirms only after a successful publish, so a broker
   outage loses nothing) or `all` (every reading).
+- **Heartbeat** — `mqtt.heartbeat_interval` (seconds, `0` = off, default): in
+  `changed` mode, force a republish of an *unchanged* value after N seconds,
+  so a steady reading keeps a fresh timestamp and Home Assistant doesn't grey
+  the entity out during long steady states.
 - **Availability**: a Last-Will marks `<prefix>/status` = `offline` if the
   gateway dies; `online` is retained on connect.
 - **Home Assistant discovery**: on by default. Each device becomes an HA
@@ -434,6 +493,40 @@ freshness watchdog is the safety net. The same map is also served as JSON at
 (`value: null` + `quality` + `age_s`, `last_value` separate) — a SCADA can
 read everything in one poll.
 
+**11.7 — Redundant sources (failover).** A meter that feeds a control loop
+shouldn't stop with one source outage. Two layers, driving the same engine:
+
+- **Per register** — in the template editor the source-kind dropdown offers
+  **Failover (live…)**: a comma-separated candidate list in priority order
+  (`device.register` for a cross-device source). YAML:
+  `source: { failover: ["_G_P_SUM3", "fronius.power_active_total"] }`
+  (`combined` is an accepted alias). Each rebuild serves the **first fresh**
+  candidate, skips missing/stale ones in order, and switches back the instant
+  the primary is fresh again.
+- **Per instance** — the Add/Edit instance modal's *Secondary source device
+  (failover)* dropdown (`device_fallback:` on the instance) names a **twin
+  device**. At start, every bare-name live register is rewritten into the
+  pair `[name, <twin>.name]` — no template edits, because canonical field
+  names are identical across devices. Const, sum, already-failover and
+  explicit `device.register` rows stay as authored. The fallback is validated
+  at save (known device, different from the source) and re-checked at start
+  (a bad value is ignored with a warning — it never blocks the meter). A
+  configured-but-offline twin arms and engages the moment it publishes.
+
+**Staleness interaction:** failover only ever serves a *fresh* candidate; if
+none is fresh, the row degrades through the instance's `on_stale` policy
+exactly like a single stale source (under `fail` the read is refused).
+**Switch events:** every change of serving source lands in the event log and
+the process log — `warn` on a drop to a lower-priority source, `info` on
+recovery — and the meter card shows `✓ on primary` / `⇢ n/m on fallback`.
+
+**Published state.** Each meter's retained MQTT state
+(`<mqtt prefix>/vmeter/<id>/state`) carries the staleness policy and bounds
+(`on_stale`, `stale_after_s`, `max_hold_s`), the last rebuild's quality
+counts (fresh/stale/missing) and the live failover routing (per register:
+candidates, active source, `on_primary`) — an external monitor sees *how* the
+meter degrades and which source feeds it, not just that it went stale.
+
 **Pitfalls:** the meter responds on any unit id (the configured one is
 informational); reads outside the emulated map answer *illegal data
 address* by design (consumers fingerprint meters by probing low addresses);
@@ -441,11 +534,94 @@ deleting a source device is blocked while a meter uses it.
 
 ---
 
+## 11b. Device Builder — remote ESP32 nodes (ESPHome)
+
+Got a meter on RS485 in another building or at another site, with no network
+cable to it? The **Builder** section builds firmware for an ESP32/ESP8266
+node that reads the meter over Modbus RTU and publishes the values via MQTT
+back into the gateway — all from the UI, no toolchain installed.
+
+Compilation is done by a standard **ESPHome** container, on your own
+hardware; the gateway drives it through its API, so it needs no shared
+volumes or new dependencies. Nothing leaves your network.
+
+**Getting started: zero configuration.** `docker compose up -d` also starts
+the bundled ESPHome service, and the gateway binds to it by itself
+(`ESPHOME_URL` is pre-filled in the compose file). The **Device Builder**
+card awaits you on the **Devices** page, below the device list, with the
+green banner and the ESPHome version already showing; the **Deploy new
+device** button in the toolbar takes you straight into the wizard. The
+ESPHome dashboard is not exposed on the LAN — everything goes through a
+single UI, with a single login and a single audit trail. (Already running
+ESPHome elsewhere? Change the URL under Devices → Device Builder → ⚙, or set
+`ESPHOME_URL` in `.env`. Want a login on the ESPHome dashboard too?
+`ESPHOME_DASHBOARD_USERNAME/PASSWORD` in `.env` set both ends at once.)
+
+**The full flow, from template to live data:**
+
+1. **Generate from template** — pick a Modbus template (e.g. Eastron
+   SDM630), the register subset, the hardware profile (board + UART/DE-RE
+   pins) and the meter's Modbus address. The MQTT broker is inherited from
+   the gateway automatically.
+2. **Preview** — you get the complete YAML (uart/modbus/modbus_controller
+   with the correct data types, byte order and scaling; values leave in
+   engineering units on explicit per-register topics).
+3. **Save + Adopt as device** — one click saves the firmware to the ESPHome
+   dashboard, fills the missing keys in `secrets.yaml` (`CHANGE_ME`
+   placeholder for Wi-Fi/OTA) **and automatically creates the gateway-side
+   pair**: an MQTT template + an mqtt-in device with exactly the same
+   topics. Zero double configuration.
+4. Fill in `secrets.yaml` (the edit button accepts secrets.yaml too), then
+   **Build** — live logs in the console.
+5. **First flash: over USB, straight from the browser** (the *USB* button;
+   needs Chrome/Edge and HTTPS or localhost — esp-web-tools is served
+   locally, no cloud). The same dialog configures Wi-Fi over the cable
+   (Improv). Afterwards: **Flash OTA** from the same page.
+6. The node boots, publishes, and the paired gateway device picks the values
+   up automatically — you see them in Dashboard/Monitor, LWT staleness
+   included.
+
+**What the generator covers today (and what it doesn't, yet):**
+
+| Node interface | State | Notes |
+|---|---|---|
+| **RS485 / Modbus RTU** | ✅ complete | uart + modbus + modbus_controller from any Modbus template; validated by ESPHome ("Configuration is valid!") |
+| **MQTT northbound** | ✅ complete | explicit per-register topics + LWT; the mqtt-in pair is created at Adopt |
+| **BLE (sensors)** | ⚠️ partial | the gateway consumes BLE via MQTT (the `ble_theengs_sensor` template); the generator doesn't emit `esp32_ble_tracker` profiles yet |
+| **CAN bus** | ⏳ planned | ESPHome has `canbus` (ESP32 internal TWAI / MCP2515), but CAN is frame+signal oriented, not register oriented — it needs a template schema extension (frame id, bits, scaling), in design |
+
+A manually imported YAML can use ANY ESPHome component (including
+canbus/BLE) today already — the limits above concern only the automatic
+**generator** from templates. Extending the generator (BLE, CAN both ways,
+I/O nodes, integrated boards like the LilyGO T-CAN485) is on the project
+roadmap.
+
+**Worth remembering:**
+
+- Without auth enabled, everything is open (trusted LAN, like the rest of
+  the app); with auth, node YAMLs, builds and flashing are **admin-only**,
+  and everything lands in the audit log.
+- **Update all** recompiles and OTA-updates every node with old firmware
+  (after an ESPHome upgrade, for instance).
+- Hardware profiles (pins/board) are saved and reused across nodes; two
+  generic profiles are included.
+- Deleting a node **archives** it on the ESPHome dashboard — nothing is
+  permanently lost.
+
 ## 12. Alerts & webhooks
 
-Infrastructure-health alerting (a device or sink goes down, read latency
-stays high, the InfluxDB buffer backs up) — **not** value alarms. Configure
-under Config → Alerts or the `alerts:` block:
+Two alert families over one delivery path (MQTT + webhook):
+
+- **Infrastructure health** — a device or sink goes down, read latency stays
+  high, the InfluxDB buffer backs up.
+- **Value thresholds** — the per-register warning/danger limits from §6
+  become alert events through a built-in hysteresis engine (**off by
+  default**, `signals.threshold`): five bands, fires only on band
+  transitions, *fast to alarm, slow to clear* (deadband
+  `threshold_deadband_pct`, default 2 %), suppressed on stale data so a comms
+  loss can't fire a phantom crossing.
+
+Configure under Config → Alerts or the `alerts:` block:
 
 ```yaml
 alerts:
@@ -457,14 +633,20 @@ alerts:
   min_interval_s: 300
   latency_ms: 1000
   buffer_points: 1000
-  signals: { device: true, sink: true, latency: true, buffer: true }
+  signals: { device: true, sink: true, latency: true, buffer: true,
+             threshold: true }                 # threshold defaults to false
+  threshold_deadband_pct: 2.0
+  threshold_alert_on_start: true
 ```
 
 Alerts are rate-limited per key (`min_interval_s`), mirrored to the event
-log and the Status page. The **Test** button (or `POST /api/alerts/test`)
-fires a synthetic alert through the real channels — it requires login or an
-API key and is cooldown-throttled, because it drives real outbound traffic.
-Webhook delivery is best-effort (no retry) and refuses redirects. Details:
+log and the Status page. The gateway *detects and delivers*; deduplication,
+routing and channel fan-out (Telegram/SMS/e-mail) belong in your webhook
+receiver / notification system. The **Test** button (or
+`POST /api/alerts/test`) fires a synthetic alert through the real channels —
+it requires login or an API key and is cooldown-throttled, because it drives
+real outbound traffic. Webhook delivery is best-effort (no retry) and
+refuses redirects. Payload shape and the threshold engine in detail:
 [alerts-webhooks.md](alerts-webhooks.md).
 
 ---
@@ -546,6 +728,12 @@ Config → **Backup & Snapshots**.
   boots — an unattended box comes back up. A corrupt file also blocks saves
   (a copy is kept as `config.yaml.bad`) so defaults can never overwrite your
   real config.
+- **Config self-healing (`config.yaml.good`)** — independently of snapshots,
+  every good load keeps a `config.yaml.good` copy; a later corrupt edit falls
+  back to that **last-known-good** file (never bare defaults), so the primary
+  keeps polling the right host through a bad edit. The condition surfaces as
+  `config.healthy` in `/api/status` and is raised as an alert; saves stay
+  disabled until the file is repaired.
 - **Backup export/import (ZIP)** — for portability between hosts. The
   export **strips secrets** (MQTT/Influx credentials, password hashes,
   webhook/REST-push headers) and host identity by default;
@@ -554,6 +742,22 @@ Config → **Backup & Snapshots**.
   config so stripped secrets survive, and takes a `pre-import` snapshot
   first. Snapshots, by contrast, are full-fidelity local restore points —
   downloading one is gated like a with-secrets export.
+
+**What goes into a backup/snapshot:** `config.yaml`, each device's selected
+registers, the user's device templates, `virtual_meters.yaml` + the
+virtual-meter templates under `config/templates/`, calculated-register
+presets and the Builder's hardware profiles. The passkey registry
+(`passkeys.json`) goes **only** into the with-secrets backup
+(`include_secrets=true`) and into snapshots — otherwise a restore would
+unlock authentication.
+
+**What does NOT go in (and how to save it separately):**
+- `audit.jsonl` / `events.jsonl` — operational history, self-rotating; copy
+  them manually if you need them for analysis.
+- The Device Builder's ESP32 node YAMLs — they live in the **ESPHome volume**
+  (`esphome-config`), not in the gateway's `config/`. Include it in your
+  infrastructure backup (Duplicati etc.) if you use the Builder.
+- `write_leases.json` — ephemeral by design (leases rebuild themselves).
 
 **Pitfall:** snapshots live under `config/snapshots/` inside the config
 volume — they protect against bad edits, not against losing the volume.

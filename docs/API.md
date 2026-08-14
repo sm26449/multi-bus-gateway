@@ -1,6 +1,6 @@
-# REST API Reference — Multi-Bus Gateway 3.4.2
+# REST API Reference — Multi-Bus Gateway
 
-Generated from the route definitions in `multibus/api.py` and `multibus/routes/`.
+Hand-maintained reference for the routes defined in `multibus/api.py` and `multibus/routes/`.
 Base URL: `http://<gateway>:8080` (default port; `ui.port` / `UI_PORT`).
 
 ## Authentication & roles
@@ -98,6 +98,8 @@ viewer session ends when its cookie expires or is cleared client-side.
 | POST | `/api/query/batch` | On-demand batch read | viewer |
 | GET | `/api/search?q=&category=` | Search the register catalog | viewer |
 | GET | `/api/poll-groups` | Global poll-group definitions | viewer |
+| GET | `/api/canonical-fields` | The canonical field dictionary (name → measurement, unit, MQTT topic, description) that drives editor autocomplete and topic/measurement derivation | viewer |
+| POST | `/api/canonical-fields/guess` | Batch canonical-name inference for the editor's **Auto-canonicalize** button: `{registers: [{name, label, unit, description}]}` → `{guesses: [name\|null]}`, index-aligned (null where not confident) | admin |
 | GET | `/api/values?device=` | All current values of a device's live store | viewer |
 | GET | `/api/values/{address}` | One current value (primary) | viewer |
 | GET | `/api/meters` | Devices exposed as JSON feeds (http_output enabled) | viewer |
@@ -132,6 +134,7 @@ viewer session ends when its cookie expires or is cleared client-side.
 | GET | `/api/device-templates/{id}/export` | Download as JSON (round-trips through upload) | viewer |
 | POST | `/api/device-templates/upload` | Validated save; 409 on id conflict unless `overwrite: true` | admin |
 | POST | `/api/device-templates/import-csv` | Convert a CSV register map into a template **preview** (save via upload) | admin |
+| POST | `/api/device-templates/import-yaml` | Convert an upstream/community YAML register map into a template **preview** (`{yaml, id?, name?, vendor?, model?, default_data_type?, default_poll_group?}`; richer than CSV — enum/bits/thresholds/write envelope pass through; save via upload) | admin |
 
 ## Device Builder (ESPHome integration)
 
@@ -184,8 +187,8 @@ enabled; dashboard errors surface as 502 with the reason.
 | Method | Path | Description | Role |
 |---|---|---|---|
 | GET | `/api/virtual-meters` | Instances + live status + served values + port range | viewer |
-| POST | `/api/virtual-meters` | Add an instance (`{template, port, unit_id, stale_after_s, device, on_stale, max_hold_s, quality_block, enabled}`) | admin |
-| PATCH | `/api/virtual-meters/{template}` | Edit an instance (partial); restarts it live if running | admin |
+| POST | `/api/virtual-meters` | Add an instance (`{template, port, unit_id, stale_after_s, device, device_fallback, on_stale, max_hold_s, quality_block, enabled}`) | admin |
+| PATCH | `/api/virtual-meters/{template}` | Edit an instance (partial: `port`, `unit_id`, `stale_after_s`, `update_interval_s`, `device`, `device_fallback`, `on_stale`, `max_hold_s`, `quality_block`); restarts it live if running | admin |
 | DELETE | `/api/virtual-meters/{template}` | Remove an instance | admin |
 | POST | `/api/virtual-meters/{template}/toggle?on=` | Enable/disable (persists + starts/stops live) | admin |
 | GET | `/api/virtual-meters/{template}/values` | The map as JSON under the staleness convention (`value: null` + `quality` + `age_s`; `last_value` separate) | viewer |

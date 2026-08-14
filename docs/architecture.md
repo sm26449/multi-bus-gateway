@@ -1,15 +1,19 @@
-# Architecture — Multi-Bus Gateway 3.0.0
+# Architecture — Multi-Bus Gateway
 
 Multi-Bus Gateway is a **protocol gateway**: it acquires measurements from
-southbound field devices (Modbus TCP, Modbus RTU, HTTP/JSON, MQTT), verifies
-and normalizes them, and routes them to independent northbound sinks (MQTT,
-InfluxDB, REST push, HTTP/JSON feeds) and to **virtual Modbus meters** that
-re-serve the data to downstream consumers. It is *not* an energy-reporting or
-billing application — cost, tariff and analytics are the job of whatever sits
-downstream.
+southbound field devices (Modbus TCP, Modbus RTU — direct serial or over a
+network serial bridge —, HTTP/JSON, MQTT), verifies and normalizes them, and
+routes them to independent northbound sinks (MQTT, InfluxDB, REST push,
+HTTP/JSON feeds) and to **virtual Modbus meters** that re-serve the data to
+downstream consumers. It can also *author* its own southbound endpoints: the
+**Device Builder** generates, compiles and flashes ESPHome firmware for remote
+ESP32/ESP8266 Modbus-reader nodes that publish back over MQTT. It is *not* an
+energy-reporting or billing application — cost, tariff and analytics are the
+job of whatever sits downstream.
 
-All facts below are drawn from the code in `multibus/` (Python package) and
-`ui/` (vanilla-JS SPA). File references use `module.py` names.
+All facts below are drawn from the code in `multibus/` (Python package),
+`serial-bridge/` (companion container) and `ui/` (vanilla-JS SPA). File
+references use `module.py` names.
 
 ## 1. System overview
 
@@ -17,32 +21,38 @@ All facts below are drawn from the code in `multibus/` (Python package) and
 flowchart LR
     subgraph SOUTH["Southbound sources"]
         MT["Modbus TCP slave<br/>(meter, inverter, PLC)"]
-        MR["Modbus RTU slave<br/>(RS-485 serial)"]
+        MR["Modbus RTU slave<br/>direct RS-485 serial, or<br/>rtu-tcp via the serial bridge"]
         HJ["HTTP/JSON endpoint<br/>(Solar API, Shelly, Tasmota)"]
-        MI["MQTT publisher<br/>(Zigbee2MQTT, Theengs, any broker)"]
+        MI["MQTT publisher<br/>(Zigbee2MQTT, Theengs,<br/>Builder-flashed ESPHome nodes)"]
     end
 
     subgraph CORE["Gateway core (one container)"]
         direction TB
         DRV["Device drivers<br/>modbus_client · http_client · mqtt_input"]
+        DEC["Decode pipeline<br/>register_parser · value_decode ·<br/>counter_filter (scale/offset, enum/bits,<br/>NaN sentinels, monotonic guard)"]
         REG["DeviceRegistry<br/>(DeviceConfig, client) pairs<br/>one live value store per device"]
         CALC["CalcEngine<br/>expression-derived registers<br/>(synthetic addresses ≥ 8,000,000)"]
-        TPL["Device templates<br/>bundled catalog + user uploads<br/>+ CSV import"]
+        THR["Threshold engine<br/>value limits → alert events<br/>(hysteresis bands)"]
+        TPL["Device templates<br/>bundled catalog + user uploads +<br/>CSV/YAML import · canonical names"]
+        BLD["Device Builder<br/>ESPHome YAML generation ·<br/>compile/OTA via external engine"]
         DIAG["Diagnostics<br/>bus trace · register probe ·<br/>discovery · SunSpec walk"]
-        SAFE["Config safety<br/>snapshots · rollback · LKG seatbelt"]
+        SAFE["Config safety<br/>snapshots · rollback · LKG seatbelt ·<br/>self-healing config"]
         SEC["Security<br/>sessions/roles · passkeys · audit ·<br/>IP allowlist · write gate + leases"]
-        DRV --> REG
+        DRV --> DEC --> REG
         TPL -.->|register maps| DRV
+        TPL -.->|firmware YAML| BLD
         REG --> CALC
         CALC --> REG
+        REG --> THR
     end
 
     subgraph NORTH["Northbound sinks & servers"]
-        MQ["MQTT publisher<br/>per-device topic prefix ·<br/>HA discovery · LWT"]
+        MQ["MQTT publisher<br/>per-device topic prefix ·<br/>HA discovery · LWT ·<br/>optional write-entities"]
         IX["InfluxDB publisher<br/>per-device bucket ·<br/>store-and-forward buffer"]
         RP["REST push<br/>periodic JSON POST per device"]
         HO["HTTP/JSON feed<br/>GET /api/meters/&lt;id&gt;"]
-        VM["Virtual meters<br/>Modbus TCP servers<br/>(EM24, Fronius SM, SunSpec…)"]
+        VM["Virtual meters<br/>Modbus TCP servers<br/>(EM24, Fronius SM, SunSpec…)<br/>staleness policies · failover"]
+        AL["Alerts<br/>MQTT ‹prefix›/alert +<br/>HTTP webhook"]
         WS["Web UI + WebSocket /ws"]
         PM["Prometheus /metrics"]
     end
@@ -59,12 +69,14 @@ flowchart LR
     REG --> VM
     REG --> WS
     REG --> PM
+    THR --> AL
 
     VM --> C1["Victron ESS"]
     VM --> C2["Fronius DataManager"]
     VM --> C3["any SunSpec / Modbus client"]
     MQ --> HA["Home Assistant / Node-RED"]
     IX --> GF["Grafana"]
+    AL --> NX["webhook consumer /<br/>notification service"]
 ```
 
 Key properties:
@@ -75,12 +87,66 @@ Key properties:
 - **The device id is the routing key.** Each device carries its own MQTT
   topic prefix, InfluxDB bucket + device tag, and output toggles
   (`DeviceConfig` in `config.py`).
+- **Uniform naming.** A register's `name` is drawn from a canonical
+  dictionary (`canonical_fields.py`, 56 fields — see
+  [`canonical-fields.md`](canonical-fields.md)), so the same physical
+  quantity is named the same on every device: `voltage_l1_n` everywhere,
+  hierarchical MQTT topic (`voltage/l1_n`), flat InfluxDB field. This is
+  also what makes device-level failover possible (§6).
 - **Invisible migration.** Device #1 (the primary) is synthesized from the
   legacy flat `modbus:`/`mqtt:`/`influxdb:` sections of `config.yaml`, so an
   install upgraded from the single-meter era keeps byte-identical topics,
   buckets, tags and Home Assistant identifiers.
 
-## 2. Core components
+## 2. Subsystem map
+
+One paragraph per module group; every file lives in `multibus/` unless noted.
+
+- **Acquisition** — `modbus_client.py`, `http_client.py`, `mqtt_input.py`
+  poll or subscribe southbound; `device_registry.py` owns the live value
+  stores; `config.py` owns `DeviceConfig` and the config bundle on disk.
+- **Decode** — `register_parser.py` (data types × word orders),
+  `value_decode.py` (enum/bitfield → text), `counter_filter.py` (monotonic
+  guard for cumulative counters), `encoder.py` (the reverse direction:
+  values → register words for virtual meters and writes, including SunSpec
+  not-available sentinels).
+- **Derived values** — `calc_engine.py` + `expressions.py` (whitelisted-AST
+  formula evaluation, per poll group).
+- **Templates & naming** — `device_template.py` and the bundled catalog in
+  `device_templates/`; `csv_import.py` and `yaml_import.py` turn vendor/
+  community register maps into template previews; `canonical_fields.py` is
+  the single source of truth for register naming and drives the
+  auto-canonicalize classifier.
+- **Sinks** — `mqtt_publisher.py` (HA discovery, LWT, availability,
+  optional write-entities), `influxdb_publisher.py` (store-and-forward
+  buffer), `rest_push.py`; `backfill.py` is the offline gap-backfill tool.
+- **Virtual meters** — `virtual_meter.py` (one emulated Modbus TCP server:
+  datastore, staleness policies, quality block) and
+  `virtual_meter_manager.py` (instances from `virtual_meters.yaml`,
+  supervisor, failover routing, `device_fallback`, retained state topic).
+- **Alerting** — `alerts.py` (AlertManager: signal gating, rate limiting,
+  MQTT + webhook delivery), `threshold_engine.py` (value-threshold
+  hysteresis bands), `event_log.py` (persisted event ring).
+- **Device Builder** — `esphome_generator.py` (device template → ESPHome
+  node YAML), `esphome_client.py` (HTTP/WS client for the external ESPHome
+  build engine), `routes/builder_routes.py` (node management, compile/OTA
+  consoles, adopt flow, web flasher).
+- **Security** — `auth.py` (sessions, roles, lockout), `passkeys.py`
+  (WebAuthn), `audit.py` (append-only JSONL), `redact.py` (secret masking),
+  `write_lease.py` (crash-safe dead-man write leases).
+- **Config safety** — `snapshots.py` (snapshots, semantic diff, rollback,
+  LKG), `tombstone_store.py` (device soft-delete/restore).
+- **Diagnostics** — `bus_trace.py` (frame-level TX/RX), `discovery.py`
+  (Modbus + ESPHome-node LAN sweeps, SunSpec walk).
+- **API & UI** — `api.py` (`create_api`) plus the extracted `routes/`
+  modules (auth, builder, calculated, commissioning, config, templates,
+  diagnostics, discovery, energy, metrics, registers, status, system,
+  values, vmeters); the SPA lives in `ui/`.
+- **Serial bridge** — `serial-bridge/supervisor.py` (separate container):
+  ser2net managed by a Python supervisor, exposing USB serial adapters as
+  stable TCP endpoints (§3).
+
+## 3. Core components
 
 ### DeviceRegistry (`device_registry.py`)
 
@@ -96,29 +162,66 @@ resync) are lock-protected; reads are lock-free snapshots.
 
 | Driver | Protocol | Model | Notes |
 |---|---|---|---|
-| `modbus_client.py` | Modbus TCP & RTU-master | one poller thread per poll group | batch reads with configurable `max_gap` merging; retry with error taxonomy (`timeout` / `exception_N` / `connection`); per-device staleness bound `stale_after_s` |
-| `http_client.py` | HTTP/JSON | one poller thread per poll group | per-register `json_path` (dot/bracket paths, list indices); SSRF guard: URL must resolve to private LAN addresses only (pinned literal IP, redirects refused) unless `security.allow_nonlan_http_devices` |
-| `mqtt_input.py` | MQTT subscribe | push-driven (no poll rate) | per-register `topic` with `+`/`#` wildcards or the device base topic; value from `json_path` or the bare payload |
+| `modbus_client.py` | Modbus TCP, RTU (direct serial), **rtu-tcp** (RTU frames over a TCP socket to the serial bridge) | one poller thread per poll group | batch reads with configurable `max_gap` merging that never bridges a declared `illegal_registers` address; retry with error taxonomy (`timeout` / `exception_N` / `connection`); per-device staleness bound `stale_after_s`; optional `drop_all_zero` data-readiness gate (a sleepy device's all-zero frame is dropped, the cache keeps last-good); wedged-link forced reopen after 5 consecutive failed polls (a serial/PTY link can stay "open" while dead — TCP self-heals, RTU needs the belt-and-braces); optional `polling.startup_jitter_s` desynchronizes poll groups at boot |
+| `http_client.py` | HTTP/JSON | one poller thread per poll group | per-register `json_path` (dot/bracket paths, list indices); SSRF guard: URL must resolve to private LAN addresses only (pinned literal IP, redirects refused) unless `security.allow_nonlan_http_devices`; a fetch that overruns its interval backs off instead of tight-looping |
+| `mqtt_input.py` | MQTT subscribe | push-driven (no poll rate) | per-register `topic` with `+`/`#` wildcards or the device base topic; value from `json_path` or the bare payload; the natural transport for Builder-flashed ESPHome nodes |
 
 All three produce the same normalized batch shape, so every sink works with
-every source. Data types (`int16/uint16/int32/uint32/int64/uint64/float/
-double/string`) and the four word orders (`abcd`, `cdab`, `badc`, `dcba`)
-are handled centrally in `register_parser.py` (decode) and `encoder.py`
-(encode, including SunSpec "not available" sentinel words).
+every source. **One Modbus connection per device**, shared across its poll
+groups; the per-device lock is released during retry backoff so a slow group
+cannot stall the realtime group.
+
+### The decode pipeline
+
+Everything between raw words and a published value is centralized:
+
+- **Data types** — `int16/uint16/int32/uint32/int64/uint64/float/double/
+  string` plus signed-magnitude `sm16`/`sm32` (top bit = sign), across the
+  four word orders (`abcd`, `cdab`, `badc`, `dcba`) — decoded in
+  `register_parser.py`, encoded back in `encoder.py` (including SunSpec
+  "not available" sentinel words).
+- **Scale and offset** — engineering value is `raw / scale + offset`, so a
+  zero-point or unit shift (Kelvin×10 → °C) decodes correctly.
+- **Enum / bitfield decode** (`value_decode.py`) — a status register may
+  declare `enum` (`{code: label}`, optional `mask`+`shift` to extract a
+  packed sub-field first) or `bits` (`{bit: name}` joined for each set
+  bit). The value becomes a **string** and flows to every sink like the
+  existing string registers; an unmapped code reads `"unknown (n)"`, never
+  a silent wrong label. HA typing recognizes the register as a text sensor.
+- **Not-available sentinels** — a register may declare `nan` (True = the
+  type's SunSpec not-implemented value such as `0x8000`/`0xFFFF`, or an
+  explicit raw value / list); a match reads as *missing* rather than a
+  garbage number (−32768 °C). Float NaN/Inf are always dropped.
+- **Monotonic-counter guard** (`counter_filter.py`) — a cumulative energy
+  register flagged `monotonic: true` drops a transient downward read (which
+  every downstream `difference()` would misread as a counter reset injecting
+  a phantom delta) while accepting a genuine, sustained reset.
 
 ### Device templates (`device_template.py`, `multibus/device_templates/`)
 
 A template is a portable JSON file describing an equipment type: registers
-(address, name, label, unit, data type, scale, category, poll group,
-`json_path`/`topic` for non-Modbus transports), suggested defaults, and —
-for writable registers — the **write safety envelope** (`writable`,
-`write_min`, `write_max`, `write_safe`). Ten templates are bundled (Janitza
-UMG 512-PRO with 4,126 registers, ABB B21/B23, Carlo Gavazzi EM24, Eastron
-SDM120/SDM630, Schneider iEM3000, plus three MQTT-transport maps:
-Zigbee2MQTT sensor, Theengs BLE, generic MQTT-JSON); provenance for each is
-documented in [`device-catalog.md`](device-catalog.md). User templates
-round-trip through upload/export and can be generated from a vendor CSV
-([`csv-import.md`](csv-import.md)).
+(address, name, label, unit, data type, scale/offset, enum/bits maps,
+`monotonic`/`nan` flags, category, poll group, visual thresholds,
+`json_path`/`topic` for non-Modbus transports), explicit Home Assistant
+typing (`device_class`, `state_class`, `entity_category`, …), suggested
+defaults, and — for writable registers — the **write safety envelope**
+(`writable`, `write_min`, `write_max`, `write_safe`). Eleven templates are
+bundled (Janitza UMG 512-PRO with 4,126 registers, ABB B21/B23, Carlo
+Gavazzi EM24, Eastron SDM120/SDM630, Schneider iEM3000, Fronius Smart Meter
+65A, plus three MQTT-transport maps: Zigbee2MQTT sensor, Theengs BLE,
+generic MQTT-JSON); provenance for each is documented in
+[`device-catalog.md`](device-catalog.md). User templates round-trip through
+upload/export and can be generated from a vendor CSV
+([`csv-import.md`](csv-import.md)) or a community YAML register map
+(`yaml_import.py` — accepts bare lists, `registers:` lists or MBG-native
+wrappers, with per-field aliases); both importers return a reviewed preview,
+never a blind save.
+
+Templates opt into **canonical naming** (`"canonical": true`); the bundled
+vendor maps are canonical, non-canonical or duplicate names surface as load
+warnings, and a one-click **auto-canonicalize** infers canonical names for a
+cryptic map via a conservative server-side classifier that returns nothing
+when unsure.
 
 ### CalcEngine (`calc_engine.py`, `expressions.py`)
 
@@ -143,12 +246,39 @@ group, next to the real registers:
 
 - **Timestamps** are the *read* time, not the publish/flush time.
 - **Publish modes** per sink: `changed` (default; cache confirmed only after
-  a successful publish, so nothing is lost to a failed send) or `all`.
+  a successful publish, so nothing is lost to a failed send) or `all`. An
+  optional `mqtt.heartbeat_interval` republishes a steady value after N
+  seconds so Home Assistant does not grey the entity out.
 - **Absence is never encoded as a measurement** — a missing value is skipped
   on MQTT/InfluxDB, reported as `stale` on the JSON feed, and handled by an
-  explicit staleness policy on virtual meters (§4).
+  explicit staleness policy on virtual meters (§6).
 
-## 3. A poll → publish cycle
+## 4. RTU over the network: the serial bridge
+
+RTU has two modes (both live-validated; details in
+[`rtu-serial.md`](rtu-serial.md)):
+
+- **Direct serial** — the classic `/dev/ttyUSB*` bind into the gateway
+  container (`protocol: rtu`), for static single-host setups.
+- **Over network** — the **`serial-bridge`** companion container
+  (`serial-bridge/supervisor.py`: ser2net driven by a Python supervisor)
+  exposes each USB serial adapter as a **stable internal TCP endpoint**,
+  and the gateway's `rtu-tcp` transport tunnels RTU frames over that socket
+  (`ModbusTcpClient` + RTU framing). The gateway container stays
+  unprivileged — no `/dev` mapping on the primary path.
+
+Bridge properties: ports are keyed by USB serial number (FTDI/CP210x) or,
+for serial-less adapters (cheap CH340), by physical USB port-path, persisted
+across replug/restart — *same adapter, same port, for life*. Hotplug is
+handled by kernel uevents plus a periodic reconcile; each adapter is held
+exclusive (TIOCEXCL), single TCP client, data ports internal-only, control
+API (`GET /adapters`, consumed by the gateway's adapter scan) on localhost.
+A `BRIDGE_EXCLUDE` list guarantees an adapter owned by another service is
+never opened. The supervisor also survives unclean shutdowns: stale UUCP
+lockfiles are cleared before (re)starting ser2net, and a dead ser2net is
+respawned.
+
+## 5. A poll → publish cycle
 
 ```mermaid
 sequenceDiagram
@@ -162,9 +292,9 @@ sequenceDiagram
     participant VM as Virtual meter server
     participant WS as WebSocket clients
 
-    PG->>DEV: batch read (registers merged up to max_gap)
+    PG->>DEV: batch read (registers merged up to max_gap,<br/>split around illegal_registers)
     DEV-->>PG: raw words (retries on timeout/exception,<br/>each attempt visible in the bus trace)
-    PG->>PG: decode (data type × word order), apply scale
+    PG->>PG: decode (data type × word order),<br/>scale/offset · enum/bits · NaN sentinels ·<br/>monotonic guard · all-zero gate
     PG->>ST: update {address: {value, name, unit, timestamp}}
     PG->>CE: run(poll_group)
     CE->>ST: read inputs (this device + device.register refs)
@@ -188,7 +318,9 @@ Failure behavior along this path:
 - A failed read increments the per-kind error counters
   (`timeout` / `exception_N` / `connection`) surfaced on `/api/status`,
   `/metrics` and the Status page; the value store simply keeps its last
-  entry with its old timestamp — consumers judge freshness by age.
+  entry with its old timestamp — consumers judge freshness by age. A device
+  going unreachable logs **one** WARN and emits one `unreachable` event
+  (recovery: one INFO + `recovered`) — edge-triggered, not per-poll noise.
 - A failed MQTT publish leaves the change cache unconfirmed, so the value
   republishes after reconnect; on every reconnect the cache is cleared and
   full state republished (retained messages may have been lost).
@@ -199,7 +331,7 @@ Failure behavior along this path:
   measurement+tags+timestamp. MQTT is deliberately *not* replayed: it is a
   live bus; the current state is republished instead.
 
-## 4. Virtual meters and the staleness convention
+## 6. Virtual meters and the staleness convention
 
 A virtual meter instance is an isolated Modbus TCP server (own thread, own
 asyncio loop) that re-serves live values under another meter's register map
@@ -215,7 +347,7 @@ Every row resolves through a per-register staleness decision:
 ```mermaid
 stateDiagram-v2
     direction LR
-    [*] --> Fresh : value newer than its bound<br/>(row stale_after_s → source device bound → instance bound)
+    [*] --> Fresh : value newer than its bound<br/>(row stale_after_s → derived poll-cadence bound →<br/>source device bound → instance bound)
 
     Fresh --> Stale : age exceeds bound
     Stale --> Fresh : new value arrives
@@ -240,7 +372,41 @@ measurement**. A frozen or zeroed value can mislead a control loop (ESS,
 export limiter), so a stale row either refuses the read (`fail`), declares
 itself not-available in the consumer's own vocabulary (`sentinel`), or is
 held for a bounded, declared time (`hold`). `legacy` preserves the exact
-pre-composite behavior for existing single-source meters.
+pre-composite behavior for existing single-source meters. A source value
+that cannot be encoded on a numeric row (a text enum/bits value) degrades
+that **row** to missing — it never aborts the whole block rebuild.
+
+**Freshness bounds are derived, not hand-tuned.** Drivers stamp each value
+with its poll-group interval, and a row's default bound is 2.5× that cadence
+(one missed poll plus jitter); calculated registers inherit the slowest
+input's interval. The cascade is loosening-only against the instance floor —
+a realtime row's sub-second cadence bound never *tightens* below the
+instance bound, so a single hiccup cannot flap the meter — while an explicit
+row `stale_after_s` wins outright (may tighten or relax).
+
+### Redundant sources and failover
+
+Two layers of redundancy, both driving the same resolver:
+
+- **Per-register failover** — a row may be backed by an ordered list of
+  sources instead of one: `source: {failover: ["a", "other.b"]}`. Each
+  rebuild serves the highest-priority candidate that is *fresh*; a
+  missing/stale candidate is skipped in order, and the primary is preferred
+  whenever fresh, so recovery switches back automatically. If **no**
+  candidate is fresh the row degrades through `on_stale` exactly like a
+  single stale source — never a silently-stale value into an ESS.
+- **Instance-level `device_fallback`** — one field on the instance names a
+  secondary "twin" source device; at start every bare-name `live` row is
+  rewritten into a failover pair `[name, <fallback>.name]` (possible
+  because canonical field names are identical across devices). Const, sum,
+  already-failover and explicit `device.register` rows are left untouched.
+  The fallback is validated at save and re-checked at start — a mis-set
+  value is ignored with a warning, never blocks a control-critical meter
+  from starting.
+
+Every serving-source switch logs an event (`warn` on drop to a
+lower-priority source, `info` on recovery) naming the meter, register and
+both sources.
 
 Consumers that want the quality **in-band** (PLC/SCADA on the same Modbus
 connection) can enable the read-only **quality block at 61440**
@@ -256,14 +422,75 @@ using the aggregator convention: `value: null` when not good, plus
 Observability per instance: a 1024-entry query log (time, FC, address,
 count, OK/exception, latency, response), counters, request-rate history,
 most-read registers, active client connections, and lifecycle events —
-plus retained MQTT state (`vmeter/<id>/state`) and HA discovery for the
-meter's diagnostics.
+plus retained MQTT state (`vmeter/<id>/state`) carrying the staleness
+policy and its bounds (`on_stale`, `stale_after_s`, `max_hold_s`), the last
+rebuild's quality counts, and the live failover routing (per register:
+candidates, active source, on-primary flag), and HA discovery for the
+meter's diagnostics — a monitor can see *how* a meter degrades and which
+redundant source is feeding it, not just that it went stale.
 
-## 5. Security model
+## 7. Threshold engine → alerts
+
+`threshold_engine.py` turns each register's **visual** thresholds — the same
+`warningLow/dangerLow/warningHigh/dangerHigh` limits that colour the
+dashboard — into alert **events**, delivered over the existing alert path
+(MQTT `<prefix>/alert`, HTTP webhook, event log — see
+[`alerts-webhooks.md`](alerts-webhooks.md)). Off by default
+(`alerts.signals.threshold`).
+
+- **Hysteresis state machine** — *fast to alarm, slow to clear*: escalation
+  fires on the raw limit (safety), while clearing to normal requires the
+  value to retreat past the boundary by `threshold_deadband_pct` (default
+  2 %), so a value hovering at a limit cannot flap. One band per value —
+  a higher severity inherently suppresses the lower one; events fire only
+  on band **transitions**, never on steady state.
+- **Off the hot path** — the engine is pure (no I/O, no clock) and runs in
+  the existing 5 s event harvester over each device's live value store; the
+  poll loop is untouched. A crossing calls the same rate-limited
+  `AlertManager.fire()` as the infrastructure signals
+  (device/sink/latency/buffer) — no new channels.
+- **No phantom alarms** — a register the device has stopped refreshing
+  (down/frozen) is not evaluated; the band holds and resumes cleanly on
+  reconnect. Band state is pruned when a register or device goes away, so
+  a removed limit cannot leave a stuck alarm.
+
+## 8. Device Builder (ESPHome)
+
+The Builder turns the gateway into a firmware authoring point for remote
+ESP32/ESP8266 nodes — RS485/Modbus readers at other locations that publish
+back over MQTT. The gateway does **not** compile firmware itself: an
+external, stock **ESPHome** container does, driven entirely over its HTTP/WS
+API (`esphome_client.py` — no shared volume, no new Python dependencies).
+Off by default; one URL in Devices → Device Builder enables it, and
+everything degrades gracefully without it.
+
+- **Generate from template** (`esphome_generator.py`) — the differentiator:
+  pick any Modbus device template + register subset and get firmware YAML
+  (`uart`/`modbus`/`modbus_controller` with correct value types, byte
+  order, scale folded into filters, poll groups → `update_interval` /
+  `skip_updates`) publishing scalars to explicit per-register topics.
+- **One-click Adopt** — the same wizard creates the *paired* gateway side:
+  a user device-template and an MQTT-input device with byte-identical
+  topics, so data flows in with zero double configuration.
+- **Node management** (`routes/builder_routes.py`) — list (including
+  mDNS-discovered adoptables and a native-API LAN sweep on port 6053),
+  YAML import/editor with server-side validation, live-log console for
+  compile / OTA flash / device logs (WebSocket relay), artifact downloads,
+  fleet "update all".
+- **USB web flasher** — first-time flashing from the browser via locally
+  vendored esp-web-tools (no CDN), with Improv Wi-Fi provisioning over the
+  same cable; **hardware profiles** (`config/builder_profiles.json`) are
+  shareable board/pin presets for the wizard.
+- **Security** — YAML content and command streams are admin-only under
+  auth; every state change and stream lands in the audit log; secrets are
+  redacted everywhere (the secrets.yaml helper only appends missing keys
+  and never logs values).
+
+## 9. Security model
 
 Everything is **off by default** (trusted-LAN appliance) and opt-in per
 layer: IP allowlist → API key → login/roles → write gate. All layers apply
-independently.
+independently. (Reporting and hardening guidance: [`SECURITY.md`](../SECURITY.md).)
 
 ```mermaid
 flowchart TB
@@ -300,13 +527,18 @@ flowchart TB
 
 Highlights (details in the manual):
 
-- **Roles**: `admin` (everything), `operator` (live commissioning actions,
-  including bounded Modbus writes, but nothing that lands in a config file),
-  `viewer` (read-only). Anti-enumeration decoy hashing and per-IP lockout on
-  login; sessions are in-memory (restart logs everyone out).
+- **Roles**: `admin` (everything, including the Device Builder), `operator`
+  (live commissioning actions, including bounded Modbus writes, but nothing
+  that lands in a config file), `viewer` (read-only). Anti-enumeration
+  decoy hashing and per-IP lockout on login; sessions are in-memory
+  (restart logs everyone out).
 - **Passkeys (WebAuthn)**: per-user credentials in `config/passkeys.json`;
   require a secure context (localhost, or a hostname over HTTPS — an IP
   address is rejected as RP ID); passkey login shares the password lockout.
+- **CSRF / SSRF**: mutating requests are refused when `Sec-Fetch-Site` /
+  `Origin` indicate cross-site; HTTP-device URLs must resolve to private
+  LAN addresses (pinned literal IP, redirects refused) unless explicitly
+  allowed.
 - **Reverse proxy**: `ui.trusted_proxies` feeds uvicorn's
   `forwarded_allow_ips` — X-Forwarded-* are honored only from listed proxies
   so the allowlist, lockout buckets and audit see real client IPs.
@@ -315,15 +547,21 @@ Highlights (details in the manual):
   (never the caller), and a `lease_ms` write arms a **crash-safe dead-man
   lease**: the lease set is persisted to `config/write_leases.json`, so
   after a gateway crash the register is reverted to its declared
-  `write_safe` value on the next boot.
+  `write_safe` value on the next boot. Home Assistant **write-entities**
+  (`number`/`select` for writable registers) are double-gated
+  (`mqtt.allow_write_entities` *and* `security.allow_writes`) and every
+  broker command is re-validated server-side — template allowlist, bounds,
+  rate limit, audit — because the broker is not a trusted caller.
 - **Audit trail** (`audit.py`): append-only JSONL
   (`config/audit.jsonl`, 1 MB × 5 files rotation) of who did what — logins,
-  writes, exports, restores — with secrets redacted from detail payloads.
+  writes, exports, restores, Builder actions — with secrets redacted from
+  detail payloads (`redact.py`, applied uniformly to audit, snapshot diffs
+  and API responses).
 
-## 6. Config safety
+## 10. Config safety
 
 `config.yaml` + per-device register files + templates + `virtual_meters.yaml`
-form the **config bundle**. Three mechanisms protect it:
+form the **config bundle**. Four mechanisms protect it:
 
 1. **Automatic snapshots** — every successful config-bearing mutation
    schedules a snapshot (2 s debounce; bursts coalesce), retained 50 deep,
@@ -331,40 +569,56 @@ form the **config bundle**. Three mechanisms protect it:
 2. **Semantic diff & rollback** — snapshots diff key-by-key (YAML/JSON
    aware, secrets masked), and restore replaces the bundle verbatim after
    taking a `pre-restore` snapshot, so a rollback is itself reversible.
-3. **Last-known-good boot seatbelt** — after ~5 minutes of healthy uptime
+3. **Self-healing config** — a good load keeps a `config.yaml.good`
+   snapshot; a later corrupt edit falls back to that last-known-good config
+   (not bare defaults), so the primary keeps polling the right host through
+   a bad edit. The broken file is preserved as `.yaml.bad`, saves stay
+   disabled until it is fixed, and the condition is surfaced in
+   `/api/status` (`config.healthy`) and raised as an alert.
+4. **Last-known-good boot seatbelt** — after ~5 minutes of healthy uptime
    (with at least one successful device read) the bundle is marked LKG. At
    boot, a config that fails to parse is automatically restored from LKG and
    the load retried once — an unattended box survives a bad edit or a torn
-   write. A corrupt `config.yaml` additionally blocks saves (the broken file
-   is preserved as `.yaml.bad`) so defaults can never overwrite a user's
-   real config.
+   write.
 
 Backups for *portability* are separate from snapshots: the export ZIP strips
 secrets and host identity by default, and import merges over the live file
 so stripped secrets survive the round-trip.
 
-## 7. Observability
+## 11. Observability
 
 | Surface | What it carries |
 |---|---|
-| `/api/status` + Status page | per-device health, poll rates, error taxonomy (`timeout`/`exception_N`/`connection`), staleness, latency, sink stats, buffer counters |
+| `/api/status` + Status page | per-device health, poll rates, error taxonomy (`timeout`/`exception_N`/`connection`), staleness, latency, forced reopens, sink stats, buffer counters, config health |
 | `/metrics` (Prometheus) | `gateway_device_*`, `gateway_mqtt_*`, `gateway_influx_*`, `gateway_vmeter_*` (incl. per-state quality gauges) |
 | `/health` | container probe; HTTP 503 only for a genuinely down virtual meter — an unreachable upstream degrades the body but never restart-loops the container |
-| Event log (`config/events.jsonl`) | persisted ring of read failures, sink transitions, vmeter lifecycle, rollbacks, alerts |
-| Alerts (`alerts:` block) | infrastructure-health alerts (device/sink/latency/buffer) to MQTT `<prefix>/alert` and/or an HTTP webhook — see [`alerts-webhooks.md`](alerts-webhooks.md) |
+| Event log (`config/events.jsonl`) | persisted ring of reachability edges, sink transitions, vmeter lifecycle + failover switches, rollbacks, alerts |
+| Alerts (`alerts:` block) | infrastructure-health signals (device/sink/latency/buffer) **and** value-threshold crossings (§7) to MQTT `<prefix>/alert` and/or an HTTP webhook — see [`alerts-webhooks.md`](alerts-webhooks.md) |
+| Home Assistant | per-device retained `…/availability` + `connectivity` binary_sensor, vmeter diagnostics via discovery |
 | Bus trace + register probe | frame-level TX/RX hex with per-retry entries; one-shot reads decoded as every type × word order |
 
-## 8. Process model
+## 12. Process model
 
-One container, one Python process (`main.py`):
+One primary container, one Python process (`main.py`), plus two optional
+companions:
 
 - FastAPI/uvicorn serves the UI, REST API and WebSocket
   (default `0.0.0.0:8080`, optional TLS).
 - Poller threads per device × poll group; push-driven MQTT-input clients.
 - One thread + asyncio loop per virtual meter instance; a supervisor thread
   ticks freshness and restarts wedged listeners.
-- Background threads: MQTT/InfluxDB reconnect monitors, REST pushers,
-  write-lease sweeper, snapshot debouncer, LKG marker.
+- Background threads: MQTT/InfluxDB reconnect monitors, REST pushers, the
+  5 s event harvester (health edges + threshold engine), write-lease
+  sweeper, snapshot debouncer, LKG marker.
 - Hot-reload by design: device/register/poll/sink changes apply without a
   container restart; only UI TLS changes and (recommended) newly imported
   devices need one.
+
+Companion containers, both optional and independently restartable:
+
+- **`serial-bridge`** — ser2net + supervisor exposing USB serial adapters
+  as stable TCP endpoints for `rtu-tcp` devices (§4). The gateway degrades
+  gracefully when it is absent (adapter scan reports the bridge down;
+  direct-serial mode is unaffected).
+- **`esphome`** — the stock ESPHome build engine behind the Device Builder
+  (§8); dashboard port unpublished — the gateway proxies everything.
