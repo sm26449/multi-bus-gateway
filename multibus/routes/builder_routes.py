@@ -393,8 +393,10 @@ def build(ctx) -> APIRouter:
         p = _profiles_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(items, indent=2, ensure_ascii=False) + "\n",
-                       encoding="utf-8")
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(json.dumps(items, indent=2, ensure_ascii=False) + "\n")
+            f.flush()
+            os.fsync(f.fileno())               # durable before the rename
         os.replace(tmp, p)
 
     @r.get("/api/builder/profiles")

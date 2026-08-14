@@ -296,7 +296,10 @@ class SnapshotStore:
     def _write_index(self, entries: List[Dict]) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
         tmp = self.dir / (_INDEX + ".tmp")
-        tmp.write_text(json.dumps(entries, indent=1, ensure_ascii=False))
+        with open(tmp, "w") as f:
+            f.write(json.dumps(entries, indent=1, ensure_ascii=False))
+            f.flush()
+            os.fsync(f.fileno())               # durable before the rename
         os.replace(tmp, self.dir / _INDEX)
 
     def list(self) -> List[Dict]:

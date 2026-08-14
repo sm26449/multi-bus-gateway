@@ -31,7 +31,6 @@ import re
 import struct
 import threading
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -439,8 +438,11 @@ class VirtualMeterManager:
         # atomic write — this file decides which meters run (can feed an ESS), so
         # never leave it half-written or let a concurrent reader see a torn file.
         tmp = self.config_path.with_suffix(".yaml.tmp")
-        tmp.write_text(yaml.safe_dump(cfg, sort_keys=False))
-        os.replace(tmp, self.config_path)
+        with open(tmp, "w") as f:
+            f.write(yaml.safe_dump(cfg, sort_keys=False))
+            f.flush()
+            os.fsync(f.fileno())               # durable before the rename —
+        os.replace(tmp, self.config_path)      # power-loss must not zero the file
 
     def overview(self) -> list[dict]:
         """All configured instances merged with live running status + preview."""
