@@ -55,6 +55,8 @@ _DATA_TYPE_ALIASES = {
     'int64': 'int64', 's64': 'int64', 'long64': 'int64', 'lint': 'int64',
     'uint64': 'uint64', 'u64': 'uint64', 'ulint': 'uint64',
     'string': 'string', 'str': 'string', 'char': 'string', 'ascii': 'string',
+    # signed-magnitude (3.17.0): sign bit + magnitude, decoded by RegisterParser
+    'sm16': 'sm16', 'sm32': 'sm32', 'signmagnitude16': 'sm16', 'signmagnitude32': 'sm32',
 }
 
 

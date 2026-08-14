@@ -51,6 +51,9 @@ VALID_DATA_TYPES = {
     'int16', 'uint16', 'short',
     'int32', 'uint32',
     'int64', 'uint64', 'long64',
+    'sm16', 'sm32',      # signed-magnitude (3.17.0) — RegisterParser decodes
+                         # them and yaml_import passes them through; missing
+                         # here meant YAML preview OK but save rejected
     'string',
     # 'string' carries its length in the type: 'string:7' = 7 registers (ASCII,
     # 2 bytes/register). RegisterParser decodes it (length-aware); the validator

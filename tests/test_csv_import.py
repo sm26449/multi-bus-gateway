@@ -113,3 +113,14 @@ def test_parsed_registers_validate_as_a_template():
 def test_default_data_type_applied_when_type_missing_or_unknown():
     r = parse_csv("addr,name\n1,A\n2,B\n", default_data_type='uint16')
     assert all(x['data_type'] == 'uint16' for x in r['registers'])
+
+
+def test_sm16_sm32_validate_as_template_types():
+    """sm16/sm32 (signed-magnitude, 3.17.0) are decoded by RegisterParser and
+    passed through by yaml_import — CSV alias table and template validator must
+    accept them too, or a community map previews fine and then fails on save
+    (audit 2026-08-14)."""
+    r = parse_csv("addr,name,type\n1,A,sm16\n2,B,sm32\n")
+    assert [x['data_type'] for x in r['registers']] == ['sm16', 'sm32']
+    assert not r['warnings']
+    assert validate_template(_template(r['registers'])) == []
