@@ -186,7 +186,10 @@ def build(ctx) -> APIRouter:
             raise HTTPException(status_code=503, detail="virtual meters not initialized")
         res = mgr.set_enabled(template, on)
         if "error" in res:
-            raise HTTPException(status_code=404, detail=res["error"])
+            # "no instance" = wrong id (404); "failed to start (enable
+            # reverted)" = a real start fault on a valid instance (400)
+            code = 404 if "no instance" in res["error"] else 400
+            raise HTTPException(status_code=code, detail=res["error"])
         return res
 
     @r.patch("/api/virtual-meters/{template}")

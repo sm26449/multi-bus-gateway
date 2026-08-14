@@ -194,3 +194,59 @@ def test_fallover_activates_twin_when_primary_stale(app_with_mgr):
     mgr.current_values[1]["mono"] = time.monotonic()
     vm._rebuild_block()
     assert vm.failover_routes()[0]["active"] == "power_active_total"
+
+
+# ── audit 2026-08-14 M3: `enabled` default must be ON on EVERY path ──────────
+
+@needs_tc
+def test_missing_enabled_key_survives_edits(app_with_mgr):
+    """A hand-edited config row without `enabled` boots ON (start_all default).
+    A template re-save and an instance PATCH must apply the SAME default —
+    before the fix both read `inst.get("enabled")` and silently stopped (or
+    refused to restart) the meter."""
+    client, mgr = app_with_mgr
+    _save_template(client)
+    assert client.post("/api/virtual-meters", json={
+        "template": "t_em", "port": PORT_A, "enabled": True}).status_code == 200
+    cfg = mgr._load_cfg()                     # simulate the legacy/hand-edited row
+    cfg["instances"][0].pop("enabled")
+    mgr._save_cfg(cfg)
+    assert any(m.t.id == "t_em" for m in mgr.meters)
+
+    # template edit → _reload_instance restarts (does not silently stop)
+    assert _save_template(client).status_code == 200
+    assert any(m.t.id == "t_em" for m in mgr.meters)
+
+    # instance PATCH → live restart happens
+    r = client.patch("/api/virtual-meters/t_em", json={"stale_after_s": 5})
+    assert r.status_code == 200 and r.json()["restarted"] is True
+
+    # and the row reads as enabled everywhere it is reported
+    ov = client.get("/api/virtual-meters").json()
+    inst = next(i for i in ov["instances"] if i["template"] == "t_em")
+    assert inst["enabled"] is True
+    assert mgr.health()["enabled_meters"] == 1
+
+
+@needs_tc
+def test_toggle_start_failure_reverts_the_flag(app_with_mgr):
+    """set_enabled(True) whose start fails must roll the persisted flag back
+    and answer 400 — not 500 with `enabled: true` left on disk for the next
+    boot to trip over."""
+    client, mgr = app_with_mgr
+    _save_template(client)
+    assert client.post("/api/virtual-meters", json={
+        "template": "t_em", "port": PORT_A, "enabled": False}).status_code == 200
+
+    def _boom(inst):
+        raise RuntimeError("port already bound")
+    orig, mgr._start_one = mgr._start_one, _boom
+    r = client.post("/api/virtual-meters/t_em/toggle?on=true")
+    assert r.status_code == 400 and "enable reverted" in r.json()["detail"]
+    inst = mgr._load_cfg()["instances"][0]
+    assert inst["enabled"] is False           # rolled back, boot stays clean
+
+    # with the fault gone the same toggle succeeds
+    mgr._start_one = orig
+    assert client.post("/api/virtual-meters/t_em/toggle?on=true").status_code == 200
+    assert any(m.t.id == "t_em" for m in mgr.meters)

@@ -193,6 +193,14 @@ class VirtualMeterManager:
         """The source device id for an instance (absent → the primary device)."""
         return inst.get("device") or self.primary_device_id
 
+    @staticmethod
+    def _inst_enabled(inst: dict) -> bool:
+        """A config row without `enabled` counts as ON — what boot (start_all)
+        has always done. Every path must apply the SAME default, or a
+        hand-edited row missing the key starts at boot yet is silently stopped
+        by the next template edit (audit 2026-08-14 M3)."""
+        return bool(inst.get("enabled", True))
+
     def _store_for(self, inst: dict) -> dict:
         """The live value cache a meter reads from — its source device's cache.
         No `device` field (or the primary) → the legacy primary cache
@@ -347,7 +355,7 @@ class VirtualMeterManager:
         running = {vm.t.id: vm for vm in self._snap()}
         meters = []
         for inst in self._load_cfg().get("instances", []):
-            if not inst.get("enabled", True):
+            if not self._inst_enabled(inst):
                 continue
             tid = inst.get("template")
             vm = running.get(tid)
@@ -418,7 +426,7 @@ class VirtualMeterManager:
             logger.error("virtual meters: bad config %s: %s", self.config_path, e)
             return
         for inst in cfg.get("instances", []):
-            if not inst.get("enabled", True):
+            if not self._inst_enabled(inst):
                 continue
             try:
                 self._start_one(inst)
@@ -461,7 +469,7 @@ class VirtualMeterManager:
                         name = load_template(str(_p)).name
                 except Exception:  # noqa: BLE001
                     pass
-            row = {"template": tid, "enabled": bool(inst.get("enabled", True)),
+            row = {"template": tid, "enabled": self._inst_enabled(inst),
                    "port": inst.get("port"), "unit_id": inst.get("unit_id", 1),
                    "stale_after_s": inst.get("stale_after_s", 15),
                    "update_interval_s": inst.get("update_interval_s", 1.0),
@@ -843,7 +851,7 @@ class VirtualMeterManager:
             vm.stop()
             with self._meters_lock:
                 self.meters.remove(vm)
-        if inst and inst.get("enabled"):
+        if inst and self._inst_enabled(inst):
             try:
                 self._start_one(inst)
             except Exception as e:  # noqa: BLE001
@@ -981,11 +989,21 @@ class VirtualMeterManager:
         inst = next((i for i in cfg.get("instances", []) if i.get("template") == template_id), None)
         if inst is None:
             return {"error": f"no instance for template {template_id}"}
+        old = dict(inst)                       # rollback snapshot — start may fail
         inst["enabled"] = bool(on)
         self._save_cfg(cfg)
         running = {vm.t.id: vm for vm in self._snap()}
         if on and template_id not in running:
-            self._start_one(inst)
+            try:
+                self._start_one(inst)
+            except Exception as e:  # noqa: BLE001
+                # roll the flag back — otherwise the API 500s while `enabled:
+                # true` stays persisted and the next boot trips over the same
+                # bad config (audit 2026-08-14 M3)
+                inst.clear()
+                inst.update(old)
+                self._save_cfg(cfg)
+                return {"error": f"failed to start (enable reverted): {e}"}
         elif not on and template_id in running:
             vm = running[template_id]
             vm.stop()
@@ -1093,7 +1111,7 @@ class VirtualMeterManager:
         self._save_cfg(cfg)
         restarted = False
         running = [m for m in self._snap() if m.t.id == template_id]
-        if running and inst.get("enabled"):
+        if running and self._inst_enabled(inst):
             for vm in running:
                 vm.stop()
                 with self._meters_lock:
@@ -1179,7 +1197,7 @@ class VirtualMeterManager:
         rank = {"ok": 0, "stale": 1, "down": 2}
         meters, worst = [], "ok"
         for inst in self._load_cfg().get("instances", []):
-            if not inst.get("enabled", True):
+            if not self._inst_enabled(inst):
                 continue
             tid = inst.get("template")
             vm = running.get(tid)
