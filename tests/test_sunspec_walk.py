@@ -53,7 +53,7 @@ class _FakeSunSpec:
         return True
     def close(self):
         pass
-    def read_holding_registers(self, address, count, slave):
+    def read_holding_registers(self, address, count, device_id):
         if any(address + i not in self.mem for i in range(count)):
             return _Result(None)
         return _Result([self.mem[address + i] for i in range(count)])

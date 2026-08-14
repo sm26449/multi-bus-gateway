@@ -88,7 +88,7 @@ def _probe(client, unit_id: int) -> bool:
     """True if the connected client gets ANY Modbus reply (data or exception)."""
     from pymodbus.pdu import ExceptionResponse
     try:
-        r = client.read_holding_registers(address=0, count=1, slave=int(unit_id))
+        r = client.read_holding_registers(address=0, count=1, device_id=int(unit_id))
     except Exception:  # noqa: BLE001
         return False
     if r is None:
@@ -237,7 +237,7 @@ def sunspec_walk(host: str, port: int = 502, unit_id: int = 1, timeout: float = 
         # one quiet retry — a single dropped reply mid-chain must not silently
         # truncate the model list (Datamanagers hiccup under connection churn)
         for attempt in range(2):
-            r = c.read_holding_registers(address=addr, count=count, slave=unit_id)
+            r = c.read_holding_registers(address=addr, count=count, device_id=unit_id)
             if not r.isError() and getattr(r, "registers", None):
                 return r.registers
             if attempt == 0:

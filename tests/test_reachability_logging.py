@@ -23,7 +23,7 @@ class _Client:
     def connect(self): return True
     def close(self): pass
 
-    def read_holding_registers(self, address, count, slave):
+    def read_holding_registers(self, address, count, device_id):
         return _Result([0] * count) if _Client.ok else _Result(None)
 
     read_input_registers = read_holding_registers

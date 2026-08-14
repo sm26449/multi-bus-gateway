@@ -1,5 +1,39 @@
 # Changelog
 
+## 3.24.0
+
+### 2026-08-15 — pymodbus 3.6.9 → 3.15.0: vmeter serving core on SimData/SimDevice
+
+- **Dependency:** pymodbus pinned to 3.15.0 (line 3.6 unmaintained ~2 years;
+  MBG exposes Modbus TCP servers on the LAN, and the 3.7+ line carries the
+  fully rewritten framing/transaction layer those servers should be parsing
+  with). Client-side renames: `slave=` → `device_id=`, `ModbusRtuFramer` →
+  `FramerType.RTU`.
+- **Vmeter server core rewritten on the SimData/SimDevice model.** 3.13+
+  reduced the classic datastore (`ModbusSlaveContext`/data blocks) to a
+  deprecated shim that deep-copies its values at server build — live block
+  updates would silently never reach clients (a frozen meter, exactly the H1
+  failure class). The serving core now builds a `SimDevice` directly:
+  - live updates mutate the runtime's registers list in place — one atomic
+    slice per value, read back as one slice, so the tear-free contract holds
+    lock-free even under quality_block (the old sparse path needed a
+    read/write lock);
+  - the two-island map (meter map + quality block) uses SimData's native
+    undefined-address refusal — reads below/outside/between islands get
+    illegal-address, preserving real-meter probing (DataManager
+    disambiguation);
+  - `SimDevice(id=0)` answers on any unit id (the old `single=True`);
+  - one instrumentation choke point (wrapped `async_getValues`/`setValues`):
+    per-read stats, the 'fail'-policy span refusal, the read-only write
+    refusal, and a new coils/discrete refusal (the shared block would
+    otherwise serve register bits where a real meter refuses).
+  Verified semantics-equivalent on the wire by a 12-point prototype before
+  the rewrite; the P2 word-tearing and read-only tests were rebuilt against
+  the real new mechanisms (granularity + end-to-end client writes).
+- Load-test device fleet (`loadtest/sim_devices.py`) migrated to the same
+  model; churn now mutates the runtime registers directly.
+- Suite: 806 passed on 3.15.0, ruff clean, coverage gate met.
+
 ## 3.23.7
 
 ### 2026-08-14 — audit M3+M4: `enabled` default symmetry, HA writes off the paho thread

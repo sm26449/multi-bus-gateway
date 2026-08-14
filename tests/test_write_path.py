@@ -37,18 +37,18 @@ class _FakeClient:
     def is_socket_open(self): return True
     def connect(self): return True
     def close(self): pass
-    def write_register(self, address, value, slave):
+    def write_register(self, address, value, device_id):
         self.calls.append(('w1', address, value)); return _Ok()
-    def write_registers(self, address, values, slave):
+    def write_registers(self, address, values, device_id):
         self.calls.append(('w16', address, list(values))); return _Ok()
-    def write_coil(self, address, value, slave):
+    def write_coil(self, address, value, device_id):
         self.calls.append(('w5', address, bool(value))); return _Ok()
-    def write_coils(self, address, values, slave):
+    def write_coils(self, address, values, device_id):
         self.calls.append(('w15', address, list(values))); return _Ok()
-    def read_coils(self, address, count, slave):
+    def read_coils(self, address, count, device_id):
         self.calls.append(('r1', address, count))
         return type('R', (), {'isError': lambda s: False, 'bits': [True] * count})()
-    def read_discrete_inputs(self, address, count, slave):
+    def read_discrete_inputs(self, address, count, device_id):
         self.calls.append(('r2', address, count))
         return type('R', (), {'isError': lambda s: False, 'bits': [False] * count})()
 

@@ -159,7 +159,7 @@ def test_instance_lifecycle_with_fallback_and_state_publish(app_with_mgr):
     # decode needs the pymodbus block — wait for the supervisor to start the
     # server (first fresh tick), then read through the decode route
     for _ in range(30):
-        if getattr(vm, "_block", None):
+        if vm.serving_block_ready:
             break
         time.sleep(0.1)
     dec = client.get("/api/virtual-meters/t_em/decode?addr=0&count=2").json()

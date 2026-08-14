@@ -26,9 +26,8 @@ import asyncio
 import math
 import struct
 
-from pymodbus.datastore import (ModbusSequentialDataBlock, ModbusServerContext,
-                                ModbusSlaveContext)
-from pymodbus.server import StartAsyncTcpServer
+from pymodbus.server import ModbusTcpServer
+from pymodbus.simulator import DataType, SimData, SimDevice
 
 # Deterministic pseudo-random walk WITHOUT Math.random-style nondeterminism:
 # each unit's phase is derived from its id + tick, so runs are reproducible.
@@ -47,20 +46,20 @@ def _i32(words_lo_hi_value: int) -> tuple[int, int]:
     return hi, lo
 
 
-def _make_context(units: int) -> ModbusServerContext:
-    slaves = {}
-    for uid in range(1, units + 1):
-        block = ModbusSequentialDataBlock(0, [0] * BLOCK_SIZE)
-        slaves[uid] = ModbusSlaveContext(hr=block, ir=block, zero_mode=True)
-    return ModbusServerContext(slaves=slaves, single=False)
+def _make_devices(units: int) -> list[SimDevice]:
+    """One SimDevice per unit id; the shared block serves holding + input."""
+    return [SimDevice(id=uid, simdata=[SimData(address=0, count=BLOCK_SIZE,
+                                               values=0,
+                                               datatype=DataType.REGISTERS)])
+            for uid in range(1, units + 1)]
 
 
-def _write_i32(ctx, uid: int, addr: int, value: int) -> None:
+def _write_i32(regs: dict, uid: int, addr: int, value: int) -> None:
     hi, lo = _i32(value)
-    ctx[uid].setValues(3, addr, [hi, lo])       # fc=3 holding
+    regs[uid][addr:addr + 2] = [hi, lo]         # atomic slice into the live block
 
 
-async def _churn(ctx: ModbusServerContext, units: int, tick_ms: float) -> None:
+async def _churn(regs: dict, units: int, tick_ms: float) -> None:
     """Every tick, move each unit's live values within realistic ranges and
     advance its energy counters — so MBG sees fresh, changing data."""
     tick = 0
@@ -72,15 +71,15 @@ async def _churn(ctx: ModbusServerContext, units: int, tick_ms: float) -> None:
             v = 230.0 + 5.0 * math.sin(ph)     # ~230 V ±5
             i = 5.0 + 2.0 * math.sin(ph * 1.3) # ~5 A ±2
             p = v * i * 3                       # rough 3-phase power
-            _write_i32(ctx, uid, 0x0000, int(v * 10))       # L1 voltage ×10
-            _write_i32(ctx, uid, 0x0002, int((v + 1) * 10))
-            _write_i32(ctx, uid, 0x0004, int((v - 1) * 10))
-            _write_i32(ctx, uid, 0x000c, int(i * 1000))     # L1 current ×1000
-            _write_i32(ctx, uid, 0x000e, int((i + 0.2) * 1000))
-            _write_i32(ctx, uid, 0x0010, int((i - 0.2) * 1000))
-            _write_i32(ctx, uid, 0x0028, int(p * 10))       # total power ×10
+            _write_i32(regs, uid, 0x0000, int(v * 10))       # L1 voltage ×10
+            _write_i32(regs, uid, 0x0002, int((v + 1) * 10))
+            _write_i32(regs, uid, 0x0004, int((v - 1) * 10))
+            _write_i32(regs, uid, 0x000c, int(i * 1000))     # L1 current ×1000
+            _write_i32(regs, uid, 0x000e, int((i + 0.2) * 1000))
+            _write_i32(regs, uid, 0x0010, int((i - 0.2) * 1000))
+            _write_i32(regs, uid, 0x0028, int(p * 10))       # total power ×10
             energy[uid] += max(1, int(p * dt / 3600))       # Wh accrual
-            _write_i32(ctx, uid, 0x0100, energy[uid])       # import energy
+            _write_i32(regs, uid, 0x0100, energy[uid])       # import energy
         tick += 1
         await asyncio.sleep(dt)
 
@@ -97,11 +96,15 @@ async def main() -> None:
 
     global BLOCK_SIZE
     BLOCK_SIZE = args.block_size
-    ctx = _make_context(args.units)
-    asyncio.create_task(_churn(ctx, args.units, args.tick_ms))
+    server = ModbusTcpServer(_make_devices(args.units),
+                             address=(args.host, args.port))
+    # live registers list per unit — churn mutates these in place
+    regs = {uid: server.context.devices[uid].block["x"][2]
+            for uid in range(1, args.units + 1)}
+    asyncio.create_task(_churn(regs, args.units, args.tick_ms))
     print(f"[sim_devices] serving {args.units} units on {args.host}:{args.port} "
           f"(churn {args.tick_ms:.0f} ms)", flush=True)
-    await StartAsyncTcpServer(context=ctx, address=(args.host, args.port))
+    await server.serve_forever()
 
 
 if __name__ == "__main__":

@@ -2087,8 +2087,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         """One ad-hoc Modbus probe (TCP or RTU): connect + FC3 read. ANY
         protocol-level answer (even a Modbus exception) proves a live device;
         only silence/timeouts fail. Used by the wizard's Test connection button."""
+        from pymodbus import FramerType
         from pymodbus.client import ModbusTcpClient, ModbusSerialClient
-        from pymodbus.transaction import ModbusRtuFramer
         from pymodbus.pdu import ExceptionResponse
         proto = str(conn.get('protocol', 'tcp')).lower()
         rtu = proto == 'rtu'
@@ -2112,7 +2112,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         else:
             where = f"{conn.get('host','')}:{conn.get('port',502)}"
             # rtu-tcp: RTU frames over a raw TCP socket (serial-over-TCP bridge)
-            _framer = {'framer': ModbusRtuFramer} if proto == 'rtu-tcp' else {}
+            _framer = {'framer': FramerType.RTU} if proto == 'rtu-tcp' else {}
             c = ModbusTcpClient(host=conn.get('host', ''),
                                 port=int(conn.get('port', 502)), timeout=timeout,
                                 **_framer)
@@ -2122,7 +2122,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                         "message": (f"Serial open of {where} failed — check the port/permissions"
                                     if rtu else
                                     f"TCP connect to {where} failed — check IP/port/firewall")}
-            rr = c.read_holding_registers(address=address, count=2, slave=unit_id)
+            rr = c.read_holding_registers(address=address, count=2, device_id=unit_id)
             lat = round((time.perf_counter() - t0) * 1000, 1)
             if not rr.isError():
                 return {"ok": True, "latency_ms": lat,

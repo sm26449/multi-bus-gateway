@@ -23,8 +23,8 @@ import threading
 from collections import deque
 from typing import Dict, List, Optional, Callable, Any
 
+from pymodbus import FramerType
 from pymodbus.client import ModbusTcpClient, ModbusSerialClient
-from pymodbus.transaction import ModbusRtuFramer
 
 from . import bus_trace
 from .config import ModbusConfig, SelectedRegister, PollGroup
@@ -74,7 +74,7 @@ def _build_client(config: ModbusConfig):
         )
     if proto == 'rtu-tcp':
         return ModbusTcpClient(host=config.host, port=config.port,
-                               framer=ModbusRtuFramer, timeout=config.timeout)
+                               framer=FramerType.RTU, timeout=config.timeout)
     return ModbusTcpClient(host=config.host, port=config.port,
                            timeout=config.timeout)
 
@@ -271,7 +271,7 @@ class ModbusConnection:
                         _read = (self.client.read_input_registers if register_type == "input"
                                  else self.client.read_holding_registers)
                         try:
-                            result = _read(address=address, count=count, slave=self.config.unit_id)
+                            result = _read(address=address, count=count, device_id=self.config.unit_id)
                         finally:
                             bus_trace.trace.commit(self.client)
 
@@ -348,7 +348,7 @@ class ModbusConnection:
                         _read = (self.client.read_discrete_inputs if register_type == "discrete"
                                  else self.client.read_coils)
                         try:
-                            result = _read(address=address, count=count, slave=self.config.unit_id)
+                            result = _read(address=address, count=count, device_id=self.config.unit_id)
                         finally:
                             bus_trace.trace.commit(self.client)
                         if not result.isError():
@@ -393,16 +393,16 @@ class ModbusConnection:
                     if register_type == "coil":
                         if isinstance(coils, (list, tuple)) and len(coils) != 1:
                             result = self.client.write_coils(address=address,
-                                                             values=[bool(c) for c in coils], slave=slave)
+                                                             values=[bool(c) for c in coils], device_id=slave)
                         else:
                             v = coils[0] if isinstance(coils, (list, tuple)) else coils
-                            result = self.client.write_coil(address=address, value=bool(v), slave=slave)
+                            result = self.client.write_coil(address=address, value=bool(v), device_id=slave)
                     elif register_type == "holding":
                         vals = list(values or [])
                         if len(vals) == 1 and prefer_fc6:
-                            result = self.client.write_register(address=address, value=vals[0], slave=slave)
+                            result = self.client.write_register(address=address, value=vals[0], device_id=slave)
                         else:
-                            result = self.client.write_registers(address=address, values=vals, slave=slave)
+                            result = self.client.write_registers(address=address, values=vals, device_id=slave)
                     else:
                         return False, f"{register_type!r} is read-only (only holding/coil are writable)"
                 finally:

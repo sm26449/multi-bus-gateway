@@ -38,7 +38,7 @@ def read_em24(host: str, port: int = 1502, unit: int = 1) -> dict:
         raise SystemExit(f"cannot connect to {host}:{port}")
 
     def rd(addr, count):
-        rr = c.read_holding_registers(addr, count=count, slave=unit)
+        rr = c.read_holding_registers(addr, count=count, device_id=unit)
         if rr.isError():
             raise SystemExit(f"read error @0x{addr:04x}: {rr}")
         return rr.registers

@@ -53,34 +53,10 @@ logger = logging.getLogger(__name__)
 # NOT wall time.
 ValueProvider = Callable[[str], Optional[tuple]]
 
-# Write function codes (single/multiple coil+register, mask, read/write).
-_WRITE_FCS = (5, 6, 15, 16, 22, 23)
-
-
-def _read_only_slave_context():
-    """Return a ModbusSlaveContext subclass that refuses writes. Built lazily so
-    pymodbus is imported only when a meter actually starts (keeps import light
-    and testable)."""
-    from pymodbus.datastore import ModbusSlaveContext
-
-    class ReadOnlySlaveContext(ModbusSlaveContext):
-        """A meter has no writable data registers. pymodbus calls
-        ``context.validate(fc, addr, count)`` before every write, so returning
-        False for a write function code yields an ILLEGAL DATA ADDRESS exception
-        — the refusal a real meter gives — without ever mutating the block."""
-
-        def __init__(self, *a, on_write_refused=None, **kw):
-            super().__init__(*a, **kw)
-            self._on_write_refused = on_write_refused
-
-        def validate(self, fc_as_hex, address, count=1):
-            if fc_as_hex in _WRITE_FCS:
-                if self._on_write_refused:
-                    self._on_write_refused(fc_as_hex, address, count)
-                return False
-            return super().validate(fc_as_hex, address, count)
-
-    return ReadOnlySlaveContext
+# Bit-oriented function codes (coils / discrete inputs). A meter has no bit
+# objects; the SimDevice shared block would otherwise serve register BITS to a
+# coil read instead of the illegal-address refusal a real meter gives.
+_BIT_FCS = (1, 2)
 
 
 @dataclass
@@ -340,12 +316,13 @@ class VirtualMeter:
                            f"block at {QUALITY_BASE} — quality block disabled")
             self.quality_block = False
         self._lock = threading.Lock()
-        # Guards the datastore against word-tearing under quality_block: the
-        # ModbusSparseDataBlock writes a multi-word value word-by-word, so a
-        # consumer read must not observe a half-updated value. Only engaged when
-        # quality_block is on — the default ModbusSequentialDataBlock writes each
-        # value as one atomic slice, so its hot read path stays lock-free.
-        self._store_lock = threading.Lock()
+        # The live serving surface: the SimRuntime's registers list, taken by
+        # reference once the server is built. Every value is pushed as ONE
+        # slice assignment and read by the server as one slice — atomic under
+        # the GIL, so the hot path is lock-free and tear-free by construction
+        # (the old sparse-block word-by-word path needed a read/write lock).
+        self._sim_regs: Optional[list] = None
+        self._sim_base = 0
         self._stop = threading.Event()
         self._sup_thread: threading.Thread | None = None
         self._server = None
@@ -618,8 +595,9 @@ class VirtualMeter:
 
     # ── server lifecycle (isolated thread + own loop) ─────────────────────
     def _start_server(self) -> None:
-        from pymodbus.datastore import (ModbusServerContext, ModbusSequentialDataBlock)
+        from pymodbus.constants import ExcCodes
         from pymodbus.server import ModbusTcpServer
+        from pymodbus.simulator import DataType, SimData, SimDevice
 
         host = self.t.transport.get("bind", "0.0.0.0")
         port = int(self.t.transport.get("port", 1502))
@@ -633,94 +611,92 @@ class VirtualMeter:
                 logging.getLogger("pymodbus").propagate = True
             except Exception:  # noqa: BLE001
                 pass
-        # Contiguous block over [base, base+size) so range reads spanning gaps
-        # succeed; reads below base raise illegal-address (real-meter behaviour).
+        # One island over [base, base+size) so range reads spanning row gaps
+        # succeed; every undefined address (below base, above the map, the void
+        # before the quality island) refuses with illegal-address — real-meter
+        # behaviour. Consumers (e.g. the Fronius DataManager) probe unmapped
+        # addresses to disambiguate meter types, so the refusal is load-bearing.
+        simdata = [SimData(address=self._block_base, count=self._block_size,
+                           values=0, datatype=DataType.REGISTERS)]
         if self.quality_block:
-            # two islands: the meter map + the quality block; the void between
-            # them still raises illegal-address, preserving real-meter probing
-            from pymodbus.datastore import ModbusSparseDataBlock
-            _vals = {a: 0 for a in range(self._block_base,
-                                         self._block_base + self._block_size)}
-            _vals.update({a: 0 for a in range(QUALITY_BASE,
-                                              QUALITY_BASE + QUALITY_SPAN)})
-            block = ModbusSparseDataBlock(_vals)
-        else:
-            block = ModbusSequentialDataBlock(self._block_base, [0] * self._block_size)
+            simdata.append(SimData(address=QUALITY_BASE, count=QUALITY_SPAN,
+                                   values=0, datatype=DataType.REGISTERS))
+        # id=0 → respond on ANY device id (a client may poll unit 240 etc.);
+        # SimCore routes every unknown id to device 0.
+        device = SimDevice(id=0, simdata=simdata)
+
         # ── always-on instrumentation: every read the consumer issues is
-        #    recorded (addr, count, response sample, latency) into stats; an
-        #    illegal-address attempt (validate fails) is recorded as an error.
-        #    This is the data that let us reverse-engineer consumers — now a
-        #    first-class observability feature. Cost: one in-RAM append per read.
+        #    recorded (addr, count, response sample, latency) into stats; a
+        #    refused read/write is recorded as an error. This is the data that
+        #    let us reverse-engineer consumers — a first-class observability
+        #    feature. Cost: one in-RAM append per request.
         _stats, _dbg, _tid = self.stats, self.debug_reads, self.t.id
 
-        def _note_refused_write(fc, address, count):
-            try:
-                _stats.record(int(fc), int(address), int(count), None, 0.0,
-                              time.time(), err=True)
-                logger.warning("vmeter[%s] REFUSED write fc=%s addr=%s count=%s",
-                               _tid, fc, address, count)
-            except Exception:  # noqa: BLE001
-                pass
+        def _wire_runtime(server) -> None:
+            """Take the live registers reference + instrument the runtime.
 
-        _orig_get, _orig_val = block.getValues, block.validate
+            The SimRuntime serves every request from ONE mutable registers
+            list; the supervisor pushes fresh values into it by slice
+            assignment. The async_getValues/async_setValues wrappers are the
+            single choke point for policy: stats, the 'fail' staleness spans,
+            the no-coils refusal and the read-only refusal all live here."""
+            runtime = server.context.devices[0]
+            start = runtime.block["x"][0]
+            self._sim_regs, self._sim_base = runtime.block["x"][2], start
+            _orig_get = runtime.async_getValues
 
-        def _instrumented_validate(address, count=1, _o=_orig_val):
-            ok = _o(address, count)
-            if ok and self._unavail_spans:
-                # 'fail' staleness policy: a read touching an unavailable
-                # (stale/missing-source) register is REFUSED with a Modbus
-                # exception instead of serving frozen/invented words — the
-                # consumer's own meter-loss fail-safe takes over. Spans are
-                # swapped atomically by the supervisor each tick.
-                a, c = int(address), int(count)
-                for s, e in self._unavail_spans:
-                    if a < e and s < a + c:
-                        ok = False
-                        break
-            if not ok:                                   # outside map / unavailable
+            async def _instrumented_get(func_code, address, count):
+                if func_code in _BIT_FCS:              # a meter has no coils
+                    try:
+                        _stats.record(int(func_code), int(address), int(count),
+                                      None, 0.0, time.time(), err=True)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return ExcCodes.ILLEGAL_ADDRESS
+                t0 = time.perf_counter()
+                vals = await _orig_get(func_code, address, count)
+                refused = isinstance(vals, ExcCodes)
+                if not refused and self._unavail_spans:
+                    # 'fail' staleness policy: a read touching an unavailable
+                    # (stale/missing-source) register is REFUSED with a Modbus
+                    # exception instead of serving frozen/invented words — the
+                    # consumer's own meter-loss fail-safe takes over. Spans are
+                    # swapped atomically by the supervisor each tick.
+                    a, c = int(address), int(count)
+                    for s, e in self._unavail_spans:
+                        if a < e and s < a + c:
+                            vals, refused = ExcCodes.ILLEGAL_ADDRESS, True
+                            break
                 try:
-                    _stats.record(3, int(address), int(count), None, 0.0, time.time(), err=True)
+                    _stats.record(int(func_code), int(address), int(count),
+                                  None if refused else vals,
+                                  (time.perf_counter() - t0) * 1e6,
+                                  time.time(), err=refused)
                     if _dbg:
-                        logger.warning("vmeter[%s] ERR refused-read addr=%s count=%s", _tid, address, count)
+                        logger.warning("vmeter[%s] %s addr=%s count=%s", _tid,
+                                       "ERR refused-read" if refused else "READ",
+                                       address, count)
                 except Exception:  # noqa: BLE001
                     pass
-            return ok
+                return vals
 
-        _lock_reads = self.quality_block          # sparse block: guard reads
-        _store_lock = self._store_lock
+            async def _instrumented_set(func_code, address, values):
+                # READ-ONLY: writes are refused (a real meter has no writable
+                # data registers) so a consumer cannot inject values into the
+                # block — pushed registers would be overwritten within
+                # update_interval_s, but pads/gaps would keep an injected value
+                # forever (a poisoned grid reading straight into the ESS loop).
+                try:
+                    _stats.record(int(func_code), int(address), len(values),
+                                  None, 0.0, time.time(), err=True)
+                    logger.warning("vmeter[%s] REFUSED write fc=%s addr=%s count=%s",
+                                   _tid, func_code, address, len(values))
+                except Exception:  # noqa: BLE001
+                    pass
+                return ExcCodes.ILLEGAL_ADDRESS
 
-        def _instrumented_get(address, count=1, _o=_orig_get):
-            t0 = time.perf_counter()
-            if _lock_reads:
-                # atomic w.r.t. the supervisor's block rebuild — a multi-word
-                # value is read whole (all-old or all-new), never torn
-                with _store_lock:
-                    vals = _o(address, count)
-            else:
-                vals = _o(address, count)   # sequential block: lock-free (atomic slice)
-            try:
-                _stats.record(3, int(address), int(count), vals,
-                              (time.perf_counter() - t0) * 1e6, time.time())
-                if _dbg:
-                    logger.warning("vmeter[%s] READ addr=%s count=%s", _tid, address, count)
-            except Exception:  # noqa: BLE001
-                pass
-            return vals
-        block.validate = _instrumented_validate
-        block.getValues = _instrumented_get
-        # serve the same data on holding + input registers (consumers vary by FC).
-        # READ-ONLY: writes are refused (a real meter has no writable data
-        # registers) so a consumer cannot inject values into the block — pushed
-        # registers would be overwritten within update_interval_s, but pads/gaps
-        # would keep an injected value forever (a poisoned grid reading straight
-        # into the ESS loop).
-        slave = _read_only_slave_context()(hr=block, ir=block, zero_mode=True,
-                                           on_write_refused=_note_refused_write)
-        # single=True → respond on ANY unit id (a client may poll unit 240 etc.).
-        # With single=True pymodbus wants ONE slave context, not a dict.
-        ctx = ModbusServerContext(slaves=slave, single=True)
-        self._ctx, self._block = ctx, block
-        self._push_to_ctx()                          # seed before first request
+            runtime.async_getValues = _instrumented_get
+            runtime.async_setValues = _instrumented_set
 
         def _run():
             loop = asyncio.new_event_loop()
@@ -729,7 +705,9 @@ class VirtualMeter:
 
             async def _serve():
                 # ModbusTcpServer.__init__ needs a RUNNING loop → build it here.
-                self._server = ModbusTcpServer(ctx, address=(host, port))
+                self._server = ModbusTcpServer(device, address=(host, port))
+                _wire_runtime(self._server)
+                self._push_to_ctx()          # seed before the first request
                 await self._server.serve_forever()
 
             try:
@@ -832,24 +810,34 @@ class VirtualMeter:
         logger.info("virtual meter %s STOPPED responding (stale/shutdown)", self.t.id)
 
     def _push_to_ctx(self) -> None:
-        """Write each register's words into the datastore — atomic per value."""
-        if not getattr(self, "_block", None):
+        """Write each register's words into the live serving list — ONE slice
+        assignment per VALUE (never per word). A slice store is atomic under
+        the GIL and the server reads each response as one slice, so a consumer
+        sees a multi-word value all-old or all-new, never torn — including
+        under quality_block (the old sparse path needed a read/write lock for
+        this; validated under load as the P2 word-tearing fix)."""
+        regs = self._sim_regs
+        if regs is None:
             return
+        base = self._sim_base
         with self._lock:
             out = list(self._regs_out)
-        # one setValues call per VALUE (not per word). The default
-        # ModbusSequentialDataBlock stores each as one atomic slice write, so the
-        # write path is lock-free. Under quality_block the ModbusSparseDataBlock
-        # stores word-by-word, so the whole rebuild is held under _store_lock —
-        # the same lock the read path takes — so a consumer never sees a value
-        # torn across the write (the P2 word-tearing fix; validated under load).
-        if self.quality_block:
-            with self._store_lock:
-                for addr, words in out:              # zero_mode → address == index
-                    self._block.setValues(addr, words)
-        else:
-            for addr, words in out:
-                self._block.setValues(addr, words)
+        for addr, words in out:
+            off = addr - base
+            regs[off:off + len(words)] = words
+
+    @property
+    def serving_block_ready(self) -> bool:
+        """True once the server's live registers list exists (kept after a
+        stale-stop so the decode view still shows the last served words)."""
+        return self._sim_regs is not None
+
+    def served_words(self, addr: int, count: int) -> list[int]:
+        """Raw words exactly as currently served (decode/inspect path)."""
+        regs, off = self._sim_regs, int(addr) - self._sim_base
+        if regs is None or off < 0 or off + count > len(regs):
+            raise IndexError(f"address {addr} outside the served block")
+        return list(regs[off:off + count])
 
     # ── supervisor ─────────────────────────────────────────────────────────
 

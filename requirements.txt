@@ -1,7 +1,7 @@
 # Multi-Bus Gateway — runtime dependencies
 
 # Modbus
-pymodbus==3.6.9
+pymodbus==3.15.0
 pyserial>=3.5          # Modbus RTU (serial) transport
 
 # MQTT

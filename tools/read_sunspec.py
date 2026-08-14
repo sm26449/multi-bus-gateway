@@ -38,7 +38,7 @@ def read_sunspec(host, port=1502, unit=1):
         raise SystemExit(f"cannot connect to {host}:{port}")
 
     def rd(addr, count):
-        rr = c.read_holding_registers(addr, count=count, slave=unit)
+        rr = c.read_holding_registers(addr, count=count, device_id=unit)
         if rr.isError():
             raise SystemExit(f"read error @{addr}: {rr}")
         return rr.registers

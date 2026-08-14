@@ -52,7 +52,7 @@ class _ExcClient:
         pass
     def is_socket_open(self):
         return True
-    def read_holding_registers(self, address, count, slave):
+    def read_holding_registers(self, address, count, device_id):
         return ExceptionResponse(3, 2)
 
 

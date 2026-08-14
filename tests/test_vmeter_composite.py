@@ -380,7 +380,7 @@ def test_fail_policy_on_the_wire():
         for _ in range(40):
             time.sleep(0.2)
             if c.connect():
-                r = c.read_holding_registers(address=0, count=2, slave=1)
+                r = c.read_holding_registers(address=0, count=2, device_id=1)
                 if not r.isError():
                     break
         else:
@@ -388,10 +388,10 @@ def test_fail_policy_on_the_wire():
         # fresh register reads fine
         assert abs(f32(r.registers) - 42.5) < 0.01
         # a read touching the STALE register is refused with a Modbus exception
-        r2 = c.read_holding_registers(address=2, count=2, slave=1)
+        r2 = c.read_holding_registers(address=2, count=2, device_id=1)
         assert r2.isError(), "stale register read must be refused"
         # a block read spanning fresh+stale is refused too (no partial truth)
-        r3 = c.read_holding_registers(address=0, count=4, slave=1)
+        r3 = c.read_holding_registers(address=0, count=4, device_id=1)
         assert r3.isError(), "block spanning a stale register must be refused"
         c.close()
     finally:
@@ -500,35 +500,46 @@ def test_quality_block_words_fresh_and_stale():
     assert w[1] == 3 and w[2] == 0                      # stale, nimic fresh
 
 
-def test_quality_block_no_word_tearing_under_concurrency():
-    """3.4.2: under quality_block the sparse block writes a multi-word value
-    word-by-word — a concurrent consumer read must not observe a half-updated
-    value (P2 word-tearing). The write path (_push_to_ctx) and the read path
-    both take _store_lock, so a reader sees a value whole (all-old or all-new).
+def test_no_word_tearing_under_concurrency():
+    """P2 word-tearing, SimData era: the supervisor pushes every value as ONE
+    slice assignment into the live registers list and the server reads each
+    response as one slice — both atomic under the GIL, so a consumer sees a
+    multi-word value all-old or all-new. Two guarantees, tested separately:
 
-    We drive the REAL _push_to_ctx against a sparse block whose per-word write
-    is slowed to force the race window, and read under the SAME _store_lock the
-    server's getValues uses. The writer always writes EQUAL words [v, v], so any
-    read where hi != lo is a torn value. Without the shared lock this tears
-    within milliseconds; with it, never."""
-    import struct  # noqa: F401  (kept parallel to the encoder path)
+    1. granularity — _push_to_ctx must issue exactly one slice store per VALUE
+       (a per-word regression reopens the tearing window the old sparse block
+       had), asserted with a recording list;
+    2. behaviour — hammering the REAL push path against concurrent slice
+       readers (what SimRuntime.get_reg_block does) never observes a tear.
+       The writer always writes EQUAL words [v, v], so hi != lo is a tear."""
     import threading
     import time as _t
-    from pymodbus.datastore import ModbusSparseDataBlock
 
     now = time.monotonic()
     vm = VirtualMeter(T([live(0, "a")]), _provider({"a": (1.0, now)}),
                       quality_block=True, on_stale="legacy")
-    block = ModbusSparseDataBlock({0: 0, 1: 0})
 
-    def slow_set(addr, values, **_k):          # widen the tearing window
-        block.values[addr] = values[0]
-        _t.sleep(0.0003)
-        if len(values) > 1:
-            block.values[addr + 1] = values[1]
-    block.setValues = slow_set
-    vm._block = block
+    class RecordingList(list):
+        def __init__(self, *a):
+            super().__init__(*a)
+            self.stores = []
 
+        def __setitem__(self, key, value):
+            self.stores.append(key)
+            super().__setitem__(key, value)
+
+    rec = RecordingList([0] * 4)
+    vm._sim_regs, vm._sim_base = rec, 0
+    with vm._lock:
+        vm._regs_out = [(0, [1, 1]), (2, [2, 2])]
+    vm._push_to_ctx()
+    assert list(rec) == [1, 1, 2, 2]
+    assert all(isinstance(k, slice) for k in rec.stores), \
+        f"per-word stores would tear: {rec.stores}"
+    assert len(rec.stores) == 2                    # one slice per VALUE
+
+    regs = [0, 0]
+    vm._sim_regs = regs
     torn, stop = [], threading.Event()
 
     def writer():
@@ -536,13 +547,12 @@ def test_quality_block_no_word_tearing_under_concurrency():
         while not stop.is_set():
             with vm._lock:
                 vm._regs_out = [(0, [v, v])]   # equal words → a tear shows as hi!=lo
-            vm._push_to_ctx()                  # real write path: holds _store_lock
+            vm._push_to_ctx()                  # the real write path
             v = 2 if v == 1 else 1
 
     def reader():
         while not stop.is_set():
-            with vm._store_lock:               # mirrors _instrumented_get's guard
-                hi, lo = block.values[0], block.values[1]
+            hi, lo = regs[0:2]                 # one slice read, like the server
             if hi != lo:
                 torn.append((hi, lo))
 
@@ -579,23 +589,41 @@ def test_quality_block_default_off_and_overlap_guard():
 
 # ── P0: virtual meter is read-only (rejects consumer writes) ─────────────────
 
-def test_readonly_slave_context_refuses_writes():
-    """The real ReadOnlySlaveContext used by every vmeter must refuse write FCs
-    (validate → False → ILLEGAL ADDRESS) and invoke the refusal callback, while
-    reads pass through."""
-    from pymodbus.datastore import ModbusSequentialDataBlock
-    from multibus.virtual_meter import _read_only_slave_context, _WRITE_FCS
-
-    refused = []
-    RO = _read_only_slave_context()
-    block = ModbusSequentialDataBlock(0, [7] * 8)
-    ctx = RO(hr=block, ir=block, zero_mode=True,
-             on_write_refused=lambda fc, a, c: refused.append((fc, a, c)))
-
-    assert ctx.validate(3, 0, 2) is True            # FC3 read allowed
-    assert ctx.validate(4, 0, 2) is True            # FC4 read allowed
-    for fc in _WRITE_FCS:                            # 5,6,15,16,22,23 refused
-        assert ctx.validate(fc, 0, 2) is False
-    assert [r[0] for r in refused] == list(_WRITE_FCS)
-    # a refused write never mutates the block
-    assert block.getValues(0, 2) == [7, 7]
+def test_meter_is_read_only_on_the_wire():
+    """The served meter must refuse every write with a Modbus exception, never
+    mutate the block, and refuse coil/discrete reads (a meter has no bit
+    objects — the shared SimDevice block would otherwise serve register bits).
+    Exercised END-TO-END through a real pymodbus client, because the refusal
+    now lives in the instrumented runtime wrappers wired at server start."""
+    from pymodbus.client import ModbusTcpClient
+    now = time.monotonic()
+    t = Template(id="ro", name="ro-test", transport={"port": 19997, "unit_id": 1},
+                 registers=[live(0, "OK")])
+    vm = VirtualMeter(t, _provider({"OK": (42.5, now)}),
+                      stale_after_s=15, update_interval_s=0.2)
+    vm.start()
+    try:
+        c = ModbusTcpClient("127.0.0.1", port=19997, timeout=2)
+        for _ in range(40):
+            time.sleep(0.2)
+            if c.connect():
+                r = c.read_holding_registers(address=0, count=2, device_id=1)
+                if not r.isError():
+                    break
+        else:
+            raise AssertionError("meter did not come up")
+        before = r.registers
+        # single write, multi write, coil write, coil read: all refused
+        assert c.write_register(address=0, value=1, device_id=1).isError()
+        assert c.write_registers(address=0, values=[1, 2], device_id=1).isError()
+        assert c.write_coil(address=0, value=True, device_id=1).isError()
+        assert c.read_coils(address=0, count=1, device_id=1).isError()
+        # a refused write never mutates the served block
+        r2 = c.read_holding_registers(address=0, count=2, device_id=1)
+        assert r2.registers == before
+        # every refusal was recorded as an error (observability contract)
+        errs = [q for q in vm.stats.queries if q.get("err")]
+        assert len(errs) >= 4
+        c.close()
+    finally:
+        vm.stop()

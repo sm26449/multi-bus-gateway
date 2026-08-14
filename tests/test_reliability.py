@@ -458,8 +458,8 @@ def test_read_lock_released_during_retry_backoff(monkeypatch):
         def is_socket_open(self): return True
         def connect(self): return True
         def close(self): pass
-        def read_holding_registers(self, address, count, slave): return _Err()
-        def read_input_registers(self, address, count, slave): return _Err()
+        def read_holding_registers(self, address, count, device_id): return _Err()
+        def read_input_registers(self, address, count, device_id): return _Err()
 
     conn = ModbusConnection(ModbusConfig())
     conn.config.retry_attempts = 2

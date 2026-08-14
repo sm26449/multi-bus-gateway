@@ -43,7 +43,7 @@ def test_wedged_but_open_link_forces_reopen(monkeypatch):
         def is_socket_open(self): return True            # port "open" but stuck
         def connect(self): return True
         def close(self): self.closed += 1
-        def read_holding_registers(self, address, count, slave):
+        def read_holding_registers(self, address, count, device_id):
             r = MagicMock(); r.isError.return_value = True; r.registers = []
             return r
 
@@ -72,7 +72,7 @@ def test_success_resets_the_failure_streak(monkeypatch):
         def is_socket_open(self): return True
         def connect(self): return True
         def close(self): pass
-        def read_holding_registers(self, address, count, slave):
+        def read_holding_registers(self, address, count, device_id):
             r = MagicMock()
             if state["ok"]:
                 r.isError.return_value = False; r.registers = [1, 2]

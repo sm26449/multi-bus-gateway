@@ -762,7 +762,7 @@ class VirtualMeterManager:
         raw words -> value -> the source variable each maps to. Debug aid for the
         Logs view (shows exactly what a consumer's read returns)."""
         vm = next((m for m in self._snap() if m.t.id == template_id), None)
-        if vm is None or not getattr(vm, "_block", None):
+        if vm is None or not vm.serving_block_ready:
             return {"error": "meter not running", "id": template_id}
         enc = RegisterEncoder
         out = []
@@ -772,7 +772,7 @@ class VirtualMeterManager:
             span = (r.length if r.type == "string"
                     else enc.REGISTER_COUNTS.get(r.type.lower(), 2))
             try:
-                words = list(vm._block.getValues(int(r.addr), max(1, span)))
+                words = vm.served_words(int(r.addr), max(1, span))
             except Exception:  # noqa: BLE001
                 words = []
             if r.source_kind == "live":

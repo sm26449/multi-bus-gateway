@@ -60,9 +60,9 @@ class _FakeClient:
     def is_socket_open(self): return True
     def connect(self): return True
     def close(self): pass
-    def read_holding_registers(self, address, count, slave):
+    def read_holding_registers(self, address, count, device_id):
         self.calls.append(('hr', address, count)); return _FakeResult([0] * count)
-    def read_input_registers(self, address, count, slave):
+    def read_input_registers(self, address, count, device_id):
         self.calls.append(('ir', address, count)); return _FakeResult([1] * count)
 
 
