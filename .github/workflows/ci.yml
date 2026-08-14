@@ -20,11 +20,19 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: |
-            requirements.txt
+            requirements.lock
             requirements-dev.txt
 
       - name: Install dependencies
-        run: pip install -r requirements-dev.txt
+        # lock first (exact runtime pins — same set the image ships), then the
+        # dev extras; requirements.txt ranges are satisfied by the pins.
+        run: pip install -r requirements.lock -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check .
 
       - name: Run test suite
-        run: python -m pytest -q
+        # --timeout: a hung loopback server fails in minutes, not the 6h job cap.
+        # --cov-fail-under=72: floor just under the current 74% — raise it as
+        # coverage grows, never lower it to make a PR pass.
+        run: python -m pytest -q --timeout=120 --cov=multibus --cov-report=term --cov-fail-under=72

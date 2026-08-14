@@ -2,5 +2,11 @@
 # Build:  docker build -f Dockerfile.test -t multi-bus-gateway:test .
 # Run:    docker run --rm -v "$(pwd)":/app -w /app --entrypoint sh \
 #           multi-bus-gateway:test -c "python -m pytest -q"
+# NOTE: FROM the locally-built :latest — build the main image first; local
+# use only, don't reuse in CI as-is.
 FROM multi-bus-gateway:latest
-RUN pip install --no-cache-dir "pytest>=7.4.0" "pytest-asyncio>=0.23.0" "httpx>=0.24.0"
+# Single source of truth for the dev set (was an inline duplicate that could
+# drift — audit 2026-08-14 L3). The -r requirements.txt line inside is a no-op
+# here: the runtime set is already installed from requirements.lock.
+COPY requirements.txt requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements-dev.txt

@@ -1,0 +1,26 @@
+# Dependency-update automation (audit 2026-08-14, M4). The runtime set is
+# LOCKED (requirements.lock) — these PRs are the deliberate-upgrade signal,
+# CI runs the full suite against each bump before it can land.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      runtime-minor:
+        applies-to: version-updates
+        update-types: [minor, patch]
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

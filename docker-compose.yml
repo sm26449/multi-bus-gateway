@@ -14,7 +14,8 @@ services:
       - "502:502"
     volumes:
       - ./config:/app/config
-      - ./docs:/app/docs:ro
+      # (no docs mount — the image bakes docs/modbus_data.json, the only file
+      # the app reads from there)
       # For live frontend editing without rebuilds, see
       # docker-compose.override.yml.example (mounts ./ui over the baked /app/ui).
     environment:

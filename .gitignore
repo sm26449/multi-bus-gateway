@@ -19,9 +19,22 @@ ENV/
 *.swo
 *~
 
-# Config files (keep examples)
+# Config files (keep examples) — every RUNTIME-state file the app writes
+# under config/ (audit 2026-08-14: a dev tree where the app ran could commit
+# live state; only templates/ and *.example.* are tracked)
 config/config.yaml
+config/config.yaml.*
 config/selected_registers.json
+config/virtual_meters.yaml
+config/calculated_templates.json
+config/builder_profiles.json
+config/write_leases.json
+config/influx_buffer.jsonl
+config/devices/
+config/device_templates/
+config/certs/
+*.bak
+*.bak-*
 
 # Environment (contains secrets)
 .env

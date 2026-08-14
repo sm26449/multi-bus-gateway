@@ -1,0 +1,14 @@
+# Lint gate (CI) — audit 2026-08-14. Defaults (E4/E7/E9 + F) minus the
+# deliberate compact-style choices this codebase uses:
+#   E702 semicolon one-liners (discovery/table builders), E731 small lambdas
+#   in CLI tools, E741 short math names in decode paths.
+# F-rules (unused imports/variables/redefinitions) stay enforced — those are
+# real smells, not style.
+line-length = 100
+
+[lint]
+ignore = ["E702", "E731", "E741"]
+
+[lint.per-file-ignores]
+# tests: setup-then-import ordering and deliberately-held references
+"tests/*" = ["E402", "F841"]
