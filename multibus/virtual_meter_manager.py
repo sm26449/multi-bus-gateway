@@ -553,6 +553,19 @@ class VirtualMeterManager:
                 "running": any(vm.t.id == template_id and vm._running for vm in self._snap()),
                 "in_use": any(i.get("template") == template_id for i in cfg)}
 
+    def _source_value(self, name: str):
+        """Current live value of a source name, searched across every device
+        store (templates don't carry the device binding — instances do). None
+        when the source isn't live anywhere right now."""
+        # getattr-defensive: callers may exercise _normalize_registers on a
+        # partially-built manager (tests, tooling) — no stores means no verdict
+        for store in (getattr(self, "current_values", None) or {},
+                      *(getattr(self, "device_values", None) or {}).values()):
+            for info in list(store.values()):
+                if isinstance(info, dict) and info.get("name") == name:
+                    return info.get("value")
+        return None
+
     def _normalize_registers(self, raw_regs: list, byte_order: str):
         """Validate + coerce editor register rows. Returns (registers, error)."""
         norm, spans = [], []
@@ -594,6 +607,17 @@ class VirtualMeterManager:
                 except (TypeError, ValueError):
                     return None, f"{tag}: const must be a number"
                 src = int(f) if f == int(f) else f
+            if kind in ("live", "sum", "failover") and typ != "string":
+                # A numeric row can never encode a text value (enum/bits/string
+                # sources) — the runtime degrades such a row to missing, but a
+                # known-text source at save time is a plain config error.
+                for _name in ([src] if isinstance(src, str) else src):
+                    _v = self._source_value(_name)
+                    if isinstance(_v, str):
+                        return None, (f"{tag}: source '{_name}' currently carries "
+                                      f"text ({_v!r}) — a {typ} row cannot encode "
+                                      "it (enum/bits/string sources need a "
+                                      "string-typed row)")
             try:
                 scale = float(r.get("scale", 1)) or 1.0
             except (TypeError, ValueError):

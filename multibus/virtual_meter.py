@@ -358,6 +358,7 @@ class VirtualMeter:
         self._conn_lock = threading.Lock()      # guards _conn_seen across threads
         self.stats = VMeterStats()              # in-RAM query log + counters
         self._failover_active: dict[int, str] = {}   # addr → active source name
+        self._encode_failed: set[int] = set()        # addrs warned unencodable (edge-triggered)
         # Freshness is judged on the MONOTONIC clock (driver 'mono' stamps vs
         # time.monotonic()), so it is immune to wall-clock/NTP steps by
         # construction. This guard is kept only to emit a diagnostic clock_step
@@ -381,6 +382,28 @@ class VirtualMeter:
                    else RegisterEncoder.REGISTER_COUNTS.get(reg.type.lower(), 2))
 
     def _resolve(self, reg: RegisterDef) -> tuple[Optional[list[int]], Optional[float], Optional[float]]:
+        """Guarded resolve: a row whose source carries an unencodable value
+        (a text enum/bits/string bound to a numeric row) degrades to MISSING —
+        it must never abort the whole block rebuild, because the supervisor
+        computes freshness only after a full rebuild and an aborted one leaves
+        the served frame frozen with the stale-stop fail-safe disarmed."""
+        try:
+            words, ts, bound = self._resolve_row(reg)
+        except (TypeError, ValueError) as e:
+            if reg.addr not in self._encode_failed:
+                self._encode_failed.add(reg.addr)
+                msg = (f"0x{reg.addr:04x}: unencodable source value ({e}) — "
+                       "row treated as missing")
+                self.stats.record_event("warn", "encode", msg)
+                logger.warning("virtual meter %s: %s", self.t.id, msg)
+            return None, None, None
+        if words is not None and reg.addr in self._encode_failed:
+            self._encode_failed.discard(reg.addr)
+            self.stats.record_event("info", "encode",
+                                    f"0x{reg.addr:04x}: source value encodable again")
+        return words, ts, bound
+
+    def _resolve_row(self, reg: RegisterDef) -> tuple[Optional[list[int]], Optional[float], Optional[float]]:
         """Return (register words, source_ts, source_bound) — ts/bound None for
         const/unknown. For ``sum`` the ts follows the policy mode: legacy keeps
         the historical newest-member ts; policy modes use the OLDEST member
@@ -988,7 +1011,11 @@ class VirtualMeter:
                     if v is None:
                         missing = True
                         break
-                    total += float(v)
+                    try:
+                        total += float(v)
+                    except (TypeError, ValueError):
+                        missing = True                # text value → row missing,
+                        break                         # never a 500 on the feed
                     if ts:
                         oldest = min(oldest if oldest is not None else ts, ts)
                 val, ts, src_bound = (None if missing else total), oldest, None
