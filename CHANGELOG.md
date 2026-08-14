@@ -1,5 +1,37 @@
 # Changelog
 
+## 3.23.6
+
+### 2026-08-14 — audit M1+M2: poller stop race, live-store ghosts (evening batch)
+
+- **M1 — lost-stop race in the pollers.** A `stop()` landing between
+  `Thread.start()` and the first line of `run()` was overwritten by
+  `running = True`; with the stop event ALREADY SET, `wait(interval)` returned
+  instantly — an unkillable zombie poller issuing back-to-back Modbus reads
+  through the OLD callback (worst on the WiFi/RTU bridge). The stop event is
+  now the single source of truth in both `RegisterPoller` and the HTTP
+  `_JsonPoller` (`running` stays as an observability mirror). The HTTP poller
+  also drops its uninterruptible `time.sleep` (audit L2): a 60 s group's
+  thread no longer outlives its device by a full interval. +5 tests.
+  (The jitter tests stopped their poller by flipping the `running` flag
+  directly — under the new contract that no longer stops anything, and the
+  first full-suite run OOM'd at 14 GB from a poller spinning against a
+  call-recording MagicMock. They now use the real `stop()` primitive —
+  exactly the single-stop-primitive discipline M1 introduces.)
+- **M2 — live-store entries at deselected addresses are purged on register
+  reload.** A template re-select that moves a register to a new address while
+  keeping its canonical name left the OLD entry frozen in the store;
+  name-based lookup binds the first match in insertion order, so vmeter rows
+  read the ghost's frozen timestamp and fail-stopped the whole meter until a
+  process restart. `purge_deselected()` now runs on every reload path
+  (per-device re-select, primary re-select, /api/config/reload-registers,
+  apply) — mirroring the calc-address purge that already existed. +4 tests.
+- **Failover/lifecycle test coverage** for the 3.21–3.23 surface that shipped
+  thinnest (manager 49%, routes 27%): instance add/edit/toggle/delete with
+  `device_fallback` through the REST routes, template editor round-trip, the
+  3.23.0 published-state contract (policy+bounds+quality+routing), and an
+  end-to-end primary-stale→twin→recovery switch. +8 tests.
+
 ## 3.23.5
 
 ### 2026-08-14 — audit P1 batch: reproducible builds, gates, self-contained UI, docs debt
