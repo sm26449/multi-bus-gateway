@@ -1,5 +1,40 @@
 # Changelog
 
+## 3.23.5
+
+### 2026-08-14 — audit P1 batch: reproducible builds, gates, self-contained UI, docs debt
+
+- **Reproducible builds:** `requirements.lock` (exact pins, the set the live
+  image runs) is now what the Dockerfile and CI install; `requirements.txt`
+  stays the intent file. Dependabot watches pip/docker/actions weekly.
+- **CI gates:** ruff lint (config in `ruff.toml`; F-rules enforced, deliberate
+  compact-style E7s excluded), coverage floor 72% (`--cov-fail-under`),
+  per-test `--timeout=120` so a hung server fails in minutes not hours.
+- **Self-contained UI again:** bootstrap-icons vendored under
+  `ui/vendor/bootstrap-icons/` (was a cdn.jsdelivr.net runtime dependency —
+  broken icons on air-gapped installs, a supply-chain surface, and a CDN
+  beacon from every operator's browser); CSP tightened back to self-only.
+- **Ad-hoc Modbus probe LAN-guarded:** `/api/devices/test` now applies the
+  same LAN-egress policy as every discovery route — it doubled as an internal
+  TCP port-scanner (audit L1). +2 tests.
+- **Durability:** fsync-before-rename in the three atomic writers that lacked
+  it (`virtual_meters.yaml`, snapshot index, builder profiles) — power loss
+  can no longer zero them.
+- **sm16/sm32 end-to-end:** accepted by the template validator and the CSV
+  alias table (they decoded fine but a community map using them previewed OK
+  and then failed on save). +1 test.
+- **Healthchecks:** the image healthcheck follows `UI_PORT` (a non-8080 deploy
+  was permanently "unhealthy"); serial-bridge Dockerfile gains its own
+  healthcheck (`GET /adapters`).
+- **Docs debt closed:** `alerts-webhooks.md` rewritten (it denied the 3.8.0
+  threshold engine); MANUAL RO/EN at full parity (Device Builder ported to EN,
+  failover/device_fallback/staleness state, opt-in decode+transport options);
+  `architecture.md` describes the 3.23-era system; new `config-reference.md`,
+  `upgrade-guide.md`, `yaml-import.md`; API.md gains canonical-fields,
+  import-yaml, `device_fallback`; READMEs tell the truth about env
+  pass-through (compose ships those lines commented) and count 11 templates.
+- Lint sweep: unused imports/variables removed across the tree (ruff --fix).
+
 ## 3.23.4
 
 ### 2026-08-14 — build hygiene + janitza-monitor name retired
