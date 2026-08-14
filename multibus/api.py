@@ -24,15 +24,14 @@ import os
 import re
 import threading
 import time
-from typing import Dict, Any, List, Optional, Set
+from typing import Dict, Optional, Set
 from datetime import datetime
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Body, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
 
 from . import __version__
 from .mqtt_publisher import MQTTPublisher
@@ -361,10 +360,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # interpolating handlers were converted to delegation); it still blocks
     # external script/frame injection, clickjacking (frame-ancestors) and
     # base-uri hijack. HSTS is emitted only over HTTPS.
+    # No external hosts: bootstrap-icons is vendored (ui/vendor/bootstrap-icons,
+    # audit 2026-08-14) — the UI is fully self-contained again, works air-gapped
+    # and stops beaconing every operator's browser to a CDN.
     _CSP = ("default-src 'self'; "
             "script-src 'self' 'unsafe-inline'; "
-            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-            "font-src 'self' https://cdn.jsdelivr.net data:; "
+            "style-src 'self' 'unsafe-inline'; "
+            "font-src 'self' data:; "
             "img-src 'self' data:; connect-src 'self'; "
             "frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 
@@ -516,7 +518,6 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # eval, sink routing). store_for preserves the exact legacy store semantics;
     # publishers() resolves the (possibly nonlocal-rebound by /api/config/apply)
     # sink refs at call time.
-    from . import expressions
     from .calc_engine import CalcEngine
 
     calc_engine = CalcEngine(config, registry.store_for,
@@ -2090,6 +2091,14 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         from pymodbus.pdu import ExceptionResponse
         proto = str(conn.get('protocol', 'tcp')).lower()
         rtu = proto == 'rtu'
+        if not rtu:
+            # same LAN-egress policy as every /api/discover/* route — without
+            # it the probe doubles as an internal TCP port scanner (audit L1)
+            from .discovery import lan_host_error
+            _e = lan_host_error(conn.get('host', ''),
+                                config.security.allow_nonlan_http_devices)
+            if _e:
+                return {"ok": False, "message": f"blocked: {_e}"}
         t0 = time.perf_counter()
         if rtu:
             where = f"{conn.get('serial_port','')}@{conn.get('baudrate',9600)}"

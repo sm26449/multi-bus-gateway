@@ -244,7 +244,8 @@ def test_template_save_upload_export_delete(tmp_path, monkeypatch):
 
 @needs_tc
 def test_config_export_import_roundtrip(tmp_path, monkeypatch):
-    import io, zipfile
+    import io
+    import zipfile
     import multibus.device_template as dt
     monkeypatch.setattr(dt, 'USER_DIR', tmp_path / 'device_templates')
     cfg, client = make_app(tmp_path, extra_yaml="""
@@ -779,3 +780,32 @@ def test_ui_security_validate_then_commit(tmp_path):
     r = client.post("/api/config/ui-security", json={"auth_enabled": True})
     assert r.status_code == 422
     assert client.get("/api/auth/status").json()["enabled"] is False   # not half-applied
+
+
+# ── ad-hoc probe LAN guard (audit 2026-08-14, L1) ──────────────────────────────
+
+@needs_tc
+def test_adhoc_probe_blocks_nonlan_host(tmp_path):
+    """/api/devices/test must apply the same LAN-egress policy as the
+    /api/discover/* routes — without it the probe is an internal TCP
+    port-scanner for any operator (or anyone, on an auth-off box)."""
+    _cfg, client = make_app(tmp_path)
+    r = client.post("/api/devices/test", json={
+        "connection": {"protocol": "tcp", "host": "8.8.8.8", "port": 502},
+        "unit_id": 1})
+    body = r.json()
+    assert body.get("ok") is False
+    assert "blocked" in body.get("message", "")
+
+
+@needs_tc
+def test_adhoc_probe_allows_lan_host(tmp_path):
+    """A private-LAN host passes the guard (the probe then legitimately
+    fails to connect in the test env — but NOT with the 'blocked' message)."""
+    _cfg, client = make_app(tmp_path)
+    r = client.post("/api/devices/test", json={
+        "connection": {"protocol": "tcp", "host": "192.0.2.1", "port": 502,
+                       "timeout": 0.2},
+        "unit_id": 1})
+    body = r.json()
+    assert "blocked" not in body.get("message", "")
