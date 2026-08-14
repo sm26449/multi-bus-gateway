@@ -1,0 +1,36 @@
+# Build-context hygiene (audit 2026-08-14). Two jobs:
+#  1. keep the context small/fast (.git 22M, node_modules 14M, tests, loadtest)
+#  2. make `COPY config/ ./config/` structurally safe: a tree where the app has
+#     RUN (config.yaml, passkeys, snapshots, audit log) must never bake that
+#     runtime state — possibly live credentials — into a shippable image.
+.git
+.gitignore
+.github
+.audit
+.claude
+.pytest_cache
+**/__pycache__
+node_modules
+tests
+loadtest
+serial-bridge
+.env*
+*.bak*
+Dockerfile.test
+docker-compose*.yml
+
+# runtime state under config/ — only templates/ and *.example.* belong in the image
+config/snapshots
+config/devices
+config/certs
+config/audit.jsonl*
+config/events.jsonl
+config/config.yaml
+config/config.yaml.*
+config/passkeys.json
+config/virtual_meters.yaml
+config/selected_registers.json
+config/calculated_templates.json
+config/builder_profiles.json
+config/write_leases.json
+config/influx_buffer.jsonl

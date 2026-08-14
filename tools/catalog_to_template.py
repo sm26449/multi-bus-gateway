@@ -138,7 +138,7 @@ def convert(catalog_path: Path, selected_path: Path | None, out_path: Path) -> d
         'vendor': cat.get('device', {}).get('manufacturer', 'Janitza electronics GmbH'),
         'model': cat.get('device', {}).get('model', 'UMG 512-PRO'),
         'version': '1.0.0',
-        'author': 'janitza-monitor built-in',
+        'author': 'multi-bus-gateway built-in',
         'description': 'Full Modbus register map of the Janitza UMG 512-PRO power '
                        'quality analyzer, generated from the vendor Modbus address '
                        'list. Curated defaults included for the common electrical '

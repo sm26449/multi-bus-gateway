@@ -1,5 +1,60 @@
 # Changelog
 
+## 3.23.4
+
+### 2026-08-14 — build hygiene + janitza-monitor name retired
+
+- **`.dockerignore` added** (audit 2026-08-14). The build context shrinks from
+  ~54 MB to the shippable tree, and — the structural part — `COPY config/`
+  can no longer bake runtime state into an image: a tree where the app has run
+  carries `config.yaml` (live credentials), `passkeys.json`, snapshots and
+  audit logs, and the previous image had 51 snapshot ZIPs + a test-run audit
+  log baked in. Only `config/templates/` and the `*.example.*` files ship.
+- **Legacy `janitza-monitor` references retired** across the repo: HA discovery
+  `manufacturer` is now `multi-bus-gateway` (identifiers/via_device untouched —
+  those are stable HA registry keys), tool paths and doc-comments point at the
+  migrated data dir (`/docker-storage/pv-stack/multi-bus-gateway/`), bundled
+  template author renamed. Deployment side (same date): data dir renamed,
+  compose paths/env (`MBG_UI_PORT`/`MBG_API_KEY`), legacy network alias
+  dropped (no consumer left), backfill cron path fixed (was silently dead —
+  called a script location that no longer existed), MBG config added to the
+  nightly stack backup (it was in no backup scope at all).
+
+## 3.23.3
+
+### 2026-08-14 — security: close the S4 redaction residual (audit)
+
+- **`Cookie`/`session` values are now masked** in the audit log and everywhere
+  else `redact_obj`/`_SECRET_KEYS` applies: an HTTP-input device configured
+  with a `Cookie:` auth header landed verbatim in `audit.jsonl`.
+- **Scalar URL leaves in the snapshot diff are masked.** `_mask()` deep-redacted
+  dict/list subtrees but returned scalar strings raw, so a changed
+  `https://user:token@host` device/influx/webhook URL surfaced its userinfo in
+  `GET /api/config/snapshots/{sid}/diff` — an endpoint a **viewer** can read.
+  Scalars at url-ish leaves now pass through `redact_url` like everything else.
+
+## 3.23.2
+
+### 2026-08-14 — vmeter: a text-valued row can no longer disarm the fail-safe
+
+- **An unencodable source value (text enum/bits/string on a numeric row)
+  degrades that ROW to missing instead of aborting the whole block rebuild.**
+  Before, one such row raised inside `_rebuild_block` on every supervisor tick
+  — freshness was never computed again, the stale-stop branch was unreachable,
+  and the meter kept serving the last-built frame as live indefinitely:
+  precisely the frozen-data-into-a-control-loop failure the staleness watchdog
+  exists to prevent. Edge-triggered warn/recovery events per register
+  (`encode`), so a misbound row is visible in Logs without flooding.
+- **`json_view()`** applies the same rule (a text member makes a `sum` row
+  missing, never a 500 on the JSON feed).
+- **Template save validation:** binding a source that currently carries text to
+  a numeric row is rejected with a clear error at save time (string-typed rows
+  still accept text sources). Runtime guard remains for sources that turn into
+  text later (template edit on the source device, enum added).
+- Conformance tests now derive their synthetic sources from the template's own
+  rows keyed by register ADDRESS (the protocol contract), so canonical-name
+  migrations can't silently break them again.
+
 ## 3.23.1
 
 ### 2026-08-13 — serial-bridge: survive unclean shutdowns (stale UUCP lock + dead ser2net)

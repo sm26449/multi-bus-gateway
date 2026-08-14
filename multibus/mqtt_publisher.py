@@ -558,7 +558,7 @@ class MQTTPublisher:
         device_info = {
             "identifiers": [f"mbg_dev_{device_id}"],
             "name": device_name or device_id,
-            "manufacturer": "janitza-monitor",
+            "manufacturer": "multi-bus-gateway",
             "model": model or "Modbus device",
             "via_device": "janitza_umg512",
         }
@@ -721,7 +721,7 @@ class MQTTPublisher:
             device = {
                 "identifiers": [f"janitza_vmeter_{mid}"],
                 "name": f"Virtual Meter: {m.get('name', mid)}",
-                "manufacturer": "janitza-monitor",
+                "manufacturer": "multi-bus-gateway",
                 "model": "Virtual Modbus meter",
                 "via_device": "janitza_umg512",
             }
