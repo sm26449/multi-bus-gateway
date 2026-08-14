@@ -22,14 +22,30 @@ from tools.read_sunspec import read_sunspec
 PORT = 15052
 
 
+# Synthetic values keyed by SunSpec model-213 register ADDRESS — the protocol
+# contract the reader polls. Source names are template-internal and rename
+# freely; deriving `fed` from the template keeps this test immune to renames.
+VALUES_BY_ADDR = {
+    40072: 1.3,                                          # A total
+    40074: 27.9, 40076: 28.3, 40078: 28.1,               # A L1-3
+    40080: 235.9, 40082: 235.9,                          # PhV avg / PhVphA
+    40084: 234.5, 40086: 234.0,                          # PhVphB / PhVphC
+    40096: 50.01,                                        # Hz
+    40098: -20000.0,                                     # W total
+    40100: -6659.0, 40102: -6716.0, 40104: -6656.0,      # W L1-3
+    40130: 27922776.0,                                   # TotWhExp
+    40138: 88052.0,                                      # TotWhImp
+}
+
+
 def test_sunspec_conformance():
     t = load_template('config/templates/fronius_sunspec_meter.yaml')
     t.transport['port'] = PORT
-    fed = {'_I_SUM3': 1.3, '_ILN[0]': 27.9, '_ILN[1]': 28.3, '_ILN[2]': 28.1,
-           '_G_ULN[0]': 235.9, '_G_ULN[1]': 234.5, '_G_ULN[2]': 234.0,
-           '_G_FREQ': 50.01, '_G_P_SUM3': -20000.0, '_PLN[0]': -6659.0,
-           '_PLN[1]': -6716.0, '_PLN[2]': -6656.0,
-           '_WH_Z[4]': 27922776.0, '_WH_V[4]': 88052.0}
+    live_by_addr = {r.addr: r.source for r in t.registers
+                    if r.source_kind == 'live'}
+    missing = set(VALUES_BY_ADDR) - set(live_by_addr)
+    assert not missing, f"template lost live registers at {sorted(missing)}"
+    fed = {live_by_addr[a]: v for a, v in VALUES_BY_ADDR.items()}
     now = time.monotonic()
     vm = VirtualMeter(t, lambda n: (fed[n], now) if n in fed else None,
                       stale_after_s=60, update_interval_s=0.3)

@@ -24,14 +24,29 @@ from tools.read_em24 import read_em24
 PORT = 15022
 
 
+# Synthetic values keyed by EM24 register ADDRESS — the protocol contract the
+# Victron reader polls. Source names are template-internal and rename freely
+# (Janitza OEM -> canonical, 2026-08); deriving `fed` from the template keeps
+# this test immune to such renames.
+VALUES_BY_ADDR = {
+    0x0028: -20049.0,    # total power W
+    0x0033: 49.99,       # frequency Hz
+    0x0034: 87992.0,     # forward (import) energy Wh
+    0x004e: 27913246.0,  # reverse (export) energy Wh
+    0x0000: 239.1, 0x0002: 238.2, 0x0004: 238.0,        # V L1-3
+    0x000c: 27.96, 0x000e: 28.3, 0x0010: 28.1,          # A L1-3
+    0x0012: -6659.0, 0x0014: -6716.0, 0x0016: -6656.0,  # W L1-3
+}
+
+
 def test_em24_conformance():
     t = load_template('config/templates/em24_av53.yaml')
     t.transport['port'] = PORT
-    # synthetic value per live source name in the template
-    fed = {'_G_P_SUM3': -20049.0, '_G_FREQ': 49.99, '_WH_V[4]': 87992.0,
-           '_WH_Z[4]': 27913246.0, '_G_ULN[0]': 239.1, '_G_ULN[1]': 238.2,
-           '_G_ULN[2]': 238.0, '_ILN[0]': 27.96, '_ILN[1]': 28.3, '_ILN[2]': 28.1,
-           '_PLN[0]': -6659.0, '_PLN[1]': -6716.0, '_PLN[2]': -6656.0}
+    live_by_addr = {r.addr: r.source for r in t.registers
+                    if r.source_kind == 'live'}
+    missing = set(VALUES_BY_ADDR) - set(live_by_addr)
+    assert not missing, f"template lost live registers at {sorted(map(hex, missing))}"
+    fed = {live_by_addr[a]: v for a, v in VALUES_BY_ADDR.items()}
     now = time.monotonic()
     vm = VirtualMeter(t, lambda n: (fed[n], now) if n in fed else None,
                       stale_after_s=60, update_interval_s=0.3)
