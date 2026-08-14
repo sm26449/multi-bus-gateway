@@ -67,6 +67,18 @@ snapshots itself:
 Restore, download, diff ("what changed since this snapshot") and delete are all
 in **Config → Backup & Snapshots**.
 
+## Downgrades and the config version stamp (3.24.2+)
+
+Every save writes a `config_version` stamp (the writing gateway's version) as
+the first key of `config.yaml`. If you **downgrade** and the file carries a
+newer stamp, the gateway loads it fine — unknown keys are simply not read —
+but logs a warning, raises a `config-downgrade` alert, and flags it in
+`/api/status` → `config_status.written_by_newer`: **the next save from the
+older version silently drops every setting the newer version introduced.**
+Either upgrade back before saving, or accept the loss knowingly. (There is no
+migration framework; the stamp exists precisely so a downgrade+save can no
+longer lose settings *silently*.)
+
 ## Field-naming note (3.6+)
 
 Since 3.6.0 the bundled vendor templates use **canonical field names**

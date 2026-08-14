@@ -1,5 +1,26 @@
 # Changelog
 
+## 3.24.2
+
+### 2026-08-15 — config version stamp (audit MEDIUM-2)
+
+- **Every save stamps `config_version`** (the writing gateway's version) as
+  the first key of config.yaml. Loading a file stamped by a NEWER gateway —
+  a downgrade — warns loudly, raises a rate-limited `config-downgrade`
+  alert, and surfaces in `/api/status` → `config_status.written_by[_newer]`:
+  the next save from the older version silently drops every setting the
+  newer one introduced, and that could previously happen with no trace.
+  Load itself is never blocked (fail-open, malformed stamps count as 0).
+  +4 tests; documented in upgrade-guide.md.
+
+### 2026-08-15 — stack ops (docker-setup, same window)
+
+- Memory limits: esphome 2g (firmware compiles spike), grafana 1g,
+  image-renderer 1g (influxdb already capped at 6g since 2026-07-15).
+- Image pins: esphome → 2026.5.3, grafana → 13.0.2 (both match the running
+  versions), image-renderer → by digest (the Go renderer publishes no
+  readable version tag). No more surprise majors via watchtower on :latest.
+
 ## 3.24.1
 
 ### 2026-08-15 — non-root containers (audit P2)

@@ -806,6 +806,15 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     alert_mgr.fire('error', 'config', 'Config',
                                    'config.yaml failed to load — running on '
                                    'last-known-good/defaults; saves disabled until repaired')
+                if getattr(config, 'config_written_by_newer', False):
+                    # downgrade detected: the file carries a newer gateway's
+                    # stamp — a save from this version silently drops any
+                    # settings that version introduced (audit MEDIUM-2)
+                    alert_mgr.fire('warn', 'config-downgrade', 'Config',
+                                   f'config.yaml written by '
+                                   f'{config.config_written_by} but '
+                                   f'{__version__} is running — saving from '
+                                   f'this version drops newer settings')
                 if mqtt_publisher:
                     transition('mqtt', 'MQTT', bool(mqtt_publisher.get_stats().get('connected')), 'sink')
                 if influxdb_publisher:

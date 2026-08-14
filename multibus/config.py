@@ -25,7 +25,18 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
 
+from . import __version__
 from .tombstone_store import TombstoneStore
+
+
+def _version_tuple(v: str) -> tuple:
+    """Numeric-compare form of a version string; unparsable parts count as 0
+    (fail-open: a malformed stamp must never block a config load)."""
+    out = []
+    for part in str(v).split("."):
+        digits = re.match(r"\d+", part)
+        out.append(int(digits.group()) if digits else 0)
+    return tuple(out)
 
 logger = logging.getLogger(__name__)
 
@@ -795,6 +806,22 @@ class Config:
             with open(self.config_path, 'r') as f:
                 data = yaml.safe_load(f) or {}
 
+            # Version stamp (audit MEDIUM-2): a file written by a NEWER gateway
+            # may hold settings this version does not know — loading works
+            # (unknown keys are simply not read), but a SAVE from here would
+            # silently drop them. Warn loudly + surface in /api/status; the
+            # operator decides (upgrade back, or accept the key loss).
+            self.config_written_by = str(data.get('config_version') or '')
+            self.config_written_by_newer = bool(
+                self.config_written_by
+                and _version_tuple(self.config_written_by) > _version_tuple(__version__))
+            if self.config_written_by_newer:
+                logger.warning(
+                    "config.yaml was written by gateway %s but %s is running — "
+                    "settings introduced after %s are preserved on load but "
+                    "will be DROPPED by the next save from this version",
+                    self.config_written_by, __version__, __version__)
+
             # Modbus
             if 'modbus' in data:
                 m = data['modbus']
@@ -1268,6 +1295,10 @@ class Config:
             "saves_disabled": failed,
             "bad_file": (str(self.config_path.with_suffix('.yaml.bad'))
                          if failed else None),
+            # version stamp: which gateway wrote the file, and whether that is
+            # NEWER than the running one (downgrade — a save would drop keys)
+            "written_by": getattr(self, 'config_written_by', '') or None,
+            "written_by_newer": bool(getattr(self, 'config_written_by_newer', False)),
         }
 
     def save_yaml_config(self):
@@ -1278,6 +1309,9 @@ class Config:
                 f"with defaults. Repair {self.config_path} (a copy of the broken "
                 f"file was kept as .yaml.bad) and restart.")
         data = {
+            # First key on purpose: who wrote this file (see the downgrade
+            # warning in _load_yaml_config).
+            'config_version': __version__,
             'modbus': {
                 'host': self.modbus.host,
                 'port': self.modbus.port,
