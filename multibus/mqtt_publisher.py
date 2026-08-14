@@ -19,6 +19,7 @@
 import math
 import time
 import json
+import queue
 import threading
 from typing import Dict, Any, Optional, List
 
@@ -36,6 +37,10 @@ RETRY_INITIAL_DELAY = 2
 RETRY_MAX_DELAY = 60
 RETRY_BACKOFF_FACTOR = 2
 RECONNECT_CHECK_INTERVAL = 30
+# HA write commands waiting for the command worker. Far above any human rate
+# through the HA UI — only a broker flood hits it, and flooding must drop
+# commands, not grow an unbounded backlog of stale writes.
+COMMAND_QUEUE_MAX = 32
 
 # Home Assistant device classes
 HA_DEVICE_CLASSES = {
@@ -173,6 +178,13 @@ class MQTTPublisher:
         # callback hands a command to. Empty + no-op unless allow_write_entities.
         self._command_map: Dict[str, tuple] = {}
         self._write_handler = None
+        # Commands execute on a dedicated worker, NOT on paho's network thread:
+        # the handler does blocking Modbus I/O under the connection lock shared
+        # with the pollers, and one slow RTU device would stall every publish
+        # in the meantime (audit 2026-08-14 M4). Bounded queue: a flood drops.
+        self._command_queue: queue.Queue = queue.Queue(maxsize=COMMAND_QUEUE_MAX)
+        self._stop_commands = threading.Event()
+        self._command_worker = None
         # per-device availability (drives the HA connectivity binary_sensor);
         # publish only on change so a steady device doesn't churn the topic
         self._availability_last: Dict[str, str] = {}
@@ -349,6 +361,9 @@ class MQTTPublisher:
         self._stop_reconnect.set()
         if self._reconnect_thread and self._reconnect_thread.is_alive():
             self._reconnect_thread.join(timeout=2)
+        self._stop_commands.set()
+        if self._command_worker and self._command_worker.is_alive():
+            self._command_worker.join(timeout=2)
 
         if self.client:
             # Flush the retained "offline" status with qos=1 and WAIT for it to
@@ -667,18 +682,47 @@ class MQTTPublisher:
         allow_writes + the template write envelope + rate limit + audit). Without
         it, incoming commands are ignored."""
         self._write_handler = fn
+        self._start_command_worker()
+
+    def _start_command_worker(self) -> None:
+        if self._command_worker is not None and self._command_worker.is_alive():
+            return
+        self._stop_commands.clear()
+        self._command_worker = threading.Thread(
+            target=self._command_loop, name="mqtt-command-worker", daemon=True)
+        self._command_worker.start()
+
+    def _command_loop(self) -> None:
+        """Drain HA write commands one at a time, in arrival order. The
+        task_done/join pair lets tests wait deterministically."""
+        while not self._stop_commands.is_set():
+            try:
+                device_id, register, payload = self._command_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            try:
+                self._write_handler(device_id, register, payload)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("MQTT command for %s addr=%s failed: %s", device_id,
+                               getattr(register, "address", "?"), e)
+            finally:
+                self._command_queue.task_done()
 
     def _on_message(self, client, userdata, message):
-        """Route a retained-config command topic to the write handler. Every
-        gate lives in the handler; here we only look the topic up and decode the
-        payload. Never raises into the paho loop."""
+        """Hand a command topic to the write worker. Every gate lives in the
+        handler; here we only look the topic up, decode the payload and
+        enqueue — the handler does blocking Modbus I/O, which must not run on
+        paho's network thread. Never raises into the paho loop."""
         try:
             entry = self._command_map.get(message.topic)
             if entry is None or self._write_handler is None:
                 return
             device_id, register = entry
             payload = message.payload.decode("utf-8", "replace").strip()
-            self._write_handler(device_id, register, payload)
+            self._command_queue.put_nowait((device_id, register, payload))
+        except queue.Full:
+            logger.warning("MQTT command on %s dropped: write queue full",
+                           getattr(message, "topic", "?"))
         except Exception as e:  # noqa: BLE001
             logger.warning("MQTT command on %s failed: %s",
                            getattr(message, "topic", "?"), e)

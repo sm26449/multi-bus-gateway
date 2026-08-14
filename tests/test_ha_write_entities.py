@@ -4,6 +4,8 @@
 its command topic is subscribed + routed to the gated write handler. Off by
 default (no write_rules → plain sensors, no subscriptions)."""
 import json
+import queue
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -91,7 +93,7 @@ def test_writable_enum_becomes_select_with_options():
     assert "min" not in cfg and "state_class" not in cfg
 
 
-# ── command routing: on_message → handler with decoded payload ───────────────
+# ── command routing: on_message → worker → handler with decoded payload ──────
 
 def test_on_message_routes_to_handler():
     pub = _pub(allow_write_entities=True)
@@ -102,7 +104,49 @@ def test_on_message_routes_to_handler():
                                  write_rules={52: _rule()})
     msg = SimpleNamespace(topic="meters/dev1/power_limit/set", payload=b" 1500 ")
     pub._on_message(pub.client, None, msg)
+    pub._command_queue.join()                        # worker drained the command
     assert calls == [("dev1", 52, "1500")]           # trimmed, decoded
+
+
+# ── M4: the blocking write runs on the command worker, never the paho loop ────
+
+def test_command_executes_off_the_calling_thread():
+    pub = _pub(allow_write_entities=True)
+    seen = []
+    pub.set_command_write_handler(lambda d, r, p: seen.append(threading.current_thread()))
+    reg = _reg()
+    pub.publish_device_discovery("dev1", "Dev", "meters/dev1", [reg],
+                                 write_rules={52: _rule()})
+    pub._on_message(pub.client, None,
+                    SimpleNamespace(topic="meters/dev1/power_limit/set", payload=b"1"))
+    pub._command_queue.join()
+    assert seen and seen[0] is not threading.current_thread()
+    assert seen[0].name == "mqtt-command-worker"
+
+
+def test_full_command_queue_drops_without_raising():
+    pub = _pub(allow_write_entities=True)
+    pub.set_command_write_handler(lambda *a: None)
+    # park the worker so the queue can actually fill
+    pub._stop_commands.set()
+    pub._command_worker.join(timeout=2)
+    pub._command_queue = queue.Queue(maxsize=1)
+    reg = _reg()
+    pub.publish_device_discovery("dev1", "Dev", "meters/dev1", [reg],
+                                 write_rules={52: _rule()})
+    msg = SimpleNamespace(topic="meters/dev1/power_limit/set", payload=b"1")
+    pub._on_message(pub.client, None, msg)           # fills the queue
+    pub._on_message(pub.client, None, msg)           # dropped, no exception
+    assert pub._command_queue.qsize() == 1
+
+
+def test_disconnect_stops_the_command_worker():
+    pub = _pub(allow_write_entities=True)
+    pub.set_command_write_handler(lambda *a: None)
+    worker = pub._command_worker
+    assert worker.is_alive()
+    pub.disconnect()
+    assert not worker.is_alive()
 
 
 def test_on_message_ignores_unknown_topic_and_missing_handler():

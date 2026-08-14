@@ -1345,8 +1345,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         NOT a trusted caller, so EVERYTHING is re-validated here regardless of
         what discovery advertised: both write gates, the template write envelope
         (writability + bounds), a rate limit, and an audit record. Runs on the
-        paho network thread; write_value takes the connection lock, so it is
-        serialized with the poller."""
+        MQTT command worker — never on paho's network thread, where the
+        blocking Modbus I/O would stall every publish (audit M4); write_value
+        takes the connection lock, so it is serialized with the poller."""
         import math as _math
         if not (config.security.allow_writes and config.mqtt.allow_write_entities):
             return
