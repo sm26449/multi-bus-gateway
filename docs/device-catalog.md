@@ -215,7 +215,7 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 - **Transport:** FC03 (read holding registers) · byte order **little-endian, low word first (CDAB / word-swapped)**
 - **Source / provenance:** Field-verified against a physical Fronius Smart Meter 65A-3 over Modbus RTU (2026-08-11): |P|<=S per phase, S^2~=P^2+Q^2, PF=P/S, Freq=50Hz.
 
-> Fronius Smart Meter 65A-3, 3-phase, Modbus RTU. Register map field-verified against the physical meter: INT32 low-word-first (CDAB), holding registers (FC03), scales V/10 A/1000 W/10 Hz/10; energy raw kWh*10 is served as canonical Wh (scale 0.01). Frequency at register 49 (register 51 holds PF_sys). Meter model id 731 at 0x000B.
+> Fronius Smart Meter 65A-3, 3-phase, Modbus RTU. Register map field-verified against the physical meter: INT32 low-word-first (CDAB), holding registers (FC03), scales V/10 A/1000 W/10 Hz/10; energy native register is Wh*10 -> canonical Wh (scale 10; the earlier 'kWh*10' reading of the field notes was off by 1000, caught against live data). Frequency at register 49 (register 51 holds PF_sys). Meter model id 731 at 0x000B.
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
@@ -245,8 +245,8 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 44 / 0x002C | `power_reactive_total` | Reactive Power Total | int32 | 10.0 | var | normal |
 | 49 / 0x0031 | `frequency` | Frequency | uint16 | 10.0 | Hz | normal |
 | 51 / 0x0033 | `power_factor_total` | Power Factor sys | int16 | 1000.0 | — | normal |
-| 52 / 0x0034 | `energy_active_import` | Energy Import Total | int32 | 0.01 | Wh | slow |
-| 78 / 0x004E | `energy_active_export` | Energy Export Total | int32 | 0.01 | Wh | slow |
+| 52 / 0x0034 | `energy_active_import` | Energy Import Total | int32 | 10.0 | Wh | slow |
+| 78 / 0x004E | `energy_active_export` | Energy Export Total | int32 | 10.0 | Wh | slow |
 | 4096 / 0x1000 | `firmware_rev` | Firmware / revision | uint16 | 1.0 | — | slow |
 | 20480 / 0x5000 | `serial` | Serial / ID (ASCII) | string:7 | 1.0 | — | slow |
 
