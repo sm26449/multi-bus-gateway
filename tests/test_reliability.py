@@ -401,17 +401,20 @@ def test_ws_broadcast_sends_outside_lock_and_drops_bad(monkeypatch):
 # ── Perf win: interval floor (0 would flood the bus) ─────────────────────────
 
 def test_poller_clamps_zero_interval():
+    # exercise the REAL constructor clamp (the test used to re-implement the
+    # max(0.05, ...) expression and assert on its own copy — external audit)
     from multibus.modbus_client import RegisterPoller
-    p = RegisterPoller.__new__(RegisterPoller)
-    # exercise the clamp logic directly
-    for bad, expect_min in [(0, 0.05), (-3, 0.05), (0.02, 0.05)]:
-        try:
-            iv = max(0.05, float(bad))
-        except (TypeError, ValueError):
-            iv = 5.0
-        assert iv >= expect_min
+
+    def _mk(interval):
+        return RegisterPoller(name="g", interval=interval, registers=[],
+                              connection=None, parser=None,
+                              publish_callback=lambda *a: None)
+
+    for bad in (0, -3, 0.02):
+        assert _mk(bad).interval == 0.05           # floored, never spins
+    assert _mk("garbage").interval == 5.0          # unparsable → safe default
     # a legit 250 ms (ESS control) is preserved
-    assert max(0.05, float(0.25)) == 0.25
+    assert _mk(0.25).interval == 0.25
 
 
 def test_save_poll_groups_rejects_zero_interval(tmp_path):

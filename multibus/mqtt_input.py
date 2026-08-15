@@ -231,6 +231,9 @@ class MqttInputClient:
     def update_registers(self, registers: list, poll_groups: dict = None):
         self.registers = registers
         self._by_topic = self._index()
+        # a live register swap can re-map an address to a different field —
+        # a stale monotonic baseline would then reject the new counter
+        self._counter_filters.clear()
         if self._client and self.connected:
             for t in self._subscriptions():
                 try:

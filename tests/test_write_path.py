@@ -146,11 +146,11 @@ def test_coil_truthy():
     assert coil_truthy("2") is True and coil_truthy("0.1") is True
 
 
-def _app(tmp_path, auth=False, **sec):
+def _app(tmp_path, auth=False, extra_yaml="", **sec):
     from tests.test_devices import write_config
     from multibus.api import create_api
     from multibus import auth as _authmod
-    cfg = write_config(tmp_path)
+    cfg = write_config(tmp_path, extra_yaml=extra_yaml)
     for k, v in sec.items():
         setattr(cfg.security, k, v)
     if auth:
@@ -203,10 +203,15 @@ def test_write_rate_limit_returns_429(tmp_path):
 
 @needs_tc
 def test_input_registers_rejected(tmp_path):
-    _cfg, client = _app(tmp_path, auth=True, allow_writes=True)
+    # was a PERMANENT skip (external audit): the shared fixture never had a
+    # non-primary device, so the read-only guard on FC4 writes went untested
+    _cfg, client = _app(tmp_path, auth=True, allow_writes=True, extra_yaml='''
+devices:
+  - id: em24-hala
+    connection: { protocol: tcp, host: 192.168.1.42, port: 1502, unit_id: 5 }
+''')
     dev = next((d for d in _cfg.devices if not d.primary), None)
-    if dev is None:
-        pytest.skip("no non-primary device in fixture")
+    assert dev is not None, "fixture must provide a non-primary device"
     r = client.post(f"/api/devices/{dev.id}/write",
                     json={"address": 5, "value": 1, "register_type": "input"})
     assert r.status_code == 400 and "read-only" in str(r.json())

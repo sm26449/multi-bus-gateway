@@ -156,11 +156,20 @@ ui:
 
 # ── P1: operator write-matcher is segment-anchored ───────────────────────────
 
-def test_operator_write_matcher_segment_anchored():
-    import multibus.api as api_mod
-    import inspect
-    # extract _operator_may_write via a tiny app build is heavy; assert the
-    # anchored semantics through the public middleware behaviour instead
-    src = inspect.getsource(api_mod.create_api)
-    assert "path == pfx or path.startswith(pfx" in src        # boundary-anchored prefix
-    assert 'parts[4] in ("write", "test", "payload-sample")' in src   # exact segment
+@needs_tc
+def test_operator_write_matcher_segment_anchored(clients):
+    # BEHAVIORAL (was an inspect.getsource assert — external audit): the
+    # operator write matcher must be segment-anchored. 403 = the ROLE gate
+    # refused; any other status means the request passed the gate (and then
+    # hit routing/validation, which is fine for the allowed cases).
+    op = clients.op
+    # allowed prefix, exact + with a sub-path
+    assert op.post("/api/query/register",
+                   json={"address": 1, "data_type": "uint16"}).status_code != 403
+    # prefix WITHOUT a segment boundary must NOT inherit the allowance
+    assert op.post("/api/query-evil").status_code == 403
+    assert op.post("/api/bus-traceX/config").status_code == 403
+    # device live-action: exactly /api/devices/<id>/<action>
+    assert op.post("/api/devices/em24/test", json={}).status_code != 403
+    assert op.post("/api/devices/em24/test/extra", json={}).status_code == 403
+    assert op.post("/api/devices/em24/rename", json={}).status_code == 403

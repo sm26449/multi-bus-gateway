@@ -388,6 +388,9 @@ class HttpClient:
         self.registers = registers
         self.poll_groups = poll_groups
         self.pollers: List[_JsonPoller] = []
+        # serializes start_polling / update_registers / disconnect (external
+        # audit: concurrent Applies interleaved stop/rebuild → doubled pollers)
+        self._lifecycle_lock = threading.RLock()
         self.publish_callback = None
         self.connected = False
         self.successful_reads = 0
@@ -463,31 +466,40 @@ class HttpClient:
             return False
 
     def start_polling(self):
-        by_group: Dict[str, list] = {}
-        for reg in self.registers:
-            by_group.setdefault(reg.poll_group, []).append(reg)
-        for group_name, regs in by_group.items():
-            gc = self.poll_groups.get(group_name) or self.poll_groups.get('normal')
-            if not gc:
-                continue
-            p = _JsonPoller(group_name, gc.interval, regs, self._fetch,
-                            self.publish_callback, self)
-            p.start()
-            self.pollers.append(p)
-        logger.info("HTTP device: started %d polling threads", len(self.pollers))
+        with self._lifecycle_lock:
+            if self.pollers:                    # double-start guard
+                logger.warning("HTTP start_polling with %d pollers already "
+                               "running — stopping them first", len(self.pollers))
+                for p in self.pollers:
+                    p.stop()
+                self.pollers = []
+            by_group: Dict[str, list] = {}
+            for reg in self.registers:
+                by_group.setdefault(reg.poll_group, []).append(reg)
+            for group_name, regs in by_group.items():
+                gc = self.poll_groups.get(group_name) or self.poll_groups.get('normal')
+                if not gc:
+                    continue
+                p = _JsonPoller(group_name, gc.interval, regs, self._fetch,
+                                self.publish_callback, self)
+                p.start()
+                self.pollers.append(p)
+            logger.info("HTTP device: started %d polling threads", len(self.pollers))
 
     def update_registers(self, registers: list, poll_groups: dict):
         """Swap the register set + poll groups and live-restart the pollers."""
-        self.registers = registers
-        self.poll_groups = poll_groups
-        for p in self.pollers:
-            p.stop()
-        self.pollers = []
-        self.start_polling()
+        with self._lifecycle_lock:
+            self.registers = registers
+            self.poll_groups = poll_groups
+            for p in self.pollers:
+                p.stop()
+            self.pollers = []
+            self.start_polling()
         logger.info("HTTP device: registers updated (%d) — pollers restarted", len(registers))
 
     def disconnect(self):
-        pollers, self.pollers = self.pollers, []
+        with self._lifecycle_lock:
+            pollers, self.pollers = self.pollers, []
         for p in pollers:
             p.stop()
         # bounded join so a poller blocked in urlopen can't publish a late batch

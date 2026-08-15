@@ -41,4 +41,6 @@ jobs:
         # --timeout: a hung loopback server fails in minutes, not the 6h job cap.
         # --cov-fail-under=72: floor just under the current 74% — raise it as
         # coverage grows, never lower it to make a PR pass.
-        run: python -m pytest -q --timeout=120 --cov=multibus --cov-report=term --cov-fail-under=72
+        run: python -m pytest -q --timeout=120 -p randomly --cov=multibus --cov-report=term --cov-fail-under=72
+        # -p randomly: random test order (seed printed in the log header —
+        # reproduce a failure locally with: pytest -p randomly --randomly-seed=<seed>)

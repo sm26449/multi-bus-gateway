@@ -208,12 +208,25 @@ def test_discover_esphome_port_range(tmp_path):
         assert rsp.status_code == 422, bad
 
 
-@needs_tc
-def test_json_view_uses_guarded_clock():
-    import inspect
-    from multibus.virtual_meter import VirtualMeter
-    # freshness moved to the MONOTONIC clock (step-immune) — json_view uses it too
-    assert "time.monotonic()" in inspect.getsource(VirtualMeter.json_view)
+def test_json_view_uses_guarded_clock(monkeypatch):
+    # BEHAVIORAL (was an inspect.getsource assert): json_view ages rows on the
+    # MONOTONIC clock — a wall-clock step must not change the reported age
+    import time as _t
+    from multibus.virtual_meter import RegisterDef, Template, VirtualMeter
+    now = _t.monotonic()
+    vals = {"power_active_total": (230.0, now)}
+    vm_ = VirtualMeter(Template(id="t", name="t", transport={"port": 19998},
+                                registers=[RegisterDef(addr=0, type="float",
+                                                       source_kind="live",
+                                                       source="power_active_total")]),
+                       lambda n: vals.get(n), stale_after_s=15)
+    vm_._rebuild_block()
+    age1 = (vm_.json_view().get("registers") or [{}])[0].get("age_s")
+    real_time = _t.time
+    monkeypatch.setattr(_t, "time", lambda: real_time() + 100000)   # NTP step
+    age2 = (vm_.json_view().get("registers") or [{}])[0].get("age_s")
+    for a in (age1, age2):
+        assert a is None or a < 60          # a wall-clock-based age would be ~100000
 
 
 def test_identity_files_tightened_on_load(tmp_path):
@@ -253,31 +266,96 @@ def test_discovery_timeout_not_reported_as_encrypted():
     assert r is None            # unidentified silent service → dropped, not "encrypted"
 
 
-def test_operator_cannot_forget_tombstone_edge():
+def test_operator_cannot_forget_tombstone_edge(tmp_path):
     """An operator must not reach DELETE /api/devices/restorable/<id> even when
-    <id> is literally 'write'/'test'/'payload-sample'."""
-    import multibus.api as api_mod
-    # rebuild the matcher's logic inline against the known prefixes isn't
-    # exposed; assert the segment guard is present in source instead
-    import inspect
-    src = inspect.getsource(api_mod.create_api)
-    assert 'parts[3] != "restorable"' in src
+    <id> is literally 'write'/'test'/'payload-sample'. BEHAVIORAL (was an
+    inspect.getsource assert): 403 = the role gate refused."""
+    import pytest as _pytest
+    try:
+        from fastapi.testclient import TestClient
+    except Exception:
+        _pytest.skip("TestClient not installed")
+    from multibus import auth as _a
+    from multibus.api import create_api
+    from tests.test_devices import write_config
+    cfg = write_config(tmp_path, extra_yaml=f"""
+ui:
+  auth:
+    enabled: true
+    username: boss
+    password: "{_a.hash_password('pw')}"
+    operator_username: ops
+    operator_password: "{_a.hash_password('op')}"
+""")
+    app, _ = create_api(cfg, None, None, None,
+                        devices=[(d, None) for d in cfg.devices])
+    op = TestClient(app, raise_server_exceptions=False)
+    assert op.post("/api/auth/login",
+                   json={"username": "ops", "password": "op"}).status_code == 200
+    for edge in ("write", "test", "payload-sample"):
+        assert op.delete(f"/api/devices/restorable/{edge}").status_code == 403
 
 
-def test_esphome_client_closes_error_responses():
-    import inspect
+def test_esphome_client_closes_error_responses(monkeypatch):
+    # BEHAVIORAL (was an inspect.getsource assert): an HTTPError body must be
+    # closed, or each failed dashboard call leaks a socket until GC
+    import urllib.error
+    import urllib.request
     from multibus import esphome_client
-    src = inspect.getsource(esphome_client.EsphomeDashboard._request)
-    assert "e.close()" in src
+    closed = []
+
+    class _Body:
+        def read(self): return b"boom"
+        def close(self): closed.append(True)
+
+    def _raise(*a, **k):
+        raise urllib.error.HTTPError("http://x", 500, "boom", None, _Body())
+    monkeypatch.setattr(urllib.request, "urlopen", _raise)
+    dash = esphome_client.EsphomeDashboard("http://127.0.0.1:1")
+    try:
+        dash._request("GET", "/anything")
+    except Exception:  # noqa: BLE001
+        pass
+    assert closed, "HTTPError response body was not closed"
 
 
 def test_modbus_poller_no_publish_after_stop():
-    # since M1 (3.23.6) the stop EVENT is the single source of truth — the
-    # mid-read guard must check it (not the `running` mirror) and break
-    import inspect
+    # BEHAVIORAL (was an inspect.getsource assert): a stop() landing while a
+    # poll cycle is mid-read must suppress the publish — since M1 (3.23.6)
+    # the stop EVENT is the single source of truth, checked between reads.
+    import threading
+    import time as _t
+    from multibus.config import SelectedRegister
     from multibus.modbus_client import RegisterPoller
-    src = inspect.getsource(RegisterPoller.run)
-    assert "if self._stop_event.is_set():" in src and "break" in src
+
+    published = []
+    poller_box = {}
+
+    class _Conn:
+        connected = True
+
+        def read_registers(self, address, count, register_type="holding",
+                           stop_event=None):
+            # the FIRST read triggers the stop — as if disconnect() raced in
+            poller_box["p"].stop()
+            return [1] * count
+
+    regs = [SelectedRegister(address=a, name=f"r{a}", label=f"r{a}", unit="",
+                             data_type="uint16", poll_group="g")
+            for a in (0, 200)]                    # far apart → two read batches
+    from multibus.register_parser import RegisterParser
+    p = RegisterPoller(name="g", interval=3600, registers=regs, connection=_Conn(),
+                       parser=RegisterParser('big'),
+                       publish_callback=lambda *a: published.append(a))
+    poller_box["p"] = p
+    p.start()
+    for _ in range(100):                          # bounded wait for thread exit
+        if not p.is_alive():
+            break
+        _t.sleep(0.02)
+    assert not p.is_alive()
+    assert published == []                        # stopped mid-cycle → no publish
+    assert isinstance(p._stop_event, threading.Event) and p._stop_event.is_set()
 
 
 def test_driver_staleness_is_monotonic_step_immune(monkeypatch):

@@ -19,6 +19,11 @@
 Moved verbatim from create_api(). Everything goes through the manager on
 ``app.state.vmeter_manager`` (set at boot by main.py), read per-request so the
 routes degrade to 503 when virtual meters aren't initialized.
+
+Deliberately SYNC (plain ``def``) routes: manager operations join server
+threads (stop/reload can block seconds). FastAPI runs sync routes in the
+threadpool, so the event loop — and every other request, including /ws —
+keeps serving. Do not "modernize" these to async def (external audit).
 """
 from __future__ import annotations
 
@@ -32,7 +37,7 @@ def build(ctx) -> APIRouter:
         return getattr(ctx.app.state, "vmeter_manager", None)
 
     @r.get("/api/virtual-meters")
-    async def list_virtual_meters():
+    def list_virtual_meters():
         """Configured virtual meters + live running status + served values."""
         mgr = _mgr()
         if mgr is None:
@@ -40,13 +45,13 @@ def build(ctx) -> APIRouter:
         return {"instances": mgr.overview(), "port_range": mgr.port_info()}
 
     @r.get("/api/virtual-meters/templates")
-    async def list_vm_templates():
+    def list_vm_templates():
         """Available meter templates (for the 'add instance' dropdown)."""
         mgr = _mgr()
         return {"templates": mgr.list_templates() if mgr else []}
 
     @r.post("/api/virtual-meters")
-    async def add_virtual_meter(payload: dict = Body(...)):
+    def add_virtual_meter(payload: dict = Body(...)):
         """Add a new virtual-meter instance from a template."""
         mgr = _mgr()
         if mgr is None:
@@ -69,7 +74,7 @@ def build(ctx) -> APIRouter:
         return res
 
     @r.delete("/api/virtual-meters/{template}")
-    async def delete_virtual_meter(template: str):
+    def delete_virtual_meter(template: str):
         """Remove a virtual-meter instance."""
         mgr = _mgr()
         if mgr is None:
@@ -80,7 +85,7 @@ def build(ctx) -> APIRouter:
         return res
 
     @r.get("/api/virtual-meters/sources")
-    async def vm_sources(device: str = Query(default="")):
+    def vm_sources(device: str = Query(default="")):
         """Live registers of a source device (for the editor source picker) +
         valid types. Absent device → the primary device's registers."""
         mgr = _mgr()
@@ -89,7 +94,7 @@ def build(ctx) -> APIRouter:
                 "port_range": mgr.port_info() if mgr else None}
 
     @r.get("/api/virtual-meters/template/{template_id}")
-    async def vm_get_template(template_id: str):
+    def vm_get_template(template_id: str):
         """Full editor view of a template (per-register fields)."""
         mgr = _mgr()
         if mgr is None:
@@ -101,7 +106,7 @@ def build(ctx) -> APIRouter:
         return res
 
     @r.put("/api/virtual-meters/template/{template_id}")
-    async def vm_save_template(template_id: str, payload: dict = Body(...)):
+    def vm_save_template(template_id: str, payload: dict = Body(...)):
         """Create or overwrite a template from the editor."""
         mgr = _mgr()
         if mgr is None:
@@ -112,7 +117,7 @@ def build(ctx) -> APIRouter:
         return res
 
     @r.delete("/api/virtual-meters/template/{template_id}")
-    async def vm_delete_template(template_id: str):
+    def vm_delete_template(template_id: str):
         """Delete a template file (refused while an instance uses it)."""
         mgr = _mgr()
         if mgr is None:
@@ -125,7 +130,7 @@ def build(ctx) -> APIRouter:
         return res
 
     @r.post("/api/virtual-meters/templates/import")
-    async def vm_import_template(payload: dict = Body(...)):
+    def vm_import_template(payload: dict = Body(...)):
         """Import a template from uploaded YAML (validated before save)."""
         mgr = _mgr()
         if mgr is None:
@@ -136,7 +141,7 @@ def build(ctx) -> APIRouter:
         return res
 
     @r.get("/api/virtual-meters/template/{template_id}/export")
-    async def vm_export_template(template_id: str):
+    def vm_export_template(template_id: str):
         """Export a template's raw YAML (for download / sharing)."""
         mgr = _mgr()
         if mgr is None:
@@ -147,7 +152,7 @@ def build(ctx) -> APIRouter:
         return res
 
     @r.get("/api/virtual-meters/{template}/values")
-    async def vm_json_view(template: str):
+    def vm_json_view(template: str):
         """The meter's map as JSON, under the aggregator staleness convention:
         value null + quality good/stale/missing + age_s per row; a stale row
         carries last_value SEPARATELY (absence is never served as a number)."""
@@ -160,7 +165,7 @@ def build(ctx) -> APIRouter:
         return res
 
     @r.get("/api/virtual-meters/{template}/stats")
-    async def vm_stats(template: str, limit: int = Query(200, ge=1, le=1024)):
+    def vm_stats(template: str, limit: int = Query(200, ge=1, le=1024)):
         """Live observability: query log (last 1024), counters, rate, per-register."""
         mgr = _mgr()
         if mgr is None:
@@ -168,7 +173,7 @@ def build(ctx) -> APIRouter:
         return mgr.get_stats(template, limit)
 
     @r.get("/api/virtual-meters/{template}/decode")
-    async def vm_decode(template: str, addr: int = Query(...), count: int = Query(1, ge=1, le=125)):
+    def vm_decode(template: str, addr: int = Query(...), count: int = Query(1, ge=1, le=125)):
         """Decode a register range -> values + the source variable each maps to."""
         mgr = _mgr()
         if mgr is None:
@@ -179,7 +184,7 @@ def build(ctx) -> APIRouter:
         return res
 
     @r.post("/api/virtual-meters/{template}/toggle")
-    async def toggle_virtual_meter(template: str, on: bool = Query(True)):
+    def toggle_virtual_meter(template: str, on: bool = Query(True)):
         """Enable/disable a virtual meter (persists + starts/stops live)."""
         mgr = _mgr()
         if mgr is None:
@@ -193,7 +198,7 @@ def build(ctx) -> APIRouter:
         return res
 
     @r.patch("/api/virtual-meters/{template}")
-    async def edit_virtual_meter(template: str, payload: dict = Body(...)):
+    def edit_virtual_meter(template: str, payload: dict = Body(...)):
         """Edit an existing instance (port / unit_id / stale_after_s /
         update_interval_s — partial). Restarts the meter live if running."""
         mgr = _mgr()

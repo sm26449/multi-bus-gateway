@@ -355,9 +355,21 @@ class GatewayApp:
         if self.vmeter_manager:
             self.vmeter_manager.stop_all()
 
+        # Disconnect devices in PARALLEL (external audit: sequential joins of
+        # up to ~5 s per device could outlast docker's stop grace period —
+        # SIGKILL then loses the InfluxDB replay buffer flushed further down).
+        # Bounded join: a wedged disconnect must not hold the flush hostage.
+        _threads = []
         for _device, client in getattr(self, 'devices', []):
             if client:
-                client.disconnect()
+                t = threading.Thread(target=client.disconnect, daemon=True,
+                                     name=f"Shutdown-{getattr(_device, 'id', '?')}")
+                t.start()
+                _threads.append(t)
+        for t in _threads:
+            t.join(timeout=8)
+            if t.is_alive():
+                logger.warning("%s still disconnecting — proceeding with shutdown", t.name)
 
         # Resolve the LIVE publishers from the API context: /api/config/apply
         # can rebind them (a sink enabled after boot creates a new one), so the

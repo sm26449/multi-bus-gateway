@@ -283,7 +283,10 @@ class ModbusConnection:
                         self.connected = self.client.connect()
                         if not self.connected:
                             self._count_error("connect refused")
-                            retry_sleep = 0.1
+                            # config-controlled, like every other failure path
+                            # (was a hardcoded 100 ms — hammered a down device
+                            # with connects at 10/s per group)
+                            retry_sleep = self.config.retry_delay
 
                     if retry_sleep is None:
                         # Janitza uses 0-based addressing in documentation
@@ -392,7 +395,7 @@ class ModbusConnection:
                 try:
                     if not self._ensure_connected():
                         self._count_error("connect refused")
-                        retry_sleep = 0.1
+                        retry_sleep = self.config.retry_delay   # was hardcoded 0.1
                     else:
                         _read = (self.client.read_discrete_inputs if register_type == "discrete"
                                  else self.client.read_coils)
@@ -417,11 +420,34 @@ class ModbusConnection:
                         retry_sleep = self.config.retry_delay
             if retry_sleep:
                 time.sleep(retry_sleep)   # lock RELEASED → another group can slip in
+        # Same failure tail as read_registers (external audit: this path had
+        # NO wedge backstop — a coil-only device on a wedged-but-open link
+        # never forced a reopen — and declared unreachable on EVERY failed
+        # batch, the exact flapping read_registers was cured of in DP-8).
         with self.lock:                    # counter RMW shared across pollers
             self.failed_reads += 1
+            self.batch_failures += 1
+            self._consecutive_fail += 1
+            _link_down = self._consecutive_fail >= self._reopen_after_fails
+            if _link_down and self.client:
+                try:
+                    self.client.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                self.connected = False
+                self.forced_reopens += 1
+                self._consecutive_fail = 0
+                self.record_event('warn', 'forced_reopen',
+                                  f'link wedged — forced reopen after '
+                                  f'{self._reopen_after_fails} consecutive failures')
         self.last_failure_ts = time.time()
-        self._note_unreachable(f"bits addr {address} — no response after "
-                               f"{self.config.retry_attempts} attempts")
+        if _link_down:
+            self._note_unreachable(f"bits addr {address} — no response after "
+                                   f"{self.config.retry_attempts} attempts")
+        else:
+            logger.debug("%sbits batch failed addr %s count %s (%d attempts)",
+                         f"[{self.trace_label}] ", address, count,
+                         self.config.retry_attempts)
         return None
 
     def write(self, address: int, *, register_type: str = "holding",
@@ -837,6 +863,12 @@ class ModbusClient:
 
         self.pollers: List[RegisterPoller] = []
         self.connected = False
+        # Serializes start_polling / reconnect / reload_registers / disconnect
+        # (external audit): two concurrent Applies used to interleave the
+        # stop-clear-start sequences and leave a DOUBLED poller set (every
+        # group polled twice — twice the bus load, interleaved timestamps).
+        # RLock: reconnect() calls start_polling() while holding it.
+        self._lifecycle_lock = threading.RLock()
 
     def connect(self) -> bool:
         """Connect to Janitza device."""
@@ -845,15 +877,32 @@ class ModbusClient:
 
     def disconnect(self):
         """Disconnect and stop all pollers."""
-        for poller in self.pollers:
-            poller.stop()
-            poller.join(timeout=5)
-
-        self.connection.disconnect()
-        self.connected = False
+        with self._lifecycle_lock:
+            for poller in self.pollers:
+                poller.stop()
+            for poller in self.pollers:
+                poller.join(timeout=5)
+            self.pollers.clear()
+            self.connection.disconnect()
+            self.connected = False
 
     def start_polling(self):
-        """Start polling threads for each poll group."""
+        """Start polling threads for each poll group. Serialized + idempotent:
+        a second call (boot racing an Apply) stops the existing set first —
+        appending blindly would poll every group twice."""
+        with self._lifecycle_lock:
+            self._start_polling_locked()
+
+    def _start_polling_locked(self):
+        if self.pollers:
+            logger.warning("start_polling called with %d pollers already running "
+                           "— stopping them first (double-start guard)",
+                           len(self.pollers))
+            for poller in self.pollers:
+                poller.stop()
+            for poller in self.pollers:
+                poller.join(timeout=5)
+            self.pollers.clear()
         # Group registers by poll group
         registers_by_group: Dict[str, List[SelectedRegister]] = {}
         for reg in self.registers:
@@ -1026,7 +1075,13 @@ class ModbusClient:
         Stops pollers, disconnects, reconnects, and restarts pollers.
         """
         logger.info("Modbus reconnecting...")
+        self._lifecycle_lock.acquire()
+        try:
+            return self._reconnect_locked()
+        finally:
+            self._lifecycle_lock.release()
 
+    def _reconnect_locked(self) -> bool:
         # Stop all pollers. With the stop event now checked between read-groups
         # AND between retry attempts (audit DP-5), a poller exits within one
         # in-flight transaction — but RETIRE the old connection regardless: a
@@ -1070,17 +1125,16 @@ class ModbusClient:
     def reload_registers(self):
         """Reload registers and restart pollers without full reconnect."""
         logger.info("Reloading Modbus registers...")
-
-        # Stop all pollers
-        for poller in self.pollers:
-            poller.stop()
-        for poller in self.pollers:
-            poller.join(timeout=5)
-        self.pollers.clear()
-
-        # Restart pollers unconditionally (they reconnect on demand) — a device
-        # briefly unreachable at reload time must not be left unpolled forever.
-        self.start_polling()
+        with self._lifecycle_lock:
+            for poller in self.pollers:
+                poller.stop()
+            for poller in self.pollers:
+                poller.join(timeout=5)
+            self.pollers.clear()
+            # Restart pollers unconditionally (they reconnect on demand) — a
+            # device briefly unreachable at reload time must not be left
+            # unpolled forever.
+            self.start_polling()
         logger.info("Modbus registers reloaded")
 
     def get_stats(self) -> Dict:

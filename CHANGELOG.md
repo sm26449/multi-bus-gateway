@@ -1,5 +1,49 @@
 # Changelog
 
+## 3.32.0
+
+### 2026-08-15 — lifecycle serialization + test-quality (backlog §I CLOSED)
+
+The last items of the externally-audited backlog section. Nothing here
+touches the served vmeter frames; the theme is "no doubled work, no
+hammering, no lying tests".
+
+- **Poller lifecycle is serialized + idempotent** — `start_polling` /
+  `reconnect` / `reload_registers` / `disconnect` used to interleave under
+  concurrent Applies, leaving a DOUBLED poller set (every group polled
+  twice — double bus load). A lifecycle RLock serializes them on both the
+  Modbus and HTTP clients, and a second `start_polling` stops the existing
+  set first instead of appending. MQTT input clears its monotonic filters
+  on a live register swap (a re-mapped address must not inherit a stale
+  counter baseline).
+- **`read_bits` shares `read_registers`' failure tail** — the coil/discrete
+  path had NO wedge backstop (a wedged-but-open link never forced a
+  reopen) and declared "unreachable" on EVERY failed batch — the exact
+  event-ring flapping the register path was cured of in DP-8.
+- **Connect-refused backoff follows `modbus.retry_delay`** — was a
+  hardcoded 100 ms, hammering a down device with connects at 10/s per
+  poll group (live config: 1 s).
+- **vmeters routes are deliberately sync** — they join server threads
+  (stop/reload can block seconds); as `async def` those joins ran ON the
+  event loop, freezing every request incl. `/ws`. Sync `def` routes run
+  in FastAPI's threadpool; a module note guards against re-asyncing.
+- **Shutdown disconnects devices in parallel** (bounded 8 s join) —
+  sequential 5 s-per-device joins could outlast docker's stop grace
+  period, and the SIGKILL lost the InfluxDB replay buffer flush.
+- **Test-quality** — the interval-clamp test exercises the real
+  constructor (it used to re-implement the expression and assert on its
+  own copy); `test_input_registers_rejected` was a PERMANENT skip (the
+  fixture never had a non-primary device) and now actually proves FC4
+  writes are refused; 5 of 8 `inspect.getsource` string-asserts replaced
+  with behavioral tests — both authorization-boundary ones (operator
+  write-matcher segment anchoring, tombstone-forget edge) now drive a
+  real app with a real operator session (403 = the role gate refused),
+  plus esphome error-body close, poller no-publish-after-stop and
+  json_view monotonic aging (the 3 kept ones assert non-security wiring
+  markers). **CI runs with `pytest-randomly`** — order-dependence (the E8
+  class) now fails loudly; verified locally: 3 randomized full runs
+  green, 891 passed.
+
 ## 3.31.0
 
 ### 2026-08-15 — self-heal on truncated configs, sm16 encode, WS API-key (backlog §I)
