@@ -96,8 +96,9 @@ def test_abb_b23_is_fc3_bigendian_integer_with_verified_map():
     assert (by_addr[23324].data_type, by_addr[23324].scale) == ("int32", 100)   # Q total
     assert (by_addr[23340].name, by_addr[23340].data_type, by_addr[23340].scale) == ("frequency", "uint16", 100)
     assert (by_addr[23354].name, by_addr[23354].data_type, by_addr[23354].scale) == ("power_factor_total", "int16", 1000)
-    # energy block @ 0x5000 = 20480 (64-bit)
-    assert (by_addr[20480].name, by_addr[20480].data_type, by_addr[20480].scale) == ("energy_active_import", "uint64", 100)
+    # energy block @ 0x5000 = 20480 (64-bit); raw kWh*100 -> canonical Wh
+    assert (by_addr[20480].name, by_addr[20480].data_type, by_addr[20480].scale) == ("energy_active_import", "uint64", 0.1)
+    assert by_addr[20480].unit == "Wh"
     assert (by_addr[20484].data_type) == "uint64"
     assert (by_addr[20488].name, by_addr[20488].data_type) == ("energy_active_net", "int64")   # net is signed
 
@@ -115,7 +116,7 @@ def test_schneider_iem3000_matches_mbmd_verified_map():
     """iEM3000 must match the field-tested volkszaehler/mbmd iem3000 map:
     holding (FC03), big-endian, float32 instantaneous + int64 energy,
     0-based addresses (= Schneider register - 1). Power float32 is kW -> W
-    (scale 0.001); energy int64 is Wh -> kWh (scale 1000)."""
+    (scale 0.001); energy int64 is already canonical Wh (scale 1)."""
     t = parse_template(_load(IEM3000))
     assert t.protocol.get("byte_order") == "big"
     assert all(r.register_type == "holding" for r in t.registers)
@@ -128,8 +129,9 @@ def test_schneider_iem3000_matches_mbmd_verified_map():
     assert (by_addr[3059].name, by_addr[3059].data_type, by_addr[3059].scale) == ("power_active_total", "float", 0.001)
     # 0x0C25 = 3109 (Frequency, register 3110)
     assert (by_addr[3109].name, by_addr[3109].data_type, by_addr[3109].scale) == ("frequency", "float", 1)
-    # 0x0C83 = 3203 (Active energy import total, register 3204) int64 Wh -> kWh
-    assert (by_addr[3203].name, by_addr[3203].data_type, by_addr[3203].scale) == ("energy_active_import", "int64", 1000)
+    # 0x0C83 = 3203 (Active energy import total, register 3204) int64 native Wh
+    assert (by_addr[3203].name, by_addr[3203].data_type, by_addr[3203].scale) == ("energy_active_import", "int64", 1)
+    assert by_addr[3203].unit == "Wh"
     assert by_addr[3207].name == "energy_active_export"
 
 
@@ -177,3 +179,19 @@ def test_boot_and_runtime_use_the_same_resolver():
     assert "byte_order_for(device.template)" in boot_src
     api_src = inspect.getsource(_api.create_api)
     assert "byte_order_for(dev_cfg.template)" in api_src
+
+
+def test_catalog_energy_units_are_canonical_wh_family():
+    """EVERY bundled map must deliver energy in the canonical Wh family
+    (Wh/varh/VAh) — a kWh row under a canonical energy_* name is a silent
+    1000x error the moment the device feeds a vmeter or a fallback twin.
+    Native-kWh meters convert in the template scale (kWh map -> scale/1000)."""
+    import glob
+    import json
+    for path in sorted(glob.glob("multibus/device_templates/*.json")):
+        regs = json.load(open(path)).get("device_template", {}).get("registers", [])
+        for r in regs:
+            if str(r.get("name", "")).startswith("energy_"):
+                assert str(r.get("unit", "")) in ("Wh", "varh", "VAh"), (
+                    f"{path}: {r.get('name')} declares {r.get('unit')!r}; "
+                    "canonical energy units are Wh/varh/VAh")

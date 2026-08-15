@@ -211,3 +211,115 @@ def test_device_fallback_resolves_primary_then_twin():
     primary[1]["mono"] = now - 100
     vm._rebuild_block()
     assert abs(f32(words_at(vm, 0x00)) - 231.0) < 0.01          # failover to twin
+
+
+# ── cumulative counters: pinned to primary, never failed over ────────────────
+# A twin is a DIFFERENT physical meter — its lifetime energy total is a
+# non-monotonic jump for every downstream kWh statistic. Counter rows are
+# excluded from device_fallback wiring and freeze at last-good instead.
+
+def _u32(words):
+    return (words[0] << 16) | words[1]
+
+
+def test_apply_device_fallback_pins_counters():
+    m = _mgr(primary="janitza",
+             devices={"fronius": {1: _entry("power_active_total", 1.0, mono=1.0)}})
+    tmpl = T([
+        RegisterDef(addr=0x00, type="int32", source_kind="live", source="power_active_total"),
+        RegisterDef(addr=0x34, type="int32", source_kind="live", source="energy_active_import"),
+        RegisterDef(addr=0x40, type="int32", source_kind="live", source="energy_active_import_l1"),
+    ])
+    m._apply_device_fallback(tmpl, {"template": "em24", "device_fallback": "fronius"}, "fronius")
+    by = {r.addr: r for r in tmpl.registers}
+    assert by[0x00].source_kind == "failover"          # instantaneous → twin pair
+    assert not by[0x00].pin_on_stale
+    # counters: NOT rewritten, pinned instead
+    for addr in (0x34, 0x40):
+        assert by[addr].source_kind == "live"
+        assert by[addr].source in ("energy_active_import", "energy_active_import_l1")
+        assert by[addr].pin_on_stale
+
+
+def test_pinned_counter_serves_past_max_hold_while_power_fails_over():
+    now = time.monotonic()
+    vals = {"energy_active_import": (5000.0, now),
+            "power_active_total": (230.0, now),
+            "twin.power_active_total": (231.0, now)}
+    rows = [RegisterDef(addr=0x34, type="uint32", source_kind="live",
+                        source="energy_active_import", pin_on_stale=True),
+            failover(0x00, ["power_active_total", "twin.power_active_total"])]
+    vm = VirtualMeter(T(rows), lambda n: vals.get(n),
+                      stale_after_s=15, on_stale="hold", max_hold_s=20)
+    vm._rebuild_block()
+    assert _u32(words_at(vm, 0x34)) == 5000
+    # primary dies: counter+power stale far beyond max_hold_s
+    vals["energy_active_import"] = (5000.0, now - 999)
+    vals["power_active_total"] = (230.0, now - 999)
+    vm._last_good[0x34] = (vm._last_good[0x34][0], now - 999)   # hold cap exceeded
+    vm._rebuild_block()
+    assert _u32(words_at(vm, 0x34)) == 5000                     # pinned, not dropped
+    assert f32(words_at(vm, 0x00)) == 231.0                     # power on the twin
+    assert vm._unavail_spans == []                              # block reads keep working
+
+
+def test_pinned_counter_without_history_still_fails_loud():
+    # E1 intact: a pin row that NEVER resolved has nothing true to pin
+    vm = VirtualMeter(T([RegisterDef(addr=0x34, type="uint32", source_kind="live",
+                                     source="energy_active_import", pin_on_stale=True)]),
+                      lambda n: None, stale_after_s=15, on_stale="hold", max_hold_s=20)
+    vm._rebuild_block()
+    assert words_at(vm, 0x34) is None
+    assert vm._unavail_spans != []
+
+
+def test_pinned_counter_resumes_on_primary_recovery():
+    now = time.monotonic()
+    vals = {"energy_active_import": (5000.0, now)}
+    vm = VirtualMeter(T([RegisterDef(addr=0x34, type="uint32", source_kind="live",
+                                     source="energy_active_import", pin_on_stale=True)]),
+                      lambda n: vals.get(n),
+                      stale_after_s=15, on_stale="hold", max_hold_s=20)
+    vm._rebuild_block()
+    vals["energy_active_import"] = (5000.0, now - 999)
+    vm._last_good[0x34] = (vm._last_good[0x34][0], now - 999)
+    vm._rebuild_block()
+    assert _u32(words_at(vm, 0x34)) == 5000                     # frozen during outage
+    # primary back: forward jump (it kept metering the real energy) is served
+    vals["energy_active_import"] = (5012.0, time.monotonic())
+    vm._rebuild_block()
+    assert _u32(words_at(vm, 0x34)) == 5012
+
+
+def test_pinned_counter_served_under_sentinel_policy_too():
+    now = time.monotonic()
+    vals = {"energy_active_import": (5000.0, now)}
+    vm = VirtualMeter(T([RegisterDef(addr=0x34, type="uint32", source_kind="live",
+                                     source="energy_active_import", pin_on_stale=True)]),
+                      lambda n: vals.get(n),
+                      stale_after_s=15, on_stale="sentinel")
+    vm._rebuild_block()
+    vals["energy_active_import"] = (5000.0, now - 999)
+    vm._rebuild_block()
+    # a counter must freeze, not turn into a NaN sentinel mid-statistics
+    assert _u32(words_at(vm, 0x34)) == 5000
+
+
+def test_legacy_gate_ignores_pinned_stale_counter():
+    now = time.monotonic()
+    vals = {"energy_active_import": (5000.0, now),
+            "power_active_total": (230.0, now)}
+    rows = [RegisterDef(addr=0x34, type="uint32", source_kind="live",
+                        source="energy_active_import", pin_on_stale=True),
+            RegisterDef(addr=0x00, type="float", source_kind="live",
+                        source="power_active_total")]
+    vm = VirtualMeter(T(rows), lambda n: vals.get(n),
+                      stale_after_s=15, on_stale="legacy")
+    vm._rebuild_block()
+    assert vm._legacy_all_fresh
+    # counter stale, power fresh → the gate must NOT fail the whole meter
+    vals["energy_active_import"] = (5000.0, now - 999)
+    vals["power_active_total"] = (230.0, time.monotonic())
+    vm._rebuild_block()
+    assert vm._legacy_all_fresh
+    assert _u32(words_at(vm, 0x34)) == 5000

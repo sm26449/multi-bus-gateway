@@ -835,3 +835,34 @@ def test_register_identity_hard_rejections():
     # span overlap → warn only, never raise
     v([{'address': 10, 'name': 'v', 'data_type': 'int32', 'register_type': 'holding'},
        {'address': 11, 'name': 'm', 'data_type': 'uint16', 'register_type': 'holding'}])
+
+
+def test_canonical_unit_contract_warns_not_rejects(caplog):
+    """A canonical energy_* name with a non-canonical unit (kWh) is a WARNING
+    (loosening-only rule) — the selection still saves, but the operator is
+    told to fix the scale before the 1000x error reaches a vmeter/twin."""
+    import logging
+    from multibus.config import validate_register_identity as v
+    rows = [{'address': 52, 'name': 'energy_active_import', 'unit': 'kWh',
+             'data_type': 'int32', 'register_type': 'holding'}]
+    with caplog.at_level(logging.WARNING, logger='multibus.config'):
+        v(rows)                                        # must NOT raise
+    assert any('canonical unit' in r.message for r in caplog.records)
+    # matching unit → silent
+    caplog.clear()
+    rows[0]['unit'] = 'Wh'
+    with caplog.at_level(logging.WARNING, logger='multibus.config'):
+        v(rows)
+    assert not any('canonical unit' in r.message for r in caplog.records)
+
+
+def test_canonical_unit_and_cumulative_helpers():
+    from multibus.canonical_fields import canonical_unit_for, is_cumulative_field
+    assert canonical_unit_for('energy_active_import') == 'Wh'
+    assert canonical_unit_for('energy_reactive_import') == 'varh'
+    assert canonical_unit_for('power_active_total') == 'W'
+    assert canonical_unit_for('power_factor_total') is None    # unit-less
+    assert canonical_unit_for('not_canonical_name') is None
+    assert is_cumulative_field('energy_active_import_l2')
+    assert not is_cumulative_field('power_active_total')
+    assert not is_cumulative_field('voltage_l1_n')

@@ -64,21 +64,21 @@ CANONICAL_FIELDS: Dict[str, Tuple[str, str, str, str]] = {
     # ── Frequency (measurement: frequency) ────────────────────────────────────
     'frequency': ('frequency', 'Hz', 'frequency', 'Grid frequency'),
     # ── Active energy (measurement: energy_active) ────────────────────────────
-    'energy_active_import':    ('energy_active', 'kWh', 'energy/active/import', 'Total imported active energy'),
-    'energy_active_export':    ('energy_active', 'kWh', 'energy/active/export', 'Total exported active energy'),
-    'energy_active_net':       ('energy_active', 'kWh', 'energy/active/net', 'Net active energy (import − export)'),
-    'energy_active_total':     ('energy_active', 'kWh', 'energy/active/total', 'Total active energy (import + export)'),
-    'energy_active_import_l1': ('energy_active', 'kWh', 'energy/active/import/l1', 'L1 imported active energy'),
-    'energy_active_import_l2': ('energy_active', 'kWh', 'energy/active/import/l2', 'L2 imported active energy'),
-    'energy_active_import_l3': ('energy_active', 'kWh', 'energy/active/import/l3', 'L3 imported active energy'),
-    'energy_active_export_l1': ('energy_active', 'kWh', 'energy/active/export/l1', 'L1 exported active energy'),
-    'energy_active_export_l2': ('energy_active', 'kWh', 'energy/active/export/l2', 'L2 exported active energy'),
-    'energy_active_export_l3': ('energy_active', 'kWh', 'energy/active/export/l3', 'L3 exported active energy'),
+    'energy_active_import':    ('energy_active', 'Wh', 'energy/active/import', 'Total imported active energy'),
+    'energy_active_export':    ('energy_active', 'Wh', 'energy/active/export', 'Total exported active energy'),
+    'energy_active_net':       ('energy_active', 'Wh', 'energy/active/net', 'Net active energy (import − export)'),
+    'energy_active_total':     ('energy_active', 'Wh', 'energy/active/total', 'Total active energy (import + export)'),
+    'energy_active_import_l1': ('energy_active', 'Wh', 'energy/active/import/l1', 'L1 imported active energy'),
+    'energy_active_import_l2': ('energy_active', 'Wh', 'energy/active/import/l2', 'L2 imported active energy'),
+    'energy_active_import_l3': ('energy_active', 'Wh', 'energy/active/import/l3', 'L3 imported active energy'),
+    'energy_active_export_l1': ('energy_active', 'Wh', 'energy/active/export/l1', 'L1 exported active energy'),
+    'energy_active_export_l2': ('energy_active', 'Wh', 'energy/active/export/l2', 'L2 exported active energy'),
+    'energy_active_export_l3': ('energy_active', 'Wh', 'energy/active/export/l3', 'L3 exported active energy'),
     # ── Reactive / apparent energy ────────────────────────────────────────────
-    'energy_reactive_import': ('energy_reactive', 'kvarh', 'energy/reactive/import', 'Total imported reactive energy'),
-    'energy_reactive_export': ('energy_reactive', 'kvarh', 'energy/reactive/export', 'Total exported reactive energy'),
-    'energy_reactive_total':  ('energy_reactive', 'kvarh', 'energy/reactive/total', 'Total reactive energy (import + export)'),
-    'energy_apparent':        ('energy_apparent', 'kVAh', 'energy/apparent/total', 'Total apparent energy'),
+    'energy_reactive_import': ('energy_reactive', 'varh', 'energy/reactive/import', 'Total imported reactive energy'),
+    'energy_reactive_export': ('energy_reactive', 'varh', 'energy/reactive/export', 'Total exported reactive energy'),
+    'energy_reactive_total':  ('energy_reactive', 'varh', 'energy/reactive/total', 'Total reactive energy (import + export)'),
+    'energy_apparent':        ('energy_apparent', 'VAh', 'energy/apparent/total', 'Total apparent energy'),
     # ── THD (measurement: thd) ────────────────────────────────────────────────
     'thd_voltage_l1': ('thd', '%', 'thd/voltage/l1', 'L1 voltage THD'),
     'thd_voltage_l2': ('thd', '%', 'thd/voltage/l2', 'L2 voltage THD'),
@@ -112,6 +112,28 @@ def measurement_for(name: str) -> Optional[str]:
 def is_canonical(name: str) -> bool:
     """True if ``name`` is a canonical field name."""
     return str(name).lower() in CANONICAL_NAMES
+
+
+def canonical_unit_for(name: str) -> Optional[str]:
+    """The CANONICAL unit of a canonical field (e.g. 'Wh' for energy — the
+    base Wh-family, matching the live Janitza chain and the vmeter template
+    scales), or None for unknown/unit-less fields. A device whose native
+    register is kWh must convert in its selection scale — the canonical name
+    is a contract on the unit too (a kWh value under an energy_* name is a
+    silent 1000x error in every consumer)."""
+    e = CANONICAL_FIELDS.get(str(name).lower())
+    return (e[1] or None) if e else None
+
+
+def is_cumulative_field(name: str) -> bool:
+    """True for lifetime-accumulating canonical fields (energy counters).
+
+    These need different absence semantics than instantaneous measurements:
+    a frozen counter is a TRUE statement ("energy delivered so far"), while
+    switching a counter row to another physical meter's lifetime total is a
+    non-monotonic jump that corrupts downstream kWh statistics (Victron /
+    DataManager). Used to exclude counter rows from device_fallback wiring."""
+    return str(name).lower().startswith('energy_')
 
 
 def suggest(name: str) -> Optional[str]:

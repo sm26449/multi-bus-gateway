@@ -21,6 +21,14 @@ HEADER = (
     "registers from this list; non-canonical names are flagged as a warning at "
     "template validation. Vendor reference maps (e.g. Janitza) predate this and "
     "may differ.\n\n"
+    "**The unit is part of the contract.** A canonical name promises the unit "
+    "in its Unit column — energy is the base **Wh family** (Wh/varh/VAh), "
+    "matching the live Janitza chain and the virtual-meter template scales. A "
+    "meter whose native map is kWh converts in its selection scale "
+    "(`scale/1000`); selecting a canonical name with a different unit logs a "
+    "warning, because the mismatch becomes a silent 1000× error the moment the "
+    "register feeds a virtual meter, a fallback twin, or a cross-device "
+    "dashboard.\n\n"
 )
 
 

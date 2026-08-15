@@ -74,6 +74,15 @@ class RegisterDef:
     # None → the source device's own bound (provider-supplied), else the
     # instance's stale_after_s. Lets a 60s BLE row coexist with a 250ms row.
     stale_after_s: Optional[float] = None
+    # Cumulative-counter absence semantics (set by device_fallback wiring, not
+    # template-authored): when the source goes stale, keep serving the LAST
+    # GOOD value indefinitely instead of failing the row after max_hold_s. A
+    # frozen counter is a true statement ("energy delivered so far"); an
+    # unavailable span would fail the DataManager's whole block read, and
+    # switching to another meter's lifetime total is a non-monotonic jump
+    # that corrupts downstream kWh statistics. Never-resolved rows still
+    # fail loudly (E1) — there is nothing true to pin.
+    pin_on_stale: bool = False
 
 
 @dataclass
@@ -547,7 +556,13 @@ class VirtualMeter:
                     newest = max(newest, ts)
                 # ts None (source without a mono stamp) fails closed here too
                 if not self._is_fresh(now, ts, self._row_bound(reg, src_bound)):
-                    all_fresh = False
+                    # A pinned cumulative counter (device_fallback wiring) is
+                    # ALLOWED to be older than the block: freezing it is its
+                    # defined absence semantics, and it must not gate off a
+                    # meter whose instantaneous rows are healthy on the twin.
+                    # (It reaches here only after resolving once — E1 intact.)
+                    if not reg.pin_on_stale:
+                        all_fresh = False
             self._legacy_all_fresh = all_fresh and newest > 0.0
             if self.quality_block:
                 out.append((QUALITY_BASE, self._quality_words(newest)))
@@ -583,6 +598,18 @@ class VirtualMeter:
                 newest_fresh = max(newest_fresh, ts)
                 continue
             quality["stale" if (words is not None or reg.addr in self._last_good) else "missing"] += 1
+            if reg.pin_on_stale:
+                held = self._last_good.get(reg.addr)
+                if held:
+                    # Cumulative counter: serve the last good value with NO
+                    # hold cap, in every policy — a frozen counter is true
+                    # ("energy so far"), a sentinel/unavailable span would
+                    # fail the DataManager's whole block read, and max_hold_s
+                    # is sized for instantaneous rows. Resumes (forward jump,
+                    # legitimate) when the primary returns. Never-resolved
+                    # rows have no held value and fall through (E1).
+                    out.append((reg.addr, held[0]))
+                    continue
             if self.on_stale == "hold":
                 held = self._last_good.get(reg.addr)
                 # same future-timestamp guard: a held stamp from before a

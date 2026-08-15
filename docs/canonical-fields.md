@@ -4,6 +4,8 @@
 
 The canonical name a register carries becomes its **MQTT topic leaf**, its **InfluxDB field**, and its `name` tag — so the same physical quantity is named the same on every device. Convention: `<quantity>_<position>` (l1/l2/l3, l1_n, l1_l2, ln_avg, ll_avg, total, n). Templates should name registers from this list; non-canonical names are flagged as a warning at template validation. Vendor reference maps (e.g. Janitza) predate this and may differ.
 
+**The unit is part of the contract.** A canonical name promises the unit in its Unit column — energy is the base **Wh family** (Wh/varh/VAh), matching the live Janitza chain and the virtual-meter template scales. A meter whose native map is kWh converts in its selection scale (`scale/1000`); selecting a canonical name with a different unit logs a warning, because the mismatch becomes a silent 1000× error the moment the register feeds a virtual meter, a fallback twin, or a cross-device dashboard.
+
 ## voltage
 
 | InfluxDB field | MQTT topic | Unit | Description |
@@ -74,30 +76,30 @@ The canonical name a register carries becomes its **MQTT topic leaf**, its **Inf
 
 | InfluxDB field | MQTT topic | Unit | Description |
 |---|---|---|---|
-| `energy_active_import` | `energy/active/import` | kWh | Total imported active energy |
-| `energy_active_export` | `energy/active/export` | kWh | Total exported active energy |
-| `energy_active_net` | `energy/active/net` | kWh | Net active energy (import − export) |
-| `energy_active_total` | `energy/active/total` | kWh | Total active energy (import + export) |
-| `energy_active_import_l1` | `energy/active/import/l1` | kWh | L1 imported active energy |
-| `energy_active_import_l2` | `energy/active/import/l2` | kWh | L2 imported active energy |
-| `energy_active_import_l3` | `energy/active/import/l3` | kWh | L3 imported active energy |
-| `energy_active_export_l1` | `energy/active/export/l1` | kWh | L1 exported active energy |
-| `energy_active_export_l2` | `energy/active/export/l2` | kWh | L2 exported active energy |
-| `energy_active_export_l3` | `energy/active/export/l3` | kWh | L3 exported active energy |
+| `energy_active_import` | `energy/active/import` | Wh | Total imported active energy |
+| `energy_active_export` | `energy/active/export` | Wh | Total exported active energy |
+| `energy_active_net` | `energy/active/net` | Wh | Net active energy (import − export) |
+| `energy_active_total` | `energy/active/total` | Wh | Total active energy (import + export) |
+| `energy_active_import_l1` | `energy/active/import/l1` | Wh | L1 imported active energy |
+| `energy_active_import_l2` | `energy/active/import/l2` | Wh | L2 imported active energy |
+| `energy_active_import_l3` | `energy/active/import/l3` | Wh | L3 imported active energy |
+| `energy_active_export_l1` | `energy/active/export/l1` | Wh | L1 exported active energy |
+| `energy_active_export_l2` | `energy/active/export/l2` | Wh | L2 exported active energy |
+| `energy_active_export_l3` | `energy/active/export/l3` | Wh | L3 exported active energy |
 
 ## energy_reactive
 
 | InfluxDB field | MQTT topic | Unit | Description |
 |---|---|---|---|
-| `energy_reactive_import` | `energy/reactive/import` | kvarh | Total imported reactive energy |
-| `energy_reactive_export` | `energy/reactive/export` | kvarh | Total exported reactive energy |
-| `energy_reactive_total` | `energy/reactive/total` | kvarh | Total reactive energy (import + export) |
+| `energy_reactive_import` | `energy/reactive/import` | varh | Total imported reactive energy |
+| `energy_reactive_export` | `energy/reactive/export` | varh | Total exported reactive energy |
+| `energy_reactive_total` | `energy/reactive/total` | varh | Total reactive energy (import + export) |
 
 ## energy_apparent
 
 | InfluxDB field | MQTT topic | Unit | Description |
 |---|---|---|---|
-| `energy_apparent` | `energy/apparent/total` | kVAh | Total apparent energy |
+| `energy_apparent` | `energy/apparent/total` | VAh | Total apparent energy |
 
 ## thd
 

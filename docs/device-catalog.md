@@ -40,13 +40,13 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 - **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
 - **Source / provenance:** ABB B-series Modbus (2CDC512084D0101); cross-checked vs steefan85/ABB_B23_Energy_Meter and roastedelectrons/ABBEnergyMeter
 
-> ABB B21 single-phase DIN-rail energy meter (B-series). Same Modbus map as the B23, populated on L1/total. Integer measurements in HOLDING registers (FC03), big-endian / high-word-first. Scales are divisors: V/10, A/100, W|var|VA/100, Hz/100, PF/1000, kWh/100. Verified against the same authoritative B-series sources as the B23 template.
+> ABB B21 single-phase DIN-rail energy meter (B-series). Same Modbus map as the B23, populated on L1/total. Integer measurements in HOLDING registers (FC03), big-endian / high-word-first. Scales are divisors: V/10, A/100, W|var|VA/100, Hz/100, PF/1000; energy raw kWh*100 is served as canonical Wh (scale 0.1). Verified against the same authoritative B-series sources as the B23 template.
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
-| 20480 / 0x5000 | `energy_active_import` | Active energy import (total) | uint64 | 100 | kWh | slow |
-| 20484 / 0x5004 | `energy_active_export` | Active energy export (total) | uint64 | 100 | kWh | slow |
-| 20488 / 0x5008 | `energy_active_net` | Active energy net (total) | int64 | 100 | kWh | slow |
+| 20480 / 0x5000 | `energy_active_import` | Active energy import (total) | uint64 | 0.1 | Wh | slow |
+| 20484 / 0x5004 | `energy_active_export` | Active energy export (total) | uint64 | 0.1 | Wh | slow |
+| 20488 / 0x5008 | `energy_active_net` | Active energy net (total) | int64 | 0.1 | Wh | slow |
 | 23296 / 0x5B00 | `voltage_l1_n` | Voltage L-N | uint32 | 10 | V | realtime |
 | 23308 / 0x5B0C | `current_l1` | Current | uint32 | 100 | A | realtime |
 | 23316 / 0x5B14 | `power_active_total` | Active power | int32 | 100 | W | realtime |
@@ -62,15 +62,15 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 - **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
 - **Source / provenance:** ABB B23/B24 User Manual 2CMC485003M0201 ch.9 (docs/vendor/meters/abb-b23-b24-user-manual.pdf) — register-for-register confirmed; also cross-checked vs steefan85/ABB_B23_Energy_Meter and roastedelectrons/ABBEnergyMeter
 
-> ABB B23 three-phase DIN-rail energy meter (B-series; B24 shares this map). Integer measurements in HOLDING registers (FC03), big-endian / high-word-first. 32-bit uint32/int32 for instantaneous values, 64-bit uint64/int64 for energy. Scales are divisors: V/10, A/100, W|var|VA/100, Hz/100, PF/1000, kWh|kvarh/100. Verified register-for-register against two independent open-source integrations (steefan85/ABB_B23_Energy_Meter register map + roastedelectrons/ABBEnergyMeter device CSV, which agree) and consistent with ABB manual 2CDC512084D0101.
+> ABB B23 three-phase DIN-rail energy meter (B-series; B24 shares this map). Integer measurements in HOLDING registers (FC03), big-endian / high-word-first. 32-bit uint32/int32 for instantaneous values, 64-bit uint64/int64 for energy. Scales are divisors: V/10, A/100, W|var|VA/100, Hz/100, PF/1000; energy raw kWh|kvarh*100 is served as canonical Wh/varh (scale 0.1). Verified register-for-register against two independent open-source integrations (steefan85/ABB_B23_Energy_Meter register map + roastedelectrons/ABBEnergyMeter device CSV, which agree) and consistent with ABB manual 2CDC512084D0101.
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
-| 20480 / 0x5000 | `energy_active_import` | Active energy import (total) | uint64 | 100 | kWh | slow |
-| 20484 / 0x5004 | `energy_active_export` | Active energy export (total) | uint64 | 100 | kWh | slow |
-| 20488 / 0x5008 | `energy_active_net` | Active energy net (total) | int64 | 100 | kWh | slow |
-| 20492 / 0x500C | `energy_reactive_import` | Reactive energy import (total) | uint64 | 100 | kvarh | slow |
-| 20496 / 0x5010 | `energy_reactive_export` | Reactive energy export (total) | uint64 | 100 | kvarh | slow |
+| 20480 / 0x5000 | `energy_active_import` | Active energy import (total) | uint64 | 0.1 | Wh | slow |
+| 20484 / 0x5004 | `energy_active_export` | Active energy export (total) | uint64 | 0.1 | Wh | slow |
+| 20488 / 0x5008 | `energy_active_net` | Active energy net (total) | int64 | 0.1 | Wh | slow |
+| 20492 / 0x500C | `energy_reactive_import` | Reactive energy import (total) | uint64 | 0.1 | varh | slow |
+| 20496 / 0x5010 | `energy_reactive_export` | Reactive energy export (total) | uint64 | 0.1 | varh | slow |
 | 23296 / 0x5B00 | `voltage_l1_n` | Voltage L1-N | uint32 | 10 | V | realtime |
 | 23298 / 0x5B02 | `voltage_l2_n` | Voltage L2-N | uint32 | 10 | V | realtime |
 | 23300 / 0x5B04 | `voltage_l3_n` | Voltage L3-N | uint32 | 10 | V | realtime |
@@ -123,7 +123,7 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 - **Transport:** FC03 (read holding registers) · byte order **little-endian, low word first (CDAB / word-swapped)**
 - **Source / provenance:** Victron dbus-modbus-client carlo_gavazzi.py (EM24_Meter) + Carlo Gavazzi EM24-DIN communication protocol
 
-> Carlo Gavazzi EM24-DIN 3-phase energy meter (the legacy Victron grid meter). 32-bit measurements are signed INT32 in HOLDING registers (FC03), LOW-WORD-FIRST (little-endian, Reg_s32l). Scales are divisors: V/10, A/1000, W/10, Hz/10, kWh/10. Register map is authoritative from Victron dbus-modbus-client/carlo_gavazzi.py (model detected via reg 0x000b == 1651) and matches this repo's production-proven em24_av53 emulation. CG meters answer both FC03 and FC04 for measurements; FC03 is canonical.
+> Carlo Gavazzi EM24-DIN 3-phase energy meter (the legacy Victron grid meter). 32-bit measurements are signed INT32 in HOLDING registers (FC03), LOW-WORD-FIRST (little-endian, Reg_s32l). Scales are divisors: V/10, A/1000, W/10, Hz/10; energy raw kWh*10 is served as canonical Wh (scale 0.01). Register map is authoritative from Victron dbus-modbus-client/carlo_gavazzi.py (model detected via reg 0x000b == 1651) and matches this repo's production-proven em24_av53 emulation. CG meters answer both FC03 and FC04 for measurements; FC03 is canonical.
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
@@ -138,11 +138,11 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 22 / 0x0016 | `power_active_l3` | Active power L3 | int32 | 10 | W | realtime |
 | 40 / 0x0028 | `power_active_total` | Total active power | int32 | 10 | W | realtime |
 | 51 / 0x0033 | `frequency` | Frequency | uint16 | 10 | Hz | realtime |
-| 52 / 0x0034 | `energy_active_import` | Import active energy (total) | int32 | 10 | kWh | slow |
-| 64 / 0x0040 | `energy_active_import_l1` | Import active energy L1 | int32 | 10 | kWh | slow |
-| 66 / 0x0042 | `energy_active_import_l2` | Import active energy L2 | int32 | 10 | kWh | slow |
-| 68 / 0x0044 | `energy_active_import_l3` | Import active energy L3 | int32 | 10 | kWh | slow |
-| 78 / 0x004E | `energy_active_export` | Export active energy (total) | int32 | 10 | kWh | slow |
+| 52 / 0x0034 | `energy_active_import` | Import active energy (total) | int32 | 0.01 | Wh | slow |
+| 64 / 0x0040 | `energy_active_import_l1` | Import active energy L1 | int32 | 0.01 | Wh | slow |
+| 66 / 0x0042 | `energy_active_import_l2` | Import active energy L2 | int32 | 0.01 | Wh | slow |
+| 68 / 0x0044 | `energy_active_import_l3` | Import active energy L3 | int32 | 0.01 | Wh | slow |
+| 78 / 0x004E | `energy_active_export` | Export active energy (total) | int32 | 0.01 | Wh | slow |
 
 ## Eastron SDM120 (single-phase)
 
@@ -162,9 +162,9 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 24 / 0x0018 | `power_reactive_total` | Reactive power | float | 1 | var | normal |
 | 30 / 0x001E | `power_factor_total` | Power factor | float | 1 | — | normal |
 | 70 / 0x0046 | `frequency` | Frequency | float | 1 | Hz | realtime |
-| 72 / 0x0048 | `energy_active_import` | Import active energy | float | 1 | kWh | slow |
-| 74 / 0x004A | `energy_active_export` | Export active energy | float | 1 | kWh | slow |
-| 342 / 0x0156 | `energy_active_total` | Total active energy | float | 1 | kWh | slow |
+| 72 / 0x0048 | `energy_active_import` | Import active energy | float | 0.001 | Wh | slow |
+| 74 / 0x004A | `energy_active_export` | Export active energy | float | 0.001 | Wh | slow |
+| 342 / 0x0156 | `energy_active_total` | Total active energy | float | 0.001 | Wh | slow |
 
 ## Eastron SDM630 (3-phase)
 
@@ -200,12 +200,12 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 60 / 0x003C | `power_reactive_total` | Total reactive power | float | 1 | var | normal |
 | 62 / 0x003E | `power_factor_total` | Total power factor | float | 1 | — | normal |
 | 70 / 0x0046 | `frequency` | Frequency | float | 1 | Hz | realtime |
-| 72 / 0x0048 | `energy_active_import` | Import active energy | float | 1 | kWh | slow |
-| 74 / 0x004A | `energy_active_export` | Export active energy | float | 1 | kWh | slow |
-| 76 / 0x004C | `energy_reactive_import` | Import reactive energy | float | 1 | kvarh | slow |
-| 78 / 0x004E | `energy_reactive_export` | Export reactive energy | float | 1 | kvarh | slow |
-| 342 / 0x0156 | `energy_active_total` | Total active energy | float | 1 | kWh | slow |
-| 344 / 0x0158 | `energy_reactive_total` | Total reactive energy | float | 1 | kvarh | slow |
+| 72 / 0x0048 | `energy_active_import` | Import active energy | float | 0.001 | Wh | slow |
+| 74 / 0x004A | `energy_active_export` | Export active energy | float | 0.001 | Wh | slow |
+| 76 / 0x004C | `energy_reactive_import` | Import reactive energy | float | 0.001 | varh | slow |
+| 78 / 0x004E | `energy_reactive_export` | Export reactive energy | float | 0.001 | varh | slow |
+| 342 / 0x0156 | `energy_active_total` | Total active energy | float | 0.001 | Wh | slow |
+| 344 / 0x0158 | `energy_reactive_total` | Total reactive energy | float | 0.001 | varh | slow |
 
 ## Fronius Smart Meter 65A-3 (RTU)
 
@@ -214,7 +214,7 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 - **Transport:** FC03 (read holding registers) · byte order **little-endian, low word first (CDAB / word-swapped)**
 - **Source / provenance:** Field-verified against a physical Fronius Smart Meter 65A-3 over Modbus RTU (2026-08-11): |P|<=S per phase, S^2~=P^2+Q^2, PF=P/S, Freq=50Hz.
 
-> Fronius Smart Meter 65A-3, 3-phase, Modbus RTU. Register map field-verified against the physical meter: INT32 low-word-first (CDAB), holding registers (FC03), scales V/10 A/1000 W/10 Hz/10 kWh/10. Frequency at register 49 (register 51 holds PF_sys). Meter model id 731 at 0x000B.
+> Fronius Smart Meter 65A-3, 3-phase, Modbus RTU. Register map field-verified against the physical meter: INT32 low-word-first (CDAB), holding registers (FC03), scales V/10 A/1000 W/10 Hz/10; energy raw kWh*10 is served as canonical Wh (scale 0.01). Frequency at register 49 (register 51 holds PF_sys). Meter model id 731 at 0x000B.
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
@@ -244,8 +244,8 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 44 / 0x002C | `power_reactive_total` | Reactive Power Total | int32 | 10.0 | var | normal |
 | 49 / 0x0031 | `frequency` | Frequency | uint16 | 10.0 | Hz | normal |
 | 51 / 0x0033 | `power_factor_total` | Power Factor sys | int16 | 1000.0 | — | normal |
-| 52 / 0x0034 | `energy_active_import` | Energy Import Total | int32 | 10.0 | kWh | slow |
-| 78 / 0x004E | `energy_active_export` | Energy Export Total | int32 | 10.0 | kWh | slow |
+| 52 / 0x0034 | `energy_active_import` | Energy Import Total | int32 | 0.01 | Wh | slow |
+| 78 / 0x004E | `energy_active_export` | Energy Export Total | int32 | 0.01 | Wh | slow |
 | 4096 / 0x1000 | `firmware_rev` | Firmware / revision | uint16 | 1.0 | — | slow |
 | 20480 / 0x5000 | `serial` | Serial / ID (ASCII) | string:7 | 1.0 | — | slow |
 
@@ -270,7 +270,7 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 - **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
 - **Source / provenance:** volkszaehler/mbmd meters/rs485/iem3000.go (field-tested; cites Schneider DOCA0005). Official register list saved at docs/vendor/meters/schneider-iem3000-modbus-register-list.pdf (image-only PDF, not machine-parsed).
 
-> Schneider Electric iEM3000-series DIN-rail energy meter (Modbus models iEM3150/3155/3250/3255/3350/3355/3450/3455/3550/3555). HOLDING registers (FC03), big-endian / high-word-first. Instantaneous values are Float32; energy is INT64. Addresses are 0-based PDU (= Schneider register number − 1, e.g. Active power total register 3060 → address 3059). Schneider reports power float32 in kW and energy int64 in Wh; scales convert to W / kWh (power /0.001, energy /1000). Voltage/current/frequency float32 are already in V/A/Hz (scale 1). Register map verified register-for-register against the field-tested volkszaehler/mbmd iem3000 driver (which cites Schneider DOCA0005). Power factor is omitted (mbmd disables it as unreliable on this series). This is the verified CORE measurement set; the device also exposes many more registers (THD, min/max, demand, per-tariff energy) — add them via the Template Manager once you have your unit's full DOCA0005 register list.
+> Schneider Electric iEM3000-series DIN-rail energy meter (Modbus models iEM3150/3155/3250/3255/3350/3355/3450/3455/3550/3555). HOLDING registers (FC03), big-endian / high-word-first. Instantaneous values are Float32; energy is INT64. Addresses are 0-based PDU (= Schneider register number − 1, e.g. Active power total register 3060 → address 3059). Schneider reports power float32 in kW and energy int64 in Wh; scales convert to canonical W / Wh (power /0.001; energy is already Wh, scale 1). Voltage/current/frequency float32 are already in V/A/Hz (scale 1). Register map verified register-for-register against the field-tested volkszaehler/mbmd iem3000 driver (which cites Schneider DOCA0005). Power factor is omitted (mbmd disables it as unreliable on this series). This is the verified CORE measurement set; the device also exposes many more registers (THD, min/max, demand, per-tariff energy) — add them via the Template Manager once you have your unit's full DOCA0005 register list.
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
@@ -289,13 +289,13 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 3067 / 0x0BFB | `power_reactive_total` | Reactive power total | float | 0.001 | var | normal |
 | 3075 / 0x0C03 | `power_apparent_total` | Apparent power total | float | 0.001 | VA | normal |
 | 3109 / 0x0C25 | `frequency` | Frequency | float | 1 | Hz | realtime |
-| 3203 / 0x0C83 | `energy_active_import` | Active energy import (total) | int64 | 1000 | kWh | slow |
-| 3207 / 0x0C87 | `energy_active_export` | Active energy export (total) | int64 | 1000 | kWh | slow |
-| 3219 / 0x0C93 | `energy_reactive_import` | Reactive energy import (total) | int64 | 1000 | kvarh | slow |
-| 3223 / 0x0C97 | `energy_reactive_export` | Reactive energy export (total) | int64 | 1000 | kvarh | slow |
-| 3517 / 0x0DBD | `energy_active_import_l1` | Active energy import L1 | int64 | 1000 | kWh | slow |
-| 3521 / 0x0DC1 | `energy_active_import_l2` | Active energy import L2 | int64 | 1000 | kWh | slow |
-| 3525 / 0x0DC5 | `energy_active_import_l3` | Active energy import L3 | int64 | 1000 | kWh | slow |
+| 3203 / 0x0C83 | `energy_active_import` | Active energy import (total) | int64 | 1.0 | Wh | slow |
+| 3207 / 0x0C87 | `energy_active_export` | Active energy export (total) | int64 | 1.0 | Wh | slow |
+| 3219 / 0x0C93 | `energy_reactive_import` | Reactive energy import (total) | int64 | 1.0 | varh | slow |
+| 3223 / 0x0C97 | `energy_reactive_export` | Reactive energy export (total) | int64 | 1.0 | varh | slow |
+| 3517 / 0x0DBD | `energy_active_import_l1` | Active energy import L1 | int64 | 1.0 | Wh | slow |
+| 3521 / 0x0DC1 | `energy_active_import_l2` | Active energy import L2 | int64 | 1.0 | Wh | slow |
+| 3525 / 0x0DC5 | `energy_active_import_l3` | Active energy import L3 | int64 | 1.0 | Wh | slow |
 
 ## Zigbee sensor (zigbee2mqtt)
 

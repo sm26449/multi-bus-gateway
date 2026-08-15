@@ -95,37 +95,40 @@
     "address": 72,
     "name": "energy_active_import",
     "label": "Import active energy",
-    "unit": "kWh",
+    "unit": "Wh",
     "data_type": "float",
     "register_type": "input",
     "category": "energy_active",
     "poll_group": "slow",
     "description": "Total imported active energy",
-    "monotonic": true
+    "monotonic": true,
+    "scale": 0.001
    },
    {
     "address": 74,
     "name": "energy_active_export",
     "label": "Export active energy",
-    "unit": "kWh",
+    "unit": "Wh",
     "data_type": "float",
     "register_type": "input",
     "category": "energy_active",
     "poll_group": "slow",
     "description": "Total exported active energy",
-    "monotonic": true
+    "monotonic": true,
+    "scale": 0.001
    },
    {
     "address": 342,
     "name": "energy_active_total",
     "label": "Total active energy",
-    "unit": "kWh",
+    "unit": "Wh",
     "data_type": "float",
     "register_type": "input",
     "category": "energy_active",
     "poll_group": "slow",
     "description": "Total active energy (import + export)",
-    "monotonic": true
+    "monotonic": true,
+    "scale": 0.001
    }
   ],
   "canonical": true

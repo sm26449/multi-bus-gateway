@@ -1,5 +1,37 @@
 # Changelog
 
+## 3.30.0
+
+### 2026-08-15 — canonical Wh + counters never fail over (backlog §I)
+
+Closes the two design gaps the external audit flagged around virtual-meter
+energy semantics. Both were LATENT (no fallback twin configured, catalog
+templates unused live) but armed the moment a second meter arrived.
+
+- **Wh is the canonical energy unit** — the live ESS-critical chain
+  (umg512 selection → vmeter templates → Influx/MQTT/NR/alertd/HA) was
+  already Wh, while the docs, `canonical_fields.py` and all 7 catalog
+  templates said kWh: the same canonical name carried units 1000× apart
+  across devices. Canonical map + generated docs flipped to the Wh family
+  (Wh/varh/VAh); the 7 catalog templates convert natively-kWh maps in the
+  selection scale (mechanical `scale/1000`, descriptions updated); a
+  conformance test pins the contract for future templates. Save-time
+  validation WARNS (loosening-only) when a canonical name declares a
+  non-canonical unit. New helpers: `canonical_unit_for`,
+  `is_cumulative_field`. The one live offender (`fronius_rtu`, own bucket,
+  no consumers) is patched to Wh in the overnight window.
+- **Cumulative counters are pinned, never failed over** — device_fallback
+  used to rewrite ALL live rows to the twin, including lifetime energy
+  totals: a switch to a different physical meter is a non-monotonic jump
+  that corrupts Victron/DataManager kWh statistics. Counter rows
+  (`is_cumulative_field`) now stay on the primary with `pin_on_stale`:
+  on outage they freeze at last-good (a frozen counter is a true
+  statement — and an unavailable span would fail the DataManager's whole
+  block read) in EVERY policy incl. the legacy gate, while instantaneous
+  rows fail over; recovery resumes with a legitimate forward jump.
+  Never-resolved rows still fail loudly (E1 intact).
+- Tests: 9 new; suite at 870 passed.
+
 ## 3.29.0
 
 ### 2026-08-15 — ONE decode pipeline for every transport (backlog §I)

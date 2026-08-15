@@ -86,6 +86,22 @@ def validate_register_identity(registers: List[Dict]) -> None:
                     "%r @%s — fine if intentional (overlapping reads are "
                     "legal); check it if %r decodes garbage",
                     rtype, n1, s1, e1, n2, s2, n2)
+    # Canonical-name unit contract (WARNING only — loosening-only rule: a
+    # mismatch is legal but almost always a scale mistake). A canonical name
+    # promises the canonical unit to every consumer; a kWh value under an
+    # energy_* name is a silent 1000x error the moment the register feeds a
+    # vmeter, a fallback twin or a cross-device dashboard.
+    from .canonical_fields import canonical_unit_for
+    for r in registers:
+        name = str(r.get('name') or '')
+        cu = canonical_unit_for(name)
+        unit = str(r.get('unit') or '').strip()
+        if cu and unit and unit != cu:
+            logger.warning(
+                "register %r declares unit %r but the canonical unit for "
+                "this name is %r — adjust the scale to deliver %s (e.g. a "
+                "native kWh map needs scale/1000), or rename the register "
+                "if it truly measures something else", name, unit, cu, cu)
 
 
 def _version_tuple(v: str) -> tuple:

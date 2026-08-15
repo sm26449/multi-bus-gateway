@@ -36,6 +36,7 @@ from typing import Optional
 
 import yaml
 
+from .canonical_fields import is_cumulative_field
 from .encoder import RegisterEncoder
 from .register_parser import RegisterParser
 from .virtual_meter import VirtualMeter, _parse_source, load_template
@@ -270,11 +271,21 @@ class VirtualMeterManager:
         (armed, waiting for the twin to come online)."""
         primary = self._inst_device(inst)
         fb_store = self._fallback_store(fb)
-        wired, ready, waiting = 0, [], []
+        wired, ready, waiting, pinned = 0, [], [], []
         for reg in template.registers:
             if reg.source_kind != "live" or not isinstance(reg.source, str):
                 continue
             if "." in reg.source:                 # explicit cross-device — leave as authored
+                continue
+            if is_cumulative_field(reg.source):
+                # Cumulative counters NEVER fail over: the twin is a different
+                # physical meter, so its lifetime total is a non-monotonic
+                # jump that corrupts downstream kWh statistics (Victron /
+                # DataManager). The row stays on the primary and freezes at
+                # its last good value while the twin feeds the instantaneous
+                # rows; it resumes (legitimate forward jump) on recovery.
+                reg.pin_on_stale = True
+                pinned.append(reg.source)
                 continue
             reg.source_kind = "failover"
             reg.source = [reg.source, f"{fb}.{reg.source}"]   # [primary bare, twin dotted]
@@ -283,9 +294,11 @@ class VirtualMeterManager:
             (ready if _lookup(fb_store, field) is not None else waiting).append(field)
         logger.info(
             "vmeter '%s': device_fallback %s → %s — %d live registers wired; "
-            "twin has now: [%s]; armed/waiting: [%s]",
+            "twin has now: [%s]; armed/waiting: [%s]; counters pinned to "
+            "primary (freeze on outage, no failover): [%s]",
             inst.get("template"), primary, fb, wired,
-            ", ".join(sorted(ready)) or "-", ", ".join(sorted(waiting)) or "-")
+            ", ".join(sorted(ready)) or "-", ", ".join(sorted(waiting)) or "-",
+            ", ".join(sorted(pinned)) or "-")
 
     # ── state → MQTT (so alertd rules can monitor the meters) ─────────────
     def _publish_states(self) -> None:

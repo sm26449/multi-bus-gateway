@@ -76,10 +76,10 @@ registers:
     device_class: power
     state_class: measurement
   - addr: 30
-    name: energy_active_import_total
-    unit: kWh
-    type: uint32
-    scale: 100
+    name: energy_active_import
+    unit: Wh                # canonical energy unit is Wh — a native-kWh map
+    type: uint32            # converts in the scale (kWh*100 raw -> scale 0.1)
+    scale: 0.1
     monotonic: true         # cumulative counter: reject downward glitches
     nan: true               # type's standard not-available sentinel
     state_class: total_increasing
