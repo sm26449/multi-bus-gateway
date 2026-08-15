@@ -593,3 +593,53 @@ def test_export_strips_esphome_password_and_webhook_url(tmp_path, fake):
     assert "password" not in (data.get("esphome") or {})
     # endpoint kept (needed to restore), but the token query is stripped
     assert data["alerts"]["webhook_url"] == "https://h/x"
+
+
+# ---------------------------------------------------------------------------
+# WS API-key gate (external audit: _write_guard is HTTP-only — the stream,
+# which can flash firmware OTA, accepted anyone on the allowlist when a key
+# was configured but login was off)
+# ---------------------------------------------------------------------------
+
+def _keyed_app(tmp_path, monkeypatch, fake):
+    import os as _os
+    monkeypatch.setenv("API_KEY", "stream-secret")
+    _os.environ.pop("JANITZA_API_KEY", None)
+    _, client = make_app(tmp_path, extra_yaml=ESPHOME_YAML)
+    fake.files["node1.yaml"] = "esphome: {}\n"
+    return client
+
+
+@needs_tc
+def test_stream_requires_api_key_when_configured(tmp_path, monkeypatch, fake):
+    from starlette.websockets import WebSocketDisconnect
+    client = _keyed_app(tmp_path, monkeypatch, fake)
+    for kw in ({},                                             # no credential
+               {"headers": {"X-API-Key": "wrong"}},            # wrong header
+               {"subprotocols": ["mbg-api-key.d3Jvbmc"]}):     # wrong ("wrong")
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect(
+                    "/api/builder/stream/compile?configuration=node1.yaml", **kw) as ws:
+                ws.receive_json()
+
+
+@needs_tc
+def test_stream_accepts_key_via_header(tmp_path, monkeypatch, fake):
+    client = _keyed_app(tmp_path, monkeypatch, fake)
+    with client.websocket_connect(
+            "/api/builder/stream/compile?configuration=node1.yaml",
+            headers={"X-API-Key": "stream-secret"}) as ws:
+        msgs = [ws.receive_json() for _ in range(3)]
+    assert msgs[-1] == {"event": "exit", "code": 0}
+
+
+@needs_tc
+def test_stream_accepts_key_via_subprotocol(tmp_path, monkeypatch, fake):
+    import base64
+    client = _keyed_app(tmp_path, monkeypatch, fake)
+    b64 = base64.urlsafe_b64encode(b"stream-secret").decode().rstrip("=")
+    with client.websocket_connect(
+            "/api/builder/stream/compile?configuration=node1.yaml",
+            subprotocols=["mbg-api-key." + b64]) as ws:
+        msgs = [ws.receive_json() for _ in range(3)]
+    assert msgs[-1] == {"event": "exit", "code": 0}

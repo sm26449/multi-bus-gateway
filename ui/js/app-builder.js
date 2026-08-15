@@ -327,7 +327,16 @@ Object.assign(JanitzaMonitor.prototype, {
         status.className = 'sink-pill';
         this._builderCloseWs();
         const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-        const ws = new WebSocket(`${proto}://${location.host}/api/builder/stream/${command}?configuration=${encodeURIComponent(name)}&port=OTA`);
+        // A browser can't set X-API-Key on a WebSocket; when the server
+        // requires the key (same localStorage slot installApiAuth prompts
+        // into), it travels as a subprotocol the server echoes back —
+        // base64url-coded, since raw keys may not be valid RFC 6455 tokens.
+        const apiKey = localStorage.getItem('mbg-api-key');
+        const wsUrl = `${proto}://${location.host}/api/builder/stream/${command}?configuration=${encodeURIComponent(name)}&port=OTA`;
+        const keyProto = apiKey ? 'mbg-api-key.' + btoa(apiKey)
+            .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') : null;
+        const ws = keyProto ? new WebSocket(wsUrl, [keyProto])
+                            : new WebSocket(wsUrl);
         this._builderWs = ws;
         // strip color codes — ESPHome emits both real ESC bytes and the
         // literal text "\033[32m" depending on the subprocess tty mode

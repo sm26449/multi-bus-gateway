@@ -34,6 +34,7 @@ Security model:
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import re
 import threading
@@ -519,6 +520,31 @@ def build(ctx) -> APIRouter:
                 await websocket.close(code=1008)
                 return
 
+        # API key (external audit): _write_guard is an HTTP middleware — WS
+        # scopes never pass through it, so with login off this stream (which
+        # can flash firmware OTA) accepted anyone on the IP allowlist. When a
+        # key is configured it is required here exactly like on HTTP writes:
+        # via X-API-Key (scripts), or — since a browser cannot set custom WS
+        # headers and a query param would leak the key into access logs — the
+        # 'mbg-api-key.<key>' subprotocol (echoed back at accept, per RFC).
+        _api_key = str(getattr(ctx, "api_key", "") or "")
+        _sub = next((p for p in (websocket.scope.get("subprotocols") or [])
+                     if p.startswith("mbg-api-key.")), None)
+        if _api_key:
+            supplied = websocket.headers.get("x-api-key", "")
+            if not supplied and _sub:
+                # base64url without padding (raw keys may not be RFC tokens)
+                import base64
+                b64 = _sub[len("mbg-api-key."):]
+                try:
+                    supplied = base64.urlsafe_b64decode(
+                        b64 + "=" * (-len(b64) % 4)).decode("utf-8")
+                except Exception:  # noqa: BLE001
+                    supplied = ""
+            if not hmac.compare_digest(supplied, _api_key):
+                await websocket.close(code=1008)
+                return
+
         name = websocket.query_params.get("configuration", "")
         port = websocket.query_params.get("port", "OTA")
         # OTA or a serial device path only — this string reaches the
@@ -543,7 +569,9 @@ def build(ctx) -> APIRouter:
             await websocket.close(code=1013)
             return
 
-        await websocket.accept()
+        # A client that offered the key-subprotocol must have it echoed back,
+        # or the browser aborts the connection (RFC 6455 §4.1).
+        await websocket.accept(subprotocol=_sub)
         audit_log.append(user=user, ip=peer, action=f"esphome {command}",
                          target=name, status="start")
         exit_code = None

@@ -139,3 +139,57 @@ def test_string_roundtrip():
     assert len(regs) == 7
     raw = b''.join(int(r).to_bytes(2, 'big') for r in regs)
     assert raw.rstrip(b'\x00').decode('ascii') == 'JNZ001'
+
+
+# ── sign-magnitude encode + fail-loud on unhandled types (external audit) ────
+
+def test_sm16_roundtrip_all_orders():
+    from multibus.register_parser import RegisterParser
+    for order in ('big', 'little', 'badc', 'dcba'):
+        enc = RegisterEncoder(order)
+        par = RegisterParser(order)
+        for v in (0, 1, 32767, -1, -5, -32767):
+            regs = enc.encode(v, 'sm16')
+            assert len(regs) == 1, "sm16 is ONE register — two would corrupt the neighbor"
+            assert par.parse_value(regs, 'sm16') == v, (order, v)
+
+
+def test_sm32_roundtrip_all_orders():
+    from multibus.register_parser import RegisterParser
+    for order in ('big', 'little', 'badc', 'dcba'):
+        enc = RegisterEncoder(order)
+        par = RegisterParser(order)
+        for v in (0, 1, 2**31 - 1, -1, -123456, -(2**31 - 1)):
+            regs = enc.encode(v, 'sm32')
+            assert len(regs) == 2
+            assert par.parse_value(regs, 'sm32') == v, (order, v)
+
+
+def test_sm16_wire_encoding_is_sign_magnitude_not_twos_complement():
+    enc = RegisterEncoder('big')
+    assert enc.encode(-5, 'sm16') == [0x8005]      # sign bit + magnitude
+    assert enc.encode(5, 'sm16') == [0x0005]
+    assert enc.encode(-5, 'int16') == [0xFFFB]     # contrast: 2's complement
+
+
+def test_sm_out_of_range_clamps_to_magnitude_limit():
+    enc = RegisterEncoder('big')
+    assert enc.encode(-40000, 'sm16') == [0xFFFF]  # clamped to -32767
+    assert enc.encode(40000, 'sm16') == [0x7FFF]
+
+
+def test_unhandled_type_fails_loud_not_split32():
+    enc = RegisterEncoder('big')
+    for bad in ('unit16', 'bool', 'sm64', 'stringy'):
+        with pytest.raises(ValueError, match='unsupported data type'):
+            enc.encode(1, bad)
+
+
+def test_sm_sentinel_words_decode_to_extreme_not_zero():
+    from multibus.register_parser import RegisterParser
+    enc = RegisterEncoder('big')
+    par = RegisterParser('big')
+    assert enc.sentinel_words('sm16') == [0xFFFF]
+    assert par.parse_value([0xFFFF], 'sm16') == -32767     # implausible extreme
+    w = enc.sentinel_words('sm32')
+    assert len(w) == 2 and par.parse_value(w, 'sm32') == -(2**31 - 1)

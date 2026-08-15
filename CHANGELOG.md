@@ -1,5 +1,40 @@
 # Changelog
 
+## 3.31.0
+
+### 2026-08-15 — self-heal on truncated configs, sm16 encode, WS API-key (backlog §I)
+
+Three more externally-audited gaps closed — all latent, none touch the
+live serving path (vmeter frames stay byte-identical to a real meter).
+
+- **Self-heal covers valid-but-truncated files** — YAML/JSON that PARSES
+  can still be a husk (empty file, bare scalar, cut before the sections
+  every save writes unconditionally). config.yaml now has a plausibility
+  gate (dict with `modbus`/`mqtt`) so a husk routes through the existing
+  .bad + heal-from-.good path instead of being loaded "successfully" and
+  then CLOBBERING the .good snapshot with itself. selected_registers.json
+  (primary AND per-device) gains the same .good/.bad contract it never
+  had — a truncated selection used to silently empty every poller; now it
+  heals from the last known-good snapshot. Deselect-all (`registers: []`
+  key present) is still a legitimate save shape and loads normally.
+- **Sign-magnitude encode + fail-loud** — `sm16`/`sm32` decode existed,
+  but encode fell into the generic `_split32` fallback: TWO words for a
+  one-register type, corrupting the adjacent register on write. Proper
+  sign-magnitude branches added (round-trip proven against the parser in
+  all four byte orders), NA sentinels defined (all-ones = max negative
+  magnitude — NOT "negative zero", which decodes to a plausible 0), and
+  an unhandled data type now raises instead of silently emitting int32
+  words — every caller already catches and degrades the row loudly.
+- **Builder stream requires the API key** — `_write_guard` is an HTTP
+  middleware, so with login off the `/api/builder/stream` WebSocket
+  (which can flash firmware OTA) accepted anyone on the IP allowlist even
+  when a key was configured. The key is now enforced on the stream like
+  on HTTP writes: `X-API-Key` header (scripts) or the
+  `mbg-api-key.<base64url(key)>` subprotocol (browsers can't set custom
+  WS headers; a query param would leak into access logs). The UI sends
+  the subprotocol automatically from its stored key.
+- Tests: 13 new; suite at 883 passed.
+
 ## 3.30.0
 
 ### 2026-08-15 — canonical Wh + counters never fail over (backlog §I)

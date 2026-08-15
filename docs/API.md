@@ -14,6 +14,11 @@ default on a trusted LAN):
    back-compat) — when set, every state-changing request
    (POST/PUT/PATCH/DELETE) must send `X-API-Key: <key>`. The two read-only
    query POSTs (`/api/query/register`, `/api/query/batch`) are exempt.
+   The builder command stream (`WS /api/builder/stream/…` — it can flash
+   firmware OTA) requires the key too: send `X-API-Key` (non-browser
+   clients), or the WebSocket subprotocol `mbg-api-key.<base64url(key)>`
+   (browsers cannot set custom WS headers; a query param would leak the
+   key into access logs). The UI does this automatically.
 3. **Login** (`ui.auth.enabled`) — session-cookie auth (`janitza_session`,
    HttpOnly, SameSite=Lax, 7-day sliding TTL). Passwords are PBKDF2-SHA256
    (600 000 iterations). Login is rate-limited per client IP

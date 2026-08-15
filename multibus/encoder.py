@@ -46,6 +46,9 @@ _INT_RANGES = {
     'int32':  (-2**31, 2**31 - 1),      'uint32': (0, 2**32 - 1),
     'int64':  (-2**63, 2**63 - 1),      'long64': (-2**63, 2**63 - 1),
     'uint64': (0, 2**64 - 1),
+    # signed-magnitude: 15/31 magnitude bits, symmetric around zero
+    'sm16':   (-32767, 32767),
+    'sm32':   (-(2**31 - 1), 2**31 - 1),
 }
 
 
@@ -107,7 +110,17 @@ class RegisterEncoder:
             return self._split32(raw & 0xffffffff)
         if dt in ('int64', 'long64', 'uint64'):
             return self._split64(raw & 0xffffffffffffffff)
-        return self._split32(raw & 0xffffffff)
+        if dt == 'sm16':                # sign-magnitude: bit 15 = sign flag
+            u = (0x8000 | -raw) if raw < 0 else raw
+            return self._apply_order([u & 0xffff])
+        if dt == 'sm32':                # sign-magnitude: bit 31 = sign flag
+            u = (0x8000_0000 | -raw) if raw < 0 else raw
+            return self._split32(u & 0xffffffff)
+        # Fail LOUD (external audit): this used to fall through to _split32,
+        # silently emitting TWO words for a type the span table may size at
+        # one — the write then corrupts the adjacent register. Every caller
+        # (vmeter _resolve, write_value) already catches and degrades the row.
+        raise ValueError(f"unsupported data type for encode: {data_type!r}")
 
     # ── helpers (canonical big-endian, then apply the wire order) ──────────
     def _split32(self, u: int) -> list[int]:
@@ -133,6 +146,11 @@ class RegisterEncoder:
         'int32': -0x8000_0000, 'uint32': 0xFFFF_FFFF,
         'int64': -0x8000_0000_0000_0000, 'long64': -0x8000_0000_0000_0000,
         'uint64': 0xFFFF_FFFF_FFFF_FFFF,
+        # sign-magnitude: all-ones = maximum negative magnitude (-32767 /
+        # -(2^31-1)) — an extreme no real measurement reaches, mirroring the
+        # int16/int32 type-edge convention. (NOT "negative zero" 0x8000,
+        # which decodes to a perfectly plausible 0.)
+        'sm16': -0x7FFF, 'sm32': -0x7FFF_FFFF,
     }
 
     def sentinel_words(self, data_type: str, length: int = 1) -> list[int]:
@@ -147,6 +165,8 @@ class RegisterEncoder:
         if dt == 'string':
             return self.encode_string('', max(1, int(length)))
         raw = self._SENTINELS.get(dt, self._SENTINELS['int32'])
+        if dt in ('sm16', 'sm32'):
+            return self.encode(raw, dt)     # sign-magnitude packing, not 2's-c
         if dt in ('int16', 'short', 'uint16'):
             return self._apply_order([raw & 0xffff])
         if dt in ('int64', 'long64', 'uint64'):

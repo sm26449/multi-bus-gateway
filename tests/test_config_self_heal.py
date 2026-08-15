@@ -52,3 +52,85 @@ def test_healed_config_refuses_to_save(tmp_path):
     import pytest
     with pytest.raises(RuntimeError):
         c.save_yaml_config()                          # must not overwrite the real file
+
+
+# ── valid-but-truncated files (external audit) ───────────────────────────────
+# YAML/JSON that PARSES can still be a husk (empty file, bare scalar, cut
+# before the sections every save writes). It must heal like a parse error —
+# and must NEVER overwrite the .good snapshot with the husk.
+
+def test_truncated_valid_yaml_heals_and_keeps_good_snapshot(tmp_path):
+    p = tmp_path / "config.yaml"
+    _write(p, "10.0.0.5")
+    Config(str(p))                                    # seeds .good
+    for husk in ("", "null", "just a string", "unrelated_key: 1\n"):
+        p.write_text(husk)
+        c = Config(str(p))
+        assert c.modbus.host == "10.0.0.5"            # healed from snapshot
+        assert c._load_failed                         # saves stay blocked
+        assert (tmp_path / "config.yaml.bad").exists()
+        # the snapshot survived — NOT clobbered by the husk
+        assert yaml.safe_load((tmp_path / "config.yaml.good").read_text())["modbus"]["host"] == "10.0.0.5"
+
+
+def _regs_payload(n):
+    return {"version": "1.0",
+            "registers": [{"address": i, "name": f"r{i}", "label": f"r{i}",
+                           "unit": "V", "data_type": "float",
+                           "poll_group": "normal"} for i in range(n)]}
+
+
+def _cfg_with_regs(tmp_path, payload) -> Config:
+    import json
+    _write(tmp_path / "config.yaml", "10.0.0.5")
+    (tmp_path / "selected_registers.json").write_text(json.dumps(payload))
+    return Config(str(tmp_path / "config.yaml"))
+
+
+def test_selected_registers_good_snapshot_and_heal(tmp_path):
+    import json
+    c = _cfg_with_regs(tmp_path, _regs_payload(3))
+    assert len(c.selected_registers) == 3
+    good = tmp_path / "selected_registers.json.good"
+    assert good.exists()                              # snapshot seeded on load
+
+    # corrupt JSON → .bad kept + healed from .good (selection NOT emptied)
+    (tmp_path / "selected_registers.json").write_text('{"version": "1.0", "registers": [{"addr')
+    c2 = Config(str(tmp_path / "config.yaml"))
+    assert len(c2.selected_registers) == 3
+    assert (tmp_path / "selected_registers.json.bad").exists()
+
+    # truncated-valid JSON (parses, but the always-written key is gone)
+    (tmp_path / "selected_registers.json").write_text('{"version": "1.0"}')
+    c3 = Config(str(tmp_path / "config.yaml"))
+    assert len(c3.selected_registers) == 3
+    # .good survived both incidents
+    assert len(json.loads(good.read_text())["registers"]) == 3
+
+
+def test_selected_registers_legitimate_empty_selection_is_accepted(tmp_path):
+    import json
+    c = _cfg_with_regs(tmp_path, _regs_payload(3))
+    assert len(c.selected_registers) == 3
+    # deselect-all is a REAL save shape (registers key present, empty) — it
+    # must load as empty and refresh the snapshot, not trigger the heal
+    (tmp_path / "selected_registers.json").write_text(json.dumps(_regs_payload(0)))
+    c2 = Config(str(tmp_path / "config.yaml"))
+    assert c2.selected_registers == []
+    assert json.loads((tmp_path / "selected_registers.json.good").read_text())["registers"] == []
+
+
+def test_device_registers_heal_from_snapshot(tmp_path):
+    import json
+    from multibus.config import DeviceConfig
+    c = _cfg_with_regs(tmp_path, _regs_payload(1))
+    dev_dir = tmp_path / "devices" / "acme"
+    dev_dir.mkdir(parents=True)
+    (dev_dir / "selected_registers.json").write_text(json.dumps(_regs_payload(2)))
+    dev = DeviceConfig(id="acme", primary=False)
+    regs, _ = c.load_device_registers(dev)
+    assert len(regs) == 2
+    # truncation → healed from the per-device .good, not an empty selection
+    (dev_dir / "selected_registers.json").write_text("[]")
+    regs2, _ = c.load_device_registers(dev)
+    assert len(regs2) == 2

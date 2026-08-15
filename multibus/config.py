@@ -875,9 +875,11 @@ class Config:
         if not path.exists():
             logger.info(f"device {device.id}: no selected registers yet ({path})")
             return [], dict(self.poll_groups)
+        data = self._load_json_with_heal(path, required_key='registers',
+                                         label=f"device {device.id} registers")
+        if data is None:
+            return [], dict(self.poll_groups)
         try:
-            with open(path, 'r') as f:
-                data = json.load(f)
             regs = self._parse_selected_payload(data)
             groups = dict(self.poll_groups)
             for name, group in (data.get('poll_groups') or {}).items():
@@ -897,6 +899,19 @@ class Config:
         try:
             with open(self.config_path, 'r') as f:
                 data = yaml.safe_load(f) or {}
+
+            # Plausibility gate (external audit): YAML that PARSES can still be
+            # a truncated/clobbered file — empty, a bare scalar, or cut before
+            # the sections every MBG save writes unconditionally. Loading it
+            # "successfully" is worse than a parse error, because the snapshot
+            # below would then overwrite the last-known-GOOD copy with the
+            # husk. Raise → the existing except path .bad-copies the file and
+            # self-heals from .good. ('devices' is deliberately NOT required —
+            # a save without extra devices legally omits the key.)
+            if not isinstance(data, dict) or not ('modbus' in data or 'mqtt' in data):
+                raise ValueError(
+                    "config.yaml parsed but looks truncated/implausible "
+                    f"(top-level keys: {sorted(data) if isinstance(data, dict) else type(data).__name__})")
 
             # Version stamp (audit MEDIUM-2): a file written by a NEWER gateway
             # may hold settings this version does not know — loading works
@@ -1088,16 +1103,67 @@ class Config:
                 self._load_failed = True              # real file still broken → block saves
                 self._healed_from_snapshot = True
 
+    def _load_json_with_heal(self, path, *, required_key: str, label: str):
+        """Load a JSON config file with the same .good/.bad self-heal contract
+        as config.yaml (external audit: selected_registers.json had NONE — a
+        truncated file silently emptied the whole selection, stopping every
+        poller while the meter looked merely stale).
+
+        - Parse error OR implausible shape (not a dict / ``required_key``
+          missing — every MBG save writes that key, even when its list is
+          empty) → the broken file is copied to ``<path>.bad`` and the last
+          known-good snapshot is loaded instead.
+        - A plausible load refreshes the ``<path>.good`` snapshot — but never
+          with an implausible husk, so .good always holds a real selection.
+        Returns the parsed dict, or None when nothing loadable exists."""
+        import shutil
+        good = path.with_suffix(path.suffix + '.good')
+
+        def _plausible(d) -> bool:
+            return isinstance(d, dict) and required_key in d
+
+        try:
+            with open(path, 'r') as f:
+                data = json.load(f)
+            if not _plausible(data):
+                raise ValueError(f"parsed but looks truncated (missing {required_key!r} key)")
+        except Exception as e:  # noqa: BLE001
+            bad = path.with_suffix(path.suffix + '.bad')
+            try:
+                shutil.copyfile(path, bad)
+                logger.error(f"{label}: {e} — broken file copied to {bad}")
+            except Exception:  # noqa: BLE001
+                logger.error(f"{label}: {e}")
+            if good.exists():
+                try:
+                    with open(good, 'r') as f:
+                        data = json.load(f)
+                    if _plausible(data):
+                        logger.error(f"SELF-HEAL: {label} loaded from last "
+                                     f"known-good snapshot {good}")
+                        return data
+                    logger.error(f"{label}: snapshot {good} is implausible too")
+                except Exception as e2:  # noqa: BLE001
+                    logger.error(f"{label}: snapshot load also failed: {e2}")
+            return None
+        try:
+            shutil.copyfile(path, good)
+        except Exception:  # noqa: BLE001
+            pass
+        return data
+
     def _load_selected_registers(self):
         """Load selected registers configuration."""
         if not self.registers_path.exists():
             logger.warning(f"Selected registers file not found: {self.registers_path}")
             return
 
+        data = self._load_json_with_heal(self.registers_path,
+                                         required_key='registers',
+                                         label='selected registers')
+        if data is None:
+            return
         try:
-            with open(self.registers_path, 'r') as f:
-                data = json.load(f)
-
             # Poll groups from registers file
             if 'poll_groups' in data:
                 for name, group in data['poll_groups'].items():
