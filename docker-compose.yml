@@ -62,10 +62,13 @@ services:
       # - ESPHOME_ENABLED=true
       - ESPHOME_USERNAME=${ESPHOME_DASHBOARD_USERNAME:-}
       - ESPHOME_PASSWORD=${ESPHOME_DASHBOARD_PASSWORD:-}
+      # serial bridge control API (rtu-bridge profile); override if renamed
+      - SERIAL_BRIDGE_URL
     networks:
       - monitoring
-    depends_on:
-      - mosquitto
+    # no depends_on: `up -d multi-bus-gateway` starts EXACTLY the gateway
+    # (the boot network-probe waits for the broker anyway), so the overlay
+    # scenario never drags a second broker onto a host that has one
 
   # MQTT broker — a REQUIRED part of the complete solution, bundled so the
   # whole pipeline works from the first `docker compose up -d` (the gateway's
@@ -79,7 +82,9 @@ services:
     container_name: mbg-mosquitto
     restart: unless-stopped
     ports:
-      - "${MQTT_PORT:-1883}:1883"
+      # host-port mapping only (MQTT_PORT stays the GATEWAY override for an
+      # external broker port — two different knobs on purpose)
+      - "${MQTT_BROKER_PORT:-1883}:1883"
       - "${MQTT_WS_PORT:-9001}:9001"
     volumes:
       - ./mosquitto/config:/mosquitto/config
@@ -131,10 +136,11 @@ services:
     networks:
       - monitoring
 
-  # Optional: InfluxDB for local storage
+  # InfluxDB — the history/energy store; part of the complete stack.
+  # First boot self-configures (see the INIT_ env defaults + .env.example).
   influxdb:
     image: influxdb:2.7
-    container_name: janitza-influxdb
+    container_name: mbg-influxdb
     restart: unless-stopped
     ports:
       - "8086:8086"
@@ -154,10 +160,10 @@ services:
     networks:
       - monitoring
 
-  # Optional: Grafana for visualization
+  # Grafana — dashboards over the same InfluxDB; part of the complete stack.
   grafana:
     image: grafana/grafana:latest
-    container_name: janitza-grafana
+    container_name: mbg-grafana
     restart: unless-stopped
     ports:
       - "3000:3000"

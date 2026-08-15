@@ -599,8 +599,10 @@ so stripped secrets survive the round-trip.
 
 ## 12. Process model
 
-One primary container, one Python process (`main.py`), plus two optional
-companions:
+One primary container, one Python process (`main.py`), plus the bundled
+stack (mosquitto, mqtt-explorer, influxdb, grafana, esphome — all default
+services of the compose file) and one profile-gated companion
+(`serial-bridge`, under `rtu-bridge`):
 
 - FastAPI/uvicorn serves the UI, REST API and WebSocket
   (default `127.0.0.1:8080` on bare metal — the container image sets `UI_HOST=0.0.0.0` — optional TLS).

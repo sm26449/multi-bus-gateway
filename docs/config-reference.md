@@ -85,6 +85,20 @@ secret values masked.
 | `SERIAL_BRIDGE_URL` | `http://pv-stack-serial-bridge:7000` | Base URL of the optional ser2net serial-bridge companion, used by the commissioning UI to list remote serial adapters. |
 | `TZ` | `Europe/Bucharest` (compose) | Standard container timezone. Calendar reports (monthly energy) use `ui.timezone`, not `TZ`. |
 
+### Compose-stack variables (infrastructure, not the gateway)
+
+Consumed by `docker-compose.yml` for the bundled services — set them in `.env`:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `MQTT_BROKER_PORT` / `MQTT_WS_PORT` | `1883` / `9001` | host-port mapping of the bundled broker (distinct from the gateway's `MQTT_PORT` override, which targets an EXTERNAL broker) |
+| `MQTT_EXPLORER_PORT` | `4000` | MQTT Explorer web UI |
+| `DOCKER_INFLUXDB_INIT_USERNAME` / `_PASSWORD` / `_ORG` / `_BUCKET` / `_ADMIN_TOKEN` | `admin` / change-me / `multibus` / `multibus` / change-me | InfluxDB first-boot self-setup; paste the token into Config → InfluxDB |
+| `GF_SECURITY_ADMIN_PASSWORD` | change-me | Grafana `admin` login |
+| `PV_STACK_NETWORK` | `pv-stack-network` | name of the docker network (created by the base file; joined as external by the overlay) |
+| `BRIDGE_EXCLUDE` | *(empty)* | serial adapters the bridge must never expose (`rtu-bridge` profile) |
+| `SERIAL_BRIDGE_URL` | `http://pv-stack-serial-bridge:7000` | where the gateway reaches the bridge's control API |
+
 ### Backfill utility (`multibus/backfill.py`)
 
 A standalone gap-backfill tool for InfluxDB; it reads its own environment:
@@ -155,13 +169,14 @@ section. (Serial/RTU and other transports are available on additional
 |-----|---------|-------|
 | `enabled` | `false` (opt-in) | |
 | `url` | `http://influxdb:8086` | |
-| `token` / `org` | `""` | |
+| `token` | `""` | paste the token from your InfluxDB (the bundled stack prints/sets it via `DOCKER_INFLUXDB_INIT_ADMIN_TOKEN`) |
+| `org` | `multibus` | matches the bundled first-boot org |
 | `bucket` | `multibus` | primary device's bucket |
 | `write_interval` | `5` | seconds |
 | `publish_mode` | `changed` | `changed` or `all` |
 | `default_bucket_pattern` | `{device}` | bucket pattern seeded onto **new** devices |
-| `buffer_minutes` | `10` | store-and-forward: keep at most this much history while InfluxDB is down; replayed with original timestamps on reconnect |
-| `buffer_max_points` | `50000` | hard cap (drop-oldest) |
+| `buffer_minutes` | `120` | store-and-forward: keep at most this much history while InfluxDB is down; replayed with original timestamps on reconnect |
+| `buffer_max_points` | `200000` | hard cap (drop-oldest) |
 | `buffer_persist` | `true` | persist the buffer to disk (see `INFLUX_BUFFER_PATH`) so it survives a restart during an outage |
 
 ### `ui:`

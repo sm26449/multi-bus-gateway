@@ -287,6 +287,10 @@ docker run -d --name multi-bus-gateway --restart unless-stopped \
   ghcr.io/sm26449/multi-bus-gateway:latest
 ```
 
+> **Note:** `docker run` starts ONLY the gateway — no bundled MQTT broker,
+> so point `MQTT_BROKER` at an existing one (or use compose, which brings
+> the whole stack).
+
 > **Ports:** `8080` = Web UI · `1502-1512` = virtual meters (grow via
 > `VMETER_PORT_START/END`) · `502` = the standard Modbus port some
 > consumers poll (drop it if it's taken on the host; it is a privileged
@@ -296,11 +300,14 @@ docker run -d --name multi-bus-gateway --restart unless-stopped \
 > or pass the adapter into the container (`devices:` in compose). Full guide:
 > [docs/MANUAL.md](docs/MANUAL.md).
 
-### With InfluxDB and Grafana (optional)
+### InfluxDB and Grafana
 
-```bash
-docker compose --profile influxdb --profile grafana up -d
-```
+They are **part of the default stack** — nothing to start separately. On
+first boot InfluxDB self-configures (org/bucket `multibus`; change the
+password/token in `.env`), then enable the sink in the UI (Config →
+InfluxDB) and paste the token. Grafana: `http://localhost:3000`. Don't
+want them? `docker compose up -d multi-bus-gateway mosquitto` starts just
+the core.
 
 ## Configuration
 
@@ -407,6 +414,8 @@ multi-bus-gateway/
 ├── tests/                     # Test suite (pytest)
 ├── main.py                    # Entry point
 ├── Dockerfile / docker-compose.yml (+ docker-compose.pv-stack.yml — shared-network overlay)
+├── mosquitto/config/       # bundled broker config
+├── serial-bridge/          # ser2net companion (rtu-bridge profile)
 └── CHANGELOG.md
 ```
 

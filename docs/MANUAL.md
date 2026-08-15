@@ -51,8 +51,8 @@ Companion documents:
   API, Shelly, Tasmota…), or an **MQTT** broker with telemetry topics.
 - A host with **Docker + Docker Compose** (amd64 or arm64 — a Raspberry Pi
   works).
-- *(Optional)* an MQTT broker for Home Assistant, and/or InfluxDB for
-  Grafana/history.
+- *(Optional)* your **own** MQTT broker and/or InfluxDB, if you prefer them
+  over the bundled ones — the default compose stack ships both.
 
 ---
 
@@ -458,9 +458,10 @@ reason.
 
 Config → **InfluxDB**: URL, token, org, bucket. Per-device buckets are
 auto-created with 90-day retention; per-register measurement/tags are set in
-the Registers tab. Point Grafana at the same bucket. The optional compose
-profiles start a local InfluxDB + Grafana (`--profile influxdb --profile
-grafana`).
+the Registers tab. Point Grafana at the same bucket. Both ship in the
+default compose stack — InfluxDB self-configures on first boot and Grafana
+listens on `:3000` (see §2); this page is only about wiring the gateway to
+them (or to your own instances).
 
 **Data guarantees.** Every point is stamped with the *read* time, not the
 flush time. If InfluxDB becomes unreachable, points go to a
@@ -910,6 +911,14 @@ password (printed once to the log) and enables authentication. The remaining
 layers (IP allowlist, API key, TLS, canonical URL) are opt-in — turn them on
 from **Config → Security** as exposure grows. Defense in depth: each layer
 applies independently.
+
+> **The bundled stack has its own doors.** The default compose also exposes
+> the broker (`1883`/`9001`, anonymous by default — add credentials via the
+> two-line recipe in `mosquitto/config/mosquitto.conf`), MQTT Explorer
+> (`4000`, unauthenticated viewer), InfluxDB (`8086`) and Grafana (`3000`,
+> login `admin` / `GF_SECURITY_ADMIN_PASSWORD` from `.env`). On anything
+> beyond a trusted LAN, set broker credentials, change the change-me
+> passwords, and drop the port mappings you don't need.
 
 ### 16.1 Login & roles
 

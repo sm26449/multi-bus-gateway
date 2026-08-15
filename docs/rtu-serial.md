@@ -98,7 +98,7 @@ Each adapter gets a stable key, so its TCP port survives replug/restart:
   must distinguish two identical serial-less adapters, keep each in its own port
   and label the ports.
 
-The map lives in `serial-bridge/data/portmap.json`.
+The map lives in `/data/portmap.json` inside the `serial-bridge-data` volume.
 
 ---
 

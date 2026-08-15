@@ -1,5 +1,33 @@
 # Changelog
 
+## 3.35.1
+
+### 2026-08-16 — docs-vs-compose verification pass (independent re-check)
+
+A fresh verification agent re-read every deployment claim against the
+final compose. Nine real mismatches fixed:
+
+- `up -d multi-bus-gateway` now starts EXACTLY the gateway — the
+  `depends_on: mosquitto` silently dragged a second broker (and its host
+  ports) into the overlay scenario; removed (the boot network-probe
+  handles ordering).
+- `SERIAL_BRIDGE_URL` was documented as settable but never passed to the
+  container — now wired through compose + `.env.example`.
+- config-reference: influx `org` default is `multibus`, buffer defaults
+  are 120 min / 200,000 (were 12× stale), plus a new **compose-stack
+  variables** table (broker/explorer ports, Influx first-boot vars,
+  Grafana login, `PV_STACK_NETWORK`, `BRIDGE_EXCLUDE`).
+- rtu-serial: the portmap lives in the `serial-bridge-data` volume, not a
+  repo path; architecture.md's process model now describes the bundled
+  stack; MANUAL §1 no longer implies you must supply a broker/Influx;
+  README project trees list `mosquitto/config/` and `serial-bridge/`;
+  legacy `janitza-*` container names → `mbg-*`; `MQTT_BROKER_PORT`
+  disambiguated from the gateway's `MQTT_PORT` override; `docker run`
+  notes it ships no broker.
+- New §16 note (both manuals): the bundled stack's own doors — anonymous
+  broker default + credential recipe, Explorer, Influx, Grafana login —
+  and what to lock down beyond a trusted LAN.
+
 ## 3.35.0
 
 ### 2026-08-16 — the complete stack out of the box + the documentation catches up

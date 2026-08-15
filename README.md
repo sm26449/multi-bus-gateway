@@ -281,6 +281,10 @@ docker run -d --name multi-bus-gateway --restart unless-stopped \
   ghcr.io/sm26449/multi-bus-gateway:latest
 ```
 
+> **Notă:** `docker run` pornește DOAR gateway-ul — fără broker-ul MQTT
+> inclus, deci setează `MQTT_BROKER` spre un broker existent (sau folosește
+> compose-ul, care aduce tot stack-ul).
+
 > **Porturi:** `8080` = Web UI · `1502-1512` = metere virtuale (extinde cu
 > `VMETER_PORT_START/END`) · `502` = portul Modbus standard pe care unii
 > consumatori îl interoghează (scoate-l dacă e ocupat pe host; fiind port
@@ -290,11 +294,14 @@ docker run -d --name multi-bus-gateway --restart unless-stopped \
 > (recomandat) — sau treci adaptorul în container (`devices:` în compose).
 > Ghid complet: [docs/MANUAL.ro.md](docs/MANUAL.ro.md).
 
-### Cu InfluxDB și Grafana (opțional)
+### InfluxDB și Grafana
 
-```bash
-docker compose --profile influxdb --profile grafana up -d
-```
+Sunt **incluse în stack-ul implicit** — nimic de pornit separat. La primul
+boot InfluxDB se auto-configurează (org/bucket `multibus`; schimbă
+parola/token-ul din `.env`), apoi activezi sink-ul din UI (Config →
+InfluxDB) și lipești token-ul. Grafana: `http://localhost:3000`. Nu le
+vrei? `docker compose up -d multi-bus-gateway mosquitto` pornește doar
+nucleul.
 
 ## Configurare
 
@@ -399,6 +406,8 @@ multi-bus-gateway/
 ├── tests/                     # Suita de teste (pytest)
 ├── main.py                    # Entry point
 ├── Dockerfile / docker-compose.yml (+ docker-compose.pv-stack.yml — overlay rețea partajată)
+├── mosquitto/config/       # configul broker-ului inclus
+├── serial-bridge/          # companion ser2net (profilul rtu-bridge)
 └── CHANGELOG.md
 ```
 

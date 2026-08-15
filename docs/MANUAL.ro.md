@@ -53,8 +53,8 @@ Documente însoțitoare:
   cu topicuri de telemetrie.
 - Un host cu **Docker + Docker Compose** (amd64 sau arm64 — merge și pe
   Raspberry Pi).
-- *(Opțional)* un broker MQTT pentru Home Assistant și/sau InfluxDB pentru
-  Grafana/istoric.
+- *(Opțional)* broker-ul MQTT și/sau InfluxDB **propriu**, dacă le preferi
+  în locul celor incluse — stack-ul compose implicit le aduce pe amândouă.
 
 ---
 
@@ -482,9 +482,10 @@ republică starea completă exact din acest motiv.
 
 Config → **InfluxDB**: URL, token, org, bucket. Bucket-urile per dispozitiv
 se creează automat cu retenție de 90 de zile; measurement/tags per registru
-se setează în tab-ul Registers. Îndreaptă Grafana spre același bucket.
-Profilurile opționale de compose pornesc un InfluxDB + Grafana local
-(`--profile influxdb --profile grafana`).
+se setează în tab-ul Registers. Îndreaptă Grafana spre același bucket. Ambele
+fac parte din stack-ul compose implicit — InfluxDB se auto-configurează la
+primul boot, iar Grafana ascultă pe `:3000` (vezi §2); pagina asta e doar
+despre legarea gateway-ului la ele (sau la instanțele tale proprii).
 
 **Garanții asupra datelor.** Fiecare punct e ștampilat cu ora *citirii*, nu
 ora scrierii. Dacă InfluxDB devine inaccesibil, punctele intră într-un
@@ -956,6 +957,14 @@ o parolă de admin (tipărită o singură dată în log) și activează
 autentificarea. Restul straturilor (allowlist IP, cheie API, TLS, URL
 canonic) sunt opt-in — activează-le din **Config → Security** pe măsură ce
 expunerea crește. Apărare în adâncime: fiecare strat se aplică independent.
+
+> **Stack-ul inclus are ușile lui.** Compose-ul implicit expune și broker-ul
+> (`1883`/`9001`, anonim implicit — adaugă credențiale cu rețeta de două
+> linii din `mosquitto/config/mosquitto.conf`), MQTT Explorer (`4000`,
+> viewer neautentificat), InfluxDB (`8086`) și Grafana (`3000`, login
+> `admin` / `GF_SECURITY_ADMIN_PASSWORD` din `.env`). Dincolo de un LAN de
+> încredere: pune credențiale pe broker, schimbă parolele change-me și
+> scoate mapările de porturi de care n-ai nevoie.
 
 ### 16.1 Login & roluri
 
