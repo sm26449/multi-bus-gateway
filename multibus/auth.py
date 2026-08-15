@@ -22,13 +22,18 @@ except the login page, the login endpoint and static assets; a read-only
 ``viewer`` role is limited to GET requests. Passwords are stored as PBKDF2
 hashes; login failures are rate-limited per client IP.
 
-State is in-memory (sessions + lockout counters reset on restart) — fine for a
-single-instance appliance.
+Sessions PERSIST across restarts (config/sessions.json, 0600): a container
+restart/upgrade must not log everyone out — the cookie is valid for 7 days,
+so the server-side record has to live at least as long. Only SHA-256 hashes
+of the tokens touch the disk; the raw token exists nowhere but the client's
+cookie. Lockout counters stay in-memory (worst case a restart forgives a
+brute-force window — acceptable for a LAN appliance).
 """
 from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 import os
 import secrets
@@ -87,15 +92,73 @@ def verify_password(password: str, stored: str) -> bool:
 _DECOY_HASH = hash_password(secrets.token_urlsafe(16))
 
 
-class AuthState:
-    """Sessions + lockout for one running instance. Thread-safe."""
+# A slid expiry is persisted at most this often — sliding happens on EVERY
+# request, and rewriting the file each time would hammer the disk for a value
+# whose precision is irrelevant against a 7-day TTL.
+_SLIDE_FLUSH_S = 300
 
-    def __init__(self, ui_config):
+
+def _token_key(token: str) -> str:
+    """Disk/lookup key for a session token — the raw token never leaves the
+    client's cookie, so a read of the persisted file yields nothing usable."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+class AuthState:
+    """Sessions + lockout for one running instance. Thread-safe.
+
+    ``store_path`` enables persistence (the API passes the config-dir file);
+    None keeps the pure in-memory behavior (unit tests, ad-hoc embedding).
+    """
+
+    def __init__(self, ui_config, store_path: Optional[str] = None):
         self._lock = threading.Lock()
-        self._sessions: Dict[str, Tuple[str, float, str]] = {}  # token -> (role, expiry, username)
+        # token_sha256 -> (role, expiry, username)
+        self._sessions: Dict[str, Tuple[str, float, str]] = {}
         self._fails: Dict[str, list] = {}                   # ip -> [failure epochs]
         self._locked_until: Dict[str, float] = {}           # ip -> epoch
+        self._store_path = store_path
+        self._last_flush = 0.0
         self.reload(ui_config)
+        self._load_sessions()
+
+    # ── persistence ────────────────────────────────────────────────────────
+    def _load_sessions(self) -> None:
+        if not self._store_path or not os.path.exists(self._store_path):
+            return
+        try:
+            with open(self._store_path) as f:
+                data = json.load(f)
+            now = time.time()
+            with self._lock:
+                for key, entry in (data.get("sessions") or {}).items():
+                    role, expiry, username = entry
+                    if float(expiry) > now:               # prune expired at load
+                        self._sessions[str(key)] = (str(role), float(expiry), str(username))
+                n = len(self._sessions)
+            logger.info("restored %d session(s) from %s", n, self._store_path)
+        except Exception as e:  # noqa: BLE001
+            # a corrupt store must never block boot — everyone just re-logs-in
+            logger.warning("session store unreadable (%s) — starting empty", e)
+
+    def _save_sessions_locked(self) -> None:
+        """Persist under self._lock. Atomic + 0600 like the other secret-bearing
+        writers (passkeys/config); losing a write worst-cases as a re-login."""
+        if not self._store_path:
+            return
+        try:
+            tmp = self._store_path + ".tmp"
+            payload = json.dumps({"version": 1, "sessions": {
+                k: [r, e, u] for k, (r, e, u) in self._sessions.items()}})
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                f.write(payload)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self._store_path)
+            self._last_flush = time.time()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("session store write failed: %s", e)
 
     def reload(self, ui_config) -> None:
         """Pick up config changes (enable flag, credentials, lockout params)."""
@@ -166,7 +229,8 @@ class AuthState:
         self._clear_failures(ip)
         token = secrets.token_urlsafe(32)
         with self._lock:
-            self._sessions[token] = (role, time.time() + SESSION_TTL_S, username)
+            self._sessions[_token_key(token)] = (role, time.time() + SESSION_TTL_S, username)
+            self._save_sessions_locked()
         return token, role
 
     def role_for(self, token: str) -> Optional[str]:
@@ -174,15 +238,23 @@ class AuthState:
         if not token:
             return None
         now = time.time()
+        key = _token_key(token)
         with self._lock:
-            entry = self._sessions.get(token)
+            entry = self._sessions.get(key)
             if not entry:
                 return None
             role, expiry, username = entry
             if expiry < now:
-                self._sessions.pop(token, None)
+                self._sessions.pop(key, None)
+                self._save_sessions_locked()
                 return None
-            self._sessions[token] = (role, now + SESSION_TTL_S, username)  # sliding
+            self._sessions[key] = (role, now + SESSION_TTL_S, username)  # sliding
+            # slides happen per request — persist at most every _SLIDE_FLUSH_S
+            # (losing a slide worst-cases as an expiry a few minutes short of
+            # 7 days after an unclean stop; irrelevant, and logins/logouts
+            # flush immediately anyway)
+            if now - self._last_flush > _SLIDE_FLUSH_S:
+                self._save_sessions_locked()
             return role
 
     def mint_session(self, role: str, username: str) -> str:
@@ -190,7 +262,8 @@ class AuthState:
         (the WebAuthn assertion IS the authentication)."""
         token = secrets.token_urlsafe(32)
         with self._lock:
-            self._sessions[token] = (role, time.time() + SESSION_TTL_S, username)
+            self._sessions[_token_key(token)] = (role, time.time() + SESSION_TTL_S, username)
+            self._save_sessions_locked()
         return token
 
     def identity_for(self, token: str) -> Optional[Tuple[str, str]]:
@@ -199,14 +272,15 @@ class AuthState:
         if not token:
             return None
         with self._lock:
-            entry = self._sessions.get(token)
+            entry = self._sessions.get(_token_key(token))
             if not entry or entry[1] < time.time():
                 return None
             return entry[0], entry[2]
 
     def logout(self, token: str) -> None:
         with self._lock:
-            self._sessions.pop(token, None)
+            self._sessions.pop(_token_key(token), None)
+            self._save_sessions_locked()
 
     def revoke_all_sessions(self) -> int:
         """Invalidate every live session (e.g. after a credential rotation, so a
@@ -215,4 +289,5 @@ class AuthState:
         with self._lock:
             n = len(self._sessions)
             self._sessions.clear()
+            self._save_sessions_locked()
             return n

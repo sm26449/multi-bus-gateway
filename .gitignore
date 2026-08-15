@@ -78,3 +78,4 @@ config/audit.jsonl*
 config/events.jsonl
 config/snapshots/
 config/passkeys.json
+config/sessions.json*

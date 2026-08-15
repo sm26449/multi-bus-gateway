@@ -299,7 +299,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # Optional login/auth (off by default). auth_state manages sessions,
     # password hashing and per-IP lockout; middleware enforces it when enabled.
     from . import auth as _auth
-    auth_state = _auth.AuthState(config.ui)
+    # sessions persist next to the other secret-bearing state (0600) so a
+    # container restart/upgrade no longer logs everyone out
+    auth_state = _auth.AuthState(
+        config.ui, store_path=str(config.config_path.parent / "sessions.json"))
     if auth_state.enabled and not getattr(config.ui, "tls_enabled", False):
         logger.warning("SECURITY: login is enabled but UI TLS is OFF — the session "
                        "cookie travels in cleartext; a LAN sniffer can hijack it. "

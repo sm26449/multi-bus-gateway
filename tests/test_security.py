@@ -340,3 +340,67 @@ def test_ui_security_canonical_url_roundtrip(tmp_path):
     r = client.post("/api/config/ui-security", json={"canonical_url": "https://mbus.diysolar.ro"})
     assert r.status_code == 200
     assert client.get("/api/config/ui-security").json()["canonical_url"] == "https://mbus.diysolar.ro"
+
+
+# ── session persistence (survives a container restart) ───────────────────────
+
+def test_sessions_survive_a_restart(tmp_path):
+    """A restart must not log everyone out: a second AuthState over the same
+    store honors tokens minted by the first. Only SHA-256 hashes touch disk."""
+    store = str(tmp_path / "sessions.json")
+    st1 = auth.AuthState(make_ui(), store_path=store)
+    token, role = st1.login("1.2.3.4", "admin", "pw")
+    assert role == "admin"
+
+    st2 = auth.AuthState(make_ui(), store_path=store)   # "restart"
+    assert st2.role_for(token) == "admin"
+    assert st2.identity_for(token) == ("admin", "admin")
+    # the raw token never touches the disk (hashed keys only)
+    raw = (tmp_path / "sessions.json").read_text()
+    assert token not in raw
+    import os as _os
+    assert (_os.stat(store).st_mode & 0o777) == 0o600
+
+
+def test_logout_and_revoke_persist(tmp_path):
+    store = str(tmp_path / "sessions.json")
+    st1 = auth.AuthState(make_ui(), store_path=store)
+    t1, _ = st1.login("1.2.3.4", "admin", "pw")
+    t2 = st1.mint_session("viewer", "guest")
+    st1.logout(t1)
+    st2 = auth.AuthState(make_ui(), store_path=store)   # restart after logout
+    assert st2.role_for(t1) is None                     # logged out stays out
+    assert st2.role_for(t2) == "viewer"                 # passkey session kept
+    st2.revoke_all_sessions()
+    st3 = auth.AuthState(make_ui(), store_path=store)   # restart after rotation
+    assert st3.role_for(t2) is None                     # revocation persists
+
+
+def test_expired_sessions_pruned_at_load(tmp_path, monkeypatch):
+    store = str(tmp_path / "sessions.json")
+    st1 = auth.AuthState(make_ui(), store_path=store)
+    token, _ = st1.login("1.2.3.4", "admin", "pw")
+    # age the persisted record past its TTL, then "restart"
+    import json as _json
+    data = _json.loads((tmp_path / "sessions.json").read_text())
+    for k in data["sessions"]:
+        data["sessions"][k][1] = 1.0
+    (tmp_path / "sessions.json").write_text(_json.dumps(data))
+    st2 = auth.AuthState(make_ui(), store_path=store)
+    assert st2.role_for(token) is None
+    assert st2._sessions == {}                          # pruned, not carried
+
+
+def test_corrupt_store_never_blocks_boot(tmp_path):
+    store = tmp_path / "sessions.json"
+    store.write_text("{not json")
+    st = auth.AuthState(make_ui(), store_path=str(store))
+    token, role = st.login("1.2.3.4", "admin", "pw")    # fresh logins still work
+    assert role == "admin" and st.role_for(token) == "admin"
+
+
+def test_no_store_path_stays_in_memory(tmp_path):
+    st = auth.AuthState(make_ui())                      # legacy/no persistence
+    token, _ = st.login("1.2.3.4", "admin", "pw")
+    assert st.role_for(token) == "admin"
+    assert list(tmp_path.iterdir()) == []               # nothing written anywhere
