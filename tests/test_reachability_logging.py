@@ -35,6 +35,9 @@ def _conn():
     _Client.ok = False
     c.client = _Client()
     c.connected = True
+    # the wedge backstop force-closes and rebuilds the client mid-test —
+    # keep it on the fake instead of a real pymodbus client
+    c._new_client = lambda: _Client()
     return c
 
 
@@ -43,16 +46,28 @@ def _kinds(conn):
 
 
 def test_reachability_is_edge_triggered():
+    """Reachability is a LINK verdict (audit DP-8): it declares 'unreachable'
+    only when the consecutive-failure run trips the wedge backstop — a single
+    chronically-failing batch among healthy ones used to flap
+    unreachable/recovered every cycle and rotate the event ring in ~25s."""
     conn = _conn()
 
-    # first terminal failure → exactly one 'unreachable' event, state flips
+    # isolated failures → batch_failures counted, but the LINK is not declared
+    # down yet (no unreachable spam from one bad batch)
+    for i in range(conn._reopen_after_fails - 1):
+        assert conn.read_registers(0, 2) is None
+    assert conn._reachable is True
+    assert _kinds(conn).count("unreachable") == 0
+    assert conn.batch_failures == conn._reopen_after_fails - 1
+
+    # the run reaches the backstop → exactly one 'unreachable', state flips
     assert conn.read_registers(0, 2) is None
     assert conn._reachable is False
     assert _kinds(conn).count("unreachable") == 1
 
-    # still down → NO new 'unreachable' event (quiet through the outage)
-    assert conn.read_registers(0, 2) is None
-    assert conn.read_registers(0, 2) is None
+    # still down (another full run) → NO new 'unreachable' (quiet outage)
+    for _ in range(conn._reopen_after_fails):
+        assert conn.read_registers(0, 2) is None
     assert _kinds(conn).count("unreachable") == 1
 
     # recovery → exactly one 'recovered' event, state flips back

@@ -132,6 +132,15 @@ class ModbusConnection:
         self._consecutive_fail = 0
         self._reopen_after_fails = 5
         self.forced_reopens = 0
+        # Retired connections never touch the wire again (audit DP-5): after a
+        # config reconnect swaps in a NEW ModbusConnection, an orphan poller
+        # still finishing its cycle would otherwise REOPEN this one on demand —
+        # two concurrent clients on one endpoint (catastrophic on RTU, where
+        # responses carry no transaction id).
+        self._retired = False
+        # Failed batches (retry budget exhausted) — the per-batch loss that
+        # data_health's connection-level timestamp can't see (audit DP-8).
+        self.batch_failures = 0
         # First-class dropout observability (mirrors VMeterStats.record_event):
         # a timestamped ring of read failures + last success/failure times, so a
         # Janitza comms loss leaves a record in the app, not just docker logs.
@@ -242,7 +251,8 @@ class ModbusConnection:
             logger.info("Modbus disconnected")
 
     def read_registers(self, address: int, count: int,
-                       register_type: str = "holding") -> Optional[List[int]]:
+                       register_type: str = "holding",
+                       stop_event=None) -> Optional[List[int]]:
         """Read holding (FC3) or input (FC4) registers, thread-safe, with retry.
 
         The lock is held only around each attempt's actual bus transaction and
@@ -253,6 +263,11 @@ class ModbusConnection:
         just interleave between retries. Re-checking the socket at the top of
         every attempt makes this safe against a peer thread reconnecting."""
         for attempt in range(self.config.retry_attempts):
+            # a retired connection (config reconnect swapped it out) or a
+            # stopping poller must not spend the remaining retry budget on the
+            # wire (audit DP-5) — bail between attempts, never mid-transaction
+            if self._retired or (stop_event is not None and stop_event.is_set()):
+                return None
             retry_sleep: Optional[float] = None
             with self.lock:
                 try:
@@ -281,7 +296,8 @@ class ModbusConnection:
                         finally:
                             bus_trace.trace.commit(self.client)
 
-                        if not result.isError() and result.registers:
+                        if (not result.isError() and result.registers
+                                and len(result.registers) >= count):
                             self.successful_reads += 1
                             self.last_success_ts = time.time()
                             self.last_success_mono = time.monotonic()
@@ -291,6 +307,16 @@ class ModbusConnection:
                             return result.registers
                         elif result.isError():
                             self._count_error(result)
+                            if attempt < self.config.retry_attempts - 1:
+                                retry_sleep = self.config.retry_delay
+                        else:
+                            # short or EMPTY non-error response (audit DP-7):
+                            # counting it a success would silently drop the tail
+                            # registers — and the old code retried the empty
+                            # case with no backoff and no error count. Both now
+                            # retry like any other bad read.
+                            got = len(result.registers or [])
+                            self._count_error(f"short response {got}/{count}")
                             if attempt < self.config.retry_attempts - 1:
                                 retry_sleep = self.config.retry_delay
 
@@ -306,10 +332,12 @@ class ModbusConnection:
 
         with self.lock:                        # counter RMW shared across pollers
             self.failed_reads += 1
+            self.batch_failures += 1
             self._consecutive_fail += 1
             # a wedged-but-"open" link never trips is_socket_open() → force a
             # close so the next read reopens a fresh client
-            if self._consecutive_fail >= self._reopen_after_fails and self.client:
+            _link_down = self._consecutive_fail >= self._reopen_after_fails
+            if _link_down and self.client:
                 try:
                     self.client.close()
                 except Exception:  # noqa: BLE001
@@ -321,8 +349,20 @@ class ModbusConnection:
                                   f'link wedged — forced reopen after '
                                   f'{self._reopen_after_fails} consecutive failures')
         self.last_failure_ts = time.time()
-        self._note_unreachable(f"addr {address} count {count} — no response after "
-                               f"{self.config.retry_attempts} attempts")
+        # Reachability is a LINK verdict, not a batch verdict (audit DP-8): one
+        # chronically-failing batch among healthy ones used to flap
+        # unreachable/recovered every cycle, rotating the 50-event ring in ~25s
+        # and burying real dropouts. Only a run of consecutive failures long
+        # enough to trip the wedge backstop declares the link unreachable; the
+        # per-batch loss stays visible via batch_failures + error_counts +
+        # per-group staleness in data_health.
+        if _link_down:
+            self._note_unreachable(f"addr {address} count {count} — no response after "
+                                   f"{self.config.retry_attempts} attempts")
+        else:
+            logger.debug("%sbatch failed addr %s count %s (%d attempts)",
+                         f"[{self.trace_label}] ", address, count,
+                         self.config.retry_attempts)
         return None
 
     def _ensure_connected(self) -> bool:
@@ -338,12 +378,15 @@ class ModbusConnection:
         return self.connected
 
     def read_bits(self, address: int, count: int,
-                  register_type: str = "coil") -> Optional[List[bool]]:
+                  register_type: str = "coil",
+                  stop_event=None) -> Optional[List[bool]]:
         """Read coils (FC1) or discrete inputs (FC2). Returns a list of bools.
 
         Lock released during the retry backoff sleep — same fairness fix as
         ``read_registers`` so a slow bit-read can't stall another poll group."""
         for attempt in range(self.config.retry_attempts):
+            if self._retired or (stop_event is not None and stop_event.is_set()):
+                return None                       # audit DP-5, same as read_registers
             retry_sleep: Optional[float] = None
             with self.lock:
                 try:
@@ -478,6 +521,8 @@ class RegisterPoller(threading.Thread):
         # reload since a fresh poller is built each time. Empty unless a register
         # opts in, so the default poll path is untouched.
         self._counter_filters: Dict[int, MonotonicFilter] = {}
+        # enum/bits registers whose decode failed — edge-triggered warn (DP-6)
+        self._decode_failed: set = set()
 
         # Data-readiness gate: drop an all-zero frame (sleepy device) — opt-in.
         self._drop_all_zero = bool(getattr(
@@ -574,13 +619,19 @@ class RegisterPoller(threading.Thread):
         results = {}
 
         for group in self._read_groups:
+            # a stop() must end the cycle HERE, not after n_groups × the retry
+            # budget (audit DP-5 — this lingering window is what produced
+            # orphan pollers at config reconnect)
+            if self._stop_event.is_set():
+                return results
             gtype = group.get('register_type', 'holding')
             read_ts = time.time()   # measurement time — travels with the value
             read_mono = time.monotonic()  # monotonic pair for step-immune freshness
 
             # coils (FC1) / discrete inputs (FC2): bits, one per address
             if gtype in ('coil', 'discrete'):
-                bits = self.connection.read_bits(group['start'], group['count'], gtype)
+                bits = self.connection.read_bits(group['start'], group['count'], gtype,
+                                                 stop_event=self._stop_event)
                 if bits is None:
                     # per-group detail is DEBUG; the device-level edge warning
                     # (_note_unreachable) is the one-line "device down" signal
@@ -596,7 +647,8 @@ class RegisterPoller(threading.Thread):
                 continue
 
             raw_data = self.connection.read_registers(
-                group['start'], group['count'], gtype)
+                group['start'], group['count'], gtype,
+                stop_event=self._stop_event)
 
             if raw_data is None:
                 logger.debug(f"{self._tag}Failed to read registers {group['start']}-{group['end']}")
@@ -616,6 +668,20 @@ class RegisterPoller(threading.Thread):
                             # status register → decode raw int to text; scale and
                             # the monotonic filter are numeric-only, so skip them.
                             value = decode_register(value, reg)
+                            if value is None:
+                                # a corrupt enum/bits config (unparsable mask/
+                                # shift) used to overwrite last-good with a
+                                # FRESH None (audit DP-6) — the vmeter then
+                                # never fail-closed and MQTT published "None".
+                                # Hold last-good and warn once per register.
+                                if reg.address not in self._decode_failed:
+                                    self._decode_failed.add(reg.address)
+                                    logger.warning(
+                                        "%s%s@%s: enum/bits decode failed — "
+                                        "holding last-good (check mask/shift)",
+                                        self._tag, reg.name, reg.address)
+                                continue
+                            self._decode_failed.discard(reg.address)
                         else:
                             # engineering value = raw / scale (SunSpec int+SF
                             # meters, transformer ratios, …). scale defaults to
@@ -640,6 +706,15 @@ class RegisterPoller(threading.Thread):
                                     logger.debug(f"{self._tag}{reg.name}@{reg.address}: "
                                                  f"dropped downward counter glitch (held)")
                                     continue
+                                if f.just_reset:
+                                    # the one transition that used to leave no
+                                    # trace (audit DP-10) — a wrongly-adopted
+                                    # baseline poisons every downstream delta
+                                    logger.warning(
+                                        f"{self._tag}{reg.name}@{reg.address}: "
+                                        f"counter RESET adopted (new baseline "
+                                        f"{value}) after {f.reset_confirm} "
+                                        f"coherent low reads")
                         results[reg.address] = {
                             'value': value,
                             'register': reg,
@@ -964,14 +1039,26 @@ class ModbusClient:
         """
         logger.info("Modbus reconnecting...")
 
-        # Stop all pollers
+        # Stop all pollers. With the stop event now checked between read-groups
+        # AND between retry attempts (audit DP-5), a poller exits within one
+        # in-flight transaction — but RETIRE the old connection regardless: a
+        # join that still times out must never leave an orphan able to REOPEN
+        # the old client and run a second concurrent Modbus master on the
+        # same endpoint (no transaction ids on RTU — responses would match
+        # the wrong request).
         for poller in self.pollers:
             poller.stop()
         for poller in self.pollers:
             poller.join(timeout=5)
+            if poller.is_alive():
+                logger.warning("%spoller %s still finishing after stop — old "
+                               "connection retired, it cannot touch the wire",
+                               f"[{self.device_id}] " if self.device_id else "",
+                               poller.poll_group_name)
         self.pollers.clear()
 
-        # Disconnect
+        # Disconnect + retire: read/write paths refuse a retired connection.
+        self.connection._retired = True
         self.connection.disconnect()
         self.connected = False
 
@@ -1083,7 +1170,26 @@ class ModbusClient:
                 status = "ok"
         if not connected and status == "ok":
             status = "degraded"
+        # Per-group staleness (audit DP-8): the connection timestamp is driven
+        # by the FASTEST group, so one chronically-failing batch/group was
+        # invisible — health said ok while a whole group's registers were
+        # frozen. A group that has polled before but not produced data for
+        # 3× its own interval (+2s slack) degrades the verdict.
+        stale_groups = []
+        for p in self.pollers:
+            _mono = getattr(p, 'last_poll_mono', None)
+            if not p.running or _mono is None:
+                continue
+            g_age = time.monotonic() - _mono
+            if g_age > p.interval * 3 + 2:
+                stale_groups.append({"group": p.poll_group_name,
+                                     "age_s": round(g_age, 1),
+                                     "interval_s": p.interval})
+        if stale_groups and status == "ok":
+            status = "degraded"
         return {"status": status, "stale": status != "ok",
                 "staleness_age_s": round(age, 1) if age is not None else None,
                 "last_success_ts": last, "connected": connected,
-                "threshold_s": round(threshold, 1)}
+                "threshold_s": round(threshold, 1),
+                "stale_groups": stale_groups,
+                "batch_failures": self.connection.batch_failures}

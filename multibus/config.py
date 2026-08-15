@@ -29,6 +29,65 @@ from . import __version__
 from .tombstone_store import TombstoneStore
 
 
+# register spans (in 16-bit words) per data type — for overlap validation
+_TYPE_SPANS = {'int16': 1, 'uint16': 1, 'sm16': 1, 'bool': 1,
+               'int32': 2, 'uint32': 2, 'sm32': 2, 'float': 2, 'float32': 2,
+               'int64': 4, 'uint64': 4, 'double': 4, 'float64': 4}
+
+
+def validate_register_identity(registers: List[Dict]) -> None:
+    """Reject identity collisions in one device's selection (audit DP-9).
+
+    Nothing used to stop: (a) two registers at the same (register_type,
+    address) — distinct Modbus address spaces collapse onto one store key,
+    last-write-wins and the other register silently vanishes; (b) span
+    overlaps (a float@100 plus an int16@101 decoding the float's low word as
+    its own reading); (c) duplicate names — nondeterministic vmeter binding
+    plus a shared MQTT topic and Influx series (the class caught LIVE in the
+    per-phase energy leaves at Migration B). Template validation covered
+    templates only; CSV/YAML/manual edits reached the store unchecked.
+    Raises ValueError naming the exact collision.
+
+    Span OVERLAPS are only WARNED about: live production maps legitimately
+    read overlapping windows (fronius_rtu serves an int32@10 alongside a
+    uint16@11), and on HTTP/MQTT devices the address is a synthetic index
+    where spans mean nothing — a hard reject would break healthy configs."""
+    seen_addr: Dict[tuple, str] = {}
+    seen_name: Dict[str, int] = {}
+    spans: Dict[str, List[tuple]] = {}
+    for r in registers:
+        name = str(r.get('name') or '')
+        addr = int(r.get('address', -1))
+        rtype = str(r.get('register_type') or 'holding')
+        key = (rtype, addr)
+        if key in seen_addr:
+            raise ValueError(f"duplicate address {addr} ({rtype}): "
+                             f"{seen_addr[key]!r} and {name!r} would overwrite "
+                             f"each other in the live store")
+        seen_addr[key] = name
+        if name:
+            if name in seen_name:
+                raise ValueError(
+                    f"duplicate register name {name!r} (addresses "
+                    f"{seen_name[name]} and {addr}): the name drives the "
+                    f"vmeter binding, the MQTT topic and the Influx series — "
+                    f"they must be unique per device")
+            seen_name[name] = addr
+        dt = str(r.get('data_type') or 'uint16').lower()
+        span = (max(1, int(r.get('length') or 1)) if dt == 'string'
+                else _TYPE_SPANS.get(dt, 2))
+        spans.setdefault(rtype, []).append((addr, addr + span, name))
+    for rtype, rows in spans.items():
+        rows.sort()
+        for (s1, e1, n1), (s2, e2, n2) in zip(rows, rows[1:]):
+            if s2 < e1:
+                logger.warning(
+                    "register span overlap (%s): %r @%s (ends %s) overlaps "
+                    "%r @%s — fine if intentional (overlapping reads are "
+                    "legal); check it if %r decodes garbage",
+                    rtype, n1, s1, e1, n2, s2, n2)
+
+
 def _version_tuple(v: str) -> tuple:
     """Numeric-compare form of a version string; unparsable parts count as 0
     (fail-open: a malformed stamp must never block a config load)."""
@@ -192,8 +251,14 @@ class InfluxDBConfig:
     default_bucket_pattern: str = "{device}"
     # Store-and-forward buffer: points that cannot be delivered (InfluxDB down)
     # are kept in RAM and replayed with their original timestamps on reconnect.
-    buffer_minutes: int = 10          # keep at most this much history
-    buffer_max_points: int = 50000    # hard cap (drop-oldest beyond this)
+    # Age window of the replay buffer, relative to its NEWEST point (a window
+    # of data, not of wall time — audit DP-12/28: the old 10-min wall-relative
+    # window silently capped real outage protection at ~10 minutes no matter
+    # what the count limit said). 120 min of typical full-rate data (~13 pt/s)
+    # is ~94k points; the count cap below is the hard RAM bound (~40 MB worst
+    # case) and binds first on high-rate configs.
+    buffer_minutes: int = 120
+    buffer_max_points: int = 200000   # hard cap (drop-oldest beyond this)
     # Persist the buffer to disk so it survives a restart during an outage
     # (RAM-only otherwise). Snapshot file under the config dir.
     buffer_persist: bool = True
@@ -627,6 +692,7 @@ class Config:
         if device_id == PRIMARY_DEVICE_ID:
             self.save_selected_registers(registers)
             return
+        validate_register_identity(registers)      # audit DP-9
         path = self.device_registers_path(device_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         data = {
@@ -1163,6 +1229,7 @@ class Config:
 
     def save_selected_registers(self, registers: List[Dict]):
         """Save selected registers to file."""
+        validate_register_identity(registers)      # audit DP-9
         data = {
             "version": "1.0",
             "registers": registers,

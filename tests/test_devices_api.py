@@ -809,3 +809,29 @@ def test_adhoc_probe_allows_lan_host(tmp_path):
         "unit_id": 1})
     body = r.json()
     assert "blocked" not in body.get("message", "")
+
+
+# ── audit DP-9: identity-collision validation on register save ───────────────
+
+def test_register_identity_hard_rejections():
+    """Duplicate (register_type, address) and duplicate names are rejected;
+    span overlaps only warn (live maps legitimately read overlapping
+    windows — fronius_rtu serves int32@10 alongside uint16@11)."""
+    import pytest as _pytest
+    from multibus.config import validate_register_identity as v
+
+    base = {'data_type': 'uint16', 'register_type': 'holding'}
+    # same (type, address) → reject
+    with _pytest.raises(ValueError, match='duplicate address'):
+        v([{**base, 'address': 5, 'name': 'a'},
+           {**base, 'address': 5, 'name': 'b'}])
+    # same address, DIFFERENT register space → allowed
+    v([{**base, 'address': 5, 'name': 'a'},
+       {**base, 'address': 5, 'name': 'b', 'register_type': 'input'}])
+    # duplicate name → reject (vmeter binding + MQTT topic + Influx series)
+    with _pytest.raises(ValueError, match='duplicate register name'):
+        v([{**base, 'address': 1, 'name': 'power'},
+           {**base, 'address': 2, 'name': 'power'}])
+    # span overlap → warn only, never raise
+    v([{'address': 10, 'name': 'v', 'data_type': 'int32', 'register_type': 'holding'},
+       {'address': 11, 'name': 'm', 'data_type': 'uint16', 'register_type': 'holding'}])

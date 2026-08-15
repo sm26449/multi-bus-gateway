@@ -541,3 +541,162 @@ def test_replay_keeps_buffer_on_auth_errors_drops_only_malformed():
     pub._drain_buffer()
     assert len(pub._buffer) == 0
     assert pub.points_dropped == n_before
+
+
+# ── audit DP-5/6/7/10: acquisition-path hardening ────────────────────────────
+
+def test_retired_connection_refuses_reads():
+    """DP-5: after a config reconnect, an orphan poller must not reopen the
+    OLD connection — a retired connection returns None without touching
+    the wire."""
+    from multibus import modbus_client as mc2
+    from multibus.config import ModbusConfig as MC
+    conn = mc2.ModbusConnection(MC(retry_attempts=3, retry_delay=0.0))
+    conn._retired = True
+    calls = []
+    conn._new_client = lambda: calls.append(1)     # would reconnect
+    assert conn.read_registers(100, 2) is None
+    assert conn.read_bits(0, 1) is None
+    assert calls == []                             # never touched the wire
+
+
+def test_stop_event_aborts_retry_budget():
+    """DP-5: a set stop event ends the retry loop between attempts."""
+    import threading as _th
+    from multibus import modbus_client as mc2
+    from multibus.config import ModbusConfig as MC
+    ev = _th.Event()
+    ev.set()
+    conn = mc2.ModbusConnection(MC(retry_attempts=3, retry_delay=0.0))
+    conn._new_client = lambda: (_ for _ in ()).throw(AssertionError("wire touched"))
+    assert conn.read_registers(100, 2, stop_event=ev) is None
+
+
+def test_short_and_empty_responses_are_failures(monkeypatch):
+    """DP-7: a non-error response with fewer registers than requested (or
+    none at all) must count as a FAILED read, not a silent success."""
+    from types import SimpleNamespace as NS
+    from multibus import modbus_client as mc2
+    from multibus.config import ModbusConfig as MC
+
+    class _ShortClient:
+        def __init__(self, regs):
+            self.regs = regs
+        def connect(self):
+            return True
+        def close(self):
+            pass
+        def is_socket_open(self):
+            return True
+        def read_holding_registers(self, address, count, device_id):
+            return NS(isError=lambda: False, registers=self.regs)
+
+    for regs in ([1], []):                          # short, then empty
+        conn = mc2.ModbusConnection(MC(retry_attempts=2, retry_delay=0.0))
+        monkeypatch.setattr(mc2, "_build_client", lambda cfg, r=regs: _ShortClient(r))
+        assert conn.read_registers(100, 2) is None
+        assert conn.failed_reads == 1
+        assert conn.batch_failures == 1
+        assert any(k.startswith("short response") or "other" in k
+                   for k in conn.error_counts), conn.error_counts
+
+
+def test_monotonic_filter_rejects_incoherent_noise_bursts():
+    """DP-10: three UNRELATED corrupt reads must not be adopted as a reset —
+    a real reset produces a coherent (itself monotonic) low sequence."""
+    from multibus.counter_filter import MonotonicFilter
+    f = MonotonicFilter(reset_confirm=3)
+    for v in (100000, 100010, 100020):
+        assert f.feed(v) == v
+    # incoherent garbage: each below baseline but mutually unrelated
+    assert f.feed(90312) is None
+    assert f.feed(12) is None          # below candidate → count restarts
+    assert f.feed(55023) is None       # still not 3 coherent lows
+    assert f.feed(55024) is None       # 2 coherent
+    assert f.just_reset is False
+    # a REAL reset: coherent growth from the new base
+    f2 = MonotonicFilter(reset_confirm=3)
+    for v in (100000, 100010):
+        f2.feed(v)
+    assert f2.feed(3) is None
+    assert f2.feed(5) is None
+    assert f2.feed(7) == 7             # 3 coherent lows → adopted
+    assert f2.just_reset is True
+    assert f2.feed(9) == 9             # normal growth from new baseline
+    assert f2.just_reset is False
+
+
+# ── audit DP-11/12/13: buffer lifecycle correctness ──────────────────────────
+
+def test_restore_honors_snapshot_age_not_boot_age(tmp_path, monkeypatch):
+    """DP-12: a snapshot whose points are older than buffer_minutes vs BOOT
+    time must still restore — the window is relative to the snapshot's own
+    newest point."""
+    import json as _json
+    import time as _t
+    snap = tmp_path / "influx_buffer.jsonl"
+    old = _t.time() - 3600                      # crash was an hour ago
+    rows = [[old + i, "b", f"m,name=x value={i} {int((old+i)*1e9)}"] for i in range(5)]
+    snap.write_text("\n".join(_json.dumps(r) for r in rows))
+    monkeypatch.setenv("INFLUX_BUFFER_PATH", str(snap))
+    pub = make_publisher(buffer_persist=True)
+    assert len(pub._buffer) == 5                # nothing thrown away at boot
+    assert pub.points_recovered == 5
+
+
+def test_prune_window_is_data_relative():
+    """DP-12/28: during an ongoing outage the buffer keeps buffer_minutes of
+    DATA (window anchored at the newest point), instead of silently dropping
+    everything older than wall-now minus the window."""
+    import time as _t
+    pub = make_publisher(buffer_minutes=60)
+    base = _t.time() - 7200                     # a 2h-old burst of points
+    with pub._buf_lock:
+        for i in range(10):
+            pub._buffer.append((base + i, "b", f"l{i}"))
+        pub._prune_buffer_locked()
+    assert len(pub._buffer) == 10               # all within 60min of NEWEST
+    # a point >window older than the newest is pruned
+    with pub._buf_lock:
+        pub._buffer.appendleft((base - 4000, "b", "ancient"))
+        pub._prune_buffer_locked()
+    assert len(pub._buffer) == 10
+    assert pub.points_dropped == 1
+
+
+def test_drops_invalidate_change_cache():
+    """DP-13: once points are dropped, 'last written' state must be forgotten
+    so a stable value re-writes after recovery instead of leaving the gap
+    open for hours."""
+    import time as _t
+    pub = make_publisher(buffer_minutes=1)
+    pub.last_values[1] = {"value": 42}
+    pub.last_write_time[1] = _t.time()
+    with pub._buf_lock:
+        pub._buffer.append((_t.time() - 3600, "b", "old"))
+        pub._buffer.append((_t.time(), "b", "new"))
+        pub._prune_buffer_locked()              # drops the old point
+    assert pub.points_dropped >= 1
+    assert pub.last_values == {} and pub.last_write_time == {}
+
+
+def test_close_flushes_write_api_before_persisting(tmp_path, monkeypatch):
+    """DP-11: points failing in the write_api's final flush must land in the
+    snapshot — the old order persisted (and even unlinked) the file BEFORE
+    the flush pushed its failures into the buffer."""
+    import json as _json
+    snap = tmp_path / "influx_buffer.jsonl"
+    monkeypatch.setenv("INFLUX_BUFFER_PATH", str(snap))
+    pub = make_publisher(buffer_persist=True)
+    pub.connected = False                       # skip drain
+
+    class _FlushFailApi:
+        def close(self_inner):
+            # the batching client flushing its queue on close → error callback
+            pub._on_write_error(("b", "org", "ns"), "m,name=x value=1 1000000000", RuntimeError("down"))
+    pub.write_api = _FlushFailApi()
+    pub.client = None
+    pub.close()
+    assert snap.exists(), "flush failures must be persisted"
+    rows = [_json.loads(l) for l in snap.read_text().splitlines() if l]
+    assert any("value=1" in r[2] for r in rows)

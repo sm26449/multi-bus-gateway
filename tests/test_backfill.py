@@ -58,10 +58,29 @@ def test_main_auto_skips_when_no_gap(monkeypatch):
     import time
     monkeypatch.setattr(backfill, "INFLUX_TOKEN", "tok")
     monkeypatch.setattr(backfill, "influx_latest_voltage_utc", lambda: time.time() - 5)  # 5s ago
+    monkeypatch.setattr(backfill, "influx_interior_gap_utc", lambda m: None)
     called = []
     monkeypatch.setattr(backfill, "backfill", lambda *a, **k: called.append(1) or 0)
     assert backfill.main([]) == 0
-    assert not called                       # a fresh last-point → nothing to heal
+    assert not called          # fresh tail + no interior hole → nothing to heal
+
+
+def test_main_auto_heals_interior_hole(monkeypatch):
+    """DP-14: a fresh tail must no longer hide an already-recovered outage —
+    the interior hole is detected and backfilled with padded bounds."""
+    import time
+    now = time.time()
+    hole = (now - 7200, now - 3600)          # a past one-hour outage
+    monkeypatch.setattr(backfill, "INFLUX_TOKEN", "tok")
+    monkeypatch.setattr(backfill, "influx_latest_voltage_utc", lambda: now - 5)
+    monkeypatch.setattr(backfill, "influx_interior_gap_utc", lambda m: hole)
+    windows = []
+    monkeypatch.setattr(backfill, "backfill",
+                        lambda s, e, dry, v: windows.append((s, e)) or 7)
+    assert backfill.main([]) == 0
+    assert len(windows) == 1
+    s, e = windows[0]
+    assert s == hole[0] - 120 and e == hole[1] + 120
 
 
 def test_main_auto_backfills_on_gap(monkeypatch):

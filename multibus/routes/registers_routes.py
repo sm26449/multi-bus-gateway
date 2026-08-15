@@ -257,6 +257,10 @@ def build(ctx) -> APIRouter:
             return {"status": "ok", "count": len(reg_list)}
         except HTTPException:
             raise
+        except ValueError as e:
+            # identity-collision rejections (audit DP-9) are the caller's to
+            # fix — a 400 with the exact collision, not a 500
+            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 

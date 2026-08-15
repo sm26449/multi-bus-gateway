@@ -303,8 +303,7 @@ class InfluxDBPublisher:
             p = self._persist_path
             if not p or not p.exists():
                 return
-            cutoff = time.time() - getattr(self.config, 'buffer_minutes', 10) * 60
-            loaded = 0
+            rows = []
             with open(p, encoding='utf-8') as f:
                 for row in f:
                     row = row.strip()
@@ -312,12 +311,18 @@ class InfluxDBPublisher:
                         continue
                     try:
                         ts, bucket, line = json.loads(row)
+                        rows.append((float(ts), bucket, line))
                     except Exception:  # noqa: BLE001
                         continue
-                    if ts < cutoff:
-                        continue
-                    self._buffer.append((float(ts), bucket, line))
-                    loaded += 1
+            # Load everything; _prune_buffer_locked applies the DATA-relative
+            # age window (audit DP-12): the old boot-relative cutoff threw the
+            # entire valid snapshot away when the host came back later than
+            # buffer_minutes after the crash, although Influx (90-day
+            # retention) would happily accept every point.
+            loaded = 0
+            for ts, bucket, line in rows:
+                self._buffer.append((ts, bucket, line))
+                loaded += 1
             self._prune_buffer_locked()
             self.points_recovered = len(self._buffer)
             logger.info("InfluxDB replay buffer restored from disk: %d points "
@@ -360,17 +365,39 @@ class InfluxDBPublisher:
             self._persist_dirty = True
             self._prune_buffer_locked()
 
+    def _invalidate_change_cache(self) -> None:
+        """Points were DROPPED (prune/poison) — forget 'last written' state
+        (audit DP-13): a stable value whose buffered point died would
+        otherwise never be written again until it physically changed,
+        leaving the series gap open long after Influx recovered."""
+        with self._cache_lock:
+            self.last_values.clear()
+            self.last_write_time.clear()
+
     def _prune_buffer_locked(self) -> None:
-        """Enforce buffer bounds. Caller holds _buf_lock."""
-        cutoff = time.time() - getattr(self.config, 'buffer_minutes', 10) * 60
+        """Enforce buffer bounds. Caller holds _buf_lock.
+
+        The age window is relative to the NEWEST buffered point, not the wall
+        clock (audit DP-12/28): wall-relative pruning silently discarded data
+        DURING an ongoing outage (real protection was ~10 min regardless of
+        the configured limits) and re-discarded a restored snapshot at boot.
+        buffer_max_points remains the hard RAM bound."""
+        if not self._buffer:
+            return
+        dropped = 0
+        newest = max(self._buffer[0][0], self._buffer[-1][0])
+        cutoff = newest - getattr(self.config, 'buffer_minutes', 120) * 60
         while self._buffer and self._buffer[0][0] < cutoff:
             self._buffer.popleft()
-            self.points_dropped += 1
-        overflow = len(self._buffer) - getattr(self.config, 'buffer_max_points', 50000)
+            dropped += 1
+        overflow = len(self._buffer) - getattr(self.config, 'buffer_max_points', 200000)
         if overflow > 0:
             for _ in range(overflow):
                 self._buffer.popleft()
-            self.points_dropped += overflow
+            dropped += overflow
+        if dropped:
+            self.points_dropped += dropped
+            self._invalidate_change_cache()        # audit DP-13
 
     def _drain_buffer(self) -> None:
         """Replay buffered points to InfluxDB in original order, in chunks,
@@ -423,6 +450,7 @@ class InfluxDBPublisher:
                     _status = getattr(e, "status", None)
                     if isinstance(_status, int) and _status in (400, 422):
                         self.points_dropped = getattr(self, "points_dropped", 0) + len(chunk)
+                        self._invalidate_change_cache()      # audit DP-13
                         logger.error(f"InfluxDB replay dropped {len(chunk)} points "
                                      f"(permanent {_status}: {e}) — poison chunk skipped")
                         continue
@@ -770,7 +798,23 @@ class InfluxDBPublisher:
         persistence is on) so the next boot picks it up."""
         self._stop_reconnect.set()
         if self._reconnect_thread and self._reconnect_thread.is_alive():
-            self._reconnect_thread.join(timeout=2)
+            # a drain in progress needs room — 2s guaranteed to be exceeded
+            # by any real replay, leaving it racing close (audit DP-11)
+            self._reconnect_thread.join(timeout=15)
+
+        # Order matters (audit DP-11): close the batching write_api FIRST —
+        # its internal queue (up to a batch of points) either reaches Influx
+        # or falls into the replay buffer via _on_write_error. Only THEN
+        # drain, and only THEN snapshot: the old order persisted before the
+        # flush, so flush-failures reappeared in a buffer nobody persisted
+        # again (and an empty pre-flush buffer even unlinked the snapshot
+        # file right before points landed in it).
+        if self.write_api:
+            try:
+                self.write_api.close()
+            except Exception:  # noqa: BLE001 — best-effort close on shutdown
+                pass
+            self.write_api = None
 
         if self.connected:
             try:
@@ -781,12 +825,6 @@ class InfluxDBPublisher:
         # Persist whatever is left (undelivered) so a restart resumes it.
         if self._persist_path:
             self._persist_buffer()
-
-        if self.write_api:
-            try:
-                self.write_api.close()
-            except Exception:  # noqa: BLE001 — best-effort close on shutdown
-                pass
 
         if self.client:
             try:
@@ -854,7 +892,7 @@ class InfluxDBPublisher:
             'replayed_total': self.points_replayed,
             'dropped_total': self.points_dropped,
             'recovered_total': self.points_recovered,
-            'buffer_minutes': getattr(self.config, 'buffer_minutes', 10),
+            'buffer_minutes': getattr(self.config, 'buffer_minutes', 120),
             'buffer_persist': bool(self._persist_path),
         }
 

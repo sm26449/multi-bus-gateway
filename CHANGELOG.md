@@ -1,5 +1,69 @@
 # Changelog
 
+## 3.27.0
+
+### 2026-08-15 — data-path audit batch 2 (DP-5..14, 16 + DP-34/36)
+
+- **DP-5 — orphan pollers eliminated.** The stop event is now checked
+  between read-groups AND between retry attempts (M1 covered only the
+  outer loop), so a stopping poller exits within one in-flight
+  transaction; a config reconnect additionally RETIRES the old connection
+  (reads/writes refuse it) — a timed-out join can no longer leave a second
+  concurrent Modbus master reopening the old client on the same endpoint.
+- **DP-6 — enum/bits decode failure holds last-good.** A corrupt
+  enum/bits config (unparsable mask/shift) used to overwrite the last good
+  value with a FRESH None — the vmeter never fail-closed and MQTT
+  published "None". Now: skip the write (cache holds), warn once per
+  register, recover silently.
+- **DP-7/34 — short and empty responses are failures.** A non-error reply
+  with fewer registers than requested counted as success (tail registers
+  silently dropped, freshness refreshed); an empty reply retried with no
+  backoff and no error count. Both now fail the batch and retry.
+- **DP-8 — partial loss is visible.** Reachability is a LINK verdict tied
+  to the consecutive-failure backstop (one chronically-failing batch no
+  longer flaps unreachable/recovered every cycle, rotating the event ring
+  in ~25s); `data_health` gains per-group staleness (`stale_groups`
+  degrades the verdict — the connection timestamp is driven by the fastest
+  group and hid a frozen slow group) and a `batch_failures` counter.
+- **DP-10 — counter resets must be COHERENT.** Three unrelated corrupt
+  reads could be adopted as a "reset" baseline (the exact phantom-delta
+  the filter exists to stop). Confirming reads must now stay within 5% of
+  the drop (a real post-reset counter grows minutely vs the drop); the
+  adoption — previously the one traceless transition — logs a WARNING.
+- **DP-11 — shutdown flush order.** close() closes the batching write_api
+  FIRST (its failures land in the replay buffer), then drains, THEN
+  persists — the old order snapshotted before the flush, losing the final
+  batch and even unlinking the snapshot right before points landed in it.
+  Reconnect join raised 2s→15s (a drain in progress raced close()).
+- **DP-12/28 — the buffer window is a window of DATA.** Age pruning is now
+  relative to the newest buffered point, not the wall clock — wall-relative
+  pruning silently capped real outage protection at ~10 minutes (during
+  the outage AND at restore, where a delayed restart threw the whole valid
+  snapshot away). Defaults raised deliberately: buffer_minutes 10→120,
+  buffer_max_points 50k→200k (hard RAM bound ~40 MB).
+- **DP-13 — drops invalidate the change cache.** A stable value whose
+  buffered point died was never written again until it physically changed;
+  any drop (prune or poison chunk) now clears last-written state so
+  post-recovery values re-write.
+- **DP-14 — backfill heals interior holes.** The auto path only checked
+  the TAIL gap, so the classic incident (Influx down an hour, live writes
+  resumed before the next cron tick) was never repaired.
+  aggregateWindow(createEmpty) now scans the lookback for interior holes
+  and backfills the earliest one with padded bounds. (+DP-36: stale
+  docstring aligned with the canonical schema.)
+- **DP-16 — HA command worker survives reconnect()** (it was joined in
+  disconnect() and never restarted; post-reconnect commands filled the
+  queue and blamed "queue full").
+- **DP-9 — identity collisions rejected at save.** Duplicate
+  (register_type, address) — distinct Modbus address spaces collapse onto
+  one store key, last-write-wins — and duplicate names (nondeterministic
+  vmeter binding + shared MQTT topic + Influx series; the class caught
+  live at Migration B) now 400 with the exact collision. Span overlaps
+  only WARN: live maps legitimately read overlapping windows (fronius_rtu
+  serves int32@10 alongside uint16@11) and HTTP/MQTT addresses are
+  synthetic — verified against all 8 live selections before shipping.
+- +13 tests (suite 840+).
+
 ## 3.26.0
 
 ### 2026-08-15 — data-path audit batch 1 (DP-1/3/4/15/17/20) + sessions + UI a11y

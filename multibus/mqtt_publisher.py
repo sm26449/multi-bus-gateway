@@ -872,6 +872,11 @@ class MQTTPublisher:
             return False
 
         self._setup_client()
+        # disconnect() joined the HA command worker; without a restart every
+        # post-reconnect command silently filled the queue to its cap and the
+        # "queue full" warning blamed the wrong cause (audit DP-16)
+        if self._write_handler is not None:
+            self._start_command_worker()
 
         if self._try_connect():
             logger.info("MQTT reconnected successfully")

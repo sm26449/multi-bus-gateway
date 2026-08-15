@@ -24,9 +24,9 @@ cabinet switch), the live stream — and InfluxDB — gets a hole. But the meter
 powered by the grid it measures and keeps logging to its own flash throughout.
 This job reads that flash via the meter's HTTP ``HIST_DATA`` API and writes the
 missing points back, matching the live ``InfluxDBPublisher`` schema exactly
-(measurement ``voltage``; fields ``uln_n``/``ull_n`` + ``value``; tags
-``device/address/name/poll_group/phase`` + ``type``|``connection``) so charts
-just fill in. A ``backfilled=1`` field marks recovered points for traceability.
+(measurement ``voltage``; the canonical per-name field — ``voltage_l1_n`` …,
+post-Migration A — + ``value``; tags ``device/address/name/poll_group/phase``
++ ``type``|``connection``) so charts just fill in. A ``backfilled=1`` field marks recovered points for traceability.
 
 Scope: L-N and L-L voltages at 1-minute resolution — the only parameters the
 UMG512 records historically (current/power/frequency are live-only, never in
@@ -130,6 +130,45 @@ def influx_latest_voltage_utc() -> float | None:
     return None
 
 
+def influx_interior_gap_utc(min_gap_sec: float) -> tuple[float, float] | None:
+    """Earliest INTERIOR gap ≥ min_gap_sec in the reference series over the
+    lookback window, as (start_utc, end_utc) — or None.
+
+    Audit DP-14: the tail-gap check alone missed the classic incident shape
+    'Influx down 14:00-15:00, live writes resumed 15:00' — by the next cron
+    tick the tail looked fresh and the hour-long hole was never repaired.
+    aggregateWindow(createEmpty) marks the empty minutes; we return the
+    hole's bounds so the auto path can heal it."""
+    from influxdb_client import InfluxDBClient
+
+    every = max(60, int(min_gap_sec // 3))
+    flux = (
+        f'from(bucket:"{INFLUX_BUCKET}") |> range(start:-{MAX_LOOKBACK_H}h) '
+        '|> filter(fn:(r)=>r._measurement=="voltage" and r._field=="value" '
+        'and r.phase=="L1" and r.type=="line_neutral") '
+        f'|> aggregateWindow(every: {every}s, fn: count, createEmpty: true) '
+        '|> keep(columns:["_time","_value"])'
+    )
+    gap_start = None
+    last_time = None
+    with InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG) as c:
+        for table in c.query_api().query(flux):
+            for rec in table.records:
+                t = rec.get_time().timestamp()
+                empty = not rec.get_value()
+                if empty and gap_start is None:
+                    gap_start = t - every          # window END stamps the bucket
+                elif not empty and gap_start is not None:
+                    if (t - every) - gap_start >= min_gap_sec:
+                        return gap_start, t
+                    gap_start = None
+                last_time = t
+    # a gap running to the edge of the window is the TAIL gap — the caller's
+    # existing latest-point check owns that case
+    _ = last_time
+    return None
+
+
 def backfill(start_utc: float, end_utc: float, dry: bool, verbose: bool) -> int:
     from influxdb_client import InfluxDBClient, Point, WritePrecision
     from influxdb_client.client.write_api import SYNCHRONOUS
@@ -200,7 +239,20 @@ def main(argv: list[str] | None = None) -> int:
         if latest is not None:
             gap = now - latest
             if gap <= MIN_GAP_SEC:
-                print(f"[auto] no gap (last point {gap:.0f}s ago ≤ {MIN_GAP_SEC}s) — nothing to do")
+                # tail is fresh — but an INTERIOR hole (outage that already
+                # recovered) hides behind it (audit DP-14): scan for one
+                hole = influx_interior_gap_utc(MIN_GAP_SEC)
+                if hole is None:
+                    print(f"[auto] no gap (last point {gap:.0f}s ago ≤ {MIN_GAP_SEC}s, "
+                          f"no interior hole) — nothing to do")
+                    return 0
+                start_utc, end_utc = hole[0] - 120, hole[1] + 120
+                print(f"[auto] interior hole detected: "
+                      f"{datetime.fromtimestamp(hole[0], timezone.utc):%Y-%m-%d %H:%M} .. "
+                      f"{datetime.fromtimestamp(hole[1], timezone.utc):%H:%M} UTC — healing")
+                n = backfill(start_utc, end_utc, args.dry_run, args.verbose)
+                print(f"{'[dry-run] would write' if args.dry_run else 'wrote'} "
+                      f"{n} points across {len(PARAMS)} series")
                 return 0
             print(f"[auto] gap detected: {gap / 60:.1f} min since last point "
                   f"({datetime.fromtimestamp(latest, timezone.utc):%Y-%m-%d %H:%M} UTC)")

@@ -36,7 +36,8 @@ class MonotonicFilter:
     counter that is momentarily flat is not mistaken for a regression.
     """
 
-    __slots__ = ("reset_confirm", "noise", "_last", "_regressions")
+    __slots__ = ("reset_confirm", "noise", "_last", "_regressions",
+                 "_reset_first", "just_reset")
 
     def __init__(self, reset_confirm: int = 3, noise: float = 0.0):
         # at least 1 confirming read; 1 = accept every downward step immediately
@@ -44,9 +45,15 @@ class MonotonicFilter:
         self.noise = abs(float(noise))
         self._last: Optional[float] = None
         self._regressions = 0
+        self._reset_first: Optional[float] = None
+        # set for exactly one feed() when a reset was ADOPTED — the caller
+        # logs it with register context (an adopted reset used to be the one
+        # transition that left no trace at all)
+        self.just_reset = False
 
     def feed(self, value):
         """Return the value to publish, or ``None`` to drop it (hold last)."""
+        self.just_reset = False
         # bool is an int subclass — exclude it; non-numerics are not counters
         if not isinstance(value, (int, float)) or isinstance(value, bool):
             return value
@@ -59,12 +66,33 @@ class MonotonicFilter:
             if value > self._last:
                 self._last = value                 # never let the baseline slip down
             self._regressions = 0
+            self._reset_first = None
             return value
 
-        # value is genuinely below the baseline — glitch until proven a reset
-        self._regressions += 1
+        # Below baseline — glitch until proven a reset. A REAL reset produces
+        # a COHERENT low sequence: the post-reset counter grows by tiny
+        # increments compared to the size of the drop itself, so the SPREAD of
+        # the confirming reads must stay small relative to that drop (5%, or
+        # the noise band). A burst of unrelated corrupt reads — even an
+        # ascending one — spreads on the same order as the drop and never
+        # confirms (audit DP-10: three random garbage values could previously
+        # be adopted as a baseline, the exact phantom-delta this filter
+        # exists to stop).
+        if self._regressions == 0 or self._reset_first is None:
+            self._reset_first = value
+            self._regressions = 1
+        else:
+            spread = value - self._reset_first
+            allowed = max(self.noise, 0.05 * (self._last - self._reset_first))
+            if -self.noise <= spread <= allowed:
+                self._regressions += 1             # coherent continuation
+            else:
+                self._reset_first = value          # incoherent → restart the count
+                self._regressions = 1
         if self._regressions >= self.reset_confirm:
-            self._last = value                     # sustained → real reset, adopt it
+            self._last = value                     # sustained + coherent → adopt
             self._regressions = 0
+            self._reset_first = None
+            self.just_reset = True
             return value
         return None                                # transient → drop, keep last-good
