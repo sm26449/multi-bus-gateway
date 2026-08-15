@@ -39,6 +39,10 @@ Companion documents:
 
 ---
 
+> The defensive design behind everything in this manual — every fail-safe,
+> delivery guarantee and self-heal — is cataloged in
+> [reliability.md](reliability.md).
+
 ## 1. What you need
 
 - At least one southbound source: a **Modbus TCP** device (e.g. a Janitza
@@ -62,7 +66,9 @@ cd multi-bus-gateway
 # 2) Create your environment file (optional — everything is configurable in the UI)
 cp .env.example .env
 
-# 3) Start it
+# 3) Start the COMPLETE stack — gateway + MQTT broker (mosquitto) +
+#    MQTT Explorer + InfluxDB + Grafana + ESPHome. Everything the product
+#    needs ships in this one file; nothing external to install.
 docker compose up -d
 
 # 4) Grab the generated admin password (first boot only), then open the UI
@@ -70,13 +76,40 @@ docker compose logs multi-bus-gateway | grep -A3 'FIRST RUN'
 #    http://<host>:8080
 ```
 
-Ports published by the default compose file: `8080` (UI/API),
-`1502–1512` (virtual-meter range, grow via `VMETER_PORT_START/END`), and
-`502` (standard Modbus, for consumers that insist on it — drop it if the host
-already uses it). For an RTU device either start the bundled serial
-bridge — `docker compose --profile rtu-bridge up -d` (recommended; see
-[rtu-serial.md](rtu-serial.md)) — or pass the adapter through directly:
-`devices: ["/dev/ttyUSB0:/dev/ttyUSB0"]` in a compose override.
+Out of the box the pipeline is live end-to-end: the gateway publishes to
+the bundled broker (its default broker host is `mosquitto`), **MQTT
+Explorer** on `:4000` shows every topic flowing, and InfluxDB self-
+configures on first boot (org/bucket `multibus`; change the password/token
+in `.env`, then enable the sink in Config → InfluxDB and paste the token —
+Grafana is on `:3000`). Want less? Start only what you need:
+`docker compose up -d multi-bus-gateway mosquitto`. Prefer your own broker
+or InfluxDB later? Point the gateway at them from the UI — the bundled ones
+are ordinary containers you can simply stop.
+
+Already running a wider stack on the shared network? The base file *names*
+its network `pv-stack-network` (override: `PV_STACK_NETWORK` in `.env`), so
+a fresh install creates it and later services can join. If the network —
+and the broker/InfluxDB — **already exist**, use the overlay and start only
+the gateway services:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.pv-stack.yml \
+  up -d multi-bus-gateway
+```
+
+Ports published by the default compose file: `8080` (UI/API), `1883` +
+`9001` (bundled MQTT + WebSockets), `4000` (MQTT Explorer), `8086`
+(InfluxDB), `3000` (Grafana), `1502–1512` (virtual-meter range, grow via
+`VMETER_PORT_START/END`), and `502` (standard Modbus, for consumers that
+insist on it — drop it if the host already uses it). The containers run **non-root** (gateway uid 10001; the
+serial bridge uid 10002 with `/dev` read-only and tty-only device access),
+which is why the compose sets `net.ipv4.ip_unprivileged_port_start=0` —
+scoped to the container's own network namespace, so an unprivileged process
+may bind `:502`; nothing changes on the host. For an RTU device either
+start the bundled serial bridge — `docker compose --profile rtu-bridge up
+-d` (recommended; see [rtu-serial.md](rtu-serial.md)) — or pass the adapter
+through directly: `devices: ["/dev/ttyUSB0:/dev/ttyUSB0"]` in a compose
+override.
 
 Logs: `docker compose logs -f`.
 
@@ -99,6 +132,7 @@ The optional env variables:
 | `MQTT_USERNAME` / `MQTT_PASSWORD` / `MQTT_PREFIX` / `MQTT_PUBLISH_MODE` | MQTT details | — |
 | `INFLUXDB_ENABLED` / `INFLUXDB_URL` / `INFLUXDB_TOKEN` / `INFLUXDB_ORG` / `INFLUXDB_BUCKET` | InfluxDB sink | — |
 | `UI_PORT` | Web UI port | `8080` |
+| `UI_HOST` | bind address — bare-metal default is loopback (`127.0.0.1`); the container image sets `0.0.0.0` (exposure is governed by the compose port mapping) | `0.0.0.0` |
 | `API_KEY` | require `X-API-Key` on mutating requests | — |
 | `VMETER_PORT_START` / `VMETER_PORT_END` | virtual-meter port range | `1502` / `1512` |
 | `TZ` | timezone for the bundled ESPHome container and timestamps | `Europe/Bucharest` |
@@ -175,8 +209,12 @@ Devices → *Discover devices*:
    - **Modbus RTU**: two modes (see [rtu-serial.md](rtu-serial.md)).
      **Over network (recommended)** — press **Scan** and pick a USB adapter
      from the serial bridge (plug in → appears; unplug → gone), MBG stays
-     unprivileged. **Direct serial** — serial port (e.g. `/dev/ttyUSB0`),
-     baud, parity, stop bits, with the adapter mapped into the container.
+     unprivileged. **One master per bridged line** is enforced: a second
+     device on the same bridge endpoint is rejected at validation (two
+     masters would evict each other forever), and Test-connection refuses
+     an endpoint a running device is polling. **Direct serial** — serial
+     port (e.g. `/dev/ttyUSB0`), baud, parity, stop bits, with the adapter
+     mapped into the container.
    - **HTTP/JSON**: a URL returning JSON; each register extracts its value
      with a `json_path` (e.g. `Body.Data.PowerReal_P_Sum`). URLs must point
      at a private LAN host unless `security.allow_nonlan_http_devices` is
@@ -193,8 +231,8 @@ Devices → *Discover devices*:
 2. **Template** — choose from the library (11 bundled maps, see
    [device-catalog.md](device-catalog.md)), **upload** a `.json` template
    (validated row by row; id conflicts ask before overwriting), **create**
-   one in the editor, or **import a CSV** register map
-   ([csv-import.md](csv-import.md)). Built-ins are read-only — *Duplicate to
+   one in the editor, or **import a CSV or YAML** register map
+   ([csv-import.md](csv-import.md), [yaml-import.md](yaml-import.md)). Built-ins are read-only — *Duplicate to
    edit*. A template used by a device cannot be deleted.
 3. **Data routing** — the device **id** becomes the routing key: values
    publish under the device's MQTT topic prefix (live preview) and land in
@@ -264,6 +302,20 @@ the InfluxDB field is the flat canonical name. The full list is in
 - A template promises canonical names with `"canonical": true`; non-canonical or
   duplicate names then show as a warning in the Template manager.
 
+**The unit is part of the contract.** Each canonical field carries a
+canonical unit (see the Unit column in
+[`canonical-fields.md`](canonical-fields.md)); energy is the base **Wh
+family** (Wh/varh/VAh). A meter whose native map is kWh converts in its
+selection **scale** (`scale/1000`) — the value it publishes must already be
+the canonical unit, or every cross-device dashboard, vmeter binding and
+failover twin inherits a silent ×1000 error. Two guards enforce this:
+
+- **In the template editor**, the *Unit* cell shows the canonical unit as a
+  tooltip for canonical names and turns **amber live** when the typed unit
+  differs, with the fix spelled out (adjust the scale, or rename the row).
+- **At save time**, selecting a canonical name with a mismatched unit logs
+  a warning (the save still goes through — the warning is the tripwire).
+
 Vendor reference maps (e.g. the Janitza UMG512) predate this and keep their
 native names — the scheme applies to the templates you build/import.
 
@@ -307,8 +359,16 @@ devices:
 |---|---|
 | `offset` | engineering value = `raw / scale + offset` — zero-point / unit shifts (e.g. Kelvin×10 → °C with `scale: 10, offset: -273.15`); skipped for enum/bitfield rows |
 | `nan` | not-available sentinel: `true` = the data type's SunSpec value (`0x8000`/`0xFFFF`…), or an explicit raw value / list. A match reads as *missing*, never a garbage number (−32768 °C). Float NaN/Inf is always dropped |
-| `monotonic: true` | cumulative counters (Wh/kWh/varh): a downward glitch is dropped (the cache holds last-good), so HA Energy / Victron / `difference()` never see a phantom counter reset; a genuine sustained reset is still accepted |
-| `enum` / `bits` (+ `mask`/`shift`) | decode a raw status word to text — `enum: {7: "Fault"}` (unmapped → `unknown (n)`), `bits: {0: "overvoltage"}` joins set-bit names; built visually via the **States** button in the template editor |
+| `monotonic: true` | cumulative counters (Wh/kWh/varh): an implausible step in **either direction** is dropped (the cache holds last-good) — a downward glitch, but also an upward jump >50% above the baseline (a corrupted high word would otherwise inject phantom GWh). A genuine sustained reset is adopted only after coherent confirming reads (within 5% of each other) and logs a WARNING with the new baseline |
+| `enum` / `bits` (+ `mask`/`shift`) | decode a raw status word to text — `enum: {7: "Fault"}` (unmapped → `unknown (n)`), `bits: {0: "overvoltage"}` joins set-bit names; built visually via the **States** button in the template editor. Bundled maps use it for identity registers too (e.g. the EM24 detection code 1651, the Fronius 65A model id 731) |
+
+These options apply **identically on every transport** — Modbus, HTTP/JSON
+and MQTT-in sources all run the same wire→value pipeline (sentinel →
+enum/bits → scale+offset → monotonic), so an energy counter fed over MQTT
+(Shelly, Zigbee2MQTT…) gets the same rollover protection as a Modbus one.
+When a value is dropped, the reason is one of three visible stages:
+`sentinel` (declared not-available), `decode_failed` (unmappable status,
+edge-logged once) or `filter_drop` (monotonic rejection, debug-logged).
 
 ---
 
@@ -360,13 +420,31 @@ in-container paths; "skip verification" is for testing only).
   so a steady reading keeps a fresh timestamp and Home Assistant doesn't grey
   the entity out during long steady states.
 - **Availability**: a Last-Will marks `<prefix>/status` = `offline` if the
-  gateway dies; `online` is retained on connect.
+  gateway dies; `online` is retained on connect. **Every device publishes a
+  retained availability topic, the primary included**, and the availability
+  cache is cleared on reconnect so it is always re-asserted — a consumer
+  never has to guess from silence. It is confirmed only after a successful
+  publish, so a broker hiccup can't leave a stale `online` behind.
+- **Retained commands are never obeyed** — a retained MQTT message sitting
+  on a *command* topic (a stray `mosquitto_pub -r`, an HA `retain: true`)
+  would otherwise re-actuate hardware on **every** reconnect. Retained
+  deliveries on command topics are dropped and the retained copy is cleared
+  at subscribe.
 - **Home Assistant discovery**: on by default. Each device becomes an HA
   device with its selected registers as sensors (`unique_id`
   `mbg_dev_<device>_<addr>_<name>` for non-primary devices), with sensible
-  device/state classes from the units. Virtual meters publish their own
-  diagnostic entities (serving state, request rate, errors, freshness…).
-  Deleting a device clears its retained discovery so HA drops the entities.
+  device/state classes from the units, plus a per-device **connectivity
+  `binary_sensor`** (availability). Registers the template marks writable
+  become HA **`number`/`select` entities** (bounds from the template,
+  double-gated by `mqtt.allow_write_entities` + `security.allow_writes` —
+  see §14); the write-aware discovery is registered at boot, so control
+  survives a restart. Virtual meters publish their own diagnostic entities
+  (serving state, request rate, errors, freshness…). Deleting a device
+  clears its retained discovery so HA drops the entities.
+- **Topic-prefix migrations** — `mqtt.compat_aliases` dual-publishes old
+  topic names alongside the new ones so consumers can be flipped without a
+  gap (see [config-reference.md](config-reference.md)); remove the aliases
+  once every consumer has moved.
 
 **Pitfall:** with `retain: true` (default) a consumer that subscribes late
 still sees the last value — but after a broker restart without persistence,
@@ -386,17 +464,27 @@ grafana`).
 
 **Data guarantees.** Every point is stamped with the *read* time, not the
 flush time. If InfluxDB becomes unreachable, points go to a
-**store-and-forward buffer** (default 10 minutes / 50,000 points — tune
-`influxdb.buffer_minutes` / `buffer_max_points`) and are replayed with their
-original timestamps on reconnect, idempotently. With
-`influxdb.buffer_persist: true` (default) the buffer also survives a
+**store-and-forward buffer** (default **120 minutes / 200,000 points**,
+~40 MB bounded — tune `influxdb.buffer_minutes` / `buffer_max_points`) and
+are replayed with their original timestamps on reconnect, idempotently. The
+window is **data-relative** (measured from the newest buffered point, not
+the wall clock), so a delayed restart never throws a valid snapshot away.
+With `influxdb.buffer_persist: true` (default) the buffer also survives a
 restart during the outage (`config/influx_buffer.jsonl`). Batches the client
 gives up on after its ~5 min of internal retries are recovered into the same
-buffer. Outages longer than the window drop the oldest points; for the
-Janitza's voltages the meter's onboard recording can backfill those via
-`python -m multibus.backfill`. Watch `buffer_points` / `replayed_total` /
-`dropped_total` in `/api/status` or `gateway_influx_buffer_points` in
-`/metrics`.
+buffer. **Authentication failures are detected explicitly**: a 401/403/404
+(rotated token, deleted bucket) sets an `influx_auth_failed` flag, raises an
+operator alert and re-buffers instead of dropping — only genuinely
+malformed points (400/422) are ever discarded, and `writes_confirmed` /
+`last_confirm_age_s` prove data is actually landing (the old failure mode
+was `connected: true` with 100 % loss). Outages longer than the window drop
+the oldest points; for the Janitza's voltages the meter's onboard recording
+can backfill those via `python -m multibus.backfill` — the backfill derives
+its point schema (tags, fields, measurement) **from the live register
+selection**, so repaired points land in byte-identical series, and a
+deselected address is skipped rather than written with a guessed schema.
+Watch `buffer_points` / `replayed_total` / `dropped_total` in `/api/status`
+or `gateway_influx_buffer_points` in `/metrics`.
 
 MQTT is deliberately **not** replayed: it is a live bus — on reconnect the
 current state is republished instead.
@@ -474,6 +562,20 @@ member. In policy modes the server stays up while at least one source is
 fresh; all dead → it stops responding so the consumer's own meter-loss
 fail-safe engages.
 
+Two per-row refinements:
+
+- **A row whose source never resolved** (renamed register, deselect, a
+  template typo) fails the freshness verdict outright and raises an
+  `unresolved` event — distinct from *stale*. Before this rule the
+  zero-seeded block would have served a plausible 0 W while the meter
+  looked healthy; now the meter withholds loudly until the source resolves
+  once.
+- **Per-row freshness bound** — a register may carry its own
+  `stale_after_s`, overriding the instance bound, so a 60-second BLE sensor
+  can share a meter with 250-ms grid rows without false staleness; the
+  effective bound also derives automatically from the producing poll
+  group's cadence.
+
 **11.5 — Optional in-band quality block.** If the consumer (PLC/SCADA) needs
 to know the data quality on the same Modbus connection, enable *In-band
 quality block* on the instance. It serves a read-only block at **61440**
@@ -511,7 +613,15 @@ shouldn't stop with one source outage. Two layers, driving the same engine:
   device**. At start, every bare-name live register is rewritten into the
   pair `[name, <twin>.name]` — no template edits, because canonical field
   names are identical across devices. Const, sum, already-failover and
-  explicit `device.register` rows stay as authored. The fallback is validated
+  explicit `device.register` rows stay as authored. **Cumulative energy
+  counters are deliberately excluded**: a twin is a different physical
+  meter, so its lifetime total would be a non-monotonic jump that corrupts
+  downstream kWh statistics (a Fronius DataManager treats a backward-moving
+  counter as a fault). Counter rows stay on the primary and, on an outage,
+  **freeze at their last good value** in every policy — a frozen counter is
+  a true statement ("energy delivered so far") — while the instantaneous
+  rows fail over; when the primary returns, the counter resumes with a
+  legitimate forward jump, like after any meter power-cycle. The fallback is validated
   at save (known device, different from the source) and re-checked at start
   (a bad value is ignored with a warning — it never blocks the meter). A
   configured-but-offline twin arms and engages the moment it publishes.
@@ -678,7 +788,21 @@ on the bus.
 - **Error taxonomy** — read failures are counted by kind: `timeout` (no
   answer), `exception_N` (the device answered with Modbus exception N —
   the link is fine, the request is wrong), `connection` (TCP/serial-level).
-  Surfaced per device on Status and `/metrics`.
+  Surfaced per device on Status and `/metrics`. Retry policy is owned by
+  the gateway (`retry_attempts`/`retry_delay`), never doubled by the Modbus
+  library, and a short or empty response counts as a failure, not a
+  success. *Reachability* is a **link verdict**, not a per-batch one: a
+  device is declared unreachable only after the consecutive-failure
+  backstop trips (which also force-reopens a wedged-but-open link), so one
+  chronically bad register batch can't flap `unreachable/recovered` events
+  while the link is fine — per-batch loss stays visible as
+  `batch_failures` + per-group `stale_groups` in the health surface.
+- **Query now** returns both the **raw** wire value and, when the address
+  is a selected register, an additive **`corrected`** field — the exact
+  value the poll pipeline would publish (scale/offset/enum applied,
+  stateless: a debug read never advances the monotonic filter). If the two
+  differ unexpectedly, the register's scale/decode declaration is where to
+  look.
 
 ---
 
@@ -692,7 +816,9 @@ default**.
    (anonymous writes are refused even with the gate open).
 3. The register must be declared **writable in the device template**, with
    optional `write_min` / `write_max` bounds; the encoding (data type,
-   scale) always comes from the template row, never from the caller.
+   scale, and `offset` — inverted on write, `raw = (value − offset) ×
+   scale`, including on the safety revert) always comes from the template
+   row, never from the caller.
 4. The **primary device is always read-only**; HTTP/JSON devices and
    input/discrete registers can't be written.
 5. Per-IP rate limit (`security.write_rate_limit_per_s`, default 10/s).
@@ -736,7 +862,16 @@ Config → **Backup & Snapshots**.
   back to that **last-known-good** file (never bare defaults), so the primary
   keeps polling the right host through a bad edit. The condition surfaces as
   `config.healthy` in `/api/status` and is raised as an alert; saves stay
-  disabled until the file is repaired.
+  disabled until the file is repaired. The heal also catches the sneaky
+  case of a file that still *parses* but is a truncated husk (empty file,
+  bare scalar, cut before the sections every save writes): a plausibility
+  gate routes it through the same `.bad` + heal path, and a snapshot that
+  would *lose devices* is never promoted over the existing `.good` (an
+  intentional device removal refreshes `.good` via the save itself). The
+  register selections get the same contract: `selected_registers.json` —
+  the primary's **and every device's** — keeps its own `.good`/`.bad`
+  pair, so a truncated selection heals instead of silently emptying every
+  poller.
 - **Backup export/import (ZIP)** — for portability between hosts. The
   export **strips secrets** (MQTT/Influx credentials, password hashes,
   webhook/REST-push headers) and host identity by default;
@@ -787,12 +922,18 @@ One **admin** account, plus optional **operator** and **viewer** accounts:
 | `admin` | everything | — |
 
 Passwords are hashed (PBKDF2-SHA256, 600k iterations); leave a password
-field blank on save to keep the current one. **Enabling login refuses the
-default admin/admin** — set a real password first. Failed logins are locked
+field blank on save to keep the current one. **Enabling login with a blank
+or default `admin` password is refused at every entry point** — the UI
+route, a hand-edited `config.yaml`, a config import and a snapshot restore
+all hit the same guard, so no path yields a gateway that *looks* locked
+but accepts `admin/admin`. Failed logins are locked
 out per IP (`lockout_threshold` / `lockout_minutes`, defaults 5 / 5 min).
 Sessions are HttpOnly cookies, 7-day sliding, persisted as SHA-256 token
 hashes in `config/sessions.json` — a container restart keeps you logged in.
-The audit trail is admin-only.
+Rotating any password revokes **every** session (an old cookie can't outlive
+the rotation) — except the author's: the security save re-issues your own
+session, so changing passwords never logs *you* out mid-task. The audit
+trail is admin-only.
 
 ### 16.2 Passkeys (WebAuthn)
 
@@ -813,7 +954,8 @@ Requirements and pitfalls:
 
 - **Built-in TLS**: point Config → Security at a cert + key under
   `config/`, or leave blank to auto-generate a self-signed pair
-  (**restart to apply**; browsers will warn on self-signed).
+  (**restart to apply**; browsers will warn on self-signed). Generated
+  private keys are created mode `0600`.
 - **Behind a reverse proxy** (recommended for real certificates): terminate
   TLS in Traefik/nginx/Caddy and set `ui.trusted_proxies` to the proxy's IP
   (e.g. the Traefik container's address). Only then are `X-Forwarded-For` /
@@ -847,7 +989,21 @@ filtering. Locked out anyway? Edit `security.allowlist` in
 
 Set `API_KEY` in the environment to require `X-API-Key` on every
 state-changing request, independent of login — useful for scripts and CI.
-Read-only GETs and the on-demand query POSTs stay open.
+Read-only GETs and the on-demand query POSTs stay open. The key also gates
+the OTA-capable **Device Builder WebSocket** (`/api/builder/stream`):
+scripts send the `X-API-Key` header; browsers — which cannot set custom WS
+headers — send the `mbg-api-key.<base64url(key)>` subprotocol (the UI does
+this automatically; a query parameter is deliberately not accepted, it
+would leak the key into access logs).
+
+### 16.5b Browser hardening
+
+State-changing requests from a **different site** are rejected outright
+(`Sec-Fetch-Site` / `Origin` checks — a drive-by page in the operator's
+browser cannot fire configuration changes), on `/ws` too. Standard security
+headers are applied, including on the login shell, and the canonical-URL
+value is output-escaped against stored-XSS. Secrets never round-trip to the
+browser: exports, env listings and logs redact tokens and password hashes.
 
 ### 16.6 Audit trail
 

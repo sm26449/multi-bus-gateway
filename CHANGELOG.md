@@ -1,5 +1,58 @@
 # Changelog
 
+## 3.35.0
+
+### 2026-08-16 — the complete stack out of the box + the documentation catches up
+
+**Deploy: one command, everything included.** `docker compose up -d` now
+brings up the COMPLETE solution — gateway + **bundled Mosquitto broker**
+(the gateway's default broker host is `mosquitto`, so publishing works
+from the first boot) + **MQTT Explorer** on :4000 (see the data flowing) +
+InfluxDB (self-configured on first boot, org/bucket `multibus`) + Grafana
++ ESPHome. Nothing external to install; a user testing the product gets a
+working pipeline end-to-end. Want less? `docker compose up -d
+multi-bus-gateway mosquitto`. Prefer your own broker/Influx? Repoint from
+the UI — the bundled ones are ordinary containers. The created network
+carries the ecosystem name (`pv-stack-network`, overridable), so later
+services join it by name; the `docker-compose.pv-stack.yml` overlay
+remains for joining an EXISTING stack (start only the gateway services).
+The `rtu-bridge` profile stays the one opt-in (it needs `/dev`). Broker
+config ships in-repo (`mosquitto/config/`) with a two-line recipe for
+adding credentials; `.env.example` seeds working (change-me) Influx and
+Grafana credentials.
+
+**Documentation: complete-coverage pass to 3.3x.** Driven by two full
+inventories (feature-gap vs the four main docs; a code-level catalog of
+every defensive mechanism):
+
+- **New page: [`docs/reliability.md`](docs/reliability.md)** — the entire
+  fail-safety catalog in one place: wire→value integrity, link
+  robustness, virtual-meter fail-safety, MQTT/InfluxDB delivery
+  guarantees, config safety, and every security enforcement point, each
+  with what it protects against and where it lives. Linked from the
+  READMEs, both manuals and SECURITY.md.
+- **SECURITY.md** gains the 7-layer security-model summary (first-run
+  login, roles/passkeys/sessions, API key incl. the WS subprotocol,
+  allowlist, the hardware-write gating chain, browser and process
+  hardening); the stale "change default credentials" advice is gone.
+- **Both manuals** (EN + RO, mirrored): the unit contract (§6.1), the
+  transport-uniform decode pipeline with the symmetric monotonic filter
+  (§6.2), retained availability + retained-command guard + HA
+  number/select + compat aliases (§8), the true Influx buffer numbers
+  (120 min / 200k, data-relative) + auth detection + backfill
+  schema-from-selection (§9), unresolved-row withhold + per-row bounds +
+  pinned counters (§11), link-verdict reachability + the query `corrected`
+  field (§13), offset-on-write (§14), the full self-heal scope (§15), and
+  §16 rewritten around sessions re-issue, WS API key, CSRF and browser
+  hardening; §2 describes the complete stack.
+- **READMEs** (RO + EN brought to parity): complete-stack quick start,
+  Dockerfile.test test command, 140+ endpoints, missing doc links, HA
+  write entities, enum/unit-contract feature bullets, rtu-bridge profile.
+- Defaults aligned with the bundled stack: `mqtt.broker: mosquitto`,
+  `influxdb.url: http://influxdb:8086`, org/bucket `multibus`
+  (config.example + config-reference updated; existing configs are
+  explicit and unaffected).
+
 ## 3.34.3
 
 ### 2026-08-15 — the canonical unit is visible where scales are set

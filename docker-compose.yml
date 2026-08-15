@@ -64,6 +64,43 @@ services:
       - ESPHOME_PASSWORD=${ESPHOME_DASHBOARD_PASSWORD:-}
     networks:
       - monitoring
+    depends_on:
+      - mosquitto
+
+  # MQTT broker — a REQUIRED part of the complete solution, bundled so the
+  # whole pipeline works from the first `docker compose up -d` (the gateway's
+  # default broker host is `mosquitto`). Anonymous on the LAN by default —
+  # see mosquitto/config/mosquitto.conf for the two-line credential setup.
+  # Already have a broker? `docker compose up -d multi-bus-gateway` starts
+  # the gateway alone and you point it at yours from Config -> MQTT.
+  mosquitto:
+    # Pinned minor: upstream :latest float has broken retain semantics before.
+    image: eclipse-mosquitto:2.1.2-alpine
+    container_name: mbg-mosquitto
+    restart: unless-stopped
+    ports:
+      - "${MQTT_PORT:-1883}:1883"
+      - "${MQTT_WS_PORT:-9001}:9001"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - mosquitto-data:/mosquitto/data
+    networks:
+      - monitoring
+
+  # MQTT Explorer — web UI over every topic the gateway publishes; the
+  # fastest way to SEE the data flowing. http://<host>:4000
+  mqtt-explorer:
+    image: smeagolworms4/mqtt-explorer:latest
+    container_name: mbg-mqtt-explorer
+    restart: unless-stopped
+    ports:
+      - "${MQTT_EXPLORER_PORT:-4000}:4000"
+    volumes:
+      - mqtt-explorer-config:/mqtt-explorer/config
+    depends_on:
+      - mosquitto
+    networks:
+      - monitoring
 
   # ESPHome — the build engine behind the Device Builder section. Ships with
   # the stack so firmware authoring works OUT OF THE BOX: the gateway finds it
@@ -105,16 +142,17 @@ services:
       - influxdb-data:/var/lib/influxdb2
       - influxdb-config:/etc/influxdb2
     environment:
+      # First-boot self-setup: working defaults so history/energy work out of
+      # the box. CHANGE the password/token before any real exposure (.env) —
+      # then paste the same token in the gateway (Config -> InfluxDB).
       - DOCKER_INFLUXDB_INIT_MODE=setup
-      - DOCKER_INFLUXDB_INIT_USERNAME
-      - DOCKER_INFLUXDB_INIT_PASSWORD
-      - DOCKER_INFLUXDB_INIT_ORG
-      - DOCKER_INFLUXDB_INIT_BUCKET
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN
+      - DOCKER_INFLUXDB_INIT_USERNAME=${DOCKER_INFLUXDB_INIT_USERNAME:-admin}
+      - DOCKER_INFLUXDB_INIT_PASSWORD=${DOCKER_INFLUXDB_INIT_PASSWORD:-multibus-change-me}
+      - DOCKER_INFLUXDB_INIT_ORG=${DOCKER_INFLUXDB_INIT_ORG:-multibus}
+      - DOCKER_INFLUXDB_INIT_BUCKET=${DOCKER_INFLUXDB_INIT_BUCKET:-multibus}
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${DOCKER_INFLUXDB_INIT_ADMIN_TOKEN:-multibus-dev-token-change-me}
     networks:
       - monitoring
-    profiles:
-      - influxdb
 
   # Optional: Grafana for visualization
   grafana:
@@ -126,11 +164,9 @@ services:
     volumes:
       - grafana-data:/var/lib/grafana
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:-multibus-change-me}
     networks:
       - monitoring
-    profiles:
-      - grafana
 
   # RTU-over-network serial bridge (opt-in profile — needs /dev access):
   # exposes each USB serial adapter as a stable TCP endpoint (ser2net) with
@@ -168,16 +204,22 @@ services:
     profiles:
       - rtu-bridge
 
-# The base file is STANDALONE: `docker compose up -d` needs nothing but this
-# repo (it creates the bridge network below). Running next to a wider stack
-# (pv-stack / any home-automation compose)? Use the overlay, which repoints
-# the same alias at the shared external network:
-#   docker compose -f docker-compose.yml -f docker-compose.pv-stack.yml up -d
+# The base file is STANDALONE and COMPLETE: `docker compose up -d` needs
+# nothing but this repo and brings up the full solution (gateway + MQTT
+# broker + MQTT Explorer + InfluxDB + Grafana + ESPHome). The network it
+# creates carries the ecosystem name (pv-stack-network), so anything you add
+# later can join it by name. Already RUNNING a stack on that network? Use
+# the overlay and start only the gateway services:
+#   docker compose -f docker-compose.yml -f docker-compose.pv-stack.yml \
+#     up -d multi-bus-gateway
 networks:
   monitoring:
+    name: ${PV_STACK_NETWORK:-pv-stack-network}
     driver: bridge
 
 volumes:
+  mosquitto-data:
+  mqtt-explorer-config:
   influxdb-data:
   influxdb-config:
   grafana-data:

@@ -40,6 +40,10 @@ Documente însoțitoare:
 
 ---
 
+> Designul defensiv din spatele întregului manual — fiecare fail-safe,
+> garanție de livrare și self-heal — e catalogat în
+> [reliability.md](reliability.md).
+
 ## 1. De ce ai nevoie
 
 - Cel puțin o sursă southbound: un dispozitiv **Modbus TCP** (de ex. un
@@ -64,7 +68,9 @@ cd multi-bus-gateway
 # 2) Creează fișierul de environment (opțional — totul se poate configura din UI)
 cp .env.example .env
 
-# 3) Pornește
+# 3) Pornește stack-ul COMPLET — gateway + broker MQTT (mosquitto) +
+#    MQTT Explorer + InfluxDB + Grafana + ESPHome. Tot ce are nevoie
+#    produsul e în acest fișier; nimic extern de instalat.
 docker compose up -d
 
 # 4) Ia parola de admin generată (doar la primul boot), apoi deschide UI-ul
@@ -72,13 +78,41 @@ docker compose logs multi-bus-gateway | grep -A3 'FIRST RUN'
 #    http://<host>:8080
 ```
 
-Porturi publicate de compose-ul implicit: `8080` (UI/API), `1502–1512`
-(gama meterelor virtuale, extinsă via `VMETER_PORT_START/END`) și `502`
-(Modbus standard, pentru consumatorii care îl cer — scoate-l dacă hostul îl
-folosește deja). Pentru un dispozitiv RTU fie pornești bridge-ul
-serial inclus — `docker compose --profile rtu-bridge up -d` (recomandat; vezi
-[rtu-serial.md](rtu-serial.md)) — fie treci adaptorul direct:
-`devices: ["/dev/ttyUSB0:/dev/ttyUSB0"]` într-un override de compose.
+Din prima pornire pipeline-ul e viu cap-coadă: gateway-ul publică în
+broker-ul inclus (host-ul implicit al brokerului e `mosquitto`), **MQTT
+Explorer** pe `:4000` arată fiecare topic curgând, iar InfluxDB se
+auto-configurează la primul boot (org/bucket `multibus`; schimbă
+parola/token-ul în `.env`, apoi activează sink-ul din Config → InfluxDB și
+lipește token-ul — Grafana e pe `:3000`). Vrei mai puțin? Pornește doar ce
+ai nevoie: `docker compose up -d multi-bus-gateway mosquitto`. Preferi
+propriul broker sau InfluxDB mai târziu? Îndrepți gateway-ul spre ele din
+UI — cele incluse sunt containere obișnuite pe care le poți opri.
+
+Rulezi deja un stack pe rețeaua partajată? Fișierul de bază își *numește*
+rețeaua `pv-stack-network` (suprascriibilă prin `PV_STACK_NETWORK` în
+`.env`), deci o instalare proaspătă o creează, iar serviciile viitoare i se
+pot alătura. Dacă rețeaua — și broker-ul/InfluxDB — **există deja**,
+folosește overlay-ul și pornește doar serviciile gateway-ului:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.pv-stack.yml \
+  up -d multi-bus-gateway
+```
+
+Porturi publicate de compose-ul implicit: `8080` (UI/API), `1883` + `9001`
+(MQTT inclus + WebSockets), `4000` (MQTT Explorer), `8086` (InfluxDB),
+`3000` (Grafana), `1502–1512` (gama meterelor virtuale, extinsă via
+`VMETER_PORT_START/END`) și `502` (Modbus standard, pentru consumatorii
+care îl cer — scoate-l dacă hostul îl folosește deja). Containerele rulează **non-root** (gateway-ul cu uid
+10001; bridge-ul serial cu uid 10002, cu `/dev` read-only și acces doar la
+tty-uri), motiv pentru care compose-ul setează
+`net.ipv4.ip_unprivileged_port_start=0` — limitat la namespace-ul de rețea
+propriu al containerului, ca un proces neprivilegiat să poată face bind pe
+`:502`; pe host nu se schimbă nimic. Pentru un dispozitiv RTU fie pornești
+bridge-ul serial inclus — `docker compose --profile rtu-bridge up -d`
+(recomandat; vezi [rtu-serial.md](rtu-serial.md)) — fie treci adaptorul
+direct: `devices: ["/dev/ttyUSB0:/dev/ttyUSB0"]` într-un override de
+compose.
 
 Loguri: `docker compose logs -f`.
 
@@ -101,6 +135,7 @@ Variabilele de mediu opționale:
 | `MQTT_USERNAME` / `MQTT_PASSWORD` / `MQTT_PREFIX` / `MQTT_PUBLISH_MODE` | detalii MQTT | — |
 | `INFLUXDB_ENABLED` / `INFLUXDB_URL` / `INFLUXDB_TOKEN` / `INFLUXDB_ORG` / `INFLUXDB_BUCKET` | sink-ul InfluxDB | — |
 | `UI_PORT` | portul UI-ului web | `8080` |
+| `UI_HOST` | adresa de bind — implicitul pe bare-metal e loopback (`127.0.0.1`); imaginea de container setează `0.0.0.0` (expunerea e guvernată de maparea de porturi din compose) | `0.0.0.0` |
 | `API_KEY` | cere `X-API-Key` la cererile de modificare | — |
 | `VMETER_PORT_START` / `VMETER_PORT_END` | gama de porturi a meterelor virtuale | `1502` / `1512` |
 | `TZ` | fus orar pentru containerul ESPHome inclus și marcajele de timp | `Europe/Bucharest` |
@@ -179,7 +214,11 @@ Devices → *Discover devices*:
    - **Modbus RTU**: două moduri (vezi [rtu-serial.md](rtu-serial.md)).
      **Prin rețea (recomandat)** — apasă **Scan** și alege un adaptor USB de
      pe serial bridge (îl bagi în priză → apare; îl scoți → dispare), MBG
-     rămâne neprivilegiat. **Serial direct** — port serial (de ex.
+     rămâne neprivilegiat. **Un singur master per linie bridged** este
+     impus: un al doilea dispozitiv pe același endpoint de bridge e respins
+     la validare (doi masteri s-ar evacua reciproc la nesfârșit), iar
+     Test-connection refuză un endpoint pe care un dispozitiv pornit face
+     deja poll. **Serial direct** — port serial (de ex.
      `/dev/ttyUSB0`), baud, paritate, biți de stop, cu adaptorul mapat în
      container.
    - **HTTP/JSON**: un URL care întoarce JSON; fiecare registru își extrage
@@ -198,8 +237,9 @@ Devices → *Discover devices*:
 2. **Template** — alege din bibliotecă (11 hărți incluse, vezi
    [device-catalog.md](device-catalog.md)), **încarcă** un template `.json`
    (validat rând cu rând; conflictele de id întreabă înainte de suprascriere),
-   **creează** unul în editor sau **importă un CSV** cu harta de registre
-   ([csv-import.md](csv-import.md)). Built-in-urile sunt read-only —
+   **creează** unul în editor sau **importă un CSV sau YAML** cu harta de
+   registre ([csv-import.md](csv-import.md),
+   [yaml-import.md](yaml-import.md)). Built-in-urile sunt read-only —
    *Duplicate to edit*. Un template folosit de un dispozitiv nu poate fi
    șters.
 3. **Rutarea datelor** — **id-ul** dispozitivului devine cheia de rutare:
@@ -274,6 +314,23 @@ numele canonic plat. Lista completă e în
 - Un template promite nume canonice cu `"canonical": true`; numele non-canonice
   sau duplicate apar apoi ca avertisment în managerul de template-uri.
 
+**Unitatea face parte din contract.** Fiecare câmp canonic poartă o unitate
+canonică (vezi coloana Unit din
+[`canonical-fields.md`](canonical-fields.md)); energia e în familia de bază
+**Wh** (Wh/varh/VAh). Un meter a cărui hartă nativă e în kWh convertește în
+**scale**-ul selecției (`scale/1000`) — valoarea pe care o publică trebuie
+să fie deja în unitatea canonică, altfel fiecare dashboard cross-device,
+binding de vmeter și geamăn de failover moștenește o eroare ×1000 tăcută.
+Două gărzi impun asta:
+
+- **În editorul de template**, celula *Unit* arată unitatea canonică ca
+  tooltip pentru numele canonice și devine **amber live** când unitatea
+  tastată diferă, cu remedierea spusă explicit (ajustezi scale-ul sau
+  redenumești rândul).
+- **La salvare**, selectarea unui nume canonic cu o unitate nepotrivită
+  loghează un warning (salvarea trece totuși — warning-ul e firul de
+  alarmă).
+
 Hărțile de referință vendor (ex. Janitza UMG512) preced această schemă și-și
 păstrează numele native — schema se aplică template-urilor pe care le creezi/imporți.
 
@@ -320,8 +377,17 @@ devices:
 |---|---|
 | `offset` | valoare inginerească = `raw / scale + offset` — deplasări de punct zero / unitate (ex. Kelvin×10 → °C cu `scale: 10, offset: -273.15`); sărit la rândurile enum/bitfield |
 | `nan` | santinelă not-available: `true` = valoarea SunSpec a tipului de date (`0x8000`/`0xFFFF`…), sau o valoare brută / listă explicită. O potrivire se citește ca *lipsă*, niciodată un număr-gunoi (−32768 °C). Float NaN/Inf e mereu aruncat |
-| `monotonic: true` | contoare cumulative (Wh/kWh/varh): un glitch descendent e aruncat (cache-ul ține ultima valoare bună), deci HA Energy / Victron / `difference()` nu văd niciodată un reset-fantomă de contor; un reset real, susținut, e totuși acceptat |
-| `enum` / `bits` (+ `mask`/`shift`) | decodează un cuvânt de stare brut în text — `enum: {7: "Fault"}` (nemapat → `unknown (n)`), `bits: {0: "overvoltage"}` unește numele biților setați; se construiește vizual din butonul **States** din editorul de template |
+| `monotonic: true` | contoare cumulative (Wh/kWh/varh): un pas neplauzibil în **oricare direcție** e aruncat (cache-ul ține ultima valoare bună) — un glitch descendent, dar și un salt ascendent cu >50% peste baseline (un high word corupt ar injecta altfel GWh fantomă). Un reset real, susținut, e adoptat doar după citiri de confirmare coerente (la sub 5% una de alta) și loghează un WARNING cu noul baseline |
+| `enum` / `bits` (+ `mask`/`shift`) | decodează un cuvânt de stare brut în text — `enum: {7: "Fault"}` (nemapat → `unknown (n)`), `bits: {0: "overvoltage"}` unește numele biților setați; se construiește vizual din butonul **States** din editorul de template. Hărțile incluse îl folosesc și pentru registrele de identitate (ex. codul de detecție EM24 1651, model id-ul Fronius 65A 731) |
+
+Aceste opțiuni se aplică **identic pe orice transport** — sursele Modbus,
+HTTP/JSON și MQTT-in rulează toate același pipeline fir→valoare (santinelă
+→ enum/bits → scale+offset → monotonic), deci un contor de energie
+alimentat prin MQTT (Shelly, Zigbee2MQTT…) primește aceeași protecție la
+rollover ca unul Modbus. Când o valoare e aruncată, motivul e una din trei
+etape vizibile: `sentinel` (declarat not-available), `decode_failed` (stare
+nemapabilă, logată o singură dată pe tranziție) sau `filter_drop`
+(respingere monotonic, logată la debug).
 
 ---
 
@@ -375,13 +441,34 @@ referențiază căile din container; „skip verification" e doar pentru teste).
   Assistant să nu îngrizeze entitatea în stările staționare lungi.
 - **Disponibilitate**: un Last-Will marchează `<prefix>/status` = `offline`
   dacă gateway-ul moare; `online` e publicat retained la conectare.
+  **Fiecare dispozitiv publică un topic de disponibilitate retained,
+  inclusiv primarul**, iar cache-ul de disponibilitate e golit la
+  reconectare, ca să fie mereu re-afirmat — un consumator nu trebuie să
+  ghicească niciodată din tăcere. Se confirmă doar după o publicare
+  reușită, deci un sughiț de broker nu poate lăsa în urmă un `online`
+  stale.
+- **Comenzile retained nu sunt niciodată executate** — un mesaj MQTT
+  retained rămas pe un topic de *comandă* (un `mosquitto_pub -r` rătăcit,
+  un `retain: true` din HA) ar re-acționa altfel hardware-ul la **fiecare**
+  reconectare. Livrările retained pe topicurile de comandă sunt aruncate,
+  iar copia retained e ștearsă la subscribe.
 - **Home Assistant discovery**: activat implicit. Fiecare dispozitiv devine
   un device HA cu registrele selectate ca senzori (`unique_id`
   `mbg_dev_<device>_<addr>_<name>` pentru dispozitivele non-primare), cu
-  device/state class deduse din unități. Meterele virtuale publică propriile
+  device/state class deduse din unități, plus un **`binary_sensor` de
+  conectivitate** per dispozitiv (disponibilitate). Registrele marcate
+  writable în template devin entități HA **`number`/`select`** (limitele
+  din template, dublu-păzite de `mqtt.allow_write_entities` +
+  `security.allow_writes` — vezi §14); discovery-ul write-aware e
+  înregistrat la boot, deci controlul supraviețuiește unui restart.
+  Meterele virtuale publică propriile
   entități de diagnostic (stare de servire, rată de cereri, erori,
   prospețime…). Ștergerea unui dispozitiv curăță discovery-ul retained, deci
   HA renunță la entități.
+- **Migrări de prefix de topic** — `mqtt.compat_aliases` publică dual
+  numele vechi de topicuri alături de cele noi, ca consumatorii să poată fi
+  mutați fără gol (vezi [config-reference.md](config-reference.md)); scoate
+  alias-urile odată ce fiecare consumator s-a mutat.
 
 **Capcană:** cu `retain: true` (implicit) un consumator care se abonează
 târziu vede totuși ultima valoare — dar după un restart de broker fără
@@ -401,16 +488,28 @@ Profilurile opționale de compose pornesc un InfluxDB + Grafana local
 
 **Garanții asupra datelor.** Fiecare punct e ștampilat cu ora *citirii*, nu
 ora scrierii. Dacă InfluxDB devine inaccesibil, punctele intră într-un
-**buffer store-and-forward** (implicit 10 minute / 50.000 de puncte —
-reglabil prin `influxdb.buffer_minutes` / `buffer_max_points`) și sunt
-replay-ate cu timestamp-urile originale la reconectare, idempotent. Cu
+**buffer store-and-forward** (implicit **120 de minute / 200.000 de
+puncte**, ~40 MB mărginit — reglabil prin `influxdb.buffer_minutes` /
+`buffer_max_points`) și sunt replay-ate cu timestamp-urile originale la
+reconectare, idempotent. Fereastra e **relativă la date** (măsurată de la
+cel mai nou punct din buffer, nu de la ceasul de perete), deci un restart
+întârziat nu aruncă niciodată un snapshot valid. Cu
 `influxdb.buffer_persist: true` (implicit) buffer-ul supraviețuiește și unui
 restart în timpul penei (`config/influx_buffer.jsonl`). Batch-urile la care
 clientul renunță după cele ~5 min de retry intern sunt recuperate în același
-buffer. Penele mai lungi decât fereastra pierd punctele cele mai vechi;
+buffer. **Eșecurile de autentificare sunt detectate explicit**: un
+401/403/404 (token rotit, bucket șters) setează un flag
+`influx_auth_failed`, ridică o alertă de operator și re-bufferizează în loc
+să arunce — doar punctele cu adevărat malformate (400/422) sunt vreodată
+aruncate, iar `writes_confirmed` / `last_confirm_age_s` dovedesc că datele
+chiar aterizează (vechiul mod de eșec era `connected: true` cu 100 %
+pierdere). Penele mai lungi decât fereastra pierd punctele cele mai vechi;
 pentru tensiunile Janitza, înregistrarea internă a meterului le poate
-recupera prin `python -m multibus.backfill`. Urmărește `buffer_points` /
-`replayed_total` / `dropped_total` în `/api/status` sau
+recupera prin `python -m multibus.backfill` — backfill-ul își derivă schema
+punctelor (tags, fields, measurement) **din selecția live de registre**,
+deci punctele reparate aterizează în serii byte-identice, iar o adresă
+deselectată e sărită în loc să fie scrisă cu o schemă ghicită. Urmărește
+`buffer_points` / `replayed_total` / `dropped_total` în `/api/status` sau
 `gateway_influx_buffer_points` în `/metrics`.
 
 MQTT **nu** este replay-at, intenționat: e un bus live — la reconectare se
@@ -492,6 +591,20 @@ celui mai slab membru. În modurile cu politică, serverul rămâne pornit cât
 timp cel puțin o sursă e proaspătă; toate moarte → nu mai răspunde, ca
 fail-safe-ul de pierdere-de-meter al consumatorului să se activeze.
 
+Două rafinări per rând:
+
+- **Un rând a cărui sursă nu s-a rezolvat niciodată** (registru redenumit,
+  deselectare, un typo în template) pică din start verdictul de prospețime
+  și ridică un eveniment `unresolved` — distinct de *stale*. Înaintea
+  acestei reguli, blocul inițializat cu zero ar fi servit un 0 W plauzibil
+  în timp ce meterul părea sănătos; acum meterul refuză zgomotos să
+  servească până când sursa se rezolvă o dată.
+- **Limită de prospețime per rând** — un registru își poate purta propriul
+  `stale_after_s`, care suprascrie limita instanței, ca un senzor BLE de
+  60 de secunde să poată împărți un meter cu rânduri de grid la 250 ms fără
+  staleness fals; limita efectivă derivă automat și din cadența
+  poll-group-ului care produce valoarea.
+
 **11.5 — Opțional: blocul de calitate in-band.** Dacă consumatorul
 (PLC/SCADA) trebuie să știe calitatea datelor pe aceeași conexiune Modbus,
 activează *In-band quality block* pe instanță. Servește un bloc read-only la
@@ -533,7 +646,16 @@ straturi, același motor:
   rescris în perechea `[nume, <geamăn>.nume]` — fără editări de template,
   pentru că numele canonice de câmpuri sunt identice între dispozitive.
   Rândurile const, sum, deja-failover și cele cu `dispozitiv.registru`
-  explicit rămân cum au fost scrise. Fallback-ul e validat la salvare
+  explicit rămân cum au fost scrise. **Contoarele cumulative de energie
+  sunt excluse deliberat**: geamănul e un alt meter fizic, deci totalul lui
+  pe viață ar fi un salt non-monotonic care corupe statisticile kWh din
+  aval (un Fronius DataManager tratează un contor care merge înapoi ca pe
+  un fault). Rândurile de contor rămân pe primar și, la o pană, **îngheață
+  la ultima valoare bună** în orice politică — un contor înghețat e o
+  afirmație adevărată („energia livrată până acum") — în timp ce rândurile
+  instantanee fac failover; când primarul revine, contorul își reia mersul
+  cu un salt înainte legitim, ca după orice power-cycle de meter.
+  Fallback-ul e validat la salvare
   (dispozitiv cunoscut, diferit de sursă) și re-verificat la pornire (o
   valoare greșită e ignorată cu un warning — nu blochează niciodată meterul).
   Un geamăn configurat-dar-offline se armează și intră în joc în clipa în
@@ -706,6 +828,22 @@ bus.
   `timeout` (fără răspuns), `exception_N` (dispozitivul a răspuns cu
   excepția Modbus N — legătura e bună, cererea e greșită), `connection`
   (nivel TCP/serial). Vizibile per dispozitiv pe Status și `/metrics`.
+  Politica de retry e deținută de gateway (`retry_attempts`/`retry_delay`),
+  niciodată dublată de biblioteca Modbus, iar un răspuns scurt sau gol
+  contează ca eșec, nu ca succes. *Reachability* e un **verdict de
+  legătură**, nu unul per batch: un dispozitiv e declarat inaccesibil doar
+  după ce se declanșează backstop-ul de eșecuri consecutive (care și
+  forțează redeschiderea unei legături blocate-dar-deschise), deci un
+  singur batch de registre cronic prost nu poate flapa evenimente
+  `unreachable/recovered` cât timp legătura e bună — pierderea per batch
+  rămâne vizibilă ca `batch_failures` + `stale_groups` per grup în
+  suprafața de sănătate.
+- **Query now** întoarce atât valoarea **brută** de pe fir cât și, când
+  adresa e un registru selectat, un câmp aditiv **`corrected`** — exact
+  valoarea pe care pipeline-ul de poll ar publica-o (scale/offset/enum
+  aplicate, stateless: o citire de debug nu avansează niciodată filtrul
+  monotonic). Dacă cele două diferă pe neașteptate, declarația de
+  scale/decodare a registrului e locul unde te uiți.
 
 ---
 
@@ -719,7 +857,9 @@ implicit**.
    `API_KEY` (scrierile anonime sunt refuzate chiar cu poarta deschisă).
 3. Registrul trebuie declarat **writable în template-ul dispozitivului**, cu
    limite opționale `write_min` / `write_max`; codificarea (tip de date,
-   scale) vine mereu din rândul de template, niciodată de la apelant.
+   scale și `offset` — inversat la scriere, `raw = (value − offset) ×
+   scale`, inclusiv la revert-ul de siguranță) vine mereu din rândul de
+   template, niciodată de la apelant.
 4. **Dispozitivul primar e mereu read-only**; dispozitivele HTTP/JSON și
    registrele input/discrete nu se pot scrie.
 5. Limită de rată per IP (`security.write_rate_limit_per_s`, implicit
@@ -766,7 +906,17 @@ Config → **Backup & Snapshots**.
   **last-known-good** (niciodată pe defaults goale), deci primarul continuă
   să citească hostul corect printr-o editare greșită. Condiția apare ca
   `config.healthy` în `/api/status` și ridică o alertă; salvările rămân
-  blocate până repari fișierul.
+  blocate până repari fișierul. Vindecarea prinde și cazul viclean al unui
+  fișier care încă se *parsează*, dar e o carcasă trunchiată (fișier gol,
+  un scalar simplu, tăiat înaintea secțiunilor pe care le scrie fiecare
+  salvare): o poartă de plauzibilitate îl rutează prin aceeași cale `.bad`
+  + heal, iar un snapshot care ar *pierde dispozitive* nu e niciodată
+  promovat peste `.good`-ul existent (o eliminare intenționată de
+  dispozitiv împrospătează `.good` chiar prin salvare). Selecțiile de
+  registre primesc același contract: `selected_registers.json` — al
+  primarului **și al fiecărui dispozitiv** — își ține propria pereche
+  `.good`/`.bad`, deci o selecție trunchiată se vindecă în loc să golească
+  tăcut fiecare poller.
 - **Backup export/import (ZIP)** — pentru portabilitate între hosturi.
   Exportul **elimină secretele** (credențiale MQTT/Influx, hash-uri de
   parole, headere de webhook/REST-push) și identitatea hostului implicit;
@@ -819,11 +969,19 @@ Un cont **admin**, plus conturi opționale **operator** și **viewer**:
 
 Parolele sunt hash-uite (PBKDF2-SHA256, 600k iterații); lasă câmpul de
 parolă gol la salvare ca să o păstrezi pe cea curentă. **Activarea
-login-ului refuză admin/admin implicit** — setează întâi o parolă reală.
+login-ului cu o parolă `admin` goală sau implicită e refuzată la fiecare
+punct de intrare** — ruta din UI, un `config.yaml` editat de mână, un
+import de configurație și o restaurare de snapshot lovesc toate aceeași
+gardă, deci nicio cale nu produce un gateway care *pare* încuiat, dar
+acceptă `admin/admin`.
 Login-urile eșuate se blochează per IP (`lockout_threshold` /
 `lockout_minutes`, implicit 5 / 5 min). Sesiunile sunt cookie-uri HttpOnly,
 glisante 7 zile, persistate ca hash-uri SHA-256 în `config/sessions.json` —
-un restart de container te ține logat. Audit trail-ul e doar pentru admin.
+un restart de container te ține logat. Rotirea oricărei parole revocă
+**fiecare** sesiune (un cookie vechi nu poate supraviețui rotației) — cu
+excepția autorului: salvarea de securitate îți re-emite propria sesiune,
+deci schimbarea parolelor nu te scoate niciodată *pe tine* din cont în
+mijlocul treburii. Audit trail-ul e doar pentru admin.
 
 ### 16.2 Passkey-uri (WebAuthn)
 
@@ -847,6 +1005,7 @@ capcane:
 - **TLS încorporat**: indică în Config → Security un certificat + cheie sub
   `config/`, sau lasă gol pentru o pereche self-signed generată automat
   (**restart pentru aplicare**; browserele avertizează pe self-signed).
+  Cheile private generate sunt create cu modul `0600`.
 - **În spatele unui reverse proxy** (recomandat pentru certificate reale):
   termină TLS în Traefik/nginx/Caddy și setează `ui.trusted_proxies` la
   IP-ul proxy-ului (de ex. adresa containerului Traefik). Doar atunci sunt
@@ -881,7 +1040,23 @@ client. Blocat totuși? Editează `security.allowlist` în
 
 Setează `API_KEY` în environment ca să ceri `X-API-Key` la fiecare cerere de
 modificare, independent de login — util pentru scripturi și CI. GET-urile
-read-only și interogările la cerere rămân deschise.
+read-only și interogările la cerere rămân deschise. Cheia păzește și
+**WebSocket-ul Device Builder** capabil de OTA (`/api/builder/stream`):
+scripturile trimit headerul `X-API-Key`; browserele — care nu pot seta
+headere WS custom — trimit subprotocolul `mbg-api-key.<base64url(key)>`
+(UI-ul o face automat; un parametru de query e deliberat neacceptat — ar
+scurge cheia în logurile de acces).
+
+### 16.5b Întărirea browserului
+
+Cererile de modificare venite de pe un **alt site** sunt respinse din start
+(verificări `Sec-Fetch-Site` / `Origin` — o pagină drive-by din browserul
+operatorului nu poate declanșa modificări de configurație), inclusiv pe
+`/ws`. Se aplică headerele de securitate standard, inclusiv pe shell-ul de
+login, iar valoarea URL-ului canonic e escapată la ieșire împotriva
+stored-XSS. Secretele nu fac niciodată drumul dus-întors spre browser:
+exporturile, listările de environment și logurile redactează tokenurile și
+hash-urile de parole.
 
 ### 16.6 Audit trail
 

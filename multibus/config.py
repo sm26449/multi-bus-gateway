@@ -219,7 +219,10 @@ class DeviceConfig:
 @dataclass
 class MQTTConfig:
     enabled: bool = True
-    broker: str = "192.168.1.100"
+    # default = the bundled compose broker, so a fresh deploy publishes from
+    # the first boot with zero configuration; bare-metal/external setups
+    # override from the UI (Config -> MQTT) or MQTT_BROKER
+    broker: str = "mosquitto"
     port: int = 1883
     username: str = ""
     password: str = ""
@@ -263,9 +266,12 @@ class MQTTConfig:
 @dataclass
 class InfluxDBConfig:
     enabled: bool = False
-    url: str = "http://localhost:8086"
+    # default = the bundled compose InfluxDB, so enabling the sink in the UI
+    # only needs the token pasted in (org/bucket defaults match the compose
+    # first-boot setup)
+    url: str = "http://influxdb:8086"
     token: str = ""
-    org: str = ""
+    org: str = "multibus"
     bucket: str = "multibus"
     write_interval: int = 5
     publish_mode: str = "changed"  # "changed" or "all"

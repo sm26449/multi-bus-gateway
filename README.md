@@ -54,6 +54,7 @@ Fronius și orice PLC/SCADA văd fiecare meterul pe care îl așteaptă. Totul
 📡 **[Spec meter virtual](docs/virtual-meter-spec.md)** ·
 🗂️ **[Catalog de dispozitive](docs/device-catalog.md)** ·
 🖼️ **[Ghid vizual UI](docs/GHID-UI.md)** ·
+🛡️ **[Fiabilitate & fail-safety](docs/reliability.md)** ·
 ⚙️ **[Referință configurare](docs/config-reference.md)** ·
 ⬆️ **[Ghid de upgrade](docs/upgrade-guide.md)** ·
 📥 **[Import YAML](docs/yaml-import.md)**
@@ -116,9 +117,11 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
 - **Praguri** de colorare per registru (warning/danger) pe dashboard.
 
 **Northbound (sink-uri) — toate opt-in, per dispozitiv**
-- **MQTT** — moduri `changed`/`all`, retain/QoS, TLS/mTLS, Last-Will,
+- **MQTT** — moduri `changed`/`all`, retain/QoS, TLS/mTLS, Last-Will +
+  availability retained per device, heartbeat opțional,
   **Home Assistant autodiscovery** (device-uri separate per sursă,
-  `unique_id` stabil `mbg_dev_*`).
+  `unique_id` stabil `mbg_dev_*`, senzor de conectivitate, iar registrele
+  scriabile devin entități **`number`/`select`** cu limite din template).
 - **InfluxDB** — bucket per dispozitiv (auto-creat), timestamp = ora citirii,
   **buffer store-and-forward persistat pe disc** (zero pierderi la pană,
   replay idempotent cu timestamp-urile originale).
@@ -242,19 +245,27 @@ pe conexiunea Modbus ([spec](docs/virtual-meter-spec.md)).
 ```bash
 git clone https://github.com/sm26449/multi-bus-gateway.git
 cd multi-bus-gateway
-cp .env.example .env          # opțional — totul se poate seta din UI
-docker compose up -d
+cp .env.example .env          # recomandat — schimbă parolele change-me
+docker compose up -d          # stack COMPLET: gateway + MQTT (mosquitto)
+                              # + MQTT Explorer + InfluxDB + Grafana + ESPHome
 # Parola de admin generată la primul boot (afișată o singură dată):
 docker compose logs multi-bus-gateway | grep -A3 'FIRST RUN'
-# UI: http://localhost:8080
+# UI: http://localhost:8080 · MQTT Explorer: :4000 · Grafana: :3000
 ```
 
-Rulezi deja un stack (MQTT/InfluxDB/Grafana) pe o rețea docker externă?
-Folosește overlay-ul — toate serviciile se alătură rețelei existente
-(implicit `pv-stack-network`, configurabil prin `PV_STACK_NETWORK` în `.env`):
+Nimic extern de instalat: broker-ul e inclus și gateway-ul publică în el
+din prima (host implicit `mosquitto`), Explorer-ul arată topicele curgând,
+iar InfluxDB se auto-configurează la primul boot. Vrei minimal?
+`docker compose up -d multi-bus-gateway mosquitto`. Broker/Influx propriu?
+Le schimbi din UI când vrei — cele incluse sunt containere obișnuite.
+
+Rulezi deja un stack pe rețeaua partajată (broker + Influx existente)?
+Folosește overlay-ul și pornește doar gateway-ul — rețeaua e cea existentă
+(implicit `pv-stack-network`, configurabil prin `PV_STACK_NETWORK`):
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.pv-stack.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.pv-stack.yml \
+  up -d multi-bus-gateway
 ```
 
 ### Imaginea prebuilt (fără build local)
@@ -275,8 +286,9 @@ docker run -d --name multi-bus-gateway --restart unless-stopped \
 > consumatori îl interoghează (scoate-l dacă e ocupat pe host; fiind port
 > privilegiat iar aplicația rulând non-root din 3.24.1, cere sysctl-ul
 > `net.ipv4.ip_unprivileged_port_start=0` de mai sus — scoate-le împreună). Pentru RTU
-> treci adaptorul serial în container (`devices:` în compose). Ghid complet:
-> [docs/MANUAL.ro.md](docs/MANUAL.ro.md).
+> pornește bridge-ul serial inclus — `docker compose --profile rtu-bridge up -d`
+> (recomandat) — sau treci adaptorul în container (`devices:` în compose).
+> Ghid complet: [docs/MANUAL.ro.md](docs/MANUAL.ro.md).
 
 ### Cu InfluxDB și Grafana (opțional)
 
@@ -322,7 +334,7 @@ History / Energy), **Virtual Meters**, **Diagnostics**, **Status** și
 
 ## API
 
-Peste 100 de endpoint-uri REST + WebSocket, grupate pe domenii (dispozitive,
+Peste 140 de endpoint-uri REST + WebSocket, grupate pe domenii (dispozitive,
 registre, metere virtuale, diagnostice, configurație, snapshot-uri, audit,
 metrics), fiecare cu rolul minim necesar — referința completă, generată din
 cod: **[docs/API.md](docs/API.md)**.

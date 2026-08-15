@@ -63,7 +63,7 @@ mqtt:
   # Enable MQTT publishing
   enabled: true
   # MQTT broker address
-  broker: 192.168.1.100
+  broker: "mosquitto"
   # MQTT broker port
   port: 1883
   # Authentication (leave empty if not required)
@@ -97,7 +97,7 @@ influxdb:
   # Enable InfluxDB publishing
   enabled: false
   # InfluxDB server URL
-  url: "http://localhost:8086"
+  url: "http://influxdb:8086"
   # API token
   token: ""
   # Organization

@@ -131,7 +131,7 @@ section. (Serial/RTU and other transports are available on additional
 | Key | Default | Notes |
 |-----|---------|-------|
 | `enabled` | `true` | |
-| `broker` | `192.168.1.100` | |
+| `broker` | `mosquitto` | the bundled compose broker; point it at your own from the UI |
 | `port` | `1883` | |
 | `username` / `password` | `""` | |
 | `topic_prefix` | `multibus/umg512` | primary device's prefix |
@@ -154,7 +154,7 @@ section. (Serial/RTU and other transports are available on additional
 | Key | Default | Notes |
 |-----|---------|-------|
 | `enabled` | `false` (opt-in) | |
-| `url` | `http://localhost:8086` | |
+| `url` | `http://influxdb:8086` | |
 | `token` / `org` | `""` | |
 | `bucket` | `multibus` | primary device's bucket |
 | `write_interval` | `5` | seconds |

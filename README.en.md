@@ -49,7 +49,11 @@ in one container, on hardware you own.
 🔌 **[API Reference](docs/API.md)** ·
 📡 **[Virtual meter spec](docs/virtual-meter-spec.md)** ·
 🗂️ **[Device catalog](docs/device-catalog.md)** ·
-🖼️ **[Visual UI guide](docs/GHID-UI.md)** (RO notes)
+🖼️ **[Visual UI guide](docs/GHID-UI.md)** (RO notes) ·
+🛡️ **[Reliability & fail-safety](docs/reliability.md)** ·
+⚙️ **[Config reference](docs/config-reference.md)** ·
+⬆️ **[Upgrade guide](docs/upgrade-guide.md)** ·
+📥 **[YAML import](docs/yaml-import.md)**
 
 ## Why software, not a box?
 
@@ -88,12 +92,17 @@ all the same. No vendor lock-in, no per-box cost.
   registers), ABB B21/B23, Carlo Gavazzi EM24, Eastron SDM120/SDM630,
   Schneider iEM3000, Fronius Smart Meter 65A-3 + 3 MQTT maps (Zigbee2MQTT,
   Theengs BLE, generic JSON).
-  In-UI editor + upload + export + **CSV import**
-  ([guide](docs/csv-import.md)).
+  In-UI editor + upload + export + **CSV/YAML import**
+  ([CSV](docs/csv-import.md), [YAML](docs/yaml-import.md)). Per-register
+  status decode (`enum`/`bits` → text, e.g. the EM24/Fronius identity
+  codes), `nan` sentinels, a symmetric **monotonic** counter filter and
+  `offset` — identical on every transport.
 - **Canonical field naming** — uniform register names across every device
   (`voltage_l1_n` everywhere), so MQTT topics and InfluxDB fields are
-  predictable. One-click **Auto-canonicalize** infers them for a cryptic
-  imported map, conservatively ([dictionary](docs/canonical-fields.md)).
+  predictable — and **the unit is part of the contract** (energy = the Wh
+  family; the editor flags a mismatched unit amber, the save warns).
+  One-click **Auto-canonicalize** infers names for a cryptic imported map,
+  conservatively ([dictionary](docs/canonical-fields.md)).
 - **Discovery wizard** — CIDR scan on the Modbus port, unit-ID sweep (TCP
   and RTU), **SunSpec model walk**, MQTT topic browse with payload previews,
   Fronius Solar API discover, **ESPHome node scan** (native API 6053, works
@@ -113,9 +122,11 @@ all the same. No vendor lock-in, no per-box cost.
   dashboard.
 
 **Northbound sinks — all opt-in, per device**
-- **MQTT** — `changed`/`all` modes, retain/QoS, TLS/mTLS, Last-Will,
+- **MQTT** — `changed`/`all` modes, retain/QoS, TLS/mTLS, Last-Will +
+  per-device retained availability, optional heartbeat,
   **Home Assistant autodiscovery** (separate HA device per source, stable
-  `mbg_dev_*` unique ids).
+  `mbg_dev_*` unique ids, a connectivity sensor, and writable registers
+  become **`number`/`select` entities** with template-declared bounds).
 - **InfluxDB** — per-device bucket (auto-created), timestamps = read time,
   **disk-persisted store-and-forward buffer** (no data loss across
   outages; idempotent replay with original timestamps).
@@ -239,19 +250,28 @@ the Modbus connection itself ([spec](docs/virtual-meter-spec.md)).
 ```bash
 git clone https://github.com/sm26449/multi-bus-gateway.git
 cd multi-bus-gateway
-cp .env.example .env          # optional — everything is configurable in the UI
-docker compose up -d
+cp .env.example .env          # recommended — change the change-me passwords
+docker compose up -d          # the COMPLETE stack: gateway + MQTT (mosquitto)
+                              # + MQTT Explorer + InfluxDB + Grafana + ESPHome
 # Admin password generated on first boot (printed once):
 docker compose logs multi-bus-gateway | grep -A3 'FIRST RUN'
-# UI: http://localhost:8080
+# UI: http://localhost:8080 · MQTT Explorer: :4000 · Grafana: :3000
 ```
 
-Already running a stack (MQTT/InfluxDB/Grafana) on an external docker
-network? Use the overlay — every service joins the existing network
-(default `pv-stack-network`, overridable via `PV_STACK_NETWORK` in `.env`):
+Nothing external to install: the broker ships in the stack and the gateway
+publishes to it from the first boot (default host `mosquitto`), the
+Explorer shows the topics flowing, and InfluxDB self-configures on first
+boot. Want minimal? `docker compose up -d multi-bus-gateway mosquitto`.
+Your own broker/Influx? Repoint the gateway from the UI whenever you like —
+the bundled ones are ordinary containers.
+
+Already running a stack on the shared network (existing broker + Influx)?
+Use the overlay and start only the gateway — it joins the existing network
+(default `pv-stack-network`, overridable via `PV_STACK_NETWORK`):
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.pv-stack.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.pv-stack.yml \
+  up -d multi-bus-gateway
 ```
 
 ### Prebuilt image (no local build)
@@ -271,8 +291,9 @@ docker run -d --name multi-bus-gateway --restart unless-stopped \
 > `VMETER_PORT_START/END`) · `502` = the standard Modbus port some
 > consumers poll (drop it if it's taken on the host; it is a privileged
 > port and the app runs non-root since 3.24.1, hence the
-> `net.ipv4.ip_unprivileged_port_start=0` sysctl above — drop them together). For RTU pass the
-> serial adapter into the container (`devices:` in compose). Full guide:
+> `net.ipv4.ip_unprivileged_port_start=0` sysctl above — drop them together). For RTU start the bundled
+> serial bridge — `docker compose --profile rtu-bridge up -d` (recommended) —
+> or pass the adapter into the container (`devices:` in compose). Full guide:
 > [docs/MANUAL.md](docs/MANUAL.md).
 
 ### With InfluxDB and Grafana (optional)
@@ -321,7 +342,7 @@ in a global menu. Full tab-by-tab tour:
 
 ## API
 
-100+ REST endpoints + WebSocket, grouped by domain (devices, registers,
+140+ REST endpoints + WebSocket, grouped by domain (devices, registers,
 virtual meters, diagnostics, config, snapshots, audit, metrics), each with
 its minimum required role — the full reference, generated from the code:
 **[docs/API.md](docs/API.md)**.
@@ -416,9 +437,10 @@ python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 python main.py --debug
 
-# tests (inside the image's container)
+# tests (the test image has pytest; the runtime image does NOT)
+docker build -f Dockerfile.test -t multi-bus-gateway:test .
 docker run --rm -v "$(pwd)":/app -w /app --entrypoint sh \
-  multi-bus-gateway:latest -c "python -m pytest -q"
+  multi-bus-gateway:test -c "python -m pytest -q"
 ```
 
 ## Contributing

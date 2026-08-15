@@ -393,7 +393,9 @@ def test_ws_broadcast_sends_outside_lock_and_drops_bad(monkeypatch):
     m = WebSocketManager()
     good, bad = GoodWS(), BadWS()
     m.active_connections = {good, bad}
-    asyncio.get_event_loop().run_until_complete(m.broadcast({"x": 1}))
+    # own loop: get_event_loop() is order-dependent (fails after a test that
+    # closed the main-thread loop) — caught by pytest-randomly
+    asyncio.run(m.broadcast({"x": 1}))
     assert good.got == ['{"x": 1}']              # delivered
     assert bad not in m.active_connections        # wedged client dropped
 
