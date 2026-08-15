@@ -1,5 +1,35 @@
 # Changelog
 
+## 3.29.0
+
+### 2026-08-15 — ONE decode pipeline for every transport (backlog §I)
+
+The wire→value correction logic existed in six drifted copies (the external
+audit's highest-leverage finding): the Modbus poll path had every stage,
+while HTTP/JSON and MQTT inputs silently skipped nan/enum/bits/monotonic
+and the on-demand query returned raw-with-caller-scale only.
+
+- **`value_decode.apply_corrections()`** is now the single pipeline —
+  nan sentinel on the RAW value → enum/bits decode → raw/scale + offset →
+  optional monotonic counter filter — with an `info['stage']` diagnostic
+  (`sentinel` | `decode_failed` | `filter_drop`) preserving the DP-6/DP-10
+  edge-triggered warnings. Every stage engages only when the register
+  declares it, so existing configs decode bit-identically (verified: zero
+  live HTTP/MQTT registers declare any of these features today).
+- **Modbus poller** now calls the shared helper (behavior unchanged —
+  golden tests pinned before the refactor).
+- **HTTP/JSON poller + MQTT input** gain the full pipeline: a declared
+  nan sentinel is held instead of published as a real measurement, enums
+  decode to text, and a monotonic energy counter finally gets rollover
+  protection on non-Modbus sources (per-register `MonotonicFilter`, owned
+  by the poller — stateful stage stays with polling callers only).
+- **Query now (single + batch)** returns an ADDITIVE `corrected` field
+  when the queried address is a selected register — the exact value the
+  poll path would publish (stateless: a debug read never advances filter
+  state). The raw `value` contract is unchanged.
+- Tests: 21 new (pipeline contract, per-transport feature tests, query
+  `corrected`); suite at 861 passed.
+
 ## 3.28.0
 
 ### 2026-08-15 — data-path audit CLOSED (batch 3) + external audit criticals

@@ -29,6 +29,7 @@ from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 
 from ._models import RegisterBatchQuery, RegisterQuery, SelectedRegisterUpdate
+from ..value_decode import apply_corrections
 
 
 def build(ctx) -> APIRouter:
@@ -294,6 +295,19 @@ def build(ctx) -> APIRouter:
         except TypeError:
             return value            # non-numeric (e.g. a bit) — leave as-is
 
+    def _corrected_value(client, address, rt, raw):
+        """ADDITIVE diagnostic: when the queried (register_type, address) is a
+        selected register, run the raw read through the shared correction
+        pipeline (nan/enum/bits/scale/offset) so 'Query now' shows the same
+        value the poll path publishes. Stateless — no monotonic filter here,
+        a debug read must never advance filter state. Returns the corrected
+        value, or ``...`` (Ellipsis) meaning "not a selected register"."""
+        for reg in (getattr(client, 'registers', None) or []):
+            if (getattr(reg, 'address', None) == address
+                    and (getattr(reg, 'register_type', 'holding') or 'holding') == rt):
+                return apply_corrections(raw, reg)
+        return ...
+
     @r.post("/api/query/register")
     async def query_register(query: RegisterQuery):
         """Query a single register on-demand (on the primary or a named device)."""
@@ -301,7 +315,7 @@ def build(ctx) -> APIRouter:
         rt = 'input' if str(query.register_type).lower() in ('input', 'ir', 'fc4', '4') else 'holding'
         value = client.read_register(query.address, query.data_type, rt)
         if value is not None:
-            return {
+            out = {
                 "address": query.address,
                 "value": _apply_scale(value, query.scale),
                 "data_type": query.data_type,
@@ -309,6 +323,10 @@ def build(ctx) -> APIRouter:
                 "device_id": query.device_id,
                 "timestamp": datetime.now().isoformat(),
             }
+            corrected = _corrected_value(client, query.address, rt, value)
+            if corrected is not ...:
+                out["corrected"] = corrected
+            return out
         raise HTTPException(status_code=500, detail="Failed to read register")
 
     @r.post("/api/query/batch")
@@ -320,8 +338,14 @@ def build(ctx) -> APIRouter:
                      for x in query.registers]
         results = client.read_registers_batch(registers)
         scale_by_addr = {x.address: x.scale for x in query.registers}
+        rt_by_addr = {r["address"]: r["register_type"] for r in registers}
 
-        return {
+        corrected = {}
+        for addr, value in results.items():
+            c = _corrected_value(client, addr, rt_by_addr.get(addr, 'holding'), value)
+            if c is not ...:
+                corrected[str(addr)] = c
+        out = {
             "values": {
                 str(addr): _apply_scale(value, scale_by_addr.get(addr))
                 for addr, value in results.items()
@@ -329,6 +353,9 @@ def build(ctx) -> APIRouter:
             "device_id": query.device_id,
             "timestamp": datetime.now().isoformat(),
         }
+        if corrected:
+            out["corrected"] = corrected
+        return out
 
     def _matches_query(entry: Dict, query: str) -> bool:
         """Check if entry matches search query."""

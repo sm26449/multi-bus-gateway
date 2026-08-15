@@ -31,7 +31,9 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
+from .counter_filter import MonotonicFilter
 from .http_client import resolve_json_path, _coerce_numeric
+from .value_decode import apply_corrections
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +83,9 @@ class MqttInputClient:
         self.last_msg_mono: Optional[float] = None
         self._client = None
         self._by_topic = self._index()
+        # monotonic-counter guards, per register (same as the pollers);
+        # re-seeded on reload since a fresh input is built each time
+        self._counter_filters: Dict[int, MonotonicFilter] = {}
 
     # ── register/topic mapping ────────────────────────────────────────────
     def _reg_topic(self, reg) -> str:
@@ -163,13 +168,19 @@ class MqttInputClient:
             val = _coerce_numeric(val)
             if val is None:
                 continue
-            # raw / scale, same convention as Modbus/HTTP (default 1.0)
-            _sc = getattr(r, 'scale', 1.0) or 1.0
-            if _sc != 1.0:
-                val = val / _sc
-            _off = getattr(r, 'offset', 0.0) or 0.0
-            if _off:
-                val = val + _off
+            # SHARED correction pipeline: nan/enum/bits/scale/offset/monotonic
+            # — this path used to apply only scale+offset, so a Shelly/Tasmota
+            # energy counter over MQTT had zero rollover protection while HA
+            # was told total_increasing (external audit). Undeclared registers
+            # pass through unchanged.
+            _cf = None
+            if getattr(r, 'monotonic', False):
+                _cf = self._counter_filters.get(r.address)
+                if _cf is None:
+                    _cf = self._counter_filters[r.address] = MonotonicFilter()
+            val = apply_corrections(val, r, counter_filter=_cf)
+            if val is None:
+                continue                  # sentinel/decode/filter → hold last-good
             data[r.address] = {'value': val, 'register': r, 'ts': self.last_msg_ts, 'mono': self.last_msg_mono}
         if data and self.publish_callback:
             self.updates += len(data)

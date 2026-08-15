@@ -96,3 +96,84 @@ def is_textual(reg) -> bool:
     if isinstance(reg, dict):
         return bool(reg.get("enum") or reg.get("bits"))
     return bool(getattr(reg, "enum", None) or getattr(reg, "bits", None))
+
+
+# ── the ONE wire→value correction pipeline ───────────────────────────────────
+
+def is_sentinel_value(value, data_type: str, nan) -> bool:
+    """Not-available sentinel test, shared across transports — the same
+    semantics as the Modbus parser (``nan`` is True → the standard sentinel
+    for the type, a number, or a list of values)."""
+    from .register_parser import RegisterParser
+    if nan is True:
+        s = RegisterParser._NOT_IMPLEMENTED.get(str(data_type).lower())
+        return s is not None and value == s
+    if isinstance(nan, (list, tuple, set)):
+        return value in nan
+    if isinstance(nan, (int, float)) and not isinstance(nan, bool):
+        return value == nan
+    return False
+
+
+def apply_corrections(value, reg, *, counter_filter=None, info=None):
+    """The wire→value correction pipeline, shared by every transport.
+
+    This logic used to exist in six drifted copies (external audit's
+    highest-leverage finding): the Modbus poll path had every stage, while
+    HTTP/MQTT silently skipped nan/enum/monotonic and the diagnostic views
+    skipped offset. The order matches the authoritative Modbus path exactly:
+
+      1. ``nan`` sentinel on the RAW value → None (absence; the caller holds
+         last-good). Compared BEFORE scaling, like the parser always did.
+      2. ``enum``/``bits`` → text (scale/offset/monotonic are numeric-only,
+         so they are skipped for status registers).
+      3. engineering = raw/scale + offset.
+      4. monotonic counter filter — STATEFUL: only POLLING callers own a
+         per-register MonotonicFilter and pass it. Diagnostic reads
+         (query/read-back/views) must NOT pass one — a debug read must never
+         advance filter state.
+
+    Every stage engages only when the register declares it; an undeclared
+    register passes through unchanged — which is why extending a transport
+    with this helper cannot change behavior for existing configs.
+
+    ``info`` (optional dict) reports WHY a None was returned
+    (``stage``: ``sentinel`` | ``decode_failed`` | ``filter_drop``) so the
+    polling callers keep their edge-triggered diagnostics (DP-6/DP-10).
+    Returns the corrected value, or None meaning "treat as missing".
+    """
+    if value is None:
+        return None
+
+    def _f(name, default=None):
+        if isinstance(reg, dict):
+            return reg.get(name, default)
+        return getattr(reg, name, default)
+
+    nan = _f("nan")
+    if (nan is not None and nan is not False
+            and isinstance(value, (int, float)) and not isinstance(value, bool)
+            and is_sentinel_value(value, _f("data_type") or "float", nan)):
+        if info is not None:
+            info["stage"] = "sentinel"
+        return None
+
+    if _f("enum") or _f("bits"):
+        decoded = decode_register(value, reg)
+        if decoded is None and info is not None:
+            info["stage"] = "decode_failed"
+        return decoded
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        sc = _f("scale", 1.0) or 1.0
+        if sc != 1.0:
+            value = value / sc
+        off = _f("offset", 0.0) or 0.0
+        if off:
+            value = value + off
+
+    if counter_filter is not None and _f("monotonic"):
+        value = counter_filter.feed(value)
+        if value is None and info is not None:
+            info["stage"] = "filter_drop"
+    return value

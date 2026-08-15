@@ -30,7 +30,7 @@ from . import bus_trace
 from .config import ModbusConfig, SelectedRegister, PollGroup
 from .counter_filter import MonotonicFilter
 from .register_parser import RegisterParser
-from .value_decode import decode_register
+from .value_decode import apply_corrections
 
 # Suppress pymodbus exception logging
 logging.getLogger("pymodbus").setLevel(logging.CRITICAL)
@@ -661,60 +661,46 @@ class RegisterPoller(threading.Thread):
 
                 if offset + reg_count <= len(raw_data):
                     reg_values = raw_data[offset:offset + reg_count]
-                    value = self.parser.parse_value(reg_values, reg.data_type,
-                                                    nan=getattr(reg, 'nan', None))
+                    # sentinel/enum/scale/offset/monotonic all live in the
+                    # SHARED pipeline now (apply_corrections — this exact
+                    # sequence used to exist here inline and in five drifted
+                    # copies elsewhere); the parser only parses.
+                    value = self.parser.parse_value(reg_values, reg.data_type)
                     if value is not None:
-                        if getattr(reg, 'enum', None) or getattr(reg, 'bits', None):
-                            # status register → decode raw int to text; scale and
-                            # the monotonic filter are numeric-only, so skip them.
-                            value = decode_register(value, reg)
-                            if value is None:
-                                # a corrupt enum/bits config (unparsable mask/
-                                # shift) used to overwrite last-good with a
-                                # FRESH None (audit DP-6) — the vmeter then
-                                # never fail-closed and MQTT published "None".
-                                # Hold last-good and warn once per register.
+                        f = None
+                        if getattr(reg, 'monotonic', False):
+                            f = self._counter_filters.get(reg.address)
+                            if f is None:
+                                f = self._counter_filters[reg.address] = MonotonicFilter()
+                        _info: Dict[str, str] = {}
+                        value = apply_corrections(value, reg, counter_filter=f,
+                                                  info=_info)
+                        if value is None:
+                            _stage = _info.get('stage')
+                            if _stage == 'decode_failed':
+                                # corrupt enum/bits config (audit DP-6): hold
+                                # last-good and warn once per register
                                 if reg.address not in self._decode_failed:
                                     self._decode_failed.add(reg.address)
                                     logger.warning(
                                         "%s%s@%s: enum/bits decode failed — "
                                         "holding last-good (check mask/shift)",
                                         self._tag, reg.name, reg.address)
-                                continue
+                            elif _stage == 'filter_drop':
+                                logger.debug(f"{self._tag}{reg.name}@{reg.address}: "
+                                             f"dropped counter glitch (held)")
+                            continue          # sentinel/decode/filter → missing
+                        if getattr(reg, 'enum', None) or getattr(reg, 'bits', None):
                             self._decode_failed.discard(reg.address)
-                        else:
-                            # engineering value = raw / scale (SunSpec int+SF
-                            # meters, transformer ratios, …). scale defaults to
-                            # 1.0 so the Janitza primary is byte-identical.
-                            sc = getattr(reg, 'scale', 1.0) or 1.0
-                            off = getattr(reg, 'offset', 0.0) or 0.0
-                            if isinstance(value, (int, float)):
-                                if sc != 1.0:
-                                    value = value / sc
-                                if off:
-                                    value = value + off
-                            # cumulative-counter hygiene: a downward glitch on an
-                            # energy register reads as a counter reset downstream
-                            # (HA Energy, Victron, InfluxDB difference()). Drop it
-                            # and let the cache keep serving the last-good value.
-                            if getattr(reg, 'monotonic', False):
-                                f = self._counter_filters.get(reg.address)
-                                if f is None:
-                                    f = self._counter_filters[reg.address] = MonotonicFilter()
-                                value = f.feed(value)
-                                if value is None:
-                                    logger.debug(f"{self._tag}{reg.name}@{reg.address}: "
-                                                 f"dropped downward counter glitch (held)")
-                                    continue
-                                if f.just_reset:
-                                    # the one transition that used to leave no
-                                    # trace (audit DP-10) — a wrongly-adopted
-                                    # baseline poisons every downstream delta
-                                    logger.warning(
-                                        f"{self._tag}{reg.name}@{reg.address}: "
-                                        f"counter RESET adopted (new baseline "
-                                        f"{value}) after {f.reset_confirm} "
-                                        f"coherent low reads")
+                        if f is not None and f.just_reset:
+                            # the one transition that used to leave no trace
+                            # (audit DP-10) — a wrongly-adopted baseline
+                            # poisons every downstream delta
+                            logger.warning(
+                                f"{self._tag}{reg.name}@{reg.address}: "
+                                f"counter RESET adopted (new baseline "
+                                f"{value}) after {f.reset_confirm} "
+                                f"coherent low reads")
                         results[reg.address] = {
                             'value': value,
                             'register': reg,

@@ -39,7 +39,9 @@ import urllib.request
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
+from .counter_filter import MonotonicFilter
 from .redact import redact_url
+from .value_decode import apply_corrections
 
 logger = logging.getLogger(__name__)
 
@@ -291,6 +293,9 @@ class _JsonPoller(threading.Thread):
         self._stop_event = threading.Event()   # single stop primitive (M1)
         self.poll_count = 0
         self.last_poll_time = 0.0
+        # monotonic-counter guards, per register (same as the Modbus poller);
+        # re-seeded on reload since a fresh poller is built each time
+        self._counter_filters: dict = {}
 
     def run(self):
         # Stop event is the single source of truth — a stop() landing between
@@ -319,15 +324,21 @@ class _JsonPoller(threading.Thread):
                             # whole batch, and a vmeter can't encode it (stalls the
                             # block refresh). Skip the register instead.
                             continue
-                        # engineering value = raw / scale, same convention as the
-                        # Modbus path — so a register's scale means the same thing
-                        # on every transport (default 1.0 = unchanged).
-                        _sc = getattr(reg, 'scale', 1.0) or 1.0
-                        if _sc != 1.0:
-                            val = val / _sc
-                        _off = getattr(reg, 'offset', 0.0) or 0.0
-                        if _off:
-                            val = val + _off
+                        # SHARED correction pipeline (apply_corrections): this
+                        # path used to apply only scale+offset — a declared
+                        # nan sentinel published as a real measurement, an
+                        # enum stayed a bare int and a monotonic energy
+                        # counter got zero rollover protection on HTTP
+                        # sources (external audit). Undeclared registers pass
+                        # through unchanged.
+                        _cf = None
+                        if getattr(reg, 'monotonic', False):
+                            _cf = self._counter_filters.get(reg.address)
+                            if _cf is None:
+                                _cf = self._counter_filters[reg.address] = MonotonicFilter()
+                        val = apply_corrections(val, reg, counter_filter=_cf)
+                        if val is None:
+                            continue          # sentinel/decode/filter → hold last-good
                         data[reg.address] = {'value': val, 'register': reg,
                                              'ts': t0, 'mono': t0_mono,
                                              'interval': self.interval}
