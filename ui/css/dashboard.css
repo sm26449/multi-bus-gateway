@@ -41,7 +41,7 @@
 }
 
 .stat-value.success { color: var(--success-text); }
-.stat-value.danger { color: var(--danger); }
+.stat-value.danger { color: var(--danger-text); }
 .stat-value.accent { color: var(--accent-text); }
 
 .stat-sub {
@@ -192,11 +192,11 @@
 }
 
 .value-number.value-warning {
-    color: var(--warning);
+    color: var(--warning-text);
 }
 
 .value-number.value-danger {
-    color: var(--danger);
+    color: var(--danger-text);
 }
 
 .value-number.value-success {
@@ -544,11 +544,11 @@
 }
 
 .value-warning {
-    color: var(--warning);
+    color: var(--warning-text);
 }
 
 .value-danger {
-    color: var(--danger);
+    color: var(--danger-text);
 }
 
 /* Badge for poll group in table */

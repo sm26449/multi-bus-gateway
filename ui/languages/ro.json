@@ -1054,5 +1054,15 @@
   "devices.forgetTip": "Șterge definitiv aceste setări păstrate",
   "devices.forgetConfirm": "Ștergi definitiv setările păstrate pentru acest dispozitiv?",
   "devices.forgotten": "Setări uitate",
-  "devices.deletedOn": "șters"
+  "devices.deletedOn": "șters",
+  "conn.restored": "✓ Conexiune restabilită",
+  "conn.lost": "⚠ Conexiune pierdută. Reconectare…",
+  "conn.reconnected": "Reconectat",
+  "conn.reconnectedDesc": "Gateway-ul răspunde din nou.",
+  "conn.lostTitle": "Conexiune pierdută",
+  "conn.lostDesc": "Gateway-ul nu răspunde — reîncercăm la fiecare 5s…",
+  "a11y.skip": "Sari la conținut",
+  "err.network": "Gateway-ul nu poate fi contactat.",
+  "err.generic": "Cererea a eșuat.",
+  "devices.restorableLoadFail": "Nu s-au putut încărca device-urile restaurabile."
 }

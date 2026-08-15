@@ -1054,5 +1054,15 @@
   "devices.forgetTip": "Delete these kept settings permanently",
   "devices.forgetConfirm": "Permanently delete the kept settings for this device?",
   "devices.forgotten": "Settings forgotten",
-  "devices.deletedOn": "deleted"
+  "devices.deletedOn": "deleted",
+  "conn.restored": "✓ Connection restored",
+  "conn.lost": "⚠ Connection lost. Reconnecting…",
+  "conn.reconnected": "Reconnected",
+  "conn.reconnectedDesc": "The gateway is responding again.",
+  "conn.lostTitle": "Connection lost",
+  "conn.lostDesc": "Cannot reach the gateway — retrying every 5s…",
+  "a11y.skip": "Skip to content",
+  "err.network": "Cannot reach the gateway.",
+  "err.generic": "Request failed.",
+  "devices.restorableLoadFail": "Could not load restorable devices."
 }

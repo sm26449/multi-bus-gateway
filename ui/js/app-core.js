@@ -179,11 +179,19 @@ Object.assign(JanitzaMonitor.prototype, {
 
     setupThemeToggle() {
         const toggle = document.getElementById('themeToggle');
+        if (!toggle) return;
 
-        // Simple toggle: cycles dark → light → auto → dark
-        toggle?.addEventListener('click', () => {
+        const cycleTheme = () => {
             const cycle = { dark: 'light', light: 'auto', auto: 'dark' };
             this.applyTheme(cycle[this.theme]);
+        };
+        // Keyboard-operable control (2.1.1): the toggle is a div in markup,
+        // so give it the button contract — focusable + Enter/Space.
+        toggle.setAttribute('role', 'button');
+        toggle.setAttribute('tabindex', '0');
+        toggle.addEventListener('click', cycleTheme);
+        toggle.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); cycleTheme(); }
         });
     },
 
@@ -195,11 +203,21 @@ Object.assign(JanitzaMonitor.prototype, {
         this.showToast(type === 'connected' ? 'success' : 'error', text);
     },
 
-    hideConnectionBanner() {
-        const banner = document.getElementById('connectionBanner');
-        if (banner) {
-            banner.classList.remove('visible');
-        }
+    // ============ Error text hygiene ============
+
+    _errMsg(x) {
+        // Human-readable error text for toasts/panels: network failures get a
+        // friendly line instead of "TypeError: Failed to fetch", FastAPI
+        // validation payloads render their messages, objects never show as
+        // [object Object], and a bare HTTP status reads as "HTTP 500".
+        if (x instanceof TypeError) return this.t('err.network', 'Cannot reach the gateway.');
+        if (x instanceof Error) return x.message || String(x);
+        const d = (x && typeof x === 'object' && 'detail' in x) ? x.detail : x;
+        if (d === null || d === undefined || d === '') return this.t('err.generic', 'Request failed.');
+        if (Array.isArray(d)) return d.map(i => (i && (i.msg || i.error)) || JSON.stringify(i)).join('; ');
+        if (typeof d === 'object') return d.error || d.msg || JSON.stringify(d);
+        if (typeof d === 'number') return `HTTP ${d}`;
+        return String(d);
     },
 
     // ============ Modal Helpers ============
@@ -800,18 +818,24 @@ Object.assign(JanitzaMonitor.prototype, {
 
             // Show reconnected banner if was disconnected
             if (this.wasDisconnected) {
-                this.showConnectionBanner('connected', '✓ Connection restored');
-                setTimeout(() => this.hideConnectionBanner(), 2500);
+                this.showConnectionBanner('connected',
+                    this.t('conn.restored', '✓ Connection restored'));
                 this.wasDisconnected = false;
             }
         };
 
         this.ws.onclose = () => {
             this.updateConnectionStatus(false);
-            this.wasDisconnected = true;
 
-            // Show disconnect banner
-            this.showConnectionBanner('disconnected', '⚠ Connection lost. Reconnecting...');
+            // ONE toast per outage, not one per 3s retry (the retry loop below
+            // fires onclose on every failed attempt — same edge-triggered
+            // discipline loadStatus uses via _statusLost). The statusbar dot
+            // keeps showing the live state throughout.
+            if (!this.wasDisconnected) {
+                this.wasDisconnected = true;
+                this.showConnectionBanner('disconnected',
+                    this.t('conn.lost', '⚠ Connection lost. Reconnecting…'));
+            }
 
             // Reconnect after 3 seconds
             setTimeout(() => this.connectWebSocket(), 3000);
@@ -939,11 +963,11 @@ Object.assign(JanitzaMonitor.prototype, {
         if (connected) {
             status.classList.add('connected');
             status.classList.remove('disconnected');
-            status.innerHTML = '<i class="bi bi-circle-fill"></i> Connected';
+            status.innerHTML = '<i class="bi bi-circle-fill" aria-hidden="true"></i> Connected';
         } else {
             status.classList.remove('connected');
             status.classList.add('disconnected');
-            status.innerHTML = '<i class="bi bi-circle-fill"></i> Disconnected';
+            status.innerHTML = '<i class="bi bi-circle-fill" aria-hidden="true"></i> Disconnected';
         }
     },
 

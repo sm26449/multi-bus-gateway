@@ -55,25 +55,25 @@ Object.assign(JanitzaMonitor.prototype, {
         host.innerHTML = `
         <div class="settings-card">
             <div class="settings-card-header">
-                <h3><i class="bi bi-calculator"></i> ${t('calc.title', 'Calculated measurements')}</h3>
+                <h3><i aria-hidden="true" class="bi bi-calculator"></i> ${t('calc.title', 'Calculated measurements')}</h3>
             </div>
             <div class="settings-card-body">
-                <p class="field-hint" style="margin-top:0"><i class="bi bi-info-circle"></i>
+                <p class="field-hint" style="margin-top:0"><i aria-hidden="true" class="bi bi-info-circle"></i>
                     ${t('calc.help', 'Derive new measurements from existing ones with a formula (e.g. power factor = P / S). Calculated values flow to MQTT, InfluxDB and the JSON output like any real measurement.')}</p>
                 <div class="calc-toolbar">
-                    <button class="btn btn-primary btn-sm" onclick="app.calcAdd()"><i class="bi bi-plus-lg"></i> ${t('calc.add', 'Add')}</button>
+                    <button class="btn btn-primary btn-sm" onclick="app.calcAdd()"><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('calc.add', 'Add')}</button>
                     <div class="calc-preset">
                         <label class="form-label" style="margin:0">${t('calc.fromPreset', 'From preset')}</label>
                         <select id="calcPresetSel" class="input input-sm"><option value="">—</option>${presetOpts}</select>
                         <button class="btn btn-secondary btn-sm" onclick="app.calcApplyPreset(document.getElementById('calcPresetSel').value)">${t('calc.use', 'Use')}</button>
-                        <button class="btn btn-ghost btn-sm" title="${t('calc.deletePreset', 'Delete selected preset')}" onclick="app.calcDeleteSelectedPreset(document.getElementById('calcPresetSel').value)"><i class="bi bi-trash"></i></button>
+                        <button class="btn btn-ghost btn-sm" title="${t('calc.deletePreset', 'Delete selected preset')}" onclick="app.calcDeleteSelectedPreset(document.getElementById('calcPresetSel').value)"><i aria-hidden="true" class="bi bi-trash"></i></button>
                     </div>
                 </div>
                 ${this._calc.editing ? this._calcEditorHtml() : ''}
                 <div class="calc-saved">
                     <div class="calc-saved-head">${t('calc.yourList', 'Your calculated measurements')} (${this._calc.items.length})</div>
                     ${this._calcListHtml()}
-                    ${this._calc.items.length ? `<p class="field-hint"><i class="bi bi-broadcast"></i> ${t('calc.alsoIn', 'These also appear in Monitor, MQTT, InfluxDB and the JSON output — like any real measurement.')}</p>` : ''}
+                    ${this._calc.items.length ? `<p class="field-hint"><i aria-hidden="true" class="bi bi-broadcast"></i> ${t('calc.alsoIn', 'These also appear in Monitor, MQTT, InfluxDB and the JSON output — like any real measurement.')}</p>` : ''}
                 </div>
             </div>
         </div>`;
@@ -180,9 +180,9 @@ Object.assign(JanitzaMonitor.prototype, {
             </div>
             <div class="calc-editor-actions">
                 <span class="save-feedback" id="calcFeedback"></span>
-                <button class="btn btn-ghost btn-sm" onclick="app.calcSaveAsTemplate()" title="${t('calc.saveAsPresetHint', 'Save this formula as a reusable preset')}"><i class="bi bi-bookmark-plus"></i> ${t('calc.saveAsPreset', 'Save as preset')}</button>
+                <button class="btn btn-ghost btn-sm" onclick="app.calcSaveAsTemplate()" title="${t('calc.saveAsPresetHint', 'Save this formula as a reusable preset')}"><i aria-hidden="true" class="bi bi-bookmark-plus"></i> ${t('calc.saveAsPreset', 'Save as preset')}</button>
                 <button class="btn btn-ghost btn-sm" onclick="app.calcCancel()">${t('common.cancel', 'Cancel')}</button>
-                <button class="btn btn-primary btn-sm" onclick="app.calcSave()"><i class="bi bi-check-lg"></i> ${t('common.save', 'Save')}</button>
+                <button class="btn btn-primary btn-sm" onclick="app.calcSave()"><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('common.save', 'Save')}</button>
             </div>
         </div>`;
     },

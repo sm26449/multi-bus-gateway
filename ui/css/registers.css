@@ -269,7 +269,7 @@
     border-radius: 50%;
     font-size: 11px;
     background: rgba(255, 69, 58, 0.15);
-    color: var(--danger);
+    color: var(--danger-text);
 }
 
 .status-icon.active {
@@ -367,7 +367,7 @@
     background: rgba(255, 214, 10, 0.1);
     border-radius: var(--radius-sm);
     font-size: 12px;
-    color: var(--warning);
+    color: var(--warning-text);
     display: flex;
     align-items: center;
     gap: 8px;
@@ -377,7 +377,7 @@
     padding: 16px;
     background: rgba(255, 69, 58, 0.1);
     border-radius: var(--radius-sm);
-    color: var(--danger);
+    color: var(--danger-text);
     display: flex;
     align-items: center;
     gap: 8px;
@@ -430,7 +430,7 @@
 
 .editor-status.invalid {
     background: rgba(255, 69, 58, 0.1);
-    color: var(--danger);
+    color: var(--danger-text);
 }
 
 /* ==================== THRESHOLD FIELDS IN MODALS ==================== */

@@ -19,7 +19,7 @@ Object.assign(JanitzaMonitor.prototype, {
             if (!rsp.ok) throw new Error(`HTTP ${rsp.status}`);
             st = await rsp.json();
         } catch (e) {
-            el.innerHTML = `<p style="color:var(--danger,#ef4444);">${this.t('builder.loadFail', 'Could not load builder status.')} <span style="color:var(--text-secondary);">(${this._esc(String(e.message || e))})</span></p>`;
+            el.innerHTML = `<p style="color:var(--danger-text);">${this.t('builder.loadFail', 'Could not load builder status.')} <span style="color:var(--text-secondary);">(${this._esc(String(e.message || e))})</span></p>`;
             return;
         }
         this._builderStatus = st;
@@ -37,11 +37,11 @@ Object.assign(JanitzaMonitor.prototype, {
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
                 ${banner}
                 <span style="flex:1;"></span>
-                <button class="btn btn-primary btn-sm" id="builderGenBtn"><i class="bi bi-magic"></i> ${this.t('builder.generate', 'Generate from template')}</button>
-                <button class="btn btn-sm" id="builderNewBtn"><i class="bi bi-plus-lg"></i> ${this.t('builder.newNode', 'New node')}</button>
-                <button class="btn btn-sm" id="builderImportBtn"><i class="bi bi-upload"></i> ${this.t('builder.importYaml', 'Import YAML')}</button>
-                <button class="btn btn-sm" id="builderUpdateAllBtn" title="${this.t('builder.updateAllTip', 'Rebuild and OTA every node whose firmware is out of date')}"><i class="bi bi-arrow-repeat"></i> ${this.t('builder.updateAll', 'Update all')}</button>
-                <button class="btn btn-ghost btn-sm" id="builderSettingsBtn" title="${this.t('builder.settingsTitle', 'ESPHome connection')}" aria-label="${this.t('builder.settingsTitle', 'ESPHome connection')}"><i class="bi bi-gear"></i></button>
+                <button class="btn btn-primary btn-sm" id="builderGenBtn"><i aria-hidden="true" class="bi bi-magic"></i> ${this.t('builder.generate', 'Generate from template')}</button>
+                <button class="btn btn-sm" id="builderNewBtn"><i aria-hidden="true" class="bi bi-plus-lg"></i> ${this.t('builder.newNode', 'New node')}</button>
+                <button class="btn btn-sm" id="builderImportBtn"><i aria-hidden="true" class="bi bi-upload"></i> ${this.t('builder.importYaml', 'Import YAML')}</button>
+                <button class="btn btn-sm" id="builderUpdateAllBtn" title="${this.t('builder.updateAllTip', 'Rebuild and OTA every node whose firmware is out of date')}"><i aria-hidden="true" class="bi bi-arrow-repeat"></i> ${this.t('builder.updateAll', 'Update all')}</button>
+                <button class="btn btn-ghost btn-sm" id="builderSettingsBtn" title="${this.t('builder.settingsTitle', 'ESPHome connection')}" aria-label="${this.t('builder.settingsTitle', 'ESPHome connection')}"><i aria-hidden="true" class="bi bi-gear"></i></button>
             </div>
             <div id="builderSettingsPanel" style="display:none;max-width:680px;margin-bottom:14px;">
                 ${this._builderSettingsFormHtml()}
@@ -65,14 +65,14 @@ Object.assign(JanitzaMonitor.prototype, {
     async _renderBuilderNodes() {
         const el = document.getElementById('builderNodes');
         if (!el) return;
-        el.innerHTML = `<span class="field-hint"><i class="bi bi-arrow-repeat spin"></i> ${this.t('common.loading', 'Loading…')}</span>`;
+        el.innerHTML = `<span class="field-hint"><i aria-hidden="true" class="bi bi-arrow-repeat spin"></i> ${this.t('common.loading', 'Loading…')}</span>`;
         let data;
         try {
             const rsp = await fetch('/api/builder/nodes');
             if (!rsp.ok) throw new Error((await rsp.json()).detail || rsp.status);
             data = await rsp.json();
         } catch (e) {
-            el.innerHTML = `<p style="color:var(--danger,#ef4444);">${this._esc(String(e.message || e))}</p>`;
+            el.innerHTML = `<p style="color:var(--danger-text);">${this._esc(String(e.message || e))}</p>`;
             return;
         }
         const nodes = data.configured || [];
@@ -92,14 +92,14 @@ Object.assign(JanitzaMonitor.prototype, {
                 n.address ? this._esc(n.address) : null,
             ].filter(Boolean).join(' · ');
             const actions = [
-                `<button class="btn btn-ghost btn-sm" data-act="edit" data-name="${name}" title="${this.t('common.edit', 'Edit')}" aria-label="${this.t('common.edit', 'Edit')}"><i class="bi bi-pencil"></i></button>`,
-                `<button class="btn btn-ghost btn-sm" data-act="validate" data-name="${name}" title="${this.t('builder.validate', 'Validate')}" aria-label="${this.t('builder.validate', 'Validate')}"><i class="bi bi-check2-circle"></i></button>`,
-                `<button class="btn btn-ghost btn-sm" data-act="compile" data-name="${name}" title="${this.t('builder.build', 'Build')}" aria-label="${this.t('builder.build', 'Build')}"><i class="bi bi-hammer"></i></button>`,
-                `<button class="btn btn-ghost btn-sm" data-act="upload" data-name="${name}" title="${this.t('builder.flashOta', 'Flash OTA')}" aria-label="${this.t('builder.flashOta', 'Flash OTA')}"><i class="bi bi-broadcast-pin"></i></button>`,
-                `<button class="btn btn-ghost btn-sm" data-act="flash-usb" data-name="${name}" title="${this.t('builder.flashUsbTip', 'First-time flash over USB, from this browser (WebSerial)')}" aria-label="${this.t('builder.flashUsb', 'Flash via USB')}"><i class="bi bi-usb-plug"></i></button>`,
-                `<button class="btn btn-ghost btn-sm" data-act="logs" data-name="${name}" title="${this.t('builder.logs', 'Logs')}" aria-label="${this.t('builder.logs', 'Logs')}"><i class="bi bi-terminal"></i></button>`,
-                `<button class="btn btn-ghost btn-sm" data-act="downloads" data-name="${name}" title="${this.t('builder.binaries', 'Binaries')}" aria-label="${this.t('builder.binaries', 'Binaries')}"><i class="bi bi-download"></i></button>`,
-                `<button class="btn btn-ghost btn-sm" data-act="delete" data-name="${name}" title="${this.t('builder.deleteTip', 'Archive on the ESPHome dashboard (recoverable there)')}" aria-label="${this.t('common.delete', 'Delete')}"><i class="bi bi-trash"></i></button>`,
+                `<button class="btn btn-ghost btn-sm" data-act="edit" data-name="${name}" title="${this.t('common.edit', 'Edit')}" aria-label="${this.t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>`,
+                `<button class="btn btn-ghost btn-sm" data-act="validate" data-name="${name}" title="${this.t('builder.validate', 'Validate')}" aria-label="${this.t('builder.validate', 'Validate')}"><i aria-hidden="true" class="bi bi-check2-circle"></i></button>`,
+                `<button class="btn btn-ghost btn-sm" data-act="compile" data-name="${name}" title="${this.t('builder.build', 'Build')}" aria-label="${this.t('builder.build', 'Build')}"><i aria-hidden="true" class="bi bi-hammer"></i></button>`,
+                `<button class="btn btn-ghost btn-sm" data-act="upload" data-name="${name}" title="${this.t('builder.flashOta', 'Flash OTA')}" aria-label="${this.t('builder.flashOta', 'Flash OTA')}"><i aria-hidden="true" class="bi bi-broadcast-pin"></i></button>`,
+                `<button class="btn btn-ghost btn-sm" data-act="flash-usb" data-name="${name}" title="${this.t('builder.flashUsbTip', 'First-time flash over USB, from this browser (WebSerial)')}" aria-label="${this.t('builder.flashUsb', 'Flash via USB')}"><i aria-hidden="true" class="bi bi-usb-plug"></i></button>`,
+                `<button class="btn btn-ghost btn-sm" data-act="logs" data-name="${name}" title="${this.t('builder.logs', 'Logs')}" aria-label="${this.t('builder.logs', 'Logs')}"><i aria-hidden="true" class="bi bi-terminal"></i></button>`,
+                `<button class="btn btn-ghost btn-sm" data-act="downloads" data-name="${name}" title="${this.t('builder.binaries', 'Binaries')}" aria-label="${this.t('builder.binaries', 'Binaries')}"><i aria-hidden="true" class="bi bi-download"></i></button>`,
+                `<button class="btn btn-ghost btn-sm" data-act="delete" data-name="${name}" title="${this.t('builder.deleteTip', 'Archive on the ESPHome dashboard (recoverable there)')}" aria-label="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>`,
             ].join('');
             return `
             <div class="device-row" style="cursor:default;">
@@ -124,7 +124,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 </div>
                 <div class="device-row-actions">
                     <button class="btn btn-ghost btn-sm" data-imp="${i}" title="${this.t('builder.importTip', 'Adopt onto the ESPHome dashboard — it becomes a managed node (build/OTA from here)')}">
-                        <i class="bi bi-box-arrow-in-down"></i> ${this.t('builder.import', 'Import')}</button>
+                        <i aria-hidden="true" class="bi bi-box-arrow-in-down"></i> ${this.t('builder.import', 'Import')}</button>
                 </div>
             </div>`).join('')}` : '';
         el.innerHTML = rows + imp;
@@ -148,7 +148,7 @@ Object.assign(JanitzaMonitor.prototype, {
     _builderSettingsFormHtml() {
         return `
             <div class="card">
-                <div class="card-header"><i class="bi bi-gear"></i> ${this.t('builder.settingsTitle', 'ESPHome connection')}</div>
+                <div class="card-header"><i aria-hidden="true" class="bi bi-gear"></i> ${this.t('builder.settingsTitle', 'ESPHome connection')}</div>
                 <div class="card-body">
                     <div class="form-group"><label class="checkbox-label">
                         <input type="checkbox" id="bsEnabled"> ${this.t('builder.enable', 'Enable the Device Builder')}</label></div>
@@ -161,7 +161,7 @@ Object.assign(JanitzaMonitor.prototype, {
                         <div class="form-group" style="flex:1;min-width:160px;"><label for="bsPass">${this.t('builder.pass', 'Password (optional)')}</label>
                             <input type="password" id="bsPass" autocomplete="new-password" style="width:100%;"></div>
                     </div>
-                    <button class="btn btn-primary btn-sm" id="bsSaveBtn"><i class="bi bi-save"></i> ${this.t('common.save', 'Save')}</button>
+                    <button class="btn btn-primary btn-sm" id="bsSaveBtn"><i aria-hidden="true" class="bi bi-save"></i> ${this.t('common.save', 'Save')}</button>
                     <span id="bsMsg" style="margin-left:10px;font-size:13px;"></span>
                 </div>
             </div>`;
@@ -193,7 +193,7 @@ Object.assign(JanitzaMonitor.prototype, {
             } else {
                 const d = await rsp.json().catch(() => ({}));
                 const msg = (d.detail && d.detail.errors) ? d.detail.errors.join('; ') : (d.detail || rsp.status);
-                document.getElementById('bsMsg').innerHTML = `<span style="color:var(--danger,#ef4444);">${this._esc(String(msg))}</span>`;
+                document.getElementById('bsMsg').innerHTML = `<span style="color:var(--danger-text);">${this._esc(String(msg))}</span>`;
             }
         });
     },
@@ -249,7 +249,7 @@ Object.assign(JanitzaMonitor.prototype, {
         }
         if (!rsp.ok) {
             const d = await rsp.json().catch(() => ({}));
-            this.showToast('error', 'Builder', this._esc(String(d.detail || rsp.status)));
+            this.showToast('error', 'Builder', this._errMsg(d.detail ?? rsp.status));
             return;
         }
         this.closeModal('builderEditorModal');
@@ -286,7 +286,7 @@ Object.assign(JanitzaMonitor.prototype, {
             this._renderBuilderNodes();
         } else {
             const d = await rsp.json().catch(() => ({}));
-            this.showToast('error', 'Builder', this._esc(String(d.detail || rsp.status)));
+            this.showToast('error', 'Builder', this._errMsg(d.detail ?? rsp.status));
         }
     },
 
@@ -303,7 +303,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div style="flex:1;"><b>${this._esc(x.title || x.file)}</b><br>
                     <span style="color:var(--text-secondary);font-size:12px;">${this._esc(x.description || '')}</span></div>
                 <a class="btn btn-sm" href="/api/builder/nodes/${encodeURIComponent(name)}/download?file=${encodeURIComponent(x.file)}&download=${encodeURIComponent(x.download || '')}">
-                    <i class="bi bi-download"></i> ${this._esc(x.file)}</a>
+                    <i aria-hidden="true" class="bi bi-download"></i> ${this._esc(x.file)}</a>
             </div>`).join('')
             : `<p style="color:var(--text-secondary);">${this.t('builder.noBinaries', 'No binaries — build the node first.')}</p>`;
         this.openModal('builderDownloadsModal');
@@ -391,7 +391,7 @@ Object.assign(JanitzaMonitor.prototype, {
             this._renderBuilderNodes();
         } else {
             const msg = (d.detail && d.detail.errors) ? d.detail.errors.join('; ') : (d.detail || rsp.status);
-            this.showToast('error', 'Builder', this._esc(String(msg)));
+            this.showToast('error', 'Builder', this._errMsg(msg));
         }
     },
 
@@ -415,7 +415,7 @@ Object.assign(JanitzaMonitor.prototype, {
             if (managed.has(r.name)) chips.push(`<span class="dev-chip">${this.t('builder.managed', 'managed here')}</span>`);
             const impIdx = impByName[r.name];
             const action = impIdx !== undefined
-                ? `<button class="btn btn-ghost btn-sm" data-scan-imp="${impIdx}"><i class="bi bi-box-arrow-in-down"></i> ${this.t('builder.import', 'Import')}</button>`
+                ? `<button class="btn btn-ghost btn-sm" data-scan-imp="${impIdx}"><i aria-hidden="true" class="bi bi-box-arrow-in-down"></i> ${this.t('builder.import', 'Import')}</button>`
                 : (managed.has(r.name) || r.encrypted ? ''
                    : `<span class="field-hint">${this.t('builder.espForeign', 'not adoptable — connect it via MQTT or reflash with the Builder')}</span>`);
             return `<div class="device-row" style="cursor:default;">
@@ -469,9 +469,9 @@ Object.assign(JanitzaMonitor.prototype, {
             <p style="max-width:520px;">${this.t('builder.flashUsbHelp',
                 'Connect the board over USB, then click Install. After flashing, the same dialog can provision Wi-Fi over the cable (Improv).')}</p>
             <esp-web-install-button manifest="/api/builder/nodes/${encodeURIComponent(name)}/manifest">
-                <button class="btn btn-primary" slot="activate"><i class="bi bi-usb-plug"></i> ${this.t('builder.install', 'Install')}</button>
+                <button class="btn btn-primary" slot="activate"><i aria-hidden="true" class="bi bi-usb-plug"></i> ${this.t('builder.install', 'Install')}</button>
                 <span slot="unsupported" style="color:var(--warning,#f59e0b);">${this.t('builder.noWebSerial2', 'WebSerial not available in this browser.')}</span>
-                <span slot="not-allowed" style="color:var(--danger,#ef4444);">${this.t('builder.notAllowed', 'Not allowed in an insecure context — open the UI over HTTPS.')}</span>
+                <span slot="not-allowed" style="color:var(--danger-text);">${this.t('builder.notAllowed', 'Not allowed in an insecure context — open the UI over HTTPS.')}</span>
             </esp-web-install-button>`;
         this.openModal('builderFlashModal');
     },
@@ -594,7 +594,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const d = await rsp.json().catch(() => ({}));
         if (!rsp.ok) {
             const errs = (d.detail && d.detail.errors) ? d.detail.errors.join('; ') : (d.detail || rsp.status);
-            msg.innerHTML = `<span style="color:var(--danger,#ef4444);">${this._esc(String(errs))}</span>`;
+            msg.innerHTML = `<span style="color:var(--danger-text);">${this._esc(String(errs))}</span>`;
             return;
         }
         this._bgResult = d;
@@ -655,7 +655,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 : this.t('builder.genSaved', 'Node YAML saved on the ESPHome dashboard.'));
             this._renderBuilderNodes();
         } catch (e) {
-            msg.innerHTML = `<span style="color:var(--danger,#ef4444);">${this._esc(String(e.message || e))}</span>`;
+            msg.innerHTML = `<span style="color:var(--danger-text);">${this._esc(String(e.message || e))}</span>`;
         }
     },
 });

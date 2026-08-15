@@ -315,7 +315,7 @@ Object.assign(JanitzaMonitor.prototype, {
             const h = (this.status?.devices || []).find(d => d.id === dev)?.data_health;
             if (grid) grid.innerHTML = `
                 <div class="empty-state">
-                    <div class="empty-state-icon">${h === 'down' ? '📵' : '📊'}</div>
+                    <div class="empty-state-icon"><i class="bi ${h === 'down' ? 'bi-wifi-off' : 'bi-bar-chart'}" aria-hidden="true"></i></div>
                     <div class="empty-state-title">${h === 'down'
                         ? this.t('dash.deviceDown', 'Source is not responding')
                         : this.t('dash.noDeviceWidgets', 'No measurements on this dashboard yet')}</div>
@@ -417,7 +417,7 @@ Object.assign(JanitzaMonitor.prototype, {
         if (dashboardRegs.length === 0 && !grid.querySelector('.empty-state')) {
             grid.innerHTML = `
                 <div class="empty-state">
-                    <div class="empty-state-icon">📊</div>
+                    <div class="empty-state-icon"><i class="bi bi-bar-chart" aria-hidden="true"></i></div>
                     <div class="empty-state-title">${this.t('msg.noWidgets', "No widgets on dashboard")}</div>
                     <div class="empty-state-desc">
                         Add measurements to your dashboard to monitor values in real-time.
@@ -465,7 +465,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="widget-header-right">
                     ${pollBadge}
                     <button class="widget-edit-btn" title="Edit widget">
-                        <i class="bi bi-pencil"></i>
+                        <i aria-hidden="true" class="bi bi-pencil"></i>
                     </button>
                 </div>
             </div>
@@ -592,7 +592,7 @@ Object.assign(JanitzaMonitor.prototype, {
         if (registers.length === 0) {
             container.innerHTML = `
                 <div class="empty-state">
-                    <div class="empty-state-icon">📊</div>
+                    <div class="empty-state-icon"><i class="bi bi-bar-chart" aria-hidden="true"></i></div>
                     <div class="empty-state-title">${this.t('msg.noWidgets', "No widgets on dashboard")}</div>
                     <div class="empty-state-desc">
                         Add measurements to your dashboard to monitor values in real-time.
@@ -630,7 +630,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <td>${pollBadge}</td>
                     <td>
                         <button class="btn-action" title="Edit" ${this._act('editRegisterByAddress', [reg.address])}>
-                            <i class="bi bi-pencil"></i>
+                            <i aria-hidden="true" class="bi bi-pencil"></i>
                         </button>
                     </td>
                 </tr>
@@ -772,9 +772,9 @@ Object.assign(JanitzaMonitor.prototype, {
         if (typeof value === 'number' && reg.thresholds && reg.thresholds.enabled) {
             const colorClass = this.getValueColorClass(value, reg);
             const colorMap = {
-                'value-danger': 'var(--color-danger, #ef4444)',
-                'value-warning': 'var(--color-warning, #f59e0b)',
-                'value-success': 'var(--color-success, #22c55e)',
+                'value-danger': 'var(--danger-text)',
+                'value-warning': 'var(--warning-text)',
+                'value-success': 'var(--success-text)',
                 'value-normal': reg.ui_config?.color || 'var(--accent)',
             };
             return colorMap[colorClass] || colorMap['value-normal'];
@@ -877,7 +877,7 @@ Object.assign(JanitzaMonitor.prototype, {
             this.showToast('success', this.t('dash.reapplyColors', 'Reapply default colors'),
                            this.t('toast.done', 'done'));
         } catch (e) {
-            this.showToast('error', this.t('toast.saveFailed', 'Save failed'), String(e));
+            this.showToast('error', this.t('toast.saveFailed', 'Save failed'), this._errMsg(e));
         } finally { if (btn) btn.disabled = false; }
     },
 
@@ -942,7 +942,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
             html += `
                 <div class="customize-item" data-address="${reg.address}" draggable="true">
-                    <i class="bi bi-grip-vertical customize-drag-handle"></i>
+                    <i aria-hidden="true" class="bi bi-grip-vertical customize-drag-handle"></i>
                     <input type="checkbox" data-address="${reg.address}" ${checked}>
                     <div class="customize-item-info">
                         <div class="customize-item-label">${this._esc(reg.label || reg.name)}</div>
@@ -955,7 +955,7 @@ Object.assign(JanitzaMonitor.prototype, {
                             <option value="chart" ${widgetType === 'chart' ? 'selected' : ''}>${this.t('lbl.chart', "Chart")}</option>
                         </select>
                         <button class="customize-size-toggle ${isWide}" data-address="${reg.address}" title="Wide widget">
-                            <i class="bi bi-arrows-expand"></i> Wide
+                            <i aria-hidden="true" class="bi bi-arrows-expand"></i> Wide
                         </button>
                     </div>
                 </div>

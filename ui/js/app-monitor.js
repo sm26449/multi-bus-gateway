@@ -166,7 +166,7 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!html) {
             container.innerHTML = `
                 <div class="empty-state" style="padding: 40px 20px;">
-                    <div class="empty-state-icon">📈</div>
+                    <div class="empty-state-icon"><i class="bi bi-graph-up" aria-hidden="true"></i></div>
                     <div class="empty-state-title">${this.t('msg.noMonitored', "No measurements monitored")}</div>
                     <div class="empty-state-desc">
                         Add measurements to monitoring to see real-time data.

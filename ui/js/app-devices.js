@@ -83,12 +83,12 @@ Object.assign(JanitzaMonitor.prototype, {
                   `${d.staleness_age_s != null ? d.staleness_age_s + 's' : '—'} ${this.t('devices.age', 'age')}`
                 : this.t('devices.notConnected', 'not connected');
             const actions = [
-                `<button class="btn btn-ghost btn-sm" ${this._act('jumpToDeviceRegisters', [d.id])} title="${this.t('devices.registers', 'Measurements')}"><i class="bi bi-list-check"></i></button>`,
-                `<button class="btn btn-ghost btn-sm" ${this._act('testDevice', [d.id], {el: true})} title="${this.t('devices.test', 'Test read')}"><i class="bi bi-activity"></i></button>`,
+                `<button class="btn btn-ghost btn-sm" ${this._act('jumpToDeviceRegisters', [d.id])} title="${this.t('devices.registers', 'Measurements')}"><i aria-hidden="true" class="bi bi-list-check"></i></button>`,
+                `<button class="btn btn-ghost btn-sm" ${this._act('testDevice', [d.id], {el: true})} title="${this.t('devices.test', 'Test read')}"><i aria-hidden="true" class="bi bi-activity"></i></button>`,
             ];
-            actions.push(`<button class="btn btn-ghost btn-sm" ${this._act('openDeviceDetail', [d.id])} title="${this.t('common.edit', 'Edit')}"><i class="bi bi-pencil"></i></button>`);
+            actions.push(`<button class="btn btn-ghost btn-sm" ${this._act('openDeviceDetail', [d.id])} title="${this.t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>`);
             if (!d.primary) {
-                actions.push(`<button class="btn btn-ghost btn-sm" ${this._act('deleteDevice', [d.id])} title="${this.t('common.delete', 'Delete')}"><i class="bi bi-trash"></i></button>`);
+                actions.push(`<button class="btn btn-ghost btn-sm" ${this._act('deleteDevice', [d.id])} title="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>`);
             }
             // The row (outside its action buttons) opens the full-page detail;
             // data-guard keeps clicks inside the action-buttons cell from bubbling
@@ -119,13 +119,17 @@ Object.assign(JanitzaMonitor.prototype, {
         let items = [];
         try {
             items = (await (await fetch('/api/devices/restorable')).json()).devices || [];
-        } catch (e) { box.innerHTML = ''; return; }
+        } catch (e) {
+            // an error must not look identical to "nothing to restore"
+            box.innerHTML = `<div class="hint-text text-danger">${this._esc(this.t('devices.restorableLoadFail', 'Could not load restorable devices.'))}</div>`;
+            return;
+        }
         if (!items.length) { box.innerHTML = ''; return; }
         const when = ts => ts ? new Date(ts * 1000).toLocaleDateString() : '';
         box.innerHTML = `
             <div class="settings-card devices-card" style="margin-top:16px;">
                 <div class="settings-card-header">
-                    <h3><i class="bi bi-arrow-counterclockwise"></i> ${this.t('devices.restorable', 'Deleted devices (restorable)')}</h3>
+                    <h3><i aria-hidden="true" class="bi bi-arrow-counterclockwise"></i> ${this.t('devices.restorable', 'Deleted devices (restorable)')}</h3>
                 </div>
                 <div class="settings-card-body">
                     <p class="field-hint" style="margin:0 0 10px;">${this.t('devices.restorableHint',
@@ -138,8 +142,8 @@ Object.assign(JanitzaMonitor.prototype, {
                             <div class="device-row-sub">${this._esc(d.protocol || '')} · ${this._esc(d.template || '—')} · ${d.registers} ${this.t('devices.regsSelected', 'measurements')}${d.deleted_ts ? ` · ${this.t('devices.deletedOn', 'deleted')} ${when(d.deleted_ts)}` : ''}</div>
                         </div>
                         <div class="device-row-actions">
-                            <button class="btn btn-sm" data-restore="${this._esc(d.id)}"><i class="bi bi-arrow-counterclockwise"></i> ${this.t('devices.restore', 'Restore')}</button>
-                            <button class="btn btn-ghost btn-sm" data-forget="${this._esc(d.id)}" title="${this.t('devices.forgetTip', 'Delete these kept settings permanently')}" aria-label="${this.t('devices.forget', 'Forget')}"><i class="bi bi-trash"></i></button>
+                            <button class="btn btn-sm" data-restore="${this._esc(d.id)}"><i aria-hidden="true" class="bi bi-arrow-counterclockwise"></i> ${this.t('devices.restore', 'Restore')}</button>
+                            <button class="btn btn-ghost btn-sm" data-forget="${this._esc(d.id)}" title="${this.t('devices.forgetTip', 'Delete these kept settings permanently')}" aria-label="${this.t('devices.forget', 'Forget')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
                         </div>
                     </div>`).join('')}
                 </div>
@@ -154,10 +158,10 @@ Object.assign(JanitzaMonitor.prototype, {
         const rsp = await fetch(`/api/devices/${encodeURIComponent(id)}/restore`, { method: 'POST' });
         const d = await rsp.json().catch(() => ({}));
         if (rsp.ok) {
-            this.showToast('success', this.t('devices.restored', 'Device restored'), this._esc(id));
+            this.showToast('success', this.t('devices.restored', 'Device restored'), id);
             this.renderDevicesList();
         } else {
-            this.showToast('error', 'Restore', this._esc(String((d.detail && d.detail.errors) ? d.detail.errors.join('; ') : (d.detail || rsp.status))));
+            this.showToast('error', 'Restore', this._errMsg((d.detail && d.detail.errors) ? d.detail.errors.join('; ') : (d.detail ?? rsp.status)));
         }
     },
 
@@ -165,11 +169,11 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!confirm(this.t('devices.forgetConfirm', 'Permanently delete the kept settings for this device?') + `\n${id}`)) return;
         const rsp = await fetch(`/api/devices/restorable/${encodeURIComponent(id)}`, { method: 'DELETE' });
         if (rsp.ok) {
-            this.showToast('success', this.t('devices.forgotten', 'Settings forgotten'), this._esc(id));
+            this.showToast('success', this.t('devices.forgotten', 'Settings forgotten'), id);
             this._renderRestorableDevices();
         } else {
             const d = await rsp.json().catch(() => ({}));
-            this.showToast('error', 'Forget', this._esc(String(d.detail || rsp.status)));
+            this.showToast('error', 'Forget', this._errMsg(d.detail ?? rsp.status));
         }
     },
 
@@ -211,10 +215,10 @@ Object.assign(JanitzaMonitor.prototype, {
     async runDiscover(btn) {
         const method = document.getElementById('discoverMethod')?.value || 'modbus';
         const box = document.getElementById('discoverResult');
-        const busy = () => { if (box) box.innerHTML = `<div class="settings-card" style="padding:12px;color:var(--text-secondary);"><i class="bi bi-arrow-repeat spin"></i> ${this.t('devices.scanning', 'Scanning…')}</div>`; };
+        const busy = () => { if (box) box.innerHTML = `<div class="settings-card" style="padding:12px;color:var(--text-secondary);"><i aria-hidden="true" class="bi bi-arrow-repeat spin"></i> ${this.t('devices.scanning', 'Scanning…')}</div>`; };
         const err = (m) => { if (box) box.innerHTML = `<div class="settings-card" style="padding:12px;color:var(--danger-text,#c0392b);">${this._esc(m)}</div>`; };
         const orig = btn ? btn.innerHTML : '';
-        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-arrow-repeat spin"></i>'; }
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i aria-hidden="true" class="bi bi-arrow-repeat spin"></i>'; }
         try {
             if (method === 'modbus') {
                 const cidr = (document.getElementById('discoverCidr')?.value || '').trim();
@@ -276,19 +280,19 @@ Object.assign(JanitzaMonitor.prototype, {
                 <td style="padding:4px 12px 4px 0;font-variant-numeric:tabular-nums;"><b>${this._esc(r.host)}</b>:${r.port}</td>
                 <td style="padding:4px 12px 4px 0;">${badge}</td>
                 <td style="padding:4px 0;white-space:nowrap;">
-                    <button class="btn btn-ghost btn-sm" ${this._act('sweepModbusUnits', [r.host, r.port], {el: true})} title="${this.t('devices.findUnits', 'Find unit ids')}"><i class="bi bi-diagram-3"></i></button>
+                    <button class="btn btn-ghost btn-sm" ${this._act('sweepModbusUnits', [r.host, r.port], {el: true})} title="${this.t('devices.findUnits', 'Find unit ids')}"><i aria-hidden="true" class="bi bi-diagram-3"></i></button>
                     <button class="btn btn-ghost btn-sm" ${this._act('useDiscoveredModbus', [r.host, r.port, r.unit_id])}>${this.t('devices.add', 'Add Device')}</button>
                 </td></tr>
                 <tr><td colspan="3" style="padding:0;"><div class="disc-units" id="discUnits-${this._esc(r.host).replace(/\./g, '_')}"></div></td></tr>`;
         }).join('');
         box.innerHTML = `<div class="settings-card" style="padding:14px;">
-            <div style="margin-bottom:8px;"><b><i class="bi bi-hdd-network"></i> ${results.length} ${this.t('devices.scanFound', 'device(s) found')}</b> <span style="color:var(--text-secondary);">· ${d.scanned} ${this.t('devices.scanScanned', 'scanned')}</span></div>
+            <div style="margin-bottom:8px;"><b><i aria-hidden="true" class="bi bi-hdd-network"></i> ${results.length} ${this.t('devices.scanFound', 'device(s) found')}</b> <span style="color:var(--text-secondary);">· ${d.scanned} ${this.t('devices.scanScanned', 'scanned')}</span></div>
             <table>${rows}</table></div>`;
     },
 
     async sweepModbusUnits(host, port, btn) {
         const cell = document.getElementById('discUnits-' + host.replace(/\./g, '_'));
-        if (cell) cell.innerHTML = `<span class="field-hint"><i class="bi bi-arrow-repeat spin"></i> ${this.t('devices.scanning', 'Scanning…')}</span>`;
+        if (cell) cell.innerHTML = `<span class="field-hint"><i aria-hidden="true" class="bi bi-arrow-repeat spin"></i> ${this.t('devices.scanning', 'Scanning…')}</span>`;
         try {
             const r = await fetch('/api/discover/modbus/units', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -327,7 +331,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const invRows = (d.inverters || []).map(i =>
             `<tr><td style="padding:2px 12px 2px 0;">${this.t('lbl.inverter', 'Inverter')}</td><td style="padding:2px 12px 2px 0;color:var(--text-secondary);">id ${this._esc(i.solar_api_id)} · DT ${i.dt} · SN ${this._esc(i.serial || '')}</td></tr>`).join('');
         box.innerHTML = `<div class="settings-card" style="padding:14px;">
-            <div style="margin-bottom:8px;"><b><i class="bi bi-hdd-network"></i> ${this.t('devices.discoverTitle', 'Devices behind')} ${this._esc(host)}</b></div>
+            <div style="margin-bottom:8px;"><b><i aria-hidden="true" class="bi bi-hdd-network"></i> ${this.t('devices.discoverTitle', 'Devices behind')} ${this._esc(host)}</b></div>
             ${meterRows ? `<div style="color:var(--text-secondary);font-size:12px;margin:6px 0 2px;">${this.t('lbl.meters', "Meters")}</div><table>${meterRows}</table>` : `<div style="color:var(--text-secondary);">${this.t('msg.noMeters', "No meters reported.")}</div>`}
             ${invRows ? `<div style="color:var(--text-secondary);font-size:12px;margin:10px 0 2px;">${this.t('lbl.inverters', "Inverters")}</div><table>${invRows}</table>` : ''}
             <p class="field-hint" style="margin-top:10px;">${this._esc(d.modbus_note || '')}</p>
@@ -427,11 +431,11 @@ Object.assign(JanitzaMonitor.prototype, {
         const gInf = d.influxdb_enabled ? '' : 'disabled title="Enable the InfluxDB output"';
         return `
         <div class="section-header">
-            <h2><button class="btn btn-ghost btn-sm" onclick="app.closeDeviceDetail()" aria-label="${t('common.back', 'Back')}"><i class="bi bi-arrow-left"></i></button>
-                <i class="bi bi-cpu"></i> ${this._esc(d.name)}
+            <h2><button class="btn btn-ghost btn-sm" onclick="app.closeDeviceDetail()" aria-label="${t('common.back', 'Back')}"><i aria-hidden="true" class="bi bi-arrow-left"></i></button>
+                <i aria-hidden="true" class="bi bi-cpu"></i> ${this._esc(d.name)}
                 <span class="dev-chip">${this._esc(s.id)}</span></h2>
             <div class="header-actions">
-                ${primary ? '' : `<button class="btn btn-ghost btn-sm" ${this._act('deleteDevice', [s.id])}><i class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>`}
+                ${primary ? '' : `<button class="btn btn-ghost btn-sm" ${this._act('deleteDevice', [s.id])}><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>`}
             </div>
         </div>
 
@@ -439,14 +443,14 @@ Object.assign(JanitzaMonitor.prototype, {
              the device (Measurements/Monitor/History/Energy are embedded, scoped
              to this device, with no device selector). -->
         <div class="config-main-tabs" id="deviceWsTabs" style="margin-bottom:14px;">
-            <button class="config-main-tab active" data-dtab="overview"><i class="bi bi-grid-1x2"></i> ${t('devices.tab.overview', 'Overview')}</button>
-            <button class="config-main-tab" data-dtab="edit"><i class="bi bi-pencil-square"></i> ${t('devices.tab.edit', 'Edit')}</button>
-            <button class="config-main-tab" data-dtab="outputs"><i class="bi bi-signpost-split"></i> ${t('devices.detail.outputs', 'Outputs')}</button>
-            <button class="config-main-tab" data-dtab="measurements"><i class="bi bi-list-check"></i> ${t('devices.registers', 'Measurements')} (${d.selected_registers})</button>
-            <button class="config-main-tab" data-dtab="calculated"><i class="bi bi-calculator"></i> ${t('calc.tab', 'Calculated')}</button>
-            <button class="config-main-tab" data-dtab="monitor" ${gMon}><i class="bi bi-graph-up"></i> ${t('nav.monitor', 'Monitor')}</button>
-            <button class="config-main-tab" data-dtab="history" ${gInf}><i class="bi bi-clock-history"></i> ${t('nav.history', 'History')}</button>
-            <button class="config-main-tab" data-dtab="energy" ${gInf}><i class="bi bi-lightning-charge"></i> ${t('nav.energy', 'Energy')}</button>
+            <button class="config-main-tab active" data-dtab="overview"><i aria-hidden="true" class="bi bi-grid-1x2"></i> ${t('devices.tab.overview', 'Overview')}</button>
+            <button class="config-main-tab" data-dtab="edit"><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('devices.tab.edit', 'Edit')}</button>
+            <button class="config-main-tab" data-dtab="outputs"><i aria-hidden="true" class="bi bi-signpost-split"></i> ${t('devices.detail.outputs', 'Outputs')}</button>
+            <button class="config-main-tab" data-dtab="measurements"><i aria-hidden="true" class="bi bi-list-check"></i> ${t('devices.registers', 'Measurements')} (${d.selected_registers})</button>
+            <button class="config-main-tab" data-dtab="calculated"><i aria-hidden="true" class="bi bi-calculator"></i> ${t('calc.tab', 'Calculated')}</button>
+            <button class="config-main-tab" data-dtab="monitor" ${gMon}><i aria-hidden="true" class="bi bi-graph-up"></i> ${t('nav.monitor', 'Monitor')}</button>
+            <button class="config-main-tab" data-dtab="history" ${gInf}><i aria-hidden="true" class="bi bi-clock-history"></i> ${t('nav.history', 'History')}</button>
+            <button class="config-main-tab" data-dtab="energy" ${gInf}><i aria-hidden="true" class="bi bi-lightning-charge"></i> ${t('nav.energy', 'Energy')}</button>
         </div>
 
         <!-- host panels for the embedded, device-scoped views -->
@@ -464,7 +468,7 @@ Object.assign(JanitzaMonitor.prototype, {
         <!-- ── Edit ── -->
         <div data-dpanel="edit" hidden>
         <div class="settings-card">
-            <div class="settings-card-header"><h3><i class="bi bi-ethernet"></i> ${t('devices.detail.connection', 'Connection')}</h3></div>
+            <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-ethernet"></i> ${t('devices.detail.connection', 'Connection')}</h3></div>
             <div class="settings-card-body">
                 <div class="form-group" style="margin-bottom:10px;">
                     <label class="form-label">${t('devices.wizard.protocol', 'Protocol')}</label>
@@ -474,7 +478,7 @@ Object.assign(JanitzaMonitor.prototype, {
                         <label><input type="radio" name="ddvProto" value="http" ${d.protocol === 'http' ? 'checked' : ''} disabled> HTTP / JSON</label>
                         <label><input type="radio" name="ddvProto" value="mqtt" ${d.protocol === 'mqtt' ? 'checked' : ''} disabled> MQTT</label>
                     </div>
-                    <div class="field-hint"><i class="bi bi-lock"></i> ${t('devices.wizard.protoLocked', 'Fixed after creation — the template map is transport-specific.')}</div>
+                    <div class="field-hint"><i aria-hidden="true" class="bi bi-lock"></i> ${t('devices.wizard.protoLocked', 'Fixed after creation — the template map is transport-specific.')}</div>
                 </div>
                 <div id="ddvHttp" style="display:${d.protocol === 'http' ? '' : 'none'}">
                     <div class="form-group"><label class="form-label" for="ddvUrl">${t('devices.wizard.httpUrl', 'JSON endpoint URL')}</label>
@@ -523,13 +527,13 @@ Object.assign(JanitzaMonitor.prototype, {
                     </div>
                     <div class="field-hint">${t('devices.editPassKeep', 'Leave the password blank to keep the stored one.')}</div>
                 </div>
-                <button class="btn btn-secondary btn-sm" onclick="app.deviceDetailTest(this)"><i class="bi bi-activity"></i> ${t('devices.wizard.testConn', 'Test connection')}</button>
+                <button class="btn btn-secondary btn-sm" onclick="app.deviceDetailTest(this)"><i aria-hidden="true" class="bi bi-activity"></i> ${t('devices.wizard.testConn', 'Test connection')}</button>
                 <span class="wiz-test-result" id="ddvTestResult" role="status"></span>
             </div>
         </div>
 
         <div class="settings-card">
-            <div class="settings-card-header"><h3><i class="bi bi-diagram-3"></i> ${t('devices.detail.identityTemplate', 'Identity & template')}</h3></div>
+            <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.detail.identityTemplate', 'Identity & template')}</h3></div>
             <div class="settings-card-body">
                 <div class="form-row">
                     <div class="form-group flex-2"><label class="form-label" for="ddvName">${t('devices.wizard.name', 'Device name')}</label>
@@ -541,7 +545,7 @@ Object.assign(JanitzaMonitor.prototype, {
         </div>
 
         <div class="settings-card">
-            <div class="settings-card-header"><h3><i class="bi bi-arrow-repeat"></i> ${t('devices.detail.polling', 'Polling')}</h3></div>
+            <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-arrow-repeat"></i> ${t('devices.detail.polling', 'Polling')}</h3></div>
             <div class="settings-card-body">
                 <label style="display:flex;align-items:center;gap:8px;">
                     <input type="checkbox" id="ddvEnabled" ${d.enabled ? 'checked' : ''}>
@@ -550,14 +554,14 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div style="color:var(--text-secondary);font-size:12px;margin-bottom:6px;">${t('devices.pollGroups', 'Poll-group intervals (seconds)')}</div>
                     <div id="ddvPollGroups"><span class="field-hint">${t('common.loading', 'Loading…')}</span></div>
                     <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-                        <button class="btn btn-secondary btn-sm" ${this._act('saveDevicePollGroups', [s.id], {el: true})}><i class="bi bi-clock"></i> ${t('devices.savePollGroups', 'Save intervals')}</button>
+                        <button class="btn btn-secondary btn-sm" ${this._act('saveDevicePollGroups', [s.id], {el: true})}><i aria-hidden="true" class="bi bi-clock"></i> ${t('devices.savePollGroups', 'Save intervals')}</button>
                         <span class="save-feedback" id="ddvPgFeedback"></span>
                     </div>
                 </div>
             </div>
             <div class="settings-card-footer">
                 <span class="save-feedback" id="ddvFeedback"></span>
-                <button class="btn btn-primary btn-sm" onclick="app.saveDeviceDetail(this)"><i class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
+                <button class="btn btn-primary btn-sm" onclick="app.saveDeviceDetail(this)"><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
             </div>
         </div>
         </div>
@@ -570,7 +574,7 @@ Object.assign(JanitzaMonitor.prototype, {
             ${this._sinkCardRest(d, primary)}
             <div class="settings-card"><div class="settings-card-footer">
                 <span class="save-feedback" id="ddvFeedback2"></span>
-                <button class="btn btn-primary btn-sm" onclick="app.saveDeviceDetail(this)"><i class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
+                <button class="btn btn-primary btn-sm" onclick="app.saveDeviceDetail(this)"><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
             </div></div>
         </div>`;
     },
@@ -592,7 +596,7 @@ Object.assign(JanitzaMonitor.prototype, {
         return `
         <div class="settings-card">
             <div class="settings-card-header">
-                <h3><i class="bi bi-broadcast"></i> MQTT ${this._sinkStatusPill(s, d.mqtt_enabled, this._devDetail?.entry?.connected)}</h3>
+                <h3><i aria-hidden="true" class="bi bi-broadcast"></i> MQTT ${this._sinkStatusPill(s, d.mqtt_enabled, this._devDetail?.entry?.connected)}</h3>
                 <label class="switch-label" title="${lock ? this.t('devices.sink.lockedPrimary', 'Always on for device #1') : ''}">
                     <input type="checkbox" id="ddvMqttEnabled" ${d.mqtt_enabled ? 'checked' : ''} ${lock ? 'disabled' : ''}>
                     <span>${this.t('devices.sink.enable', 'Enable')}</span>
@@ -606,7 +610,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <label style="display:flex;align-items:center;gap:8px;margin-top:6px;">
                     <input type="checkbox" id="ddvHaDisc" ${d.ha_discovery_enabled ? 'checked' : ''}>
                     ${this.t('devices.wizard.haDiscovery', 'Publish Home Assistant MQTT discovery for this device')}</label>
-                <p class="field-hint"><i class="bi bi-lock"></i> ${primary
+                <p class="field-hint"><i aria-hidden="true" class="bi bi-lock"></i> ${primary
                     ? this.t('devices.sink.mqttLockNote', 'Topic and MQTT output are fixed for device #1 (protects existing history & Home Assistant).')
                     : this.t('devices.sink.routeLockNote', 'Topic prefix is fixed after creation — changing it would orphan existing history & HA entities.')}</p>
             </div>
@@ -619,7 +623,7 @@ Object.assign(JanitzaMonitor.prototype, {
         return `
         <div class="settings-card">
             <div class="settings-card-header">
-                <h3><i class="bi bi-database"></i> InfluxDB ${this._sinkStatusPill(s, d.influxdb_enabled, this._devDetail?.entry?.connected)}</h3>
+                <h3><i aria-hidden="true" class="bi bi-database"></i> InfluxDB ${this._sinkStatusPill(s, d.influxdb_enabled, this._devDetail?.entry?.connected)}</h3>
                 <label class="switch-label" title="${lock ? this.t('devices.sink.lockedPrimary', 'Always on for device #1') : ''}">
                     <input type="checkbox" id="ddvInfluxEnabled" ${d.influxdb_enabled ? 'checked' : ''} ${lock ? 'disabled' : ''}>
                     <span>${this.t('devices.sink.enable', 'Enable')}</span>
@@ -632,7 +636,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div class="form-group"><label class="form-label" for="ddvTag">${this.t('devices.wizard.deviceTag', 'Influx device tag')}</label>
                         <input type="text" id="ddvTag" class="input" value="${this._esc(d.device_tag)}" disabled></div>
                 </div>
-                <p class="field-hint"><i class="bi bi-lock"></i> ${primary
+                <p class="field-hint"><i aria-hidden="true" class="bi bi-lock"></i> ${primary
                     ? this.t('devices.sink.influxLockNote', 'Bucket and tag are fixed for device #1 (protects existing history).')
                     : this.t('devices.sink.influxLockNoteEdit', 'Bucket and tag are fixed after creation — changing them would orphan existing history.')}</p>
             </div>
@@ -755,7 +759,7 @@ Object.assign(JanitzaMonitor.prototype, {
             </div>
         </div>
         <div class="settings-card">
-            <div class="settings-card-header"><h3><i class="bi bi-activity"></i> ${t('devices.overview.live', 'Live values')}</h3></div>
+            <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-activity"></i> ${t('devices.overview.live', 'Live values')}</h3></div>
             <div class="settings-card-body"><div id="ddvSnapshot"><span class="field-hint">${t('common.loading', 'Loading…')}</span></div></div>
         </div>`;
     },
@@ -803,7 +807,7 @@ Object.assign(JanitzaMonitor.prototype, {
         });
         if (!Object.keys(groups).length) return;
         const orig = btn ? btn.innerHTML : '';
-        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-arrow-repeat spin"></i>'; }
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i aria-hidden="true" class="bi bi-arrow-repeat spin"></i>'; }
         if (fb) { fb.textContent = ''; fb.className = 'save-feedback'; }
         try {
             const r = await fetch(`/api/devices/${encodeURIComponent(id)}/poll-groups`, {
@@ -890,7 +894,7 @@ Object.assign(JanitzaMonitor.prototype, {
         return `
         <div class="settings-card">
             <div class="settings-card-header">
-                <h3><i class="bi bi-braces"></i> ${this.t('devices.sink.httpTitle', 'HTTP / JSON output')} ${this._sinkStatusPill(s, on, this._devDetail?.entry?.connected)}</h3>
+                <h3><i aria-hidden="true" class="bi bi-braces"></i> ${this.t('devices.sink.httpTitle', 'HTTP / JSON output')} ${this._sinkStatusPill(s, on, this._devDetail?.entry?.connected)}</h3>
                 <label class="switch-label">
                     <input type="checkbox" id="ddvHttpEnabled" ${on ? 'checked' : ''} onchange="app.toggleHttpOutput('${this._esc(id)}', this)">
                     <span>${this.t('devices.sink.enable', 'Enable')}</span>
@@ -901,18 +905,18 @@ Object.assign(JanitzaMonitor.prototype, {
                     <label class="form-label" for="ddvHttpUrl">${this.t('devices.sink.httpUrl', 'JSON feed URL')}</label>
                     <div style="display:flex;gap:6px;align-items:center;">
                         <input type="text" id="ddvHttpUrl" class="input" value="${this._esc(url)}" readonly onclick="this.select()">
-                        <button type="button" class="btn btn-sm btn-secondary" ${this._act('copyText', [url], {el: true})} title="${this.t('common.copy', 'Copy')}"><i class="bi bi-clipboard"></i></button>
-                        <a class="btn btn-sm btn-secondary" href="${this._esc(url)}" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right"></i> ${this.t('common.open', 'Open')}</a>
+                        <button type="button" class="btn btn-sm btn-secondary" ${this._act('copyText', [url], {el: true})} title="${this.t('common.copy', 'Copy')}"><i aria-hidden="true" class="bi bi-clipboard"></i></button>
+                        <a class="btn btn-sm btn-secondary" href="${this._esc(url)}" target="_blank" rel="noopener"><i aria-hidden="true" class="bi bi-box-arrow-up-right"></i> ${this.t('common.open', 'Open')}</a>
                     </div>
                 </div>
                 <div id="ddvHttpFeed" class="http-feed" style="display:${on ? '' : 'none'}">
                     <div class="http-feed-head">
                         <span id="ddvHttpStats" class="http-feed-stats">${this.t('common.loading', 'Loading…')}</span>
-                        <button type="button" class="btn btn-sm btn-secondary" ${this._act('_loadHttpFeed', [id])} title="${this.t('common.refresh', 'Refresh')}"><i class="bi bi-arrow-clockwise"></i> ${this.t('common.refresh', 'Refresh')}</button>
+                        <button type="button" class="btn btn-sm btn-secondary" ${this._act('_loadHttpFeed', [id])} title="${this.t('common.refresh', 'Refresh')}"><i aria-hidden="true" class="bi bi-arrow-clockwise"></i> ${this.t('common.refresh', 'Refresh')}</button>
                     </div>
                     <pre id="ddvHttpPreview" class="http-feed-preview" aria-live="polite"></pre>
                 </div>
-                <p class="field-hint"><i class="bi bi-info-circle"></i> ${this.t('devices.sink.httpNote', 'Serves the live values of this device as read-only JSON, keyed by measurement name (Solar-API style) — pull it from any HTTP client without MQTT or InfluxDB. Guarded by the same IP allowlist / auth as the UI.')}</p>
+                <p class="field-hint"><i aria-hidden="true" class="bi bi-info-circle"></i> ${this.t('devices.sink.httpNote', 'Serves the live values of this device as read-only JSON, keyed by measurement name (Solar-API style) — pull it from any HTTP client without MQTT or InfluxDB. Guarded by the same IP allowlist / auth as the UI.')}</p>
             </div>
         </div>`;
     },
@@ -930,7 +934,7 @@ Object.assign(JanitzaMonitor.prototype, {
         return `
         <div class="settings-card">
             <div class="settings-card-header">
-                <h3><i class="bi bi-cloud-upload"></i> ${this.t('rest.title', 'REST push')} ${this._sinkStatusPill(s, on, this._devDetail?.entry?.connected)}</h3>
+                <h3><i aria-hidden="true" class="bi bi-cloud-upload"></i> ${this.t('rest.title', 'REST push')} ${this._sinkStatusPill(s, on, this._devDetail?.entry?.connected)}</h3>
                 <label class="switch-label"><input type="checkbox" id="ddvRestEnabled" ${on ? 'checked' : ''}><span>${this.t('devices.sink.enable', 'Enable')}</span></label>
             </div>
             <div class="settings-card-body">
@@ -948,10 +952,10 @@ Object.assign(JanitzaMonitor.prototype, {
                     <input type="checkbox" id="ddvRestVerify" ${rp.verify_tls !== false ? 'checked' : ''}> ${this.t('rest.verifyTls', 'Verify TLS certificate')}</label>
                 <div class="rest-status" id="ddvRestStatus">${statusLine}</div>
                 <div class="calc-editor-actions" style="margin-top:12px">
-                    <button class="btn btn-ghost btn-sm" ${this._act('testRestPush', [this._devDetail.id])}><i class="bi bi-send"></i> ${this.t('rest.test', 'Test push')}</button>
-                    <button class="btn btn-primary btn-sm" ${this._act('saveRestPush', [this._devDetail.id])}><i class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}</button>
+                    <button class="btn btn-ghost btn-sm" ${this._act('testRestPush', [this._devDetail.id])}><i aria-hidden="true" class="bi bi-send"></i> ${this.t('rest.test', 'Test push')}</button>
+                    <button class="btn btn-primary btn-sm" ${this._act('saveRestPush', [this._devDetail.id])}><i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}</button>
                 </div>
-                <p class="field-hint"><i class="bi bi-info-circle"></i> ${this.t('rest.note', 'POSTs the live values of this device as JSON to the URL every interval. External URLs are allowed. Put a Bearer / API key in Headers (stored masked).')}</p>
+                <p class="field-hint"><i aria-hidden="true" class="bi bi-info-circle"></i> ${this.t('rest.note', 'POSTs the live values of this device as JSON to the URL every interval. External URLs are allowed. Put a Bearer / API key in Headers (stored masked).')}</p>
             </div>
         </div>`;
     },
@@ -1074,7 +1078,7 @@ Object.assign(JanitzaMonitor.prototype, {
         catch (e) { /* clipboard blocked (non-HTTPS/older browser) — the field is selectable as fallback */ }
         if (btn) {
             const o = btn.innerHTML;
-            btn.innerHTML = '<i class="bi bi-check-lg"></i>';
+            btn.innerHTML = '<i aria-hidden="true" class="bi bi-check-lg"></i>';
             setTimeout(() => { btn.innerHTML = o; }, 1200);
         }
     },
@@ -1084,7 +1088,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const s = this._devDetail;
         const fb = document.getElementById('ddvFeedback');
         const orig = btn ? btn.innerHTML : '';
-        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-arrow-repeat spin"></i>'; }
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i aria-hidden="true" class="bi bi-arrow-repeat spin"></i>'; }
         if (fb) { fb.textContent = ''; fb.className = 'save-feedback'; }
         const payload = {
             id: s.id, name: d.name, template: d.template, enabled: d.enabled,

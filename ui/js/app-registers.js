@@ -857,7 +857,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
         // Show the result container
         resultContainer.style.display = 'block';
-        resultDiv.innerHTML = '<div class="loading"><i class="bi bi-arrow-repeat spin"></i> Querying…</div>';
+        resultDiv.innerHTML = '<div class="loading"><i aria-hidden="true" class="bi bi-arrow-repeat spin"></i> Querying…</div>';
 
         // Look up register info from our database
         const allRegs = this.flattenRegisters();
@@ -919,12 +919,12 @@ Object.assign(JanitzaMonitor.prototype, {
                     </div>
                     <div class="result-actions">
                         ${isConfigured
-                            ? '<span class="badge configured"><i class="bi bi-check-circle"></i> Monitored</span>'
+                            ? '<span class="badge configured"><i aria-hidden="true" class="bi bi-check-circle"></i> Monitored</span>'
                             : `<button class="btn btn-primary btn-sm" id="queryConfigureBtn">
-                                <i class="bi bi-plus-circle"></i> Add to Monitoring
+                                <i aria-hidden="true" class="bi bi-plus-circle"></i> Add to Monitoring
                                </button>
                                <button class="btn btn-ghost btn-sm" id="queryQuickAddBtn">
-                                <i class="bi bi-lightning"></i> Quick Add
+                                <i aria-hidden="true" class="bi bi-lightning"></i> Quick Add
                                </button>`
                         }
                     </div>
@@ -945,7 +945,7 @@ Object.assign(JanitzaMonitor.prototype, {
                             <span class="detail-value">${new Date(data.timestamp).toLocaleString()}</span>
                         </div>
                         <div class="result-note">
-                            <i class="bi bi-info-circle"></i> This address is not in the known measurements database.
+                            <i aria-hidden="true" class="bi bi-info-circle"></i> This address is not in the known measurements database.
                         </div>
                     </div>
                 `;
@@ -978,7 +978,7 @@ Object.assign(JanitzaMonitor.prototype, {
             this.renderQueryHistory();
 
         } catch (error) {
-            resultDiv.innerHTML = `<div class="result-error"><i class="bi bi-exclamation-triangle"></i> Error: ${error.message}</div>`;
+            resultDiv.innerHTML = `<div class="result-error"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> Error: ${error.message}</div>`;
         }
     },
 
@@ -1492,13 +1492,13 @@ Object.assign(JanitzaMonitor.prototype, {
         const leaseTxt = body.lease_ms ? ` · ${this.t('write.lease', 'Auto-revert (s)')}: ${body.lease_ms / 1000}s` : '';
         document.getElementById('writeResult').innerHTML = `
             <div class="settings-card" style="border-left:3px solid #e08e0b;padding:10px 12px;">
-              <div style="font-weight:600;margin-bottom:6px;color:var(--warning-text,#c77700);"><i class="bi bi-exclamation-triangle"></i> ${this.t('write.confirmTitle', 'Confirm write to hardware')}</div>
+              <div style="font-weight:600;margin-bottom:6px;color:var(--warning-text,#c77700);"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> ${this.t('write.confirmTitle', 'Confirm write to hardware')}</div>
               <div style="font-size:13px;font-variant-numeric:tabular-nums;">
                 ${this.t('lbl.name', 'Name')}: <b>${this._esc(id)}</b> · ${this.t('lbl.address', 'Address')}: <b>${address}</b> (${fc}) · ${this.t('lbl.value', 'Value')}: <b>${this._esc(String(body.value))}</b>${leaseTxt}
               </div>
               <div style="margin-top:8px;display:flex;gap:8px;">
                 <button class="btn btn-ghost btn-sm" onclick="app._cancelWrite()">${this.t('common.cancel', 'Cancel')}</button>
-                <button class="btn btn-primary btn-sm" onclick="app.confirmWrite(this)"><i class="bi bi-check-lg"></i> ${this.t('write.confirm', 'Confirm write')}</button>
+                <button class="btn btn-primary btn-sm" onclick="app.confirmWrite(this)"><i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('write.confirm', 'Confirm write')}</button>
               </div>
             </div>`;
     },
@@ -1526,10 +1526,10 @@ Object.assign(JanitzaMonitor.prototype, {
                 return;
             }
             const vflag = res.verified === true ? ' ✓' : (res.verified === false ? ` ⚠ ${this.t('write.mismatch', 'mismatch')}` : '');
-            const lease = res.lease_ms ? ` · <i class="bi bi-hourglass-split"></i> ${this.t('write.leases', 'auto-revert')} ${res.lease_ms / 1000}s → ${this._esc(String(res.reverts_to))}` : '';
+            const lease = res.lease_ms ? ` · <i aria-hidden="true" class="bi bi-hourglass-split"></i> ${this.t('write.leases', 'auto-revert')} ${res.lease_ms / 1000}s → ${this._esc(String(res.reverts_to))}` : '';
             box.innerHTML = `<div class="settings-card" style="padding:8px 12px;color:var(--success-text,#1a8f4c);">
-                <i class="bi bi-check-circle"></i> ${this.t('write.done', 'Written')} · ${this.t('write.readBack', 'read-back')}: <b>${this._esc(String(res.read_back))}</b>${vflag}${lease}</div>`;
-            this.showToast('success', this.t('write.done', 'Written'), `${id} @ ${address} = ${this._esc(String(res.written))}`);
+                <i aria-hidden="true" class="bi bi-check-circle"></i> ${this.t('write.done', 'Written')} · ${this.t('write.readBack', 'read-back')}: <b>${this._esc(String(res.read_back))}</b>${vflag}${lease}</div>`;
+            this.showToast('success', this.t('write.done', 'Written'), `${id} @ ${address} = ${String(res.written)}`);
             this._pendingWrite = null;
         } catch (e) {
             box.innerHTML = `<div class="settings-card" style="padding:8px 12px;color:var(--danger-text,#c0392b);">${this._esc(e.message)}</div>`;

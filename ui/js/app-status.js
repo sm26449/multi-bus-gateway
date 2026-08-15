@@ -76,7 +76,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <div style="color:var(--text-secondary);font-size:11.5px;">${label}</div>
             <div style="font-size:20px;font-weight:600;color:${color || 'inherit'};font-variant-numeric:tabular-nums;">${value}</div>
             ${sub ? `<div style="color:var(--text-secondary);font-size:11px;margin-top:2px;">${sub}</div>` : ''}</div>`;
-        const sectHead = (icon, title) => `<h3 style="margin:18px 0 8px;font-size:14px;"><i class="bi ${icon}"></i> ${title}</h3>`;
+        const sectHead = (icon, title) => `<h3 style="margin:18px 0 8px;font-size:14px;"><i aria-hidden="true" class="bi ${icon}"></i> ${title}</h3>`;
 
         // ── health ──
         const issues = [];
@@ -98,9 +98,9 @@ Object.assign(JanitzaMonitor.prototype, {
                     if (!a) return '';
                     const on = a.enabled, chans = (a.channels || []).join(', ') || t('status.noChannel', 'no channel');
                     const testBtn = (a.channels && a.channels.length)
-                        ? ` <button class="btn btn-ghost btn-sm" style="padding:0 8px;font-size:11px;" onclick="app.testAlert(this)"><i class="bi bi-send"></i> ${t('status.testAlert', 'Test')}</button> <span id="alertTestResult" style="font-size:11.5px;"></span>`
+                        ? ` <button class="btn btn-ghost btn-sm" style="padding:0 8px;font-size:11px;" onclick="app.testAlert(this)"><i aria-hidden="true" class="bi bi-send"></i> ${t('status.testAlert', 'Test')}</button> <span id="alertTestResult" style="font-size:11.5px;"></span>`
                         : '';
-                    return `<i class="bi bi-bell${on ? '-fill' : ''}"></i> ${t('status.alerts', 'Alerts')}: <b style="color:${on ? OK : OFF};">${on ? t('status.armed', 'armed') : t('status.off', 'off')}</b>${on ? ` <span style="color:var(--text-secondary);">· ${esc(chans)}</span>` : ''}${testBtn}`;
+                    return `<i aria-hidden="true" class="bi bi-bell${on ? '-fill' : ''}"></i> ${t('status.alerts', 'Alerts')}: <b style="color:${on ? OK : OFF};">${on ? t('status.armed', 'armed') : t('status.off', 'off')}</b>${on ? ` <span style="color:var(--text-secondary);">· ${esc(chans)}</span>` : ''}${testBtn}`;
                 })()}</div>
             </div></div>`;
 
@@ -111,7 +111,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const vmReq = insts.reduce((a, i) => a + (i.req_rate || 0), 0);
         const vmConns = insts.reduce((a, i) => a + (i.conn_count || 0), 0);
         const sinkRow = (icon, name, on, connected, right) => `<div style="display:flex;align-items:center;gap:8px;margin:5px 0;font-size:12.5px;">
-            ${dot(!on ? OFF : connected ? OK : WARN)}<i class="bi ${icon}"></i> <b>${name}</b>
+            ${dot(!on ? OFF : connected ? OK : WARN)}<i aria-hidden="true" class="bi ${icon}"></i> <b>${name}</b>
             <span style="color:var(--text-secondary);margin-left:auto;font-variant-numeric:tabular-nums;">${on ? right : t('status.off', 'off')}</span></div>`;
         const pipeline = `<div style="display:flex;gap:14px;align-items:stretch;flex-wrap:wrap;">
             <div class="settings-card" style="flex:1;min-width:240px;padding:12px 14px;"><div style="color:var(--text-secondary);font-size:11.5px;margin-bottom:4px;">${t('status.sources', 'Sources (polling)')} · ${devices.length}</div>${srcRows}</div>
@@ -131,7 +131,7 @@ Object.assign(JanitzaMonitor.prototype, {
         // (this._statusHist survives), so this only shows in the first ~4s.
         const spark = (arr) => (arr && arr.length > 1 && this._sparkline)
             ? this._sparkline(arr, 260, 40)
-            : `<span class="field-hint"><i class="bi bi-hourglass-split"></i> ${t('status.collecting', 'collecting data…')}</span>`;
+            : `<span class="field-hint"><i aria-hidden="true" class="bi bi-hourglass-split"></i> ${t('status.collecting', 'collecting data…')}</span>`;
         const trends = `<div style="display:flex;gap:14px;flex-wrap:wrap;">
             <div class="settings-card" style="flex:1;min-width:200px;padding:10px 14px;"><div style="color:var(--text-secondary);font-size:11.5px;">${t('status.pollRate', 'Poll rate')} · ${pollRate.toFixed(1)}/s</div>${spark(this._statusHist.poll)}</div>
             <div class="settings-card" style="flex:1;min-width:200px;padding:10px 14px;"><div style="color:var(--text-secondary);font-size:11.5px;">MQTT · ${(mqttRate ?? 0).toFixed(1)}/s</div>${spark(this._statusHist.mqtt)}</div>
@@ -283,6 +283,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 statusDevices.classList.toggle('connected', total > 0 && online === total);
                 statusDevices.classList.toggle('partial', online > 0 && online < total);
                 statusDevices.classList.toggle('disconnected', total > 0 && online === 0);
+                statusDevices.setAttribute('aria-label',
+                    `Devices: ${online} of ${total} online`);
             }
 
             if (statusMqtt) {
@@ -294,6 +296,10 @@ Object.assign(JanitzaMonitor.prototype, {
                     statusMqtt.classList.toggle('connected', mqtt.connected);
                     statusMqtt.classList.toggle('disconnected', !mqtt.connected);
                 }
+                // the dot alone is color-only (1.4.1) — keep the accessible
+                // name carrying the STATE, not just the service name
+                statusMqtt.setAttribute('aria-label', 'MQTT: ' + (!mqtt.enabled
+                    ? 'disabled' : (mqtt.connected ? 'connected' : 'disconnected')));
             }
 
             if (statusInflux) {
@@ -305,6 +311,8 @@ Object.assign(JanitzaMonitor.prototype, {
                     statusInflux.classList.toggle('connected', influx.connected);
                     statusInflux.classList.toggle('disconnected', !influx.connected);
                 }
+                statusInflux.setAttribute('aria-label', 'InfluxDB: ' + (!influx.enabled
+                    ? 'disabled' : (influx.connected ? 'connected' : 'disconnected')));
             }
 
             this._updateVmeterPill();
@@ -340,7 +348,8 @@ Object.assign(JanitzaMonitor.prototype, {
             // Recovered: tell the user once (the heartbeat is our liveness probe).
             if (this._statusLost) {
                 this._statusLost = false;
-                this.showToast?.('success', 'Reconnected', 'The gateway is responding again.');
+                this.showToast?.('success', this.t('conn.reconnected', 'Reconnected'),
+                                 this.t('conn.reconnectedDesc', 'The gateway is responding again.'));
             }
         } catch (error) {
             console.error('Failed to load status:', error);
@@ -349,8 +358,8 @@ Object.assign(JanitzaMonitor.prototype, {
             // outage leaves the operator guessing.
             if (!this._statusLost) {
                 this._statusLost = true;
-                this.showToast?.('error', 'Connection lost',
-                                 'Cannot reach the gateway — retrying every 5s…');
+                this.showToast?.('error', this.t('conn.lostTitle', 'Connection lost'),
+                                 this.t('conn.lostDesc', 'Cannot reach the gateway — retrying every 5s…'));
             }
         }
     },
@@ -366,7 +375,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const items = Object.entries(this.pollGroups);
         if (!items.length) return;
         el.innerHTML = items.map(([name, g]) =>
-            `<span class="poll-item"><i class="bi bi-${icons[name] || 'clock'}"></i> ${this._esc(name)}: ${fmt(g.interval)}</span>`
+            `<span class="poll-item"><i aria-hidden="true" class="bi bi-${icons[name] || 'clock'}"></i> ${this._esc(name)}: ${fmt(g.interval)}</span>`
         ).join('');
     },
 
@@ -385,7 +394,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
         if (service === 'modbus') {
             const data = this.status.modbus || {};
-            title = '<i class="bi bi-hdd-network"></i> Modbus Status';
+            title = '<i aria-hidden="true" class="bi bi-hdd-network"></i> Modbus Status';
             html += `
                 <div class="status-detail-row">
                     <span class="status-detail-label">${this.t('lbl.status', "Status")}</span>
@@ -431,13 +440,13 @@ Object.assign(JanitzaMonitor.prototype, {
                 ${(data.events && data.events.length) ? `<div class="status-detail-row"><span class="status-detail-label" style="color:var(--text-secondary);">${this.t('lbl.recentFailures', "Recent read failures")}</span><span class="status-detail-value">${data.events.length}</span></div>` : ''}
                 ${(data.events || []).slice(-6).reverse().map(e => `
                 <div class="status-detail-row">
-                    <span class="status-detail-label" style="color:#c77700;"><i class="bi bi-exclamation-triangle"></i> ${this._esc(e.kind || '')}</span>
+                    <span class="status-detail-label" style="color:#c77700;"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> ${this._esc(e.kind || '')}</span>
                     <span class="status-detail-value mono" style="font-size:11px;" title="${this._esc(e.message || '')}">${new Date(e.ts * 1000).toLocaleTimeString()}</span>
                 </div>`).join('')}
             `;
         } else if (service === 'mqtt') {
             const data = this.status.mqtt || {};
-            title = '<i class="bi bi-broadcast"></i> MQTT Status';
+            title = '<i aria-hidden="true" class="bi bi-broadcast"></i> MQTT Status';
             if (!data.enabled) {
                 html += `
                     <div class="status-detail-row">
@@ -475,7 +484,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     </div>
                     ${data.messages_skipped > 0 ? `
                     <div class="status-detail-hint">
-                        <i class="bi bi-info-circle"></i>
+                        <i aria-hidden="true" class="bi bi-info-circle"></i>
                         Skipped = unchanged values (publish mode: ${this._esc(data.publish_mode || 'changed')})
                     </div>
                     ` : ''}
@@ -483,7 +492,7 @@ Object.assign(JanitzaMonitor.prototype, {
             }
         } else if (service === 'influxdb') {
             const data = this.status.influxdb || {};
-            title = '<i class="bi bi-database"></i> InfluxDB Status';
+            title = '<i aria-hidden="true" class="bi bi-database"></i> InfluxDB Status';
             if (!data.enabled) {
                 html += `
                     <div class="status-detail-row">
@@ -525,7 +534,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     </div>
                     ${data.writes_skipped > 0 ? `
                     <div class="status-detail-hint">
-                        <i class="bi bi-info-circle"></i>
+                        <i aria-hidden="true" class="bi bi-info-circle"></i>
                         Skipped = ${data.publish_mode === 'changed' ? 'unchanged values' : 'rate limited'} (publish mode: ${this._esc(data.publish_mode || 'changed')})
                     </div>
                     ` : ''}

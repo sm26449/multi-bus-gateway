@@ -51,7 +51,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const addBar = `
             <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
               <button class="btn btn-primary btn-sm" id="vmAddInstanceBtn" ${canAdd ? '' : 'disabled'}>
-                <i class="bi bi-plus-lg"></i> ${this.t('vmeter.addInstance', 'Add instance')}</button>
+                <i aria-hidden="true" class="bi bi-plus-lg"></i> ${this.t('vmeter.addInstance', 'Add instance')}</button>
               ${portHint ? `<span style="color:var(--text-secondary);font-size:12px;">${noFree ? '<span style="color:#e08e0b;">No free port in range — widen VMETER_PORT_END.</span> ' : ''}${portHint}</span>` : ''}
             </div>`;
         const cards = !insts.length
@@ -92,13 +92,13 @@ Object.assign(JanitzaMonitor.prototype, {
                   <div><div style="color:var(--text-secondary);font-size:11.5px;">${this.t('lbl.freshness', "Freshness")}</div>stale after <b>${m.stale_after_s ?? 15}s</b> · <b>${this._fmtInterval(m.update_interval_s ?? 1)}</b> refresh</div>
                   ${m.errors ? `<div style="color:#c0392b;"><div style="font-size:11.5px;">${this.t('lbl.errors', "Errors")}</div><b>${m.errors}</b></div>` : ''}
                 </div>
-                ${m.last_error ? `<div style="color:#c77700;font-size:12.5px;margin-bottom:10px;" title="${this._esc(m.last_error.message || '')}"><i class="bi bi-exclamation-triangle"></i> ${this._esc(m.last_error.kind || '')}${m.last_error.ts ? ` <span style="color:var(--text-secondary);">· ${this._relTime(m.last_error.ts)}</span>` : ''}</div>` : ''}
+                ${m.last_error ? `<div style="color:#c77700;font-size:12.5px;margin-bottom:10px;" title="${this._esc(m.last_error.message || '')}"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> ${this._esc(m.last_error.kind || '')}${m.last_error.ts ? ` <span style="color:var(--text-secondary);">· ${this._relTime(m.last_error.ts)}</span>` : ''}</div>` : ''}
                 <div style="font-size:12.5px;margin-bottom:14px;">
-                  <div style="color:var(--text-secondary);margin-bottom:4px;"><i class="bi bi-plug"></i> Connections (${conns.length})</div>
+                  <div style="color:var(--text-secondary);margin-bottom:4px;"><i aria-hidden="true" class="bi bi-plug"></i> Connections (${conns.length})</div>
                   <table>${connRows}</table></div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                  <button class="btn btn-sm" data-vm-editinst="${mid}"><i class="bi bi-sliders"></i> ${t('common.edit', 'Edit')}</button>
-                  <button class="btn btn-ghost btn-sm" data-vm-del="${mid}"><i class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>
+                  <button class="btn btn-sm" data-vm-editinst="${mid}"><i aria-hidden="true" class="bi bi-sliders"></i> ${t('common.edit', 'Edit')}</button>
+                  <button class="btn btn-ghost btn-sm" data-vm-del="${mid}"><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>
                 </div>`;
             const live = prev
                 ? `<div style="font-size:13px;"><div style="color:var(--text-secondary);margin-bottom:6px;">Live values served (source → served value)</div><table>${prev}</table></div>`
@@ -107,9 +107,9 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="settings-card vm-acc" data-mid="${mid}" style="margin-bottom:12px;">
               <div class="settings-card-header vm-acc-head" tabindex="0" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;">
                 <div class="vm-head-l" style="display:flex;align-items:center;gap:10px;min-width:0;">
-                  <i class="bi bi-chevron-right vm-acc-chev" style="transition:transform .15s ease;color:var(--text-secondary);"></i>
-                  <h3 style="margin:0;font-size:15px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><i class="bi bi-hdd-network"></i> ${this._esc(m.name || m.template)}</h3>
-                  <span class="dev-chip" title="${t('vmeter.sourceDevice', 'Source device')}"><i class="bi bi-arrow-left-short"></i>${this._esc(devName(m.device))}</span>
+                  <i aria-hidden="true" class="bi bi-chevron-right vm-acc-chev" style="transition:transform .15s ease;color:var(--text-secondary);"></i>
+                  <h3 style="margin:0;font-size:15px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><i aria-hidden="true" class="bi bi-hdd-network"></i> ${this._esc(m.name || m.template)}</h3>
+                  <span class="dev-chip" title="${t('vmeter.sourceDevice', 'Source device')}"><i aria-hidden="true" class="bi bi-arrow-left-short"></i>${this._esc(devName(m.device))}</span>
                   ${badge}
                 </div>
                 <div class="vm-head-r" style="display:flex;align-items:center;gap:14px;" onclick="event.stopPropagation()">
@@ -141,18 +141,18 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div><b>${this._esc(t.name)}</b><br>
                   <span style="color:var(--text-secondary);font-size:12px;">id <code>${this._esc(t.id)}</code> · ${t.kind} · ${t.registers} measurements</span></div>
                 <div style="display:flex;gap:8px;">
-                  <button class="btn btn-sm" data-vm-edit="${this._esc(t.id)}"><i class="bi bi-pencil"></i> Edit</button>
-                  <button class="btn btn-ghost btn-sm" data-vm-export="${this._esc(t.id)}" title="Export YAML"><i class="bi bi-download"></i></button>
-                  <button class="btn btn-ghost btn-sm" data-vm-tpldel="${this._esc(t.id)}" title="Delete template"><i class="bi bi-trash"></i></button>
+                  <button class="btn btn-sm" data-vm-edit="${this._esc(t.id)}"><i aria-hidden="true" class="bi bi-pencil"></i> Edit</button>
+                  <button class="btn btn-ghost btn-sm" data-vm-export="${this._esc(t.id)}" title="Export YAML"><i aria-hidden="true" class="bi bi-download"></i></button>
+                  <button class="btn btn-ghost btn-sm" data-vm-tpldel="${this._esc(t.id)}" title="Delete template"><i aria-hidden="true" class="bi bi-trash"></i></button>
                 </div>
               </div>
             </div>`).join('');
         const tmplSection = `
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                <h3 style="margin:0;"><i class="bi bi-diagram-3"></i> Templates</h3>
+                <h3 style="margin:0;"><i aria-hidden="true" class="bi bi-diagram-3"></i> Templates</h3>
                 <div style="display:flex;gap:8px;">
-                  <button class="btn btn-ghost btn-sm" id="vmImportBtn"><i class="bi bi-upload"></i> Import</button>
-                  <button class="btn btn-sm" id="vmNewTplBtn"><i class="bi bi-plus-lg"></i> New template</button>
+                  <button class="btn btn-ghost btn-sm" id="vmImportBtn"><i aria-hidden="true" class="bi bi-upload"></i> Import</button>
+                  <button class="btn btn-sm" id="vmNewTplBtn"><i aria-hidden="true" class="bi bi-plus-lg"></i> New template</button>
                 </div>
               </div>
               <p style="color:var(--text-secondary);font-size:12.5px;margin:0 0 10px;">Map a device's live measurements into the layout a consumer expects. Editing a template that an instance uses reloads it live. Export shares a template as YAML; Import validates before saving.</p>
@@ -168,8 +168,8 @@ Object.assign(JanitzaMonitor.prototype, {
               .vm-log-row:hover .vm-view,.vm-log-row.active .vm-view{opacity:1;}
             </style>
             <div class="config-main-tabs" id="vmSubtabs">
-              <button class="config-main-tab active" data-vmtab="meters"><i class="bi bi-hdd-network"></i> ${this.t('vmeter.tab.meters', 'Meters')}</button>
-              <button class="config-main-tab" data-vmtab="templates"><i class="bi bi-diagram-3"></i> ${this.t('vmeter.tab.templates', 'Templates')}</button>
+              <button class="config-main-tab active" data-vmtab="meters"><i aria-hidden="true" class="bi bi-hdd-network"></i> ${this.t('vmeter.tab.meters', 'Meters')}</button>
+              <button class="config-main-tab" data-vmtab="templates"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this.t('vmeter.tab.templates', 'Templates')}</button>
             </div>
             <div data-vmpanel="meters">${addBar}${cards}</div>
             <div data-vmpanel="templates" hidden>${tmplSection}</div>`;
@@ -510,7 +510,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const panel = host.querySelector('.vm-decode-panel');
         this._vmDecodeSel = null;
         if (panel) panel.innerHTML = `<div class="settings-card" style="padding:16px;color:var(--text-secondary);">
-            <div style="font-size:13px;margin-bottom:4px;"><i class="bi bi-braces"></i> Decode</div>
+            <div style="font-size:13px;margin-bottom:4px;"><i aria-hidden="true" class="bi bi-braces"></i> Decode</div>
             <div style="font-size:12.5px;line-height:1.5;">Click any row on the left to decode that Modbus read — raw words → value → the source variable each maps to.</div></div>`;
         if (!out._decodeWired) {                  // delegated: click a row → decode in side panel
             out._decodeWired = true;
@@ -675,7 +675,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const panel = panelEl || document.getElementById('vmDecodePanel');
         if (!panel || !id || !Number.isFinite(addr)) return;
         const wrap = (inner) => `<div class="settings-card" style="padding:14px;">
-            <h4 style="margin:0 0 8px;font-size:13.5px;"><i class="bi bi-braces"></i> Decode · addr ${addr} · count ${count}</h4>${inner}</div>`;
+            <h4 style="margin:0 0 8px;font-size:13.5px;"><i aria-hidden="true" class="bi bi-braces"></i> Decode · addr ${addr} · count ${count}</h4>${inner}</div>`;
         panel.innerHTML = wrap('<p style="color:var(--text-secondary);font-size:12.5px;margin:0;">Decoding…</p>');
         let d;
         try {
@@ -762,11 +762,11 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="form-group"><label class="form-label">Bind</label>
               <input id="vmfBind" class="input" value="${this._esc(t.bind || '0.0.0.0')}"></div>
           </div>
-          ${tpl.in_use ? '<p class="hint-text" style="color:#e08e0b;"><i class="bi bi-exclamation-triangle"></i> Used by an instance — saving reloads it live.</p>' : ''}
+          ${tpl.in_use ? '<p class="hint-text" style="color:#e08e0b;"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> Used by an instance — saving reloads it live.</p>' : ''}
           <div class="form-section">
             <div style="display:flex;justify-content:space-between;align-items:center;">
               <h4 style="margin:0;">${this.t('lbl.measurements', "Measurements")}</h4>
-              <button class="btn btn-sm" id="vmAddRowBtn"><i class="bi bi-plus-lg"></i> Add measurement</button>
+              <button class="btn btn-sm" id="vmAddRowBtn"><i aria-hidden="true" class="bi bi-plus-lg"></i> Add measurement</button>
             </div>
             <div style="overflow-x:auto;margin-top:8px;">
               <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
@@ -848,7 +848,7 @@ Object.assign(JanitzaMonitor.prototype, {
           <td><input class="input input-sm vm-len" type="number" style="width:52px;" value="${reg.length ?? 1}"></td>
           <td><input class="input input-sm vm-stale" type="number" style="width:64px;" min="1" placeholder="auto" value="${reg.stale_after_s ?? ''}"></td>
           <td><input class="input input-sm vm-note" style="width:130px;" value="${this._esc(reg.note || '')}"></td>
-          <td style="white-space:nowrap;"><button class="btn btn-ghost btn-sm vm-row-dup" title="Duplicate row"><i class="bi bi-copy"></i></button><button class="btn btn-ghost btn-sm vm-row-del" title="Remove"><i class="bi bi-x-lg"></i></button></td>`;
+          <td style="white-space:nowrap;"><button class="btn btn-ghost btn-sm vm-row-dup" title="Duplicate row"><i aria-hidden="true" class="bi bi-copy"></i></button><button class="btn btn-ghost btn-sm vm-row-del" title="Remove"><i aria-hidden="true" class="bi bi-x-lg"></i></button></td>`;
         tbody.appendChild(tr);
         const kindSel = tr.querySelector('.vm-kind');
         const liveSel = tr.querySelector('.vm-src-live');
@@ -935,7 +935,7 @@ Object.assign(JanitzaMonitor.prototype, {
             } else {
                 this.showToast('error', this.t('toast.saveFailed', 'Save failed'), j.detail || this.t('toast.validationError', 'validation error'));
             }
-        } catch (e) { this.showToast('error', this.t('toast.saveFailed', 'Save failed'), String(e)); }
+        } catch (e) { this.showToast('error', this.t('toast.saveFailed', 'Save failed'), this._errMsg(e)); }
         finally { btn.disabled = false; }
     },
 

@@ -109,7 +109,7 @@ Object.assign(JanitzaMonitor.prototype, {
             if (!r.ok) throw new Error(data.detail || r.statusText);
             host.innerHTML = this._probeResultHtml(data);
         } catch (e) {
-            host.innerHTML = `<div class="diag-exc"><i class="bi bi-exclamation-triangle"></i> ${this._esc(String(e.message || e))}</div>`;
+            host.innerHTML = `<div class="diag-exc"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> ${this._esc(String(e.message || e))}</div>`;
         } finally {
             btn.disabled = false;
         }
@@ -117,7 +117,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
     _probeResultHtml(d) {
         if (!d.ok) {
-            return `<div class="diag-exc"><i class="bi bi-exclamation-triangle"></i> ${this._esc(this.t('probe.noResponse', 'No response — check the bus monitor above for the frame (exception code, timeout).'))}</div>`;
+            return `<div class="diag-exc"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> ${this._esc(this.t('probe.noResponse', 'No response — check the bus monitor above for the frame (exception code, timeout).'))}</div>`;
         }
         if (d.bits) {
             const bits = d.bits.map((b, i) =>
@@ -194,8 +194,8 @@ Object.assign(JanitzaMonitor.prototype, {
             btn.classList.toggle('btn-danger', st.enabled);
             btn.classList.toggle('btn-primary', !st.enabled);
             btn.innerHTML = st.enabled
-                ? `<i class="bi bi-stop-fill"></i> ${this._esc(this.t('diag.stop', 'Stop capture'))}`
-                : `<i class="bi bi-record-fill"></i> ${this._esc(this.t('diag.start', 'Start capture'))}`;
+                ? `<i aria-hidden="true" class="bi bi-stop-fill"></i> ${this._esc(this.t('diag.stop', 'Stop capture'))}`
+                : `<i aria-hidden="true" class="bi bi-record-fill"></i> ${this._esc(this.t('diag.start', 'Start capture'))}`;
         }
         const stats = document.getElementById('diagStats');
         if (stats) {
@@ -280,7 +280,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
     _diagDetailHtml(r) {
         const excLine = r.exc != null
-            ? `<div class="diag-exc"><i class="bi bi-exclamation-triangle"></i> ${this._esc(r.exc_name || '')} (${r.exc})</div>` : '';
+            ? `<div class="diag-exc"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> ${this._esc(r.exc_name || '')} (${r.exc})</div>` : '';
         return `<tr class="diag-detail"><td colspan="8">
             ${excLine}
             <div class="diag-frame"><span class="diag-dir">TX →</span>${this._diagHexFmt(r.tx, r.proto, true)}</div>
@@ -322,7 +322,7 @@ Object.assign(JanitzaMonitor.prototype, {
             if (!r.ok) throw new Error((data.detail?.errors || [r.statusText]).join('; '));
             out.innerHTML = this._ssResultHtml(data);
         } catch (e) {
-            out.innerHTML = `<div class="diag-exc"><i class="bi bi-exclamation-triangle"></i> ${this._esc(String(e.message || e))}</div>`;
+            out.innerHTML = `<div class="diag-exc"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> ${this._esc(String(e.message || e))}</div>`;
         } finally {
             btn.disabled = false;
         }
@@ -330,7 +330,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
     _ssResultHtml(d) {
         if (!d.ok) {
-            return `<div class="diag-exc"><i class="bi bi-exclamation-triangle"></i> ${this._esc(d.error || 'scan failed')}</div>`;
+            return `<div class="diag-exc"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> ${this._esc(d.error || 'scan failed')}</div>`;
         }
         const id = d.identity;
         const idCard = id ? `

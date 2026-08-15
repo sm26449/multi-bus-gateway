@@ -97,7 +97,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <label class="seg-btn ${http ? 'on' : ''} ${locked && !http ? 'disabled' : ''}"><input type="radio" name="devWizProto" value="http" ${http ? 'checked' : ''} ${lk}><span class="s"></span> HTTP / JSON</label>
             <label class="seg-btn ${d.protocol === 'mqtt' ? 'on' : ''} ${locked && d.protocol !== 'mqtt' ? 'disabled' : ''}"><input type="radio" name="devWizProto" value="mqtt" ${d.protocol === 'mqtt' ? 'checked' : ''} ${lk}><span class="s"></span> MQTT</label>
         </div>
-        ${locked ? `<div class="field-hint" style="margin:-8px 0 14px;"><i class="bi bi-lock"></i> ${this.t('devices.wizard.protoLocked', 'Fixed after creation — the template map is transport-specific.')}</div>` : ''}
+        ${locked ? `<div class="field-hint" style="margin:-8px 0 14px;"><i aria-hidden="true" class="bi bi-lock"></i> ${this.t('devices.wizard.protoLocked', 'Fixed after creation — the template map is transport-specific.')}</div>` : ''}
         <div id="devWizHttpFields" style="display:${http ? '' : 'none'}">
             <div class="form-group">
                 <label class="form-label" for="devWizUrl">${this.t('devices.wizard.httpUrl', 'JSON endpoint URL')}</label>
@@ -105,7 +105,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="field-hint">${this.t('devices.wizard.httpHint', 'The device polls this URL and reads values by the template’s json_path. Values arrive already scaled.')}</div>
             </div>
             <button class="btn btn-secondary btn-sm" onclick="app.devWizardTest(this)">
-                <i class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
+                <i aria-hidden="true" class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
             <div class="wiz-test-result" id="devWizTestResult3" role="status"></div>
         </div>
         <div id="devWizTcpFields" style="display:${tcp ? '' : 'none'}">
@@ -131,7 +131,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 </div>
             </div>
             <button class="btn btn-secondary btn-sm" id="devWizTestBtn" onclick="app.devWizardTest(this)">
-                <i class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
+                <i aria-hidden="true" class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
             <div class="wiz-test-result" id="devWizTestResult" role="status"></div>
         </div>
         <div id="devWizRtuFields" style="display:${isRtu ? '' : 'none'}">
@@ -149,7 +149,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     </div>
                     <div class="form-group">
                         <button class="btn btn-secondary btn-sm" id="devWizScanBtn" onclick="app.devWizScanBridge(this)">
-                            <i class="bi bi-arrow-repeat"></i> ${this.t('devices.wizard.scan', 'Scan')}</button>
+                            <i aria-hidden="true" class="bi bi-arrow-repeat"></i> ${this.t('devices.wizard.scan', 'Scan')}</button>
                     </div>
                     <div class="form-group">
                         <label class="form-label" for="devWizUnitB">${this.t('lbl.unitId', "Unit ID")}</label>
@@ -161,7 +161,7 @@ Object.assign(JanitzaMonitor.prototype, {
                         ? this.t('devices.wizard.bridgeBound', 'Bound to {ep} — the adapter keeps this endpoint across replug.').replace('{ep}', `${d.host}:${d.port}`)
                         : this.t('devices.wizard.bridgeScanHint', 'Plug the adapter in and press Scan. Baud rate is set on the bridge (default 9600 8N1).')}</div>
                 <button class="btn btn-secondary btn-sm" style="margin-top:8px;" onclick="app.devWizardTest(this)">
-                    <i class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
+                    <i aria-hidden="true" class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
             </div>
             <div id="devWizRtuDirect" style="display:${rtuBridge ? 'none' : ''}">
                 <div class="form-row">
@@ -187,7 +187,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     </div>
                 </div>
                 <button class="btn btn-secondary btn-sm" onclick="app.devWizardTest(this)">
-                    <i class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
+                    <i aria-hidden="true" class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
                 <div class="field-hint" style="margin-top:6px;">${this.t('devices.wizard.rtuNote', 'The serial device must be attached to the host and mapped into the container (e.g. devices: /dev/ttyUSB0). It starts polling right after saving.')}</div>
             </div>
             <div class="wiz-test-result" id="devWizTestResult2" role="status"></div>
@@ -209,8 +209,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="field-hint">${this.t('devices.wizard.mqttTopicHint', 'The device subscribes here; values are read from the JSON payload by the template’s json_path. + and # wildcards supported.')}</div>
                 <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
                     <span class="field-hint" style="margin:0;">${this.t('devices.wizard.presets', 'Presets:')}</span>
-                    <button type="button" class="calc-chip" onclick="app._devWizMqttPreset('zigbee2mqtt_sensor', 'zigbee2mqtt/<friendly_name>')"><i class="bi bi-broadcast-pin"></i> Zigbee (zigbee2mqtt)</button>
-                    <button type="button" class="calc-chip" onclick="app._devWizMqttPreset('ble_theengs_sensor', 'home/TheengsGateway/BTtoMQTT/<MAC>')"><i class="bi bi-bluetooth"></i> BLE (Theengs/BTHome)</button>
+                    <button type="button" class="calc-chip" onclick="app._devWizMqttPreset('zigbee2mqtt_sensor', 'zigbee2mqtt/<friendly_name>')"><i aria-hidden="true" class="bi bi-broadcast-pin"></i> Zigbee (zigbee2mqtt)</button>
+                    <button type="button" class="calc-chip" onclick="app._devWizMqttPreset('ble_theengs_sensor', 'home/TheengsGateway/BTtoMQTT/<MAC>')"><i aria-hidden="true" class="bi bi-bluetooth"></i> BLE (Theengs/BTHome)</button>
                 </div>
             </div>
             <div class="form-row">
@@ -223,9 +223,9 @@ Object.assign(JanitzaMonitor.prototype, {
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
                 <button class="btn btn-secondary btn-sm" onclick="app.devWizardTest(this)">
-                    <i class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
+                    <i aria-hidden="true" class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
                 <button class="btn btn-secondary btn-sm" id="devWizMqttBrowseBtn" onclick="app.devWizMqttBrowse(this)">
-                    <i class="bi bi-binoculars"></i> ${this.t('devices.wizard.browseTopics', 'Browse topics')}</button>
+                    <i aria-hidden="true" class="bi bi-binoculars"></i> ${this.t('devices.wizard.browseTopics', 'Browse topics')}</button>
             </div>
             <div class="wiz-test-result" id="devWizTestResult4" role="status"></div>
             <div id="devWizMqttBrowse" style="display:none;">
@@ -335,17 +335,17 @@ Object.assign(JanitzaMonitor.prototype, {
         const rows = compatible.map(t => `
             <div class="tpl-pick ${t.id === w.data.template ? 'selected' : ''}" data-tpl="${this._esc(t.id)}"
                  role="radio" aria-checked="${t.id === w.data.template}" tabindex="0">
-                <i class="bi ${t.id === w.data.template ? 'bi-check-circle-fill' : 'bi-circle'}"></i>
+                <i aria-hidden="true" class="bi ${t.id === w.data.template ? 'bi-check-circle-fill' : 'bi-circle'}"></i>
                 <div><strong>${this._esc(t.name)}</strong>
                     <div class="field-hint">${this._esc(t.vendor || '')} ${this._esc(t.model || '')}
                         ${(t.used_by || []).length ? `· ${this.t('devtpl.usedBy', 'used by')} ${t.used_by.map(x => this._esc(x)).join(', ')}` : ''}</div></div>
                 <div class="tpl-pick-meta">${t.builtin ? this.t('devices.builtin', 'built-in') : this.t('devices.community', 'user')}<br>${t.registers} measurements · v${this._esc(t.version)}</div>
                 <div class="tpl-pick-actions" onclick="event.stopPropagation()">
                     ${t.builtin
-                        ? `<button class="btn btn-ghost btn-sm" ${this._act('openTplEditor', [t.id, true])} title="${this.t('devtpl.duplicate', 'Duplicate to edit')}"><i class="bi bi-copy"></i></button>`
-                        : `<button class="btn btn-ghost btn-sm" ${this._act('openTplEditor', [t.id])} title="${this.t('common.edit', 'Edit')}"><i class="bi bi-pencil"></i></button>` +
-                          ((t.used_by || []).length ? '' : `<button class="btn btn-ghost btn-sm" ${this._act('tplDelete', [t.id])} title="${this.t('common.delete', 'Delete')}"><i class="bi bi-trash"></i></button>`)}
-                    <button class="btn btn-ghost btn-sm" ${this._act('tplExport', [t.id])} title="${this.t('common.export', 'Export')}"><i class="bi bi-download"></i></button>
+                        ? `<button class="btn btn-ghost btn-sm" ${this._act('openTplEditor', [t.id, true])} title="${this.t('devtpl.duplicate', 'Duplicate to edit')}"><i aria-hidden="true" class="bi bi-copy"></i></button>`
+                        : `<button class="btn btn-ghost btn-sm" ${this._act('openTplEditor', [t.id])} title="${this.t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>` +
+                          ((t.used_by || []).length ? '' : `<button class="btn btn-ghost btn-sm" ${this._act('tplDelete', [t.id])} title="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>`)}
+                    <button class="btn btn-ghost btn-sm" ${this._act('tplExport', [t.id])} title="${this.t('common.export', 'Export')}"><i aria-hidden="true" class="bi bi-download"></i></button>
                 </div>
             </div>`).join('');
         return `
@@ -353,9 +353,9 @@ Object.assign(JanitzaMonitor.prototype, {
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <input type="text" id="devWizTplSearch" class="input" placeholder="${this.t('common.search', 'Search')}…" style="max-width:240px;">
             <button class="btn btn-secondary btn-sm" onclick="app.tplUpload()">
-                <i class="bi bi-upload"></i> ${this.t('devtpl.upload', 'Upload template')}</button>
+                <i aria-hidden="true" class="bi bi-upload"></i> ${this.t('devtpl.upload', 'Upload template')}</button>
             <button class="btn btn-secondary btn-sm" onclick="app.openTplEditor(null)">
-                <i class="bi bi-plus-lg"></i> ${this.t('devtpl.new', 'New template')}</button>
+                <i aria-hidden="true" class="bi bi-plus-lg"></i> ${this.t('devtpl.new', 'New template')}</button>
         </div>
         <p class="field-hint" style="margin:6px 0;">${this.t('devices.wizard.tplIntro2', 'The template is the measurement map of the equipment: pick one, upload a file, or create your own.')}</p>
         <div class="tpl-pick-list" id="devWizTplList" role="radiogroup">${rows ||
@@ -373,7 +373,7 @@ Object.assign(JanitzaMonitor.prototype, {
         // changing it re-routes future data and orphans existing history / HA entities.
         const routeLocked = this._devWiz.primary || !!this._devWiz.editId;
         const routeNote = routeLocked
-            ? `<div class="field-hint"><i class="bi bi-lock"></i> ${this._devWiz.primary
+            ? `<div class="field-hint"><i aria-hidden="true" class="bi bi-lock"></i> ${this._devWiz.primary
                 ? this.t('devices.wizard.routeLocked', 'Fixed for device #1 (protects existing history &amp; Home Assistant entities).')
                 : this.t('devices.wizard.routeLockedEdit', 'Fixed after creation — changing it would orphan existing history &amp; HA entities.')}</div>`
             : '';
@@ -548,7 +548,7 @@ Object.assign(JanitzaMonitor.prototype, {
     async devWizScanBridge(btn) {
         btn.disabled = true;
         const orig = btn.innerHTML;
-        btn.innerHTML = `<i class="bi bi-arrow-repeat"></i> ${this._esc(this.t('devices.wizard.scanning', 'Scanning…'))}`;
+        btn.innerHTML = `<i aria-hidden="true" class="bi bi-arrow-repeat"></i> ${this._esc(this.t('devices.wizard.scanning', 'Scanning…'))}`;
         let msg = '', ok = false;
         try {
             const r = await fetch('/api/bridge/adapters');

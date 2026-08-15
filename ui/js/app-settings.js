@@ -440,7 +440,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const [url, body] = this._gatherSettings(section);
         const fb = document.getElementById(section + 'SaveFeedback');
         const orig = btn ? btn.innerHTML : '';
-        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-arrow-repeat spin"></i>'; }
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i aria-hidden="true" class="bi bi-arrow-repeat spin"></i>'; }
         if (fb) { fb.textContent = ''; fb.className = 'save-feedback'; }
         try {
             const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -462,7 +462,7 @@ Object.assign(JanitzaMonitor.prototype, {
     async saveGeneralConfig(btn) {
         const fb = document.getElementById('generalSaveFeedback');
         const orig = btn ? btn.innerHTML : '';
-        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-arrow-repeat spin"></i>'; }
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i aria-hidden="true" class="bi bi-arrow-repeat spin"></i>'; }
         if (fb) { fb.textContent = ''; fb.className = 'save-feedback'; }
         try {
             const tz = (document.getElementById('cfgTimezone')?.value || '').trim();
@@ -678,13 +678,13 @@ Object.assign(JanitzaMonitor.prototype, {
                     <td class="mono">${kb}</td>
                     <td style="white-space:nowrap;text-align:right;">
                         <button class="btn btn-ghost btn-sm" onclick="app.diffSnapshot('${this._esc(s.id)}')"
-                                title="${this._esc(this.t('snap.diff', 'What changed since'))}"><i class="bi bi-file-diff"></i></button>
+                                title="${this._esc(this.t('snap.diff', 'What changed since'))}"><i aria-hidden="true" class="bi bi-file-diff"></i></button>
                         <button class="btn btn-ghost btn-sm" onclick="app.restoreSnapshot('${this._esc(s.id)}')"
-                                title="${this._esc(this.t('snap.restore', 'Restore'))}"><i class="bi bi-arrow-counterclockwise"></i></button>
+                                title="${this._esc(this.t('snap.restore', 'Restore'))}"><i aria-hidden="true" class="bi bi-arrow-counterclockwise"></i></button>
                         <button class="btn btn-ghost btn-sm" onclick="window.location='/api/config/snapshots/${this._esc(s.id)}/download'"
-                                title="${this._esc(this.t('snap.download', 'Download'))}"><i class="bi bi-download"></i></button>
+                                title="${this._esc(this.t('snap.download', 'Download'))}"><i aria-hidden="true" class="bi bi-download"></i></button>
                         ${s.lkg ? '' : `<button class="btn btn-ghost btn-sm" onclick="app.deleteSnapshot('${this._esc(s.id)}')"
-                                title="${this._esc(this.t('common.delete', 'Delete'))}"><i class="bi bi-trash"></i></button>`}
+                                title="${this._esc(this.t('common.delete', 'Delete'))}"><i aria-hidden="true" class="bi bi-trash"></i></button>`}
                     </td></tr>`;
             }).join('');
         } catch (e) {
@@ -790,8 +790,8 @@ Object.assign(JanitzaMonitor.prototype, {
             host.innerHTML = `
               <div class="modal-content" style="max-width:820px;">
                 <div class="modal-header">
-                  <h3><i class="bi bi-file-diff"></i> <span id="snapDiffTitle"></span></h3>
-                  <button class="modal-close" onclick="document.getElementById('snapDiffModal').style.display='none'" aria-label="Close">&times;</button>
+                  <h3><i class="bi bi-file-diff" aria-hidden="true"></i> <span id="snapDiffTitle"></span></h3>
+                  <button class="modal-close" onclick="app.closeModal('snapDiffModal')" aria-label="Close">&times;</button>
                 </div>
                 <div class="modal-body" id="snapDiffBody" style="max-height:65vh;overflow-y:auto;"></div>
               </div>`;
@@ -801,7 +801,10 @@ Object.assign(JanitzaMonitor.prototype, {
             this.t('snap.diffTitle', 'Changes since this snapshot');
         const body = document.getElementById('snapDiffBody');
         body.innerHTML = `<div class="field-hint">${this._esc(this.t('common.loading', 'Loading…'))}</div>`;
-        host.style.display = 'flex';
+        // through openModal, not a bare display:flex — it carries the dialog
+        // semantics, focus trap, Escape and focus restore (a11y audit: this
+        // was the one modal bypassing the shared machinery)
+        this.openModal('snapDiffModal');
         try {
             const r = await fetch(`/api/config/snapshots/${encodeURIComponent(id)}/diff`);
             const d = await r.json();

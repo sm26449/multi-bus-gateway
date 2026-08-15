@@ -35,16 +35,16 @@ Object.assign(JanitzaMonitor.prototype, {
             const usedRow = inUse
                 ? `<div style="margin-top:3px;color:var(--text-secondary);font-size:12px;">${t('templates.inUse', 'in use by')}: ${x.used_by.map(d => `<code>${this._esc(d)}</code>`).join(', ')}</div>`
                 : '';
-            const viewBtn = `<button class="btn btn-sm" data-tm-view="${this._esc(x.id)}"><i class="bi bi-eye"></i> ${t('templates.view', 'View')}</button>`;
+            const viewBtn = `<button class="btn btn-sm" data-tm-view="${this._esc(x.id)}"><i aria-hidden="true" class="bi bi-eye"></i> ${t('templates.view', 'View')}</button>`;
             const actions = x.builtin
                 ? `${viewBtn}
-                   <button class="btn btn-sm" data-tm-dup="${this._esc(x.id)}"><i class="bi bi-files"></i> ${t('templates.duplicate', 'Duplicate')}</button>
-                   <button class="btn btn-ghost btn-sm" data-tm-exp="${this._esc(x.id)}" title="Export JSON"><i class="bi bi-download"></i></button>`
+                   <button class="btn btn-sm" data-tm-dup="${this._esc(x.id)}"><i aria-hidden="true" class="bi bi-files"></i> ${t('templates.duplicate', 'Duplicate')}</button>
+                   <button class="btn btn-ghost btn-sm" data-tm-exp="${this._esc(x.id)}" title="Export JSON"><i aria-hidden="true" class="bi bi-download"></i></button>`
                 : `${viewBtn}
-                   <button class="btn btn-sm" data-tm-edit="${this._esc(x.id)}"><i class="bi bi-pencil"></i> ${t('common.edit', 'Edit')}</button>
-                   <button class="btn btn-sm" data-tm-dup="${this._esc(x.id)}"><i class="bi bi-files"></i> ${t('templates.duplicate', 'Duplicate')}</button>
-                   <button class="btn btn-ghost btn-sm" data-tm-exp="${this._esc(x.id)}" title="Export JSON"><i class="bi bi-download"></i></button>
-                   <button class="btn btn-ghost btn-sm" data-tm-del="${this._esc(x.id)}" ${inUse ? 'disabled' : ''} title="${inUse ? t('templates.delInUse', 'in use — reassign first') : t('common.delete', 'Delete')}"><i class="bi bi-trash"></i></button>`;
+                   <button class="btn btn-sm" data-tm-edit="${this._esc(x.id)}"><i aria-hidden="true" class="bi bi-pencil"></i> ${t('common.edit', 'Edit')}</button>
+                   <button class="btn btn-sm" data-tm-dup="${this._esc(x.id)}"><i aria-hidden="true" class="bi bi-files"></i> ${t('templates.duplicate', 'Duplicate')}</button>
+                   <button class="btn btn-ghost btn-sm" data-tm-exp="${this._esc(x.id)}" title="Export JSON"><i aria-hidden="true" class="bi bi-download"></i></button>
+                   <button class="btn btn-ghost btn-sm" data-tm-del="${this._esc(x.id)}" ${inUse ? 'disabled' : ''} title="${inUse ? t('templates.delInUse', 'in use — reassign first') : t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>`;
             return `<div class="settings-card" style="margin-bottom:10px;">
                 <div class="settings-card-body" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
                   <div style="min-width:0;">
@@ -58,19 +58,19 @@ Object.assign(JanitzaMonitor.prototype, {
 
         const errKeys = Object.keys(loadErrors);
         const errBanner = errKeys.length
-            ? `<div class="settings-card" style="border-left:3px solid #c0392b;padding:8px 12px;margin-bottom:10px;color:var(--danger-text,#c0392b);font-size:12.5px;"><i class="bi bi-exclamation-triangle"></i> ${errKeys.length} ${t('templates.loadErrors', 'template file(s) failed to load')}: ${errKeys.map(k => this._esc(k)).join(', ')}</div>`
+            ? `<div class="settings-card" style="border-left:3px solid #c0392b;padding:8px 12px;margin-bottom:10px;color:var(--danger-text,#c0392b);font-size:12.5px;"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> ${errKeys.length} ${t('templates.loadErrors', 'template file(s) failed to load')}: ${errKeys.map(k => this._esc(k)).join(', ')}</div>`
             : '';
         const warnKeys = Object.keys(loadWarnings);
         const warnBanner = warnKeys.length
-            ? `<div class="settings-card" style="border-left:3px solid #f59e0b;padding:8px 12px;margin-bottom:10px;color:var(--warning-text,#b45309);font-size:12.5px;"><i class="bi bi-exclamation-circle"></i> ${t('templates.canonicalWarn', 'Non-canonical field names (see docs/canonical-fields.md)')}: ${warnKeys.map(k => `<b>${this._esc(k)}</b> — ${this._esc(loadWarnings[k])}`).join(' · ')}</div>`
+            ? `<div class="settings-card" style="border-left:3px solid #f59e0b;padding:8px 12px;margin-bottom:10px;color:var(--warning-text,#b45309);font-size:12.5px;"><i aria-hidden="true" class="bi bi-exclamation-circle"></i> ${t('templates.canonicalWarn', 'Non-canonical field names (see docs/canonical-fields.md)')}: ${warnKeys.map(k => `<b>${this._esc(k)}</b> — ${this._esc(loadWarnings[k])}`).join(' · ')}</div>`
             : '';
         const devToolbar = `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
-            <input type="search" id="tmSearch" placeholder="${t('templates.search', 'Search maps…')}" value="${this._esc(this._tmSearch || '')}" style="max-width:240px;padding:6px 10px;border:1px solid var(--border-color,#ccc);border-radius:6px;background:var(--input-bg,transparent);color:inherit;">
+            <input type="search" id="tmSearch" placeholder="${t('templates.search', 'Search maps…')}" value="${this._esc(this._tmSearch || '')}" style="max-width:240px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary);color:inherit;">
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              <button class="btn btn-ghost btn-sm" id="tmImportCsvBtn"><i class="bi bi-filetype-csv"></i> ${t('registers.importCsv', 'Import CSV')}</button>
-              <button class="btn btn-ghost btn-sm" id="tmImportYamlBtn"><i class="bi bi-filetype-yml"></i> ${t('registers.importYaml', 'Import YAML')}</button>
-              <button class="btn btn-ghost btn-sm" id="tmUploadBtn"><i class="bi bi-upload"></i> ${t('templates.upload', 'Upload JSON')}</button>
-              <button class="btn btn-sm" id="tmNewBtn"><i class="bi bi-plus-lg"></i> ${t('templates.new', 'New map')}</button>
+              <button class="btn btn-ghost btn-sm" id="tmImportCsvBtn"><i aria-hidden="true" class="bi bi-filetype-csv"></i> ${t('registers.importCsv', 'Import CSV')}</button>
+              <button class="btn btn-ghost btn-sm" id="tmImportYamlBtn"><i aria-hidden="true" class="bi bi-filetype-yml"></i> ${t('registers.importYaml', 'Import YAML')}</button>
+              <button class="btn btn-ghost btn-sm" id="tmUploadBtn"><i aria-hidden="true" class="bi bi-upload"></i> ${t('templates.upload', 'Upload JSON')}</button>
+              <button class="btn btn-sm" id="tmNewBtn"><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('templates.new', 'New map')}</button>
             </div></div>`;
 
         // ── Meter emulations (vmeter output templates) ──
@@ -80,23 +80,23 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div><b>${this._esc(tp.name)}</b><br>
                   <span style="color:var(--text-secondary);font-size:12px;">id <code>${this._esc(tp.id)}</code> · ${this._esc(tp.kind || '')} · ${tp.registers} ${t('templates.measurements', 'measurements')}</span></div>
                 <div style="display:flex;gap:8px;">
-                  <button class="btn btn-sm" data-tmvm-edit="${this._esc(tp.id)}"><i class="bi bi-pencil"></i> ${t('common.edit', 'Edit')}</button>
-                  <button class="btn btn-ghost btn-sm" data-tmvm-exp="${this._esc(tp.id)}" title="Export YAML"><i class="bi bi-download"></i></button>
-                  <button class="btn btn-ghost btn-sm" data-tmvm-del="${this._esc(tp.id)}" title="Delete"><i class="bi bi-trash"></i></button>
+                  <button class="btn btn-sm" data-tmvm-edit="${this._esc(tp.id)}"><i aria-hidden="true" class="bi bi-pencil"></i> ${t('common.edit', 'Edit')}</button>
+                  <button class="btn btn-ghost btn-sm" data-tmvm-exp="${this._esc(tp.id)}" title="Export YAML"><i aria-hidden="true" class="bi bi-download"></i></button>
+                  <button class="btn btn-ghost btn-sm" data-tmvm-del="${this._esc(tp.id)}" title="Delete"><i aria-hidden="true" class="bi bi-trash"></i></button>
                 </div>
               </div></div>`).join('') : `<p style="color:var(--text-secondary);">${t('templates.noEmu', 'No meter emulations yet.')}</p>`;
         const vmToolbar = `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
             <p style="color:var(--text-secondary);font-size:12.5px;margin:0;max-width:560px;">${t('templates.emuHint', 'Map live values into the layout a consumer expects. Run and monitor instances on the Virtual Meters page.')}</p>
             <div style="display:flex;gap:8px;">
               <input type="file" id="tmVmImportFile" accept=".yaml,.yml" style="display:none;">
-              <button class="btn btn-ghost btn-sm" id="tmVmImportBtn"><i class="bi bi-upload"></i> ${t('common.import', 'Import')}</button>
-              <button class="btn btn-sm" id="tmVmNewBtn"><i class="bi bi-plus-lg"></i> ${t('templates.newEmu', 'New template')}</button>
+              <button class="btn btn-ghost btn-sm" id="tmVmImportBtn"><i aria-hidden="true" class="bi bi-upload"></i> ${t('common.import', 'Import')}</button>
+              <button class="btn btn-sm" id="tmVmNewBtn"><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('templates.newEmu', 'New template')}</button>
             </div></div>`;
 
         el.innerHTML = `
             <div class="config-main-tabs" id="tmTabs">
-              <button class="config-main-tab ${activeTab === 'devmaps' ? 'active' : ''}" data-tmtab="devmaps"><i class="bi bi-table"></i> ${t('templates.tab.devmaps', 'Device maps')} <span style="opacity:.6;">(${devTpls.length})</span></button>
-              <button class="config-main-tab ${activeTab === 'emulations' ? 'active' : ''}" data-tmtab="emulations"><i class="bi bi-hdd-network"></i> ${t('templates.tab.emu', 'Meter emulations')} <span style="opacity:.6;">(${vmTpls.length})</span></button>
+              <button class="config-main-tab ${activeTab === 'devmaps' ? 'active' : ''}" data-tmtab="devmaps"><i aria-hidden="true" class="bi bi-table"></i> ${t('templates.tab.devmaps', 'Device maps')} <span style="opacity:.6;">(${devTpls.length})</span></button>
+              <button class="config-main-tab ${activeTab === 'emulations' ? 'active' : ''}" data-tmtab="emulations"><i aria-hidden="true" class="bi bi-hdd-network"></i> ${t('templates.tab.emu', 'Meter emulations')} <span style="opacity:.6;">(${vmTpls.length})</span></button>
             </div>
             <div data-tmpanel="devmaps" ${activeTab === 'devmaps' ? '' : 'hidden'}>${errBanner}${warnBanner}${devToolbar}${devCards}</div>
             <div data-tmpanel="emulations" ${activeTab === 'emulations' ? '' : 'hidden'}>${vmToolbar}${vmCards}</div>`;
@@ -165,7 +165,7 @@ Object.assign(JanitzaMonitor.prototype, {
             ${full.version ? `<div><div style="color:var(--text-secondary);">version</div>v${this._esc(full.version)}</div>` : ''}
           </div>`;
         const src = full.source_document
-            ? `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;"><i class="bi bi-journal-check"></i> ${t('templates.source', 'Source')}: ${this._esc(full.source_document)}</div>` : '';
+            ? `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;"><i aria-hidden="true" class="bi bi-journal-check"></i> ${t('templates.source', 'Source')}: ${this._esc(full.source_document)}</div>` : '';
         const desc = full.description
             ? `<details style="margin-bottom:10px;"><summary style="cursor:pointer;font-size:12.5px;color:var(--text-secondary);">${t('templates.details', 'Details / provenance')}</summary><p style="font-size:12.5px;color:var(--text-secondary);margin:6px 0 0;">${this._esc(full.description)}</p></details>` : '';
         const rows = regs.slice().sort((a, b) => (a.address - b.address)).map(r => {
@@ -182,7 +182,7 @@ Object.assign(JanitzaMonitor.prototype, {
               </tr>`;
         }).join('');
         const table = `<div style="overflow-x:auto;"><table style="width:100%;font-size:12.5px;border-collapse:collapse;">
-            <thead><tr style="text-align:left;border-bottom:1px solid var(--border-color,#ccc);color:var(--text-secondary);">
+            <thead><tr style="text-align:left;border-bottom:1px solid var(--border);color:var(--text-secondary);">
               <th style="padding:4px 10px 4px 0;">${t('templates.address', 'Address')}</th><th style="padding:4px 10px 4px 0;">${t('templates.name', 'Name')}</th>
               <th style="padding:4px 10px 4px 0;">${t('templates.label', 'Description')}</th><th style="padding:4px 10px 4px 0;">${t('templates.type', 'Type')}</th>
               <th style="padding:4px 10px 4px 0;text-align:right;">${t('templates.scale', 'Scale')}</th><th style="padding:4px 10px 4px 0;">${t('templates.unit', 'Unit')}</th>
@@ -218,8 +218,8 @@ Object.assign(JanitzaMonitor.prototype, {
         const set = (id, prop, val) => { const e = document.getElementById(id); if (e) e[prop] = val; };
         const show = (id, on) => { const e = document.getElementById(id); if (e) e.style.display = on ? '' : 'none'; };
         set('csvModalTitle', 'innerHTML', yaml
-            ? '<i class="bi bi-filetype-yml"></i> ' + this._esc(this.t('yaml.title', 'Import register map from YAML'))
-            : '<i class="bi bi-filetype-csv"></i> ' + this._esc(this.t('csv.title', 'Import register map from CSV')));
+            ? '<i aria-hidden="true" class="bi bi-filetype-yml"></i> ' + this._esc(this.t('yaml.title', 'Import register map from YAML'))
+            : '<i aria-hidden="true" class="bi bi-filetype-csv"></i> ' + this._esc(this.t('csv.title', 'Import register map from CSV')));
         show('csvIntroCsv', !yaml); show('csvIntroYaml', yaml);
         show('csvExampleLink', !yaml);           // example download is CSV-only
         set('csvTextLabel', 'textContent', yaml ? 'YAML' : 'CSV');
@@ -504,8 +504,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 <td><input class="input tpl-cell" data-f="write_max" type="number" step="any" value="${r.write_max ?? ''}" style="width:60px" placeholder="max" aria-label="Write max"></td>
                 <td><input class="input tpl-cell" data-f="write_safe" type="number" step="any" value="${r.write_safe ?? ''}" style="width:60px" placeholder="safe" aria-label="Write safe (auto-revert)"></td>
                 <td style="white-space:nowrap;">
-                    <button class="btn btn-ghost btn-sm" ${this._act('tplEditStates', [i])} title="${this.t('devtpl.editStates', 'Decode states (enum / bitfield)')}" aria-label="Decode states" style="${(r.enum || r.bits) ? 'color:var(--accent,#3b82f6);' : ''}"><i class="bi bi-list-ol"></i>${(r.enum || r.bits) ? ` <span style="font-size:10px;">${r.bits ? 'bits' : Object.keys(r.enum).length}</span>` : ''}</button>
-                    <button class="btn btn-ghost btn-sm" ${this._act('tplDelRow', [i])} title="${this.t('common.delete', 'Delete')}" aria-label="Delete row"><i class="bi bi-trash"></i></button>
+                    <button class="btn btn-ghost btn-sm" ${this._act('tplEditStates', [i])} title="${this.t('devtpl.editStates', 'Decode states (enum / bitfield)')}" aria-label="Decode states" style="${(r.enum || r.bits) ? 'color:var(--accent,#3b82f6);' : ''}"><i aria-hidden="true" class="bi bi-list-ol"></i>${(r.enum || r.bits) ? ` <span style="font-size:10px;">${r.bits ? 'bits' : Object.keys(r.enum).length}</span>` : ''}</button>
+                    <button class="btn btn-ghost btn-sm" ${this._act('tplDelRow', [i])} title="${this.t('common.delete', 'Delete')}" aria-label="Delete row"><i aria-hidden="true" class="bi bi-trash"></i></button>
                 </td>
             </tr>`).join('');
         document.getElementById('devTplBody').innerHTML = `
@@ -533,10 +533,10 @@ Object.assign(JanitzaMonitor.prototype, {
             <input type="text" id="tplSearch" class="input" placeholder="${this.t('common.search', 'Search')}…"
                    value="${this._esc(e.search || '')}" style="max-width:220px;">
             <button class="btn btn-secondary btn-sm" onclick="app.tplAddRow()">
-                <i class="bi bi-plus-lg"></i> ${this.t('devtpl.addRegister', 'Add measurement')}</button>
+                <i aria-hidden="true" class="bi bi-plus-lg"></i> ${this.t('devtpl.addRegister', 'Add measurement')}</button>
             <button class="btn btn-secondary btn-sm" onclick="app.tplAutoCanonicalize()"
                     title="${this._esc(this.t('devtpl.autoCanonHint', 'Infer canonical names from each row’s label/unit (conservative — leaves anything uncertain untouched). Review, then Save.'))}">
-                <i class="bi bi-magic"></i> ${this.t('devtpl.autoCanon', 'Auto-canonicalize')}</button>
+                <i aria-hidden="true" class="bi bi-magic"></i> ${this.t('devtpl.autoCanon', 'Auto-canonicalize')}</button>
             <span class="field-hint">${matching.length > MAX
                 ? this.t('devtpl.showing', 'showing') + ` ${MAX} / ${matching.length}`
                 : `${matching.length} ${this.t('devices.regsSelected', 'measurements')}`}
@@ -729,7 +729,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <tr>
               <td><input class="input enum-cell" data-f="v" data-i="${i}" value="${this._esc(row.v)}" style="width:120px;" placeholder="${this._enumBuilder.mode === 'bits' ? '0' : 'e.g. 4'}"></td>
               <td><input class="input enum-cell" data-f="label" data-i="${i}" value="${this._esc(row.label)}" placeholder="e.g. ${this._enumBuilder.mode === 'bits' ? 'overtemp' : 'MPPT'}"></td>
-              <td><button class="btn btn-ghost btn-sm" onclick="app.enumBuilderDelRow(${i})" aria-label="Remove"><i class="bi bi-x-lg"></i></button></td>
+              <td><button class="btn btn-ghost btn-sm" onclick="app.enumBuilderDelRow(${i})" aria-label="Remove"><i aria-hidden="true" class="bi bi-x-lg"></i></button></td>
             </tr>`).join('');
         body.querySelectorAll('.enum-cell').forEach(inp => inp.addEventListener('change', () => {
             const r = this._enumBuilder.rows[parseInt(inp.dataset.i, 10)];

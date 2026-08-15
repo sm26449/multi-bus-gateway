@@ -135,8 +135,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 <input type="text" class="ef-label input" value="${this._esc(c.label)}" placeholder="${this._esc(c.name)}" aria-label="Label">
                 <span class="ef-meta">${this._esc(c.name)} · ${this._esc(c.unit)}</span>
                 <span class="ef-move">
-                    <button type="button" class="ef-btn" title="${this.t('common.moveUp', 'Move up')}" ${i === 0 ? 'disabled' : ''} ${this._act('energyMoveField', [i, -1])}><i class="bi bi-chevron-up"></i></button>
-                    <button type="button" class="ef-btn" title="${this.t('common.moveDown', 'Move down')}" ${i === rows.length - 1 ? 'disabled' : ''} ${this._act('energyMoveField', [i, 1])}><i class="bi bi-chevron-down"></i></button>
+                    <button type="button" class="ef-btn" title="${this.t('common.moveUp', 'Move up')}" ${i === 0 ? 'disabled' : ''} ${this._act('energyMoveField', [i, -1])}><i aria-hidden="true" class="bi bi-chevron-up"></i></button>
+                    <button type="button" class="ef-btn" title="${this.t('common.moveDown', 'Move down')}" ${i === rows.length - 1 ? 'disabled' : ''} ${this._act('energyMoveField', [i, 1])}><i aria-hidden="true" class="bi bi-chevron-down"></i></button>
                 </span>
             </div>`).join('');
     },
@@ -225,7 +225,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const leg = document.getElementById('histLegend');
         const canvas = document.getElementById('historyCanvas');
         if (l) l.innerHTML = '<div style="padding:22px 16px;color:var(--text-secondary);font-size:13px;line-height:1.55;">'
-            + '<i class="bi bi-database-x" style="font-size:18px;"></i><br><br>'
+            + '<i aria-hidden="true" class="bi bi-database-x" style="font-size:18px;"></i><br><br>'
             + `<b>${this._esc(this.t('history.notConfigured'))}</b><br>${this._esc(this.t('history.notConfiguredBody'))}</div>`;
         if (info) info.textContent = this.t('history.notConfigured');
         if (leg) leg.innerHTML = '';
