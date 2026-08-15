@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Dict
 
 from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from ._models import InfluxDBConfigUpdate, ModbusConfigUpdate, MQTTConfigUpdate
 
@@ -191,12 +192,20 @@ def build(ctx) -> APIRouter:
         for k, v in changes.items():
             setattr(u, k, v)
         config.save_yaml_config()
+        _reissue = False
         if auth_state is not None:
             auth_state.reload(config.ui)
             # a password change invalidates every existing session, so an old
-            # cookie can't outlive the rotation (the caller re-logs in)
+            # cookie can't outlive the rotation
             if _pw_rotated:
                 auth_state.revoke_all_sessions()
+            # ...but the CALLER must not be logged out by their own save (the
+            # old behavior 401'd their next request, which the UI misread as
+            # "API key required" — a dead end when no key exists). Re-issue a
+            # fresh admin session: with auth previously ON only an admin
+            # reaches this route; with auth previously OFF the caller just SET
+            # the admin password, i.e. they ARE the admin.
+            _reissue = auth_state.enabled and (_pw_rotated or enabling)
         resp = {"status": "ok", "restart_needed": restart_needed}
         if enabling:
             _pk = getattr(getattr(app.state, "ctx", None), "passkey_store", None)
@@ -207,6 +216,14 @@ def build(ctx) -> APIRouter:
                                  ip=request.client.host if request.client else "-",
                                  action="login enabled",
                                  status="ok", detail={"passkeys_present": len(_enrolled)})
+        if _reissue:
+            token = auth_state.mint_session("admin", auth_state.admin_user)
+            secure = bool(config.ui.tls_enabled) or request.url.scheme == "https"
+            out = JSONResponse(resp)
+            out.set_cookie(_auth.COOKIE_NAME, token, httponly=True,
+                           samesite="lax", secure=secure,
+                           max_age=_auth.SESSION_TTL_S, path="/")
+            return out
         return resp
 
     @r.get("/api/config/security")

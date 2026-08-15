@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.34.1
+
+### 2026-08-15 — a security save no longer logs out its own author
+
+Live incident (caught by Stefan minutes after the 3.34.0 deploy): disabling
+login, then re-enabling it while setting passwords, revoked EVERY session —
+including the caller's — so the very next write returned 401, which the UI
+misread as "enter the API key" (a dead end when no key is configured).
+
+- The `ui-security` save now RE-ISSUES a fresh admin session cookie to the
+  caller whenever passwords rotate or login turns on (with login previously
+  off, the caller just SET the admin password — they are the admin). Other
+  sessions stay revoked, as intended.
+- The UI's 401 handler now checks `/api/auth/status` first: login enabled
+  with no live role = dead session → the login overlay ("Session expired"),
+  NOT the API-key prompt. The key prompt remains for the case it was built
+  for (auth off / role present but a configured key missing).
+- Regression test drives the exact incident sequence end-to-end.
+
 ## 3.34.0
 
 ### 2026-08-15 — deploy split, first-run login, release pipeline (repo stays private)

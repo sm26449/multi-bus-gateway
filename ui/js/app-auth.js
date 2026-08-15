@@ -19,8 +19,21 @@ Object.assign(JanitzaMonitor.prototype, {
                 if (key) h.set('X-API-Key', key);
                 return orig(input, { ...opts, headers: h });
             };
-            return send(localStorage.getItem(KEY)).then((res) => {
+            return send(localStorage.getItem(KEY)).then(async (res) => {
                 if (res.status !== 401) return res;
+                // A 401 with login ENABLED and no live session is a DEAD
+                // SESSION (a security save revokes all sessions), not a
+                // missing API key — the old prompt sent the operator hunting
+                // for a key that usually does not exist. Re-login instead.
+                try {
+                    const st = await (await orig('/api/auth/status')).json();
+                    if (st.enabled && !st.role) {
+                        this._showLogin && this._showLogin(
+                            this.t ? this.t('auth.sessionExpired', 'Session expired — sign in again')
+                                   : 'Session expired — sign in again');
+                        return res;
+                    }
+                } catch (e) { /* status unreachable → fall through */ }
                 const k = window.prompt('This action needs the API key:');
                 if (!k) return res;
                 localStorage.setItem(KEY, k);

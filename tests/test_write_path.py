@@ -215,3 +215,36 @@ devices:
     r = client.post(f"/api/devices/{dev.id}/write",
                     json={"address": 5, "value": 1, "register_type": "input"})
     assert r.status_code == 400 and "read-only" in str(r.json())
+
+
+@needs_tc
+def test_security_save_reissues_the_callers_session(tmp_path):
+    """The live incident (2026-08-15): admin disables login, re-enables it
+    while setting passwords → revoke_all_sessions() killed the CALLER's
+    session too, the next write 401'd and the UI dead-ended asking for an
+    API key that did not exist. The save must hand the caller a fresh admin
+    session cookie so their next request just works."""
+    from multibus import auth as _authmod
+    _cfg, client = _app(tmp_path, auth=True)
+
+    # rotate the viewer password while logged in → own session survives
+    r = client.post("/api/config/ui-security",
+                    json={"viewer_username": "viewer", "viewer_password": "viewpw1"})
+    assert r.status_code == 200
+    assert _authmod.COOKIE_NAME in r.cookies          # fresh cookie issued
+    r2 = client.post("/api/config/ui-security",
+                     json={"viewer_password": "viewpw2"})
+    assert r2.status_code == 200                       # NOT 401 — still admin
+
+    # full incident shape: disable, then enable+set passwords from the
+    # auth-off window → the enable response logs the caller in as admin
+    assert client.post("/api/config/ui-security",
+                       json={"auth_enabled": False}).status_code == 200
+    r3 = client.post("/api/config/ui-security",
+                     json={"auth_enabled": True, "auth_password": "newadminpw",
+                           "viewer_password": "viewpw3"})
+    assert r3.status_code == 200
+    assert _authmod.COOKIE_NAME in r3.cookies
+    # next admin-only write goes through with the re-issued session
+    r4 = client.post("/api/config/ui-security", json={"viewer_password": "viewpw4"})
+    assert r4.status_code == 200
