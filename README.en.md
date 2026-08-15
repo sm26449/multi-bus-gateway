@@ -241,7 +241,17 @@ git clone https://github.com/sm26449/multi-bus-gateway.git
 cd multi-bus-gateway
 cp .env.example .env          # optional — everything is configurable in the UI
 docker compose up -d
+# Admin password generated on first boot (printed once):
+docker compose logs multi-bus-gateway | grep -A3 'FIRST RUN'
 # UI: http://localhost:8080
+```
+
+Already running a stack (MQTT/InfluxDB/Grafana) on an external docker
+network? Use the overlay — every service joins the existing network
+(default `pv-stack-network`, overridable via `PV_STACK_NETWORK` in `.env`):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.pv-stack.yml up -d
 ```
 
 ### Prebuilt image (no local build)
@@ -326,13 +336,15 @@ curl -s http://localhost:8080/metrics | grep gateway_device_up
 By default the appliance targets a **trusted LAN** — everything is open
 locally and every defense layer is opt-in:
 
-> **⚠️ First boot is open by design.** Out of the box authentication is **off**,
-> the UI binds to `0.0.0.0`, and the admin credentials are `admin` / `admin`.
-> That is fine on an isolated, trusted LAN — but **before exposing the gateway to
-> any wider network, enable authentication and change the password** (Settings →
-> Security, or the `ui.auth` block in `config.yaml`) and consider binding to
-> `127.0.0.1` behind a reverse proxy. Anyone who can reach the host can also
-> reach the Modbus writes and the virtual-meter servers.
+> **🔐 First boot generates a login.** A fresh install (no `config.yaml`)
+> starts with authentication **enabled**: an admin password is generated,
+> stored hashed, and printed **once** to the log —
+> `docker compose logs multi-bus-gateway | grep -A3 'FIRST RUN'`. Change it
+> after the first login (Settings → Security). On bare metal the UI binds to
+> `127.0.0.1` by default; the container image explicitly sets
+> `UI_HOST=0.0.0.0` (exposure is governed by the compose port mapping).
+> Anyone who can reach the port can also reach the Modbus writes and the
+> virtual-meter servers — treat access accordingly.
 
 - **Login + roles** (admin/operator/viewer), per-IP lockout, **WebAuthn
   passkeys**, HttpOnly sessions (7-day sliding).
@@ -373,7 +385,7 @@ multi-bus-gateway/
 ├── ui/                        # Vanilla-JS SPA (i18n in ui/languages/)
 ├── tests/                     # Test suite (pytest)
 ├── main.py                    # Entry point
-├── Dockerfile / docker-compose.yml
+├── Dockerfile / docker-compose.yml (+ docker-compose.pv-stack.yml — shared-network overlay)
 └── CHANGELOG.md
 ```
 

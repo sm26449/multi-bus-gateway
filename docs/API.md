@@ -5,8 +5,9 @@ Base URL: `http://<gateway>:8080` (default port; `ui.port` / `UI_PORT`).
 
 ## Authentication & roles
 
-Everything below is subject to three independent, **opt-in** gates (all off by
-default on a trusted LAN):
+Everything below is subject to three independent gates. The IP allowlist and
+the API key are opt-in; **login is enabled automatically on a fresh install**
+(the first run generates an admin password and prints it once to the log):
 
 1. **IP allowlist** (`security.allowlist`) — applies to every request,
    including `/health` and `/metrics`.

@@ -35,7 +35,7 @@ CONTROL_PORT = int(os.environ.get("BRIDGE_CONTROL_PORT", "7000"))
 # ser2net serial params applied to every adapter. Per-adapter baud is a later
 # refinement (RFC2217 or a control API); today's meters are 9600 8N1.
 SERIAL_PARAMS = os.environ.get("BRIDGE_SERIAL_PARAMS", "9600n81")
-# Adapters to NEVER expose — claimed by another service (e.g. the Seplos BMS on
+# Adapters to NEVER expose — claimed by another service (e.g. a BMS on
 # its own container). Comma-separated; each token matches a stable_id, dev path,
 # or USB port-path. Excluded adapters are LISTED (available=false) but never get
 # a ser2net connection, so their serial line is never opened by the bridge.
@@ -204,7 +204,7 @@ def _reload_ser2net() -> None:
 
 def reconcile() -> None:
     """Idempotent: enumerate, and if the managed adapter set changed, regen +
-    reload. Excluded adapters (claimed elsewhere, e.g. Seplos) are listed but
+    reload. Excluded adapters (claimed elsewhere, e.g. a BMS) are listed but
     NEVER exposed — the bridge never opens their serial line."""
     global _adapters
     with _lock:

@@ -309,7 +309,13 @@ class SecurityConfig:
 
 @dataclass
 class UIConfig:
-    host: str = "0.0.0.0"
+    # SAFE default: loopback only (external audit B5 — ~120 routes used to be
+    # LAN-reachable, unauthenticated, out of the box). The container image
+    # sets UI_HOST=0.0.0.0 explicitly — inside a container the namespace is
+    # isolated and exposure is governed by the compose port mapping; on bare
+    # metal, listening on every interface is an explicit opt-in
+    # (ui.host: 0.0.0.0 / UI_HOST env / --host).
+    host: str = "127.0.0.1"
     port: int = 8080
     auth_enabled: bool = False
     auth_username: str = "admin"
@@ -324,7 +330,7 @@ class UIConfig:
     # bounds, diagnostics, discovery) but NO configuration changes
     operator_username: str = ""
     operator_password: str = ""
-    # Canonical UI URL: when set (e.g. https://mbus.diysolar.ro), the browser is
+    # Canonical UI URL: when set (e.g. https://gateway.example.com), the browser is
     # steered here by default (TLS + passkeys). Empty = no redirect. The local
     # IP stays reachable via ?local (client-side, so a down hostname can't lock
     # the operator out).
@@ -1321,6 +1327,8 @@ class Config:
         # UI
         if os.getenv('UI_PORT'):
             self.ui.port = int(os.getenv('UI_PORT'))
+        if os.getenv('UI_HOST'):
+            self.ui.host = os.getenv('UI_HOST')
 
         # ESPHome / Device Builder. ESPHOME_URL doubles as the zero-config
         # seed: on a FRESH deploy (no esphome: block in config.yaml yet) its
@@ -1461,6 +1469,7 @@ class Config:
             'INFLUXDB_BUCKET': 'influxdb.bucket',
             'INFLUXDB_PUBLISH_MODE': 'influxdb.publish_mode',
             'UI_PORT': 'ui.port',
+            'UI_HOST': 'ui.host',
         }
         # Secret-bearing paths: report only that they are env-pinned, never the
         # value (this endpoint is readable without the API key). URL-valued

@@ -1,0 +1,20 @@
+# Overlay: join an EXISTING pv-stack network instead of creating the
+# standalone one. Use together with the base file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.pv-stack.yml up -d
+#
+# Every service keeps its `monitoring` network alias — this file only
+# repoints that alias at the shared external network, so the gateway sees
+# (and is seen by) the rest of the stack (mosquitto, influxdb, node-red,
+# grafana, …) by container name, with zero changes to the base file.
+#
+# Without the wider stack? Use the base file alone (it creates its own
+# bridge network), or pre-create a shared one yourself:
+#
+#   docker network create pv-stack-network
+#
+# The network name is overridable: PV_STACK_NETWORK=my-net in .env.
+networks:
+  monitoring:
+    external: true
+    name: ${PV_STACK_NETWORK:-pv-stack-network}

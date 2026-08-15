@@ -1,5 +1,5 @@
 # Exact pinned dependency set (runtime) — regenerate after a deliberate
-# upgrade with: docker exec pv-stack-multi-bus-gateway pip freeze | sort
+# upgrade with: docker exec <gateway-container> pip freeze | sort
 # (or pip-compile). Dockerfile and CI install from THIS file; requirements.txt
 # stays the human-edited intent file. Audit 2026-08-14 (M1: reproducible builds).
 annotated-doc==0.0.4

@@ -67,9 +67,39 @@ class GatewayApp:
         self.vmeter_manager = None
         self.running = False
 
+    def _first_run_provision(self):
+        """Fresh install (no config.yaml at all): generate an admin password,
+        store it HASHED with auth enabled, and print it ONCE — the standard
+        appliance pattern (external audit B5: the gateway used to ship ~120
+        routes open to anyone who could reach the port). Never touches an
+        existing config; a wiped password stays wipeable by editing the file."""
+        import os as _os
+        if _os.path.exists(self.config_path):
+            return
+        import secrets
+        from multibus import auth as _auth
+        password = secrets.token_urlsafe(12)
+        cfg = Config(self.config_path)          # defaults (file absent)
+        cfg.ui.auth_enabled = True
+        cfg.ui.auth_username = "admin"
+        cfg.ui.auth_password = _auth.hash_password(password)
+        cfg.save_yaml_config()
+        banner = (
+            "\n" + "=" * 62 +
+            "\n  FIRST RUN — generated admin credentials (shown ONLY once):" +
+            "\n      username: admin" +
+            f"\n      password: {password}" +
+            "\n  Change it in Config -> Security after logging in." +
+            "\n" + "=" * 62)
+        print(banner, flush=True)
+        logger.warning("first run: auth enabled with a generated admin "
+                       "password (printed to stdout once)")
+
     def setup(self):
         """Initialize all components."""
         logger.info("Multi-Bus Gateway starting...")
+
+        self._first_run_provision()
 
         # Load configuration — through the last-known-good seatbelt: a
         # config.yaml that fails to parse (bad edit, torn write) is restored
@@ -449,7 +479,7 @@ def main():
         log_level="info" if not args.debug else "debug",
         # X-Forwarded-* is honored ONLY from proxies the operator explicitly
         # listed in ui.trusted_proxies (e.g. the Traefik container that
-        # terminates TLS for mbus.diysolar.ro). With the list empty — the
+        # terminates TLS for gateway.example.com). With the list empty — the
         # default — proxy headers stay OFF entirely: a client co-located with
         # some proxy cannot spoof client.host and defeat the login lockout,
         # the IP allowlist or the audit trail.

@@ -363,13 +363,16 @@
     "data_type": "uint16",
     "access": "RD",
     "category": "diagnostic",
-    "description": "Meter model identification code (register 0x000B). This unit reports 731.",
+    "description": "Meter model identification code (register 0x000B). This unit reports 731. Decoded via enum (verified on the physical meter); an unknown code shows as 'unknown (n)'.",
     "scale": 1.0,
     "poll_group": "slow",
     "entity_category": "diagnostic",
     "state_class": "none",
     "enabled_by_default": false,
-    "icon": "mdi:identifier"
+    "icon": "mdi:identifier",
+    "enum": {
+     "731": "Smart Meter 65A-3"
+    }
    },
    {
     "address": 4096,

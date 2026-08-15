@@ -45,25 +45,24 @@ a persistent port, and serves a scan API.
 
 ### 2.1 Run the bridge
 
-It ships as a compose service (`pv-stack-serial-bridge`). Key points:
+It ships in `docker-compose.yml` as the opt-in `rtu-bridge` profile (it
+needs `/dev` access, so it never starts by accident):
 
-```yaml
-serial-bridge:
-  build: { context: ./serial-bridge }
-  restart: unless-stopped
-  environment:
-    # adapters to NEVER expose — claimed by another service. Comma-separated;
-    # each token matches a stable id, /dev path, or USB port-path.
-    - BRIDGE_EXCLUDE=1a86:7523@1-1      # e.g. the BMS adapter
-  volumes:
-    - /dev:/dev
-    - ./data:/data                       # persistent port map
-  device_cgroup_rules:                   # unprivileged access to serial nodes
-    - 'c 188:* rmw'                       # ttyUSB
-    - 'c 166:* rmw'                       # ttyACM
-  ports:
-    - "127.0.0.1:7000:7000"              # control API — localhost only
+```bash
+docker compose --profile rtu-bridge up -d
 ```
+
+The service (see the compose file for the authoritative definition) runs as
+container `pv-stack-serial-bridge` — the name the gateway's default
+`SERIAL_BRIDGE_URL=http://pv-stack-serial-bridge:7000` resolves. Key points:
+
+- `/dev` is bound **read-only** and only ttyUSB/ttyACM device nodes are
+  allowed (`device_cgroup_rules`); the process runs non-root (dialout).
+- `BRIDGE_EXCLUDE` (in `.env`) lists adapters to NEVER expose — claimed by
+  another service. Comma-separated; each token matches a stable id, /dev
+  path, or USB port-path (e.g. `1a86:7523@1-1` for a BMS adapter).
+- The persistent port map lives in the `serial-bridge-data` volume.
+- The control API is published on localhost only (`127.0.0.1:7000`).
 
 - **Data ports (7001–7099) are internal-only.** They are *not* published to the
   LAN — anyone who can reach them speaks raw Modbus to your bus. MBG reaches the

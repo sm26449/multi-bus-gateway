@@ -603,7 +603,7 @@ One primary container, one Python process (`main.py`), plus two optional
 companions:
 
 - FastAPI/uvicorn serves the UI, REST API and WebSocket
-  (default `0.0.0.0:8080`, optional TLS).
+  (default `127.0.0.1:8080` on bare metal — the container image sets `UI_HOST=0.0.0.0` — optional TLS).
 - Poller threads per device × poll group; push-driven MQTT-input clients.
 - One thread + asyncio loop per virtual meter instance; a supervisor thread
   ticks freshness and restarts wedged listeners.

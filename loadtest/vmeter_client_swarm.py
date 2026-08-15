@@ -95,7 +95,7 @@ async def _client(cid: int, target: tuple[str, int], args, stats: Stats,
                     continue
             t0 = time.perf_counter()
             rr = await client.read_holding_registers(
-                address=args.start, count=args.count, slave=args.unit)
+                address=args.start, count=args.count, device_id=args.unit)
             lat = (time.perf_counter() - t0) * 1000
             stats.read(lat, ok=(rr is not None and not rr.isError()))
         except Exception:      # noqa: BLE001 — count as a failed read, keep looping

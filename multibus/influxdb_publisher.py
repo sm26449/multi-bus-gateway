@@ -623,89 +623,18 @@ class InfluxDBPublisher:
             self.last_write_time[key] = time.time()
 
     def _get_measurement(self, register: SelectedRegister) -> str:
-        """Get InfluxDB measurement name for a register."""
-        if register.influxdb_measurement:
-            return register.influxdb_measurement
-
-        # A canonical register name is the authoritative source — consult the
-        # dictionary before the unit heuristic, which otherwise misfiles fields
-        # the unit can't disambiguate (power_factor/diagnostics → 'janitza',
-        # apparent energy 'kVAh' → 'power_apparent' via the 'va' substring).
-        from .canonical_fields import measurement_for
-        m = measurement_for(getattr(register, 'name', '') or '')
-        if m:
-            return m
-
-        unit = register.unit.lower() if register.unit else ''
-        # MOST-SPECIFIC first: 'v' is a substring of 'va'/'var'/'varh', 'w' of
-        # 'wh', 'var' of 'varh' — so energy (…h) and reactive/apparent must be
-        # tested before the bare V/A/W, else e.g. 'VA' matches 'v' → voltage.
-        if 'varh' in unit:
-            return 'energy_reactive'
-        elif 'wh' in unit:
-            return 'energy_active'
-        elif 'var' in unit:
-            return 'power_reactive'
-        elif 'va' in unit:
-            return 'power_apparent'
-        elif 'hz' in unit:
-            return 'frequency'
-        elif 'w' in unit:
-            return 'power_active'
-        elif 'v' in unit:
-            return 'voltage'
-        elif 'a' in unit:
-            return 'current'
-        elif '%' in unit:
-            return 'percentage'
-        else:
-            return 'janitza'
+        return get_measurement(register)
 
     def _get_tags(self, register: SelectedRegister,
                   device_tag: Optional[str] = None) -> Dict[str, str]:
-        """Get InfluxDB tags for a register. ``device_tag`` is the per-device
-        tag value (Tier 2); None = the historical default, which device #1
-        also passes explicitly — lines stay byte-identical."""
-        tags = {
-            'device': device_tag or 'janitza_umg512',
-            'address': str(register.address),
-            'name': register.name,
-        }
-
-        if register.influxdb_tags:
-            tags.update(register.influxdb_tags)
-
-        return tags
+        return get_tags(register, device_tag)
 
     def _build_point(self, register: SelectedRegister, safe_val: Any, ts: float,
                      poll_group: Optional[str] = None,
                      extra_tags: Dict[str, str] = None,
                      device_tag: Optional[str] = None):
-        """Build a Point stamped with the Modbus poll time (not the flush time),
-        so batching latency never skews the series and buffered replay lands the
-        point exactly where it was measured."""
-        from influxdb_client import Point, WritePrecision
-
-        point = Point(self._get_measurement(register))
-        for tag_key, tag_value in self._get_tags(register, device_tag).items():
-            point = point.tag(tag_key, tag_value)
-        if extra_tags:
-            for tag_key, tag_value in extra_tags.items():
-                point = point.tag(tag_key, tag_value)
-        if poll_group:
-            point = point.tag('poll_group', poll_group)
-
-        # strip only the Janitza '_G_' PREFIX (audit DP-27: the unanchored
-        # replace also collapsed an interior '_g_', letting two different
-        # names share one field; verified identical on every live name)
-        _name_l = register.name.lower().replace('[', '_').replace(']', '')
-        field_name = _name_l[3:] if _name_l.startswith('_g_') else _name_l
-        if isinstance(safe_val, (int, float)):
-            point = point.field(field_name, float(safe_val))
-            point = point.field('value', float(safe_val))
-        else:
-            point = point.field(field_name, str(safe_val))
-        return point.time(int(ts * 1e9), WritePrecision.NS)
+        return build_point(register, safe_val, ts, poll_group=poll_group,
+                           extra_tags=extra_tags, device_tag=device_tag)
 
     def _deliver(self, point, ts: float, bucket: Optional[str] = None) -> None:
         """Route one point: enqueue to the batching client when connected,
@@ -1106,3 +1035,94 @@ class InfluxDBPublisher:
             except Exception:  # noqa: BLE001
                 pass
         return {"year": y, "month": m, "start": s, "stop": e, "totals": totals, "daily": daily}
+
+
+# ── the ONE line-protocol schema — module functions so OFFLINE writers (the
+# backfill cron) emit byte-identical series to the live publisher (external
+# audit B3: backfill used to transcribe this schema by hand and drifted
+# into a parallel, invisible series) ────────────────────────────────────────
+
+def get_measurement(register: SelectedRegister) -> str:
+    """Get InfluxDB measurement name for a register."""
+    if register.influxdb_measurement:
+        return register.influxdb_measurement
+
+    # A canonical register name is the authoritative source — consult the
+    # dictionary before the unit heuristic, which otherwise misfiles fields
+    # the unit can't disambiguate (power_factor/diagnostics → 'janitza',
+    # apparent energy 'kVAh' → 'power_apparent' via the 'va' substring).
+    from .canonical_fields import measurement_for
+    m = measurement_for(getattr(register, 'name', '') or '')
+    if m:
+        return m
+
+    unit = register.unit.lower() if register.unit else ''
+    # MOST-SPECIFIC first: 'v' is a substring of 'va'/'var'/'varh', 'w' of
+    # 'wh', 'var' of 'varh' — so energy (…h) and reactive/apparent must be
+    # tested before the bare V/A/W, else e.g. 'VA' matches 'v' → voltage.
+    if 'varh' in unit:
+        return 'energy_reactive'
+    elif 'wh' in unit:
+        return 'energy_active'
+    elif 'var' in unit:
+        return 'power_reactive'
+    elif 'va' in unit:
+        return 'power_apparent'
+    elif 'hz' in unit:
+        return 'frequency'
+    elif 'w' in unit:
+        return 'power_active'
+    elif 'v' in unit:
+        return 'voltage'
+    elif 'a' in unit:
+        return 'current'
+    elif '%' in unit:
+        return 'percentage'
+    else:
+        return 'janitza'
+
+def get_tags(register: SelectedRegister,
+         device_tag: Optional[str] = None) -> Dict[str, str]:
+    """Get InfluxDB tags for a register. ``device_tag`` is the per-device
+    tag value (Tier 2); None = the historical default, which device #1
+    also passes explicitly — lines stay byte-identical."""
+    tags = {
+        'device': device_tag or 'janitza_umg512',
+        'address': str(register.address),
+        'name': register.name,
+    }
+
+    if register.influxdb_tags:
+        tags.update(register.influxdb_tags)
+
+    return tags
+
+def build_point(register: SelectedRegister, safe_val: Any, ts: float,
+            poll_group: Optional[str] = None,
+            extra_tags: Dict[str, str] = None,
+            device_tag: Optional[str] = None):
+    """Build a Point stamped with the Modbus poll time (not the flush time),
+    so batching latency never skews the series and buffered replay lands the
+    point exactly where it was measured."""
+    from influxdb_client import Point, WritePrecision
+
+    point = Point(get_measurement(register))
+    for tag_key, tag_value in get_tags(register, device_tag).items():
+        point = point.tag(tag_key, tag_value)
+    if extra_tags:
+        for tag_key, tag_value in extra_tags.items():
+            point = point.tag(tag_key, tag_value)
+    if poll_group:
+        point = point.tag('poll_group', poll_group)
+
+    # strip only the Janitza '_G_' PREFIX (audit DP-27: the unanchored
+    # replace also collapsed an interior '_g_', letting two different
+    # names share one field; verified identical on every live name)
+    _name_l = register.name.lower().replace('[', '_').replace(']', '')
+    field_name = _name_l[3:] if _name_l.startswith('_g_') else _name_l
+    if isinstance(safe_val, (int, float)):
+        point = point.field(field_name, float(safe_val))
+        point = point.field('value', float(safe_val))
+    else:
+        point = point.field(field_name, str(safe_val))
+    return point.time(int(ts * 1e9), WritePrecision.NS)

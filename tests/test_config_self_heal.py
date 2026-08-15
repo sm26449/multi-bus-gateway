@@ -169,3 +169,25 @@ def test_intentional_device_removal_refreshes_good_via_save(tmp_path):
     c.save_yaml_config()
     good = yaml.safe_load((tmp_path / "config.yaml.good").read_text())
     assert len(good.get("devices") or []) == 1        # .good follows the save
+
+
+def test_first_run_provisions_hashed_admin_password(tmp_path, capsys):
+    """B5 (external audit): a fresh install must not ship ~120 open routes.
+    No config.yaml → generate an admin password, store it HASHED with auth
+    on, print it once; an existing config is never touched."""
+    import main as m
+    app = m.GatewayApp.__new__(m.GatewayApp)
+    app.config_path = str(tmp_path / "config.yaml")
+    app._first_run_provision()
+    doc = yaml.safe_load((tmp_path / "config.yaml").read_text())
+    assert doc["ui"]["auth"]["enabled"] is True
+    assert doc["ui"]["auth"]["password"].startswith("pbkdf2_sha256$")
+    printed = capsys.readouterr().out
+    assert "FIRST RUN" in printed and "password:" in printed
+    # the password appears ONLY in stdout, never in the file
+    assert printed.split("password: ")[1].split()[0] not in (tmp_path / "config.yaml").read_text()
+    # second boot: config exists → untouched, nothing printed
+    before = (tmp_path / "config.yaml").read_text()
+    app._first_run_provision()
+    assert (tmp_path / "config.yaml").read_text() == before
+    assert "FIRST RUN" not in capsys.readouterr().out

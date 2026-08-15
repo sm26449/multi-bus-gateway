@@ -35,6 +35,11 @@ EXPOSE 8080 1502-1512 502
 # root cause of 40k+ failing health checks since image build). Probes /health:
 # 200 for ok/degraded (a stale source is a correct fail-safe, not a fault),
 # 503 (→ HTTPError → unhealthy) only when an enabled virtual meter is down.
+# In-container bind: every interface of the container's OWN namespace —
+# exposure to the LAN is governed solely by the compose port mapping.
+# (The bare-metal code default is loopback; see UIConfig.host.)
+ENV UI_HOST=0.0.0.0
+
 # Port follows UI_PORT (audit MEDIUM-1: the 8080 hardcode made any
 # UI_PORT!=8080 deploy permanently 'unhealthy').
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \

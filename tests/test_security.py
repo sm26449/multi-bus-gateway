@@ -322,13 +322,13 @@ def test_challenge_cache_evicts_oldest_not_all():
 
 def test_canonical_redirect_script_and_bypass():
     from multibus.api import _canonical_redirect_script, _render_index_html
-    s = _canonical_redirect_script("https://mbus.diysolar.ro")
-    assert "mbus.diysolar.ro" in s
+    s = _canonical_redirect_script("https://gw.example.com")
+    assert "gw.example.com" in s
     assert "mbg-stay-local" in s          # sticky local bypass
     assert "p.has('local')" in s          # ?local escape hatch
     assert "location.host===h" in s       # no redirect when already canonical
     assert _canonical_redirect_script("") == ""    # unset → no redirect (compat)
-    html = _render_index_html(canonical_url="https://mbus.diysolar.ro")
+    html = _render_index_html(canonical_url="https://gw.example.com")
     assert html.startswith("") and "<head><script>" in html   # injected first in head
 
 
@@ -337,9 +337,9 @@ def test_ui_security_canonical_url_roundtrip(tmp_path):
     _cfg, client = make_app(tmp_path)
     r = client.post("/api/config/ui-security", json={"canonical_url": "not-a-url"})
     assert r.status_code == 422                                  # scheme required
-    r = client.post("/api/config/ui-security", json={"canonical_url": "https://mbus.diysolar.ro"})
+    r = client.post("/api/config/ui-security", json={"canonical_url": "https://gw.example.com"})
     assert r.status_code == 200
-    assert client.get("/api/config/ui-security").json()["canonical_url"] == "https://mbus.diysolar.ro"
+    assert client.get("/api/config/ui-security").json()["canonical_url"] == "https://gw.example.com"
 
 
 # ── session persistence (survives a container restart) ───────────────────────

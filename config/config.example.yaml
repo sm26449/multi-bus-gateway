@@ -1,10 +1,9 @@
-# Janitza UMG 512-PRO Monitor Configuration
+# Multi-Bus Gateway — example configuration
+# Copy to config/config.yaml (or let the first run generate one — a fresh
+# boot with NO config.yaml enables login with a generated admin password,
+# printed once to the log). Every key below can also be set from the UI
+# (Config → Settings); the file is rewritten on each save.
 
-general:
-  # Logging level: DEBUG, INFO, WARNING, ERROR
-  log_level: INFO
-  # Log file path (optional, logs to stdout if not set)
-  log_file: ""
 
 modbus:
   # Janitza device IP address — or leave this and set it from the UI
@@ -39,8 +38,8 @@ modbus:
   drop_all_zero: false
 
 polling:
-  # Default poll interval in seconds
-  default_interval: 5
+  # (per-group intervals live in selected_registers.json / the UI; there is
+  # no global default interval)
   # Startup jitter (seconds, 0 = off). Each poll group waits a random delay in
   # [0, min(interval, this)] before its FIRST read, so several devices/groups
   # don't fire in lock-step and hammer a shared transport (e.g. the RTU-over-TCP
@@ -71,7 +70,7 @@ mqtt:
   username: ""
   password: ""
   # Base topic prefix
-  topic_prefix: "janitza/umg512"
+  topic_prefix: "multibus/umg512"
   # Retain messages
   retain: true
   # QoS level (0, 1, or 2)
@@ -104,7 +103,7 @@ influxdb:
   # Organization
   org: ""
   # Bucket name
-  bucket: "janitza"
+  bucket: "multibus"
   # Minimum write interval per measurement (seconds)
   write_interval: 5
   # Publish mode: "changed" (only changed values) or "all" (all values every poll)
@@ -117,7 +116,9 @@ influxdb:
 
 ui:
   # Web UI host
-  host: "0.0.0.0"
+  # Bare-metal default is loopback; the container image overrides with
+  # UI_HOST=0.0.0.0 (exposure is then governed by the compose port mapping).
+  host: "127.0.0.1"
   # Web UI port
   port: 8080
   # Enable authentication (optional). Set a username and a strong password before

@@ -95,9 +95,18 @@ def test_main_auto_backfills_on_gap(monkeypatch):
     assert seen and seen["e"] > seen["s"]   # a real window was passed to backfill
 
 
+def _fake_regs():
+    from multibus.config import SelectedRegister
+    return {addr: SelectedRegister(address=addr, name=f"voltage_x{addr}",
+                                   label=f"x{addr}", unit="V", data_type="float",
+                                   poll_group="realtime")
+            for _p, addr in backfill.PARAMS}
+
+
 def test_backfill_dry_run_fetches_but_makes_no_client(monkeypatch):
     import influxdb_client
     monkeypatch.setattr(backfill, "meter_tz_offset", lambda: 0)
+    monkeypatch.setattr(backfill, "load_registers", _fake_regs)
     calls = {"fetch": 0}
 
     def _fetch(*a, **k):
@@ -114,3 +123,55 @@ def test_backfill_dry_run_fetches_but_makes_no_client(monkeypatch):
     # constructs no client and writes nothing
     assert backfill.backfill(0, 10_000, dry=True, verbose=True) == 0
     assert calls["fetch"] == len(backfill.PARAMS)
+
+
+def test_backfill_emits_the_live_publisher_schema(monkeypatch, tmp_path):
+    """B3 (external audit): the backfilled line protocol must be BYTE-equal to
+    the live publisher's for the same register/value/timestamp, modulo the
+    `backfilled` marker field — no more hand-transcribed parallel series."""
+    from multibus.config import SelectedRegister
+    from multibus.influxdb_publisher import build_point
+
+    reg = SelectedRegister(address=19000, name="voltage_l1_n", label="L1",
+                           unit="V", data_type="float", poll_group="realtime",
+                           influxdb_tags={"phase": "L1", "type": "line_neutral"})
+    monkeypatch.setattr(backfill, "meter_tz_offset", lambda: 0)
+    monkeypatch.setattr(backfill, "load_registers", lambda: {19000: reg})
+    monkeypatch.setattr(backfill, "PARAMS", [("_ULN[0]", 19000)])
+    monkeypatch.setattr(backfill, "fetch_hist", lambda *a, **k: [(230.5, 1000.0)])
+
+    written = []
+
+    class _WApi:
+        def write(self, bucket, record): written.append(record)
+        def close(self): pass
+
+    class _Client:
+        def __init__(self, *a, **k): pass
+        def write_api(self, **k): return _WApi()
+        def close(self): pass
+    import influxdb_client
+    monkeypatch.setattr(influxdb_client, "InfluxDBClient", _Client)
+
+    assert backfill.backfill(0, 10_000, dry=False, verbose=False) == 1
+    got = written[0].to_line_protocol()
+    live = build_point(reg, 230.5, 1000.0, poll_group="realtime").to_line_protocol()
+    # strip the marker field, timestamps normalized (S vs NS precision)
+    assert got.replace(",backfilled=1i", "").replace("backfilled=1i,", "").split()[0:2] == live.split()[0:2]
+    assert "backfilled=1" in got
+
+
+def test_backfill_skips_deselected_addresses(monkeypatch, capsys):
+    monkeypatch.setattr(backfill, "meter_tz_offset", lambda: 0)
+    monkeypatch.setattr(backfill, "load_registers", lambda: {})
+    monkeypatch.setattr(backfill, "fetch_hist",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not fetch")))
+    import influxdb_client
+
+    class _Client:
+        def __init__(self, *a, **k): pass
+        def write_api(self, **k): return None
+        def close(self): pass
+    monkeypatch.setattr(influxdb_client, "InfluxDBClient", _Client)
+    assert backfill.backfill(0, 10_000, dry=False, verbose=False) == 0
+    assert "not in the live selection" in capsys.readouterr().out

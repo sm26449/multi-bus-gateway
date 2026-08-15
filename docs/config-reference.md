@@ -6,6 +6,10 @@ operation needs none of this by hand: the UI (Config → Settings) edits and
 persists `config.yaml` for you. This reference exists for pre-seeding deployments,
 reviewing a config in git, and understanding exactly what a key does.
 
+A ready-to-copy annotated starting point ships as
+[`config/config.example.yaml`](../config/config.example.yaml) — its keys and
+defaults track this document.
+
 ## Configuration sources and precedence
 
 1. **`config/config.yaml`** — the persistent configuration, written by the UI
@@ -55,6 +59,7 @@ These map 1:1 onto `config.yaml` keys and override them at each boot.
 | `INFLUXDB_BUCKET` | `influxdb.bucket` | |
 | `INFLUXDB_PUBLISH_MODE` | `influxdb.publish_mode` | `changed` or `all` |
 | `UI_PORT` | `ui.port` | |
+| `UI_HOST` | `ui.host` | container image sets `0.0.0.0`; bare-metal default is loopback |
 
 Active overrides are reported by `GET /api/config` (`env_overrides`), with
 secret values masked.
@@ -93,6 +98,7 @@ A standalone gap-backfill tool for InfluxDB; it reads its own environment:
 | `INFLUXDB_TOKEN` | *(empty)* | |
 | `JANITZA_MIN_GAP_SEC` | `180` | Minimum gap (seconds) worth backfilling. |
 | `JANITZA_MAX_LOOKBACK_H` | `48` | How far back to scan. |
+| `JANITZA_REGISTERS_PATH` | `config/selected_registers.json` | The live selection the point SCHEMA is derived from (tags, fields, measurement, poll group) via the publisher's own `build_point` — backfilled points land in byte-identical series. An address missing from the selection is skipped, never written with a guessed schema. |
 
 ## config.yaml
 
@@ -162,10 +168,10 @@ section. (Serial/RTU and other transports are available on additional
 
 | Key | Default | Notes |
 |-----|---------|-------|
-| `host` | `0.0.0.0` | |
+| `host` | `127.0.0.1` | loopback on bare metal; the container image sets `UI_HOST=0.0.0.0` |
 | `port` | `8080` | |
-| `auth.enabled` | `false` | login off = trusted-LAN default |
-| `auth.username` / `auth.password` | `admin` / `admin` | admin account |
+| `auth.enabled` | `false` | a FRESH install's first run writes `true` + a generated admin password (printed once to the log) |
+| `auth.username` / `auth.password` | `admin` / `""` | password default is blank; enabling auth with a blank or `admin` password is refused |
 | `auth.viewer_username` / `auth.viewer_password` | `""` | optional read-only account (GET only) |
 | `auth.operator_username` / `auth.operator_password` | `""` | optional operator account: live actions (bounded writes, diagnostics, discovery) but no configuration changes |
 | `auth.lockout_threshold` | `5` | failed logins per client IP before lockout |

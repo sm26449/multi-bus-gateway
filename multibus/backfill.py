@@ -73,16 +73,42 @@ MIN_GAP_SEC = int(os.environ.get("JANITZA_MIN_GAP_SEC", "180"))
 MAX_LOOKBACK_H = int(os.environ.get("JANITZA_MAX_LOOKBACK_H", "48"))
 TB = 60  # meter recording timebase (seconds) — 1-minute means
 
-# (hist_param, address, register_name, field_name, extra_tags) — measurement is "voltage".
-# Mirrors the live registers in config/selected_registers.json (L-N: type, L-L: connection).
-PARAMS: list[tuple[str, int, str, str, dict[str, str]]] = [
-    ("_ULN[0]", 19000, "voltage_l1_n", "voltage_l1_n", {"phase": "L1", "type": "line_neutral"}),
-    ("_ULN[1]", 19002, "voltage_l2_n", "voltage_l2_n", {"phase": "L2", "type": "line_neutral"}),
-    ("_ULN[2]", 19004, "voltage_l3_n", "voltage_l3_n", {"phase": "L3", "type": "line_neutral"}),
-    ("_ULL[0]", 19006, "voltage_l1_l2", "voltage_l1_l2", {"phase": "L1", "connection": "line_line"}),
-    ("_ULL[1]", 19008, "voltage_l2_l3", "voltage_l2_l3", {"phase": "L2", "connection": "line_line"}),
-    ("_ULL[2]", 19010, "voltage_l3_l1", "voltage_l3_l1", {"phase": "L3", "connection": "line_line"}),
+# hist_param -> register ADDRESS only. Everything else — name tag, field
+# name, measurement, extra tags, poll_group — comes from the LIVE selection
+# (config/selected_registers.json) through the publisher's own build_point,
+# so backfilled points land in byte-identical series (external audit B3: the
+# transcribed schema here drifted into a parallel series the history chart
+# never saw, while the gap detector "confirmed" repairs that never landed).
+PARAMS: list[tuple[str, int]] = [
+    ("_ULN[0]", 19000),
+    ("_ULN[1]", 19002),
+    ("_ULN[2]", 19004),
+    ("_ULL[0]", 19006),
+    ("_ULL[1]", 19008),
+    ("_ULL[2]", 19010),
 ]
+
+REGISTERS_PATH = os.environ.get("JANITZA_REGISTERS_PATH",
+                                "config/selected_registers.json")
+
+
+def load_registers() -> dict[int, object]:
+    """The live selection, keyed by address — the schema authority."""
+    from .config import Config
+    with open(REGISTERS_PATH) as fh:
+        data = json.load(fh)
+    return {r.address: r for r in Config._parse_selected_payload(data)}
+
+
+def _ref_name() -> str:
+    """Name tag of the reference series for gap detection — the FIRST param's
+    register in the live selection (falls back to the canonical name so a
+    missing selection degrades to the historical behaviour, not a crash)."""
+    try:
+        reg = load_registers().get(PARAMS[0][1])
+        return reg.name if reg else "voltage_l1_n"
+    except Exception:  # noqa: BLE001
+        return "voltage_l1_n"
 
 
 def _http_json(url: str, timeout: int = 12) -> dict:
@@ -121,7 +147,7 @@ def influx_latest_voltage_utc() -> float | None:
     flux = (
         f'from(bucket:"{INFLUX_BUCKET}") |> range(start:-{MAX_LOOKBACK_H}h) '
         '|> filter(fn:(r)=>r._measurement=="voltage" and r._field=="value" '
-        'and r.phase=="L1" and r.type=="line_neutral") |> last() |> keep(columns:["_time"])'
+        f'and r.name=="{_ref_name()}") |> last() |> keep(columns:["_time"])'
     )
     with InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG) as c:
         for table in c.query_api().query(flux):
@@ -145,7 +171,7 @@ def influx_interior_gap_utc(min_gap_sec: float) -> tuple[float, float] | None:
     flux = (
         f'from(bucket:"{INFLUX_BUCKET}") |> range(start:-{MAX_LOOKBACK_H}h) '
         '|> filter(fn:(r)=>r._measurement=="voltage" and r._field=="value" '
-        'and r.phase=="L1" and r.type=="line_neutral") '
+        f'and r.name=="{_ref_name()}") '
         f'|> aggregateWindow(every: {every}s, fn: count, createEmpty: true) '
         '|> keep(columns:["_time","_value"])'
     )
@@ -170,36 +196,35 @@ def influx_interior_gap_utc(min_gap_sec: float) -> tuple[float, float] | None:
 
 
 def backfill(start_utc: float, end_utc: float, dry: bool, verbose: bool) -> int:
-    from influxdb_client import InfluxDBClient, Point, WritePrecision
+    from influxdb_client import InfluxDBClient  # noqa: F401
     from influxdb_client.client.write_api import SYNCHRONOUS
 
+    from .influxdb_publisher import build_point
+
     tz = meter_tz_offset()
+    by_addr = load_registers()
     written = 0
     client = None if dry else InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
     try:
         wapi = None if dry else client.write_api(write_options=SYNCHRONOUS)
-        for param, addr, name, field, extra in PARAMS:
+        for param, addr in PARAMS:
+            reg = by_addr.get(addr)
+            if reg is None:
+                # deselected/renamed register: skipping is CORRECT — writing
+                # with a transcribed schema would recreate the parallel series
+                print(f"  {param:9} @{addr}: not in the live selection — skipped")
+                continue
             pts = fetch_hist(param, start_utc, end_utc, tz)
             if verbose or dry:
                 span = (f"{datetime.fromtimestamp(pts[0][1], timezone.utc):%H:%M}"
                         f"–{datetime.fromtimestamp(pts[-1][1], timezone.utc):%H:%M}") if pts else "—"
-                print(f"  {param:9} {name:11} -> {len(pts):3} pts  {span}")
+                print(f"  {param:9} {reg.name:11} -> {len(pts):3} pts  {span}")
             if dry:
                 continue
             for val, utc in pts:
-                p = (
-                    Point("voltage")
-                    .tag("device", "janitza_umg512")
-                    .tag("address", str(addr))
-                    .tag("name", name)
-                    .tag("poll_group", "realtime")
-                )
-                for k, v in extra.items():
-                    p = p.tag(k, v)
-                p = (p.field(field, float(val))
-                       .field("value", float(val))
-                       .field("backfilled", 1)
-                       .time(int(utc), WritePrecision.S))
+                # the publisher's own schema + the backfill marker field
+                p = build_point(reg, float(val), float(utc),
+                                poll_group=reg.poll_group).field("backfilled", 1)
                 wapi.write(bucket=INFLUX_BUCKET, record=p)
                 written += 1
         if wapi:

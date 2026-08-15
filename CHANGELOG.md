@@ -1,5 +1,59 @@
 # Changelog
 
+## 3.34.0
+
+### 2026-08-15 — deploy split, first-run login, release pipeline (repo stays private)
+
+The go-public checklist executed to the last pre-flip item — the repository
+remains PRIVATE; only the actual flip work (history purge, screenshot
+re-shoot, vendor-doc licensing decision, GHCR tag) is still pending.
+
+- **Deploy compose split** — the base `docker-compose.yml` stays fully
+  standalone (creates its own network); the new `docker-compose.pv-stack.yml`
+  overlay repoints the shared alias at an EXISTING external network
+  (`pv-stack-network`, overridable via `PV_STACK_NETWORK`), so the gateway
+  joins a wider stack with `-f base -f overlay` and zero base-file edits.
+  The serial bridge now ships as the opt-in `rtu-bridge` compose profile
+  (read-only /dev, cgroup-scoped ttyUSB/ttyACM, non-root) — closing the
+  docs/compose mismatch the external audit flagged.
+- **First-run login (B5)** — a fresh install (no config.yaml) generates an
+  admin password, stores it hashed with auth ENABLED, and prints it once to
+  the log. Bare-metal bind default is now loopback (`ui.host: 127.0.0.1`,
+  `UI_HOST` env override); the container image sets `UI_HOST=0.0.0.0`
+  explicitly — exposure is governed by the compose port mapping.
+- **Backfill uses the live schema (B3)** — the point-building logic
+  (`get_measurement`/`get_tags`/`build_point`) is extracted from the
+  publisher as module functions; backfill maps HIST params to ADDRESSES
+  only and derives everything else from `config/selected_registers.json`,
+  with a line-protocol equality test. A deselected address is skipped, not
+  written with a guessed schema.
+- **Catalog enums** — status/identity registers now decode: Fronius 65A
+  `model_id` (731, field-verified) and the EM24 detection register 0x000B
+  (1651, from the cited Victron map) map to text via `enum`; unknown codes
+  read honestly as `unknown (n)`. (Enums are declared per register IN the
+  device template — `enum`/`bits`/`mask`/`shift` — and flow through
+  selection, decode and HA typing automatically.)
+- **Packaging hygiene** — GHCR release workflow added (fires ONLY on a
+  version tag; gateway + serial-bridge, multi-arch; no tag pushed yet),
+  `NOTICE` for the vendored MIT/Apache-2.0 UI assets, the last two missing
+  AGPL headers, `config.example.yaml` refreshed (dead blocks removed,
+  defaults aligned, referenced from the config reference), load-test swarm
+  ported to pymodbus 3.15 (`device_id=`) with a staleness notice on the
+  capacity report.
+- **Docs truth pass** (21 findings from a full consistency sweep): README
+  (both languages), MANUAL (both), config-reference, API.md, architecture,
+  CONTRIBUTING and the compose override example now describe the CURRENT
+  behavior — first-run generated login, loopback default bind, persisted
+  sessions (a restart keeps you logged in; only the lockout counter is
+  in-memory), the `rtu-bridge` profile, the pv-stack overlay, `UI_HOST` and
+  `JANITZA_REGISTERS_PATH` documented.
+- **Privacy scrub (pre-flip)** — real deployment details genericized in
+  code/comments (reverse-proxy hostname, BMS neighbour naming, personal
+  lockfile command); the remaining flip-only items (production screenshots,
+  history purge, vendor register-list licensing) are inventoried in
+  `.audit/go-public-inventory.md`.
+- Tests: 899 passed, 0 skipped; both compose configurations validate.
+
 ## 3.33.0
 
 ### 2026-08-15 — reconciliation vs the re-verified external open list

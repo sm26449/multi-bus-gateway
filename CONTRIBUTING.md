@@ -36,7 +36,9 @@ or module-level state. The seed is printed in the log header;
 `--randomly-seed=<seed>` reproduces a failing order.
 
 To run the whole stack locally: `docker compose up -d` (see the README Quick
-Start). The UI is at http://localhost:8080.
+Start). The UI is at http://localhost:8080 — the first boot prints a
+generated admin password in the logs (`docker compose logs multi-bus-gateway
+| grep -A3 'FIRST RUN'`).
 
 ## Making a change
 

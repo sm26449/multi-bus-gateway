@@ -79,3 +79,6 @@ config/events.jsonl
 config/snapshots/
 config/passkeys.json
 config/sessions.json*
+
+# local assistant workspace — never commit
+.claude/

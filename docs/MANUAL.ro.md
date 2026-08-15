@@ -67,16 +67,18 @@ cp .env.example .env
 # 3) Pornește
 docker compose up -d
 
-# 4) Deschide UI-ul
+# 4) Ia parola de admin generată (doar la primul boot), apoi deschide UI-ul
+docker compose logs multi-bus-gateway | grep -A3 'FIRST RUN'
 #    http://<host>:8080
 ```
 
 Porturi publicate de compose-ul implicit: `8080` (UI/API), `1502–1512`
 (gama meterelor virtuale, extinsă via `VMETER_PORT_START/END`) și `502`
 (Modbus standard, pentru consumatorii care îl cer — scoate-l dacă hostul îl
-folosește deja). Pentru un dispozitiv RTU, treci adaptorul serial în
-container: `devices: ["/dev/ttyUSB0:/dev/ttyUSB0"]` într-un override de
-compose.
+folosește deja). Pentru un dispozitiv RTU fie pornești bridge-ul
+serial inclus — `docker compose --profile rtu-bridge up -d` (recomandat; vezi
+[rtu-serial.md](rtu-serial.md)) — fie treci adaptorul direct:
+`devices: ["/dev/ttyUSB0:/dev/ttyUSB0"]` într-un override de compose.
 
 Loguri: `docker compose logs -f`.
 
@@ -799,9 +801,11 @@ pierderii volumului. Ține și un ZIP exportat altundeva.
 
 ## 16. Securitate
 
-Totul e **oprit implicit** — appliance-ul țintește un LAN de încredere.
-Activează straturile din **Config → Security** pe măsură ce expunerea
-crește. Apărare în adâncime: fiecare strat se aplică independent.
+**Login-ul e PORNIT de la prima rulare** — o instalare proaspătă generează
+o parolă de admin (tipărită o singură dată în log) și activează
+autentificarea. Restul straturilor (allowlist IP, cheie API, TLS, URL
+canonic) sunt opt-in — activează-le din **Config → Security** pe măsură ce
+expunerea crește. Apărare în adâncime: fiecare strat se aplică independent.
 
 ### 16.1 Login & roluri
 
@@ -818,8 +822,8 @@ parolă gol la salvare ca să o păstrezi pe cea curentă. **Activarea
 login-ului refuză admin/admin implicit** — setează întâi o parolă reală.
 Login-urile eșuate se blochează per IP (`lockout_threshold` /
 `lockout_minutes`, implicit 5 / 5 min). Sesiunile sunt cookie-uri HttpOnly,
-glisante 7 zile, în memorie — un restart de container deloghează pe toată
-lumea. Audit trail-ul e doar pentru admin.
+glisante 7 zile, persistate ca hash-uri SHA-256 în `config/sessions.json` —
+un restart de container te ține logat. Audit trail-ul e doar pentru admin.
 
 ### 16.2 Passkey-uri (WebAuthn)
 
@@ -1036,7 +1040,7 @@ oferă alternativa corectă.
 | Entități MQTT lipsă în HA | broker accesibil? discovery activat? verifică `docker compose logs` |
 | Avertismente de write-retry InfluxDB | URL/token/bucket corecte? Clientul reîncearcă ~5 min, apoi batch-ul e recuperat în buffer și replay-at — urmărește `replayed_total`/`dropped_total` |
 | Login-ul refuză să se activeze | setează întâi o parolă nouă de admin — `admin` implicit nu poate fi folosită |
-| Blocat (login) | așteaptă `lockout_minutes`, sau repornește containerul (sesiunile/lockout-urile sunt în memorie) |
+| Blocat (login) | așteaptă `lockout_minutes`, sau repornește containerul (contorul de lockout e în memorie; sesiunile supraviețuiesc restartului) |
 | Blocat (allowlist IP) | editează `security.allowlist` în `config/config.yaml`, repornește |
 | Înrolarea passkey eșuează | ești pe URL cu IP sau HTTP simplu — folosește `localhost` sau un hostname peste HTTPS |
 | Configurația s-a stricat după o editare | boot-ul restaurează automat last-known-good; fișierul stricat rămâne ca `config.yaml.bad`; sau fă rollback la un snapshot din Config → Backup |

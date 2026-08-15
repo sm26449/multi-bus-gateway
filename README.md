@@ -244,7 +244,17 @@ git clone https://github.com/sm26449/multi-bus-gateway.git
 cd multi-bus-gateway
 cp .env.example .env          # opțional — totul se poate seta din UI
 docker compose up -d
+# Parola de admin generată la primul boot (afișată o singură dată):
+docker compose logs multi-bus-gateway | grep -A3 'FIRST RUN'
 # UI: http://localhost:8080
+```
+
+Rulezi deja un stack (MQTT/InfluxDB/Grafana) pe o rețea docker externă?
+Folosește overlay-ul — toate serviciile se alătură rețelei existente
+(implicit `pv-stack-network`, configurabil prin `PV_STACK_NETWORK` în `.env`):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.pv-stack.yml up -d
 ```
 
 ### Imaginea prebuilt (fără build local)
@@ -327,13 +337,15 @@ curl -s http://localhost:8080/metrics | grep gateway_device_up
 Implicit, appliance-ul e gândit pentru un **LAN de încredere** — totul e
 deschis local și fiecare strat de apărare e opt-in:
 
-> **⚠️ La prima pornire e deschis intenționat.** Din fabrică autentificarea e
-> **oprită**, UI-ul ascultă pe `0.0.0.0`, iar credențialele admin sunt
-> `admin` / `admin`. E ok pe un LAN izolat, de încredere — dar **înainte de a
-> expune gateway-ul într-o rețea mai largă, activează autentificarea și schimbă
-> parola** (Settings → Security, sau blocul `ui.auth` din `config.yaml`) și ia în
-> calcul bind pe `127.0.0.1` în spatele unui reverse proxy. Oricine ajunge la
-> host ajunge și la scrierile Modbus și la serverele de metere virtuale.
+> **🔐 Prima pornire generează un login.** O instalare proaspătă (fără
+> `config.yaml`) pornește cu autentificarea **activată**: e generată o parolă
+> de admin, stocată hash-uit și tipărită **o singură dată** în log —
+> `docker compose logs multi-bus-gateway | grep -A3 'FIRST RUN'`. Schimb-o
+> după primul login (Settings → Security). Pe bare-metal UI-ul ascultă
+> implicit doar pe `127.0.0.1`; imaginea de container setează explicit
+> `UI_HOST=0.0.0.0` (expunerea o controlează maparea de porturi din compose).
+> Oricine ajunge la port ajunge și la scrierile Modbus și la serverele de
+> metere virtuale — tratează accesul în consecință.
 
 - **Login + roluri** (admin/operator/viewer), lockout per IP, **passkeys
   WebAuthn**, sesiuni HttpOnly glisante 7 zile.
@@ -374,7 +386,7 @@ multi-bus-gateway/
 ├── ui/                        # SPA vanilla JS (i18n în ui/languages/)
 ├── tests/                     # Suita de teste (pytest)
 ├── main.py                    # Entry point
-├── Dockerfile / docker-compose.yml
+├── Dockerfile / docker-compose.yml (+ docker-compose.pv-stack.yml — overlay rețea partajată)
 └── CHANGELOG.md
 ```
 

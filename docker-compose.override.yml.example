@@ -9,7 +9,7 @@
 # container recreate, so consumers polling the virtual meters are never dropped.
 #
 # Notes:
-#   * Frontend only. Python changes (janitza/*.py) still need a rebuild.
+#   * Frontend only. Python changes (multibus/*.py) still need a rebuild.
 #   * Bump the asset cache-buster (?v=vmNN in ui/templates/index.html) when you
 #     change app.js / a .css so the browser actually fetches the new file.
 #   * Remove docker-compose.override.yml to go back to the baked, shippable image.
@@ -19,9 +19,7 @@ services:
       - ./ui:/app/ui:ro
 
 # --- Attach to an existing external network (multi-stack homes) -------------
-# services:
-#   multi-bus-gateway:
-#     networks: [monitoring, pv-stack-network]
-# networks:
-#   pv-stack-network:
-#     external: true
+# Use the dedicated overlay instead of hand-editing networks here:
+#   docker compose -f docker-compose.yml -f docker-compose.pv-stack.yml up -d
+# (it repoints the shared `monitoring` alias at the external network — every
+# service joins it, and the name is overridable via PV_STACK_NETWORK in .env)

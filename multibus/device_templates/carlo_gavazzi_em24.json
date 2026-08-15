@@ -210,6 +210,22 @@
     "poll_group": "slow",
     "description": "Total exported active energy",
     "monotonic": true
+   },
+   {
+    "address": 11,
+    "name": "model_id",
+    "label": "Meter model id",
+    "unit": "",
+    "data_type": "uint16",
+    "scale": 1,
+    "register_type": "holding",
+    "category": "diagnostic",
+    "poll_group": "slow",
+    "entity_category": "diagnostic",
+    "description": "Carlo Gavazzi identification code at 0x000B — the register Victron's dbus-modbus-client detects the EM24 by (1651 = EM24-DIN AV5 3). Only the documented code is mapped; any other reads as 'unknown (n)'.",
+    "enum": {
+     "1651": "EM24-DIN AV5 3"
+    }
    }
   ],
   "canonical": true

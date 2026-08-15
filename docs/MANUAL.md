@@ -65,14 +65,17 @@ cp .env.example .env
 # 3) Start it
 docker compose up -d
 
-# 4) Open the UI
+# 4) Grab the generated admin password (first boot only), then open the UI
+docker compose logs multi-bus-gateway | grep -A3 'FIRST RUN'
 #    http://<host>:8080
 ```
 
 Ports published by the default compose file: `8080` (UI/API),
 `1502–1512` (virtual-meter range, grow via `VMETER_PORT_START/END`), and
 `502` (standard Modbus, for consumers that insist on it — drop it if the host
-already uses it). For an RTU device pass the serial adapter through:
+already uses it). For an RTU device either start the bundled serial
+bridge — `docker compose --profile rtu-bridge up -d` (recommended; see
+[rtu-serial.md](rtu-serial.md)) — or pass the adapter through directly:
 `devices: ["/dev/ttyUSB0:/dev/ttyUSB0"]` in a compose override.
 
 Logs: `docker compose logs -f`.
@@ -767,9 +770,11 @@ Keep an exported ZIP somewhere else too.
 
 ## 16. Security
 
-Everything is **off by default** — the appliance targets a trusted LAN.
-Turn on layers from **Config → Security** as exposure grows. Defense in
-depth: each layer applies independently.
+**Login is ON from the first run** — a fresh install generates an admin
+password (printed once to the log) and enables authentication. The remaining
+layers (IP allowlist, API key, TLS, canonical URL) are opt-in — turn them on
+from **Config → Security** as exposure grows. Defense in depth: each layer
+applies independently.
 
 ### 16.1 Login & roles
 
@@ -785,8 +790,9 @@ Passwords are hashed (PBKDF2-SHA256, 600k iterations); leave a password
 field blank on save to keep the current one. **Enabling login refuses the
 default admin/admin** — set a real password first. Failed logins are locked
 out per IP (`lockout_threshold` / `lockout_minutes`, defaults 5 / 5 min).
-Sessions are HttpOnly cookies, 7-day sliding, in-memory — a container restart
-logs everyone out. The audit trail is admin-only.
+Sessions are HttpOnly cookies, 7-day sliding, persisted as SHA-256 token
+hashes in `config/sessions.json` — a container restart keeps you logged in.
+The audit trail is admin-only.
 
 ### 16.2 Passkeys (WebAuthn)
 
@@ -993,7 +999,7 @@ provided.
 | MQTT entities missing in HA | broker reachable? discovery enabled? check `docker compose logs` |
 | InfluxDB write-retry warnings | URL/token/bucket correct? The client retries ~5 min, then the batch is recovered into the buffer and replayed — watch `replayed_total`/`dropped_total` |
 | Login refuses to enable | set a new admin password first — the default `admin` cannot be used |
-| Locked out (login) | wait `lockout_minutes`, or restart the container (sessions/lockouts are in-memory) |
+| Locked out (login) | wait `lockout_minutes`, or restart the container (the lockout counter is in-memory; sessions survive the restart) |
 | Locked out (IP allowlist) | edit `security.allowlist` in `config/config.yaml`, restart |
 | Passkey enrollment fails | you're on an IP URL or plain HTTP — use `localhost` or a hostname over HTTPS |
 | Config broke after an edit | boot restores last-known-good automatically; the broken file is kept as `config.yaml.bad`; or roll back a snapshot from Config → Backup |

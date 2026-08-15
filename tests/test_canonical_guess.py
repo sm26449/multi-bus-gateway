@@ -1,3 +1,5 @@
+# Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
+# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
 # Tests for the conservative canonical-name classifier that powers the
 # "auto-canonicalize" button. The safe failure is None (leave it to the human);
 # the dangerous failure is a valid-but-WRONG name. Cases below encode both the

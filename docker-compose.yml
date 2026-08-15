@@ -132,10 +132,47 @@ services:
     profiles:
       - grafana
 
-# To attach the gateway to an EXISTING external stack network (e.g. a wider
-# home-automation compose), add it via docker-compose.override.yml — see
-# docker-compose.override.yml.example. A fresh standalone install must work
-# with nothing but `docker compose up -d`.
+  # RTU-over-network serial bridge (opt-in profile — needs /dev access):
+  # exposes each USB serial adapter as a stable TCP endpoint (ser2net) with
+  # hotplug reload + a scan API the gateway's Add-Device wizard uses. Start
+  # it with:  docker compose --profile rtu-bridge up -d
+  # See docs/rtu-serial.md. The container name matches the gateway's default
+  # SERIAL_BRIDGE_URL (http://pv-stack-serial-bridge:7000) — override that
+  # env on the gateway if you rename it.
+  serial-bridge:
+    build:
+      context: ./serial-bridge
+    image: mbg-serial-bridge:latest
+    container_name: pv-stack-serial-bridge
+    restart: unless-stopped
+    environment:
+      # adapters to NEVER expose (claimed by another service). Comma-separated;
+      # each token matches a stable id, /dev path, or USB port-path.
+      - BRIDGE_EXCLUDE=${BRIDGE_EXCLUDE:-}
+    # Unprivileged access to hotplugged USB serial lines: /dev is bound
+    # READ-ONLY (blocks node creation/renames from inside; opening a tty for
+    # I/O is unaffected) and only ttyUSB (major 188) / ttyACM (major 166)
+    # nodes are allowed. The process runs non-root (uid 10002, dialout).
+    volumes:
+      - /dev:/dev:ro
+      - serial-bridge-data:/data
+    device_cgroup_rules:
+      - 'c 188:* rmw'
+      - 'c 166:* rmw'
+    ports:
+      # control API for host-side debug only; the gateway reaches both the
+      # API and the data ports over the internal network by name
+      - "127.0.0.1:7000:7000"
+    networks:
+      - monitoring
+    profiles:
+      - rtu-bridge
+
+# The base file is STANDALONE: `docker compose up -d` needs nothing but this
+# repo (it creates the bridge network below). Running next to a wider stack
+# (pv-stack / any home-automation compose)? Use the overlay, which repoints
+# the same alias at the shared external network:
+#   docker compose -f docker-compose.yml -f docker-compose.pv-stack.yml up -d
 networks:
   monitoring:
     driver: bridge
@@ -145,3 +182,4 @@ volumes:
   influxdb-config:
   grafana-data:
   esphome-config:
+  serial-bridge-data:

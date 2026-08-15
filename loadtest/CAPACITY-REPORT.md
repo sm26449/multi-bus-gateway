@@ -1,5 +1,12 @@
 # MBG Capacity Report
 
+> **STALENESS NOTICE:** measured on **v3.4.1** (2026-08-01), which predates
+> the pymodbus 3.15 / SimData virtual-meter serving-core rewrite (3.24.x)
+> and the 3.25–3.33 hardening series. Treat every figure as a lower-bound
+> indication, not a current benchmark — re-run the campaign
+> (`loadtest/README.md`) against the current version before quoting numbers.
+> The swarm script has been updated for pymodbus 3.15 (`device_id=`).
+
 **System:** Multi-Bus Gateway v3.4.1  **Date:** 2026-08-01
 **Basis:** 7-phase load/stress campaign (§6.0–§6.8), full data in
 [`RESULTS.md`](RESULTS.md).

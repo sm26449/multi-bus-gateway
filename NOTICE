@@ -1,0 +1,23 @@
+Multi-Bus Gateway
+Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+
+Licensed under the GNU Affero General Public License v3.0 or later
+(AGPL-3.0-or-later); see the LICENSE file.
+
+This distribution bundles third-party components under their own licenses,
+each with its full license text alongside the vendored files:
+
+- Bootstrap Icons (ui/vendor/bootstrap-icons/)
+  Copyright (c) 2019-2024 The Bootstrap Authors
+  License: MIT — ui/vendor/bootstrap-icons/LICENSE
+  https://github.com/twbs/icons
+
+- ESP Web Tools 10.4.0 (ui/vendor/esp-web-tools/ — vendored dist/web bundle)
+  Copyright 2021 Open Home Foundation
+  License: Apache-2.0 — ui/vendor/esp-web-tools/LICENSE
+  https://esphome.github.io/esp-web-tools/
+
+The bundled Docker Compose stack references (but does not redistribute)
+container images with their own licenses: ESPHome (ghcr.io/esphome/esphome),
+InfluxDB, Grafana, ser2net (built into the serial-bridge image from Alpine
+packages).
