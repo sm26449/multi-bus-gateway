@@ -301,3 +301,27 @@ def test_write_then_refresh_updates_the_live_store(tmp_path):
     assert fake.reg[100] == 42                            # written
     assert store[100]["value"] == 42                      # AND reflected at once
     assert store[100]["ts"] > 0
+
+
+# ── audit DP-15: availability confirms after publish, clears on reconnect ────
+
+def test_availability_retries_after_failed_publish():
+    pub = _pub()
+    pub._publish = lambda t, p, retain=None: False        # broker rejects
+    pub.publish_device_availability("meters/dev1", online=False)
+    assert pub._availability_last == {}                    # not marked → retried
+    sent = []
+    pub._publish = lambda t, p, retain=None: sent.append((t, p)) or True
+    pub.publish_device_availability("meters/dev1", online=False)
+    assert sent == [("meters/dev1/availability", "offline")]
+    assert pub._availability_last["meters/dev1/availability"] == "offline"
+    # unchanged state → no republish
+    pub.publish_device_availability("meters/dev1", online=False)
+    assert len(sent) == 1
+
+
+def test_availability_cache_cleared_on_reconnect():
+    pub = _pub()
+    pub._availability_last["meters/dev1/availability"] = "online"
+    pub._on_connect(pub.client, None, None, 0)
+    assert pub._availability_last == {}

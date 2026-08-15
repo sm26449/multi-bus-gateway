@@ -263,6 +263,10 @@ class MQTTPublisher:
             # (broker restart loses retained messages)
             with self.lock:
                 self.last_values.clear()
+            # availability cache too (audit DP-15): a broker that lost retained
+            # state would otherwise show every device topic EMPTY until the
+            # device next flips state — could be days
+            self._availability_last.clear()
 
             # Re-publish online status
             status_topic = f"{self.config.topic_prefix}/status"
@@ -701,8 +705,12 @@ class MQTTPublisher:
         payload = "online" if online else "offline"
         if self._availability_last.get(topic) == payload:
             return
-        self._availability_last[topic] = payload
-        self._publish(topic, payload, retain=True)
+        # confirm AFTER a successful publish (audit DP-15): marking first meant
+        # a dropped 'offline' was never retried — a dead device stayed 'online'
+        # in HA indefinitely. On failure the cache keeps the old state, so the
+        # next tick retries.
+        if self._publish(topic, payload, retain=True):
+            self._availability_last[topic] = payload
 
     def set_command_write_handler(self, fn) -> None:
         """Install the gated executor for HA write commands. ``fn(device_id,

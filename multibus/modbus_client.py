@@ -63,6 +63,10 @@ def _build_client(config: ModbusConfig):
                    ser2net; host/port point at the bridge endpoint)
     One factory so connect() and the per-read reconnect stay in sync."""
     proto = getattr(config, 'protocol', 'tcp')
+    # retries=0: pymodbus' own per-call retry (default 3) MULTIPLIES with the
+    # application-level retry_attempts loop in read_registers — on a wedged
+    # link that compounded to (1+3)×timeout per call, ~38s per batch, ~76s
+    # per 0.25s realtime cycle (audit DP-20). MBG owns the retry policy.
     if proto == 'rtu':
         return ModbusSerialClient(
             port=config.serial_port,
@@ -71,12 +75,14 @@ def _build_client(config: ModbusConfig):
             stopbits=int(config.stopbits),
             bytesize=int(config.bytesize),
             timeout=config.timeout,
+            retries=0,
         )
     if proto == 'rtu-tcp':
         return ModbusTcpClient(host=config.host, port=config.port,
-                               framer=FramerType.RTU, timeout=config.timeout)
+                               framer=FramerType.RTU, timeout=config.timeout,
+                               retries=0)
     return ModbusTcpClient(host=config.host, port=config.port,
-                           timeout=config.timeout)
+                           timeout=config.timeout, retries=0)
 
 
 def _endpoint(config: ModbusConfig) -> str:

@@ -74,3 +74,18 @@ def test_stats_expose_error_counts(monkeypatch):
     client.connect()
     client.connection.read_registers(0, 2)
     assert client.get_stats()["error_counts"] == {"exception_2": 1}
+
+
+def test_clients_are_built_without_pymodbus_retries():
+    """DP-20: pymodbus' internal retry (default 3) multiplies with MBG's own
+    retry_attempts loop — a wedged link compounded to ~4× the intended
+    timeout budget per call. MBG owns the retry policy, so every client is
+    built with retries=0."""
+    for proto in ("tcp", "rtu-tcp"):
+        cfg = ModbusConfig(protocol=proto, host="192.0.2.1", port=1502,
+                           serial_port="/dev/null")
+        c = mc._build_client(cfg)
+        assert getattr(c, "retries", None) == 0, proto
+    cfg = ModbusConfig(protocol="rtu", serial_port="/dev/null")
+    c = mc._build_client(cfg)
+    assert getattr(c, "retries", None) == 0, "rtu"

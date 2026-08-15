@@ -764,10 +764,16 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     note(name, st.get('events'))
                     transition('dev:' + did, name, bool(st.get('connected')), 'device')
                     # feed the per-device HA connectivity binary_sensor (publishes
-                    # only on change; non-primary devices have their own prefix)
-                    if mqtt_publisher and dev_cfg and not dev_cfg.primary:
+                    # only on change). The PRIMARY publishes too (audit DP-1): it
+                    # was the only device without an availability topic, so its
+                    # retained data values had no liveness signal at all — a dead
+                    # Janitza looked identical to a steady one on the broker.
+                    if mqtt_publisher:
+                        _avail_prefix = (mqtt_publisher.config.topic_prefix
+                                         if (dev_cfg is None or dev_cfg.primary)
+                                         else dev_cfg.mqtt_topic_prefix)
                         mqtt_publisher.publish_device_availability(
-                            dev_cfg.mqtt_topic_prefix, bool(st.get('connected')))
+                            _avail_prefix, bool(st.get('connected')))
                     lat = st.get('last_latency_ms')
                     if alert_mgr.sig_latency and lat and lat > alert_mgr.latency_ms:
                         alert_mgr.fire('warn', 'lat:' + did, name,
@@ -823,6 +829,14 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 if influxdb_publisher:
                     ist = influxdb_publisher.get_stats()
                     transition('influx', 'InfluxDB', bool(ist.get('connected')), 'sink')
+                    if ist.get('auth_failed'):
+                        # rotated token / missing bucket: writes 401/403/404
+                        # while /ping stays green (audit DP-3) — the operator
+                        # must act; points are buffering meanwhile
+                        alert_mgr.fire('error', 'influx-auth', 'InfluxDB',
+                                       'InfluxDB rejects writes (auth/bucket) — '
+                                       'token rotated or bucket missing; points '
+                                       'are buffering until fixed')
                     if alert_mgr.sig_buffer:
                         bp = ist.get('buffer_points') or 0
                         if bp > alert_mgr.buffer_points:

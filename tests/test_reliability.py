@@ -479,3 +479,65 @@ def test_read_lock_released_during_retry_backoff(monkeypatch):
     assert conn.read_registers(0, 2) is None       # fails after its retries
     assert held_during_sleep                        # a backoff actually happened
     assert not any(held_during_sleep)               # lock was FREE during every backoff
+
+
+# ── audit DP-3: auth/bucket failures must not pass for health ────────────────
+
+class _ApiErr(Exception):
+    def __init__(self, status):
+        super().__init__(f"({status}) unauthorized")
+        self.status = status
+
+
+def test_auth_error_flags_and_disconnects():
+    """401/403/404 on write: /ping is unauthenticated in InfluxDB 2.x, so a
+    rotated token kept connected=True while 100% of writes failed. The write
+    error must flag auth_failed (alert loop) and drop connected (reconnect
+    also re-creates a missing bucket)."""
+    pub = make_publisher()
+    pub.connected = True
+    for status in (401, 403, 404):
+        pub.auth_failed = False
+        pub.connected = True
+        pub._handle_write_error(_ApiErr(status))
+        assert pub.auth_failed is True, status
+        assert pub.connected is False, status
+    # a confirmed delivery ends the incident
+    pub._on_write_success(None, None)
+    assert pub.auth_failed is False
+    assert pub.writes_confirmed == 1 and pub.last_confirm_ts is not None
+    st = pub.get_stats()
+    assert st["auth_failed"] is False and st["writes_confirmed"] == 1
+
+
+def test_replay_keeps_buffer_on_auth_errors_drops_only_malformed():
+    """Replay classification: 400/422 = poison data (drop the chunk); 401/403/
+    404 are operator-fixable — dropping would destroy up to 5000 GOOD points
+    per chunk, so they must re-buffer like transient errors."""
+    pub = make_publisher()
+    pub.connected = True
+    import time as _t
+    pub._buffer_line("m,name=x value=1 1000000000", _t.time(), bucket=None)
+    n_before = len(pub._buffer)
+
+    class _WApi:
+        def __init__(self, status):
+            self.status = status
+        def write(self, *a, **kw):
+            raise _ApiErr(self.status)
+        def close(self):
+            pass
+
+    # auth error → buffer intact, connected dropped, nothing counted dropped
+    pub.client = type("C", (), {"write_api": lambda self, **kw: _WApi(401)})()
+    pub._drain_buffer()
+    assert len(pub._buffer) == n_before
+    assert pub.points_dropped == 0
+    assert pub.connected is False and pub.auth_failed is True
+
+    # malformed data → chunk dropped, drain continues
+    pub.connected = True
+    pub.client = type("C", (), {"write_api": lambda self, **kw: _WApi(422)})()
+    pub._drain_buffer()
+    assert len(pub._buffer) == 0
+    assert pub.points_dropped == n_before

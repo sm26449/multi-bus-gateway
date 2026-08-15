@@ -1,5 +1,52 @@
 # Changelog
 
+## 3.26.0
+
+### 2026-08-15 — data-path audit batch 1 (DP-1/3/4/15/17/20) + sessions + UI a11y
+
+- **DP-1/DP-15 (MQTT liveness):** the PRIMARY device now publishes a
+  retained `{prefix}/availability` topic like every other device — it was
+  the only one without a liveness signal, so a dead Janitza was
+  indistinguishable on the broker from a steady one, indefinitely.
+  Availability now confirms AFTER a successful publish (a dropped `offline`
+  retries next tick instead of leaving a false `online` forever) and the
+  availability cache clears on reconnect (a broker that lost retained state
+  gets fresh values). Operationally: `mqtt.heartbeat_interval: 30` enabled
+  on the live config — unchanged values republish every 30s, so retained
+  data can no longer be hours-old without anyone noticing.
+- **DP-3 (InfluxDB silent loss):** `/ping` is unauthenticated in InfluxDB
+  2.x, so a rotated/revoked token (or deleted bucket) kept `connected:true`
+  while 100% of writes failed 401/403/404 and replay dropped chunks of up
+  to 5000 points as "permanent". Write errors now classify 401/403/404
+  explicitly: `auth_failed` flag (fires an operator alert), connected
+  dropped (reconnect also re-creates a missing bucket), and replay
+  re-buffers on those instead of dropping — only 400/422 (genuinely
+  malformed data) still drop. New confirmed-delivery counters
+  (`writes_confirmed`, `last_confirm_age_s`) from the write_api success
+  callback — the enqueue counters stay green during an outage; these don't.
+- **DP-4/DP-17 (serial-bridge):** the reconcile signature now includes the
+  DEV PATH — an unplug+replug inside one 10s window with kernel
+  renumbering left ser2net opening a dead `/dev` (or the wrong bus)
+  forever. The main reconcile loop and the udev-event path are individually
+  guarded: a transient OSError no longer kills the supervisor (and a
+  healthy ser2net with it); the udev log message no longer blames udev for
+  reconcile errors. Docstring now states the real topology: uevents do not
+  reach a bridge-network netns — the 10s reconcile IS the hotplug path.
+- **DP-20 (compounded timeouts):** all pymodbus clients are built with
+  `retries=0` — the library default (3) multiplied with MBG's own
+  retry_attempts, turning a wedged link into 12s per call / ~38s per batch
+  / ~76s per 0.25s realtime cycle. MBG owns the retry policy.
+- **Sessions persist across restarts** (see 04d6c52): a container
+  restart/upgrade no longer logs every browser out — sessions live in
+  config/sessions.json (SHA-256 hashes only, 0600), pruned at load.
+- **UI accessibility/visual batch 1** (see c170a06): AA contrast inks on
+  both themes, 118 label associations, 325 decorative icons hidden from
+  SRs, real login dialog, keyboard theme toggle, skip-link + landmark,
+  reduced-motion, one reconnect toast per outage, human-readable error
+  toasts, empty-state contract.
+- Full data-path audit report (36 adjudicated findings, 5 tracks):
+  `.audit/audit-2026-08-15-datapath.md`. +10 tests (suite 830+).
+
 ## 3.25.1
 
 ### 2026-08-15 — non-root ergonomics + docs debt for the 3.24/3.25 wave

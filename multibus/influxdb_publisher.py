@@ -88,6 +88,14 @@ class InfluxDBPublisher:
         self.writes_failed = 0
         self.writes_skipped = 0
         self.disconnection_count = 0
+        # DP-3: writes_total/last_write_ts count ENQUEUE into the batching
+        # client — they stay green while every batch fails. These two count
+        # CONFIRMED deliveries (the write_api success callback), and
+        # auth_failed flags 401/403/404 so the alert loop can tell the
+        # operator instead of losing data silently.
+        self.writes_confirmed = 0
+        self.last_confirm_ts = None
+        self.auth_failed = False
 
         # Store-and-forward replay buffer: (poll_epoch_s, bucket, line_protocol)
         # tuples, bounded by age (buffer_minutes) and count (buffer_max_points).
@@ -183,6 +191,16 @@ class InfluxDBPublisher:
         """Callback when InfluxDB batch write is being retried."""
         logger.warning(f"InfluxDB write retry: {exception}")
 
+    def _on_write_success(self, conf, data):
+        """Batch confirmed by InfluxDB — the only place delivery is REAL
+        (audit DP-3). Also clears the auth flag: a rotated-token incident
+        ends the moment a write lands again."""
+        self.writes_confirmed += 1
+        self.last_confirm_ts = time.time()
+        if self.auth_failed:
+            logger.info("InfluxDB writes confirmed again — auth incident over")
+            self.auth_failed = False
+
     def _setup_client(self):
         """Setup InfluxDB client with proper batching and error callbacks.
 
@@ -221,7 +239,7 @@ class InfluxDBPublisher:
                     exponential_base=2,
                 ),
                 error_callback=self._on_write_error,
-                success_callback=None,
+                success_callback=self._on_write_success,
                 retry_callback=self._on_write_retry,
             )
 
@@ -395,13 +413,15 @@ class InfluxDBPublisher:
                                record="\n".join(line for _, _, line in chunk))
                     self.points_replayed += len(chunk)
                 except Exception as e:  # noqa: BLE001
-                    # A 4xx (except 429) is a PERMANENT rejection of this data
+                    # Only 400/422 are PERMANENT rejections of this data
                     # (malformed line protocol, field-type conflict) — re-buffering
-                    # it would block every later point behind the poison chunk
-                    # forever. Drop it and keep draining. 429/5xx/connection are
-                    # transient: re-buffer and retry.
+                    # those would block every later point behind the poison chunk
+                    # forever. Drop them and keep draining. 401/403/404 are
+                    # OPERATOR-fixable (rotated token, missing bucket — audit
+                    # DP-3): dropping would destroy up to 5000 good points per
+                    # chunk, so they re-buffer like 429/5xx/connection errors.
                     _status = getattr(e, "status", None)
-                    if isinstance(_status, int) and 400 <= _status < 500 and _status != 429:
+                    if isinstance(_status, int) and _status in (400, 422):
                         self.points_dropped = getattr(self, "points_dropped", 0) + len(chunk)
                         logger.error(f"InfluxDB replay dropped {len(chunk)} points "
                                      f"(permanent {_status}: {e}) — poison chunk skipped")
@@ -482,6 +502,23 @@ class InfluxDBPublisher:
 
     def _handle_write_error(self, error: Exception):
         """Handle write errors and trigger reconnection if needed."""
+        # Auth/authorization/bucket failures FIRST (audit DP-3): /ping is
+        # unauthenticated in InfluxDB 2.x, so a rotated/revoked token or a
+        # deleted bucket sailed straight past the health check — connected
+        # stayed True while 100% of writes 401/403/404'd, silently. Flag it
+        # loudly (the API alert loop fires on auth_failed) and drop connected
+        # so the monitor re-runs setup (which also re-creates a missing
+        # bucket via _ensure_bucket).
+        _status = getattr(error, "status", None)
+        if isinstance(_status, int) and _status in (401, 403, 404):
+            if not self.auth_failed:
+                logger.error("InfluxDB rejected writes with HTTP %s — token "
+                             "revoked/rotated or bucket missing. Points are "
+                             "buffered until this is fixed.", _status)
+            self.auth_failed = True
+            self.connected = False
+            return
+
         error_str = str(error).lower()
         connection_errors = [
             'connection refused', 'connection reset', 'connection closed',
@@ -803,6 +840,12 @@ class InfluxDBPublisher:
             'last_contact_age_s': round(time.time() - self.last_write_ts, 1) if self.last_write_ts else None,
             'writes_failed': self.writes_failed,
             'writes_skipped': self.writes_skipped,
+            # confirmed-delivery truth (enqueue counters stay green during an
+            # outage; these do not — audit DP-3)
+            'writes_confirmed': self.writes_confirmed,
+            'last_confirm_age_s': (round(time.time() - self.last_confirm_ts, 1)
+                                   if self.last_confirm_ts else None),
+            'auth_failed': self.auth_failed,
             'publish_mode': self.publish_mode,
             'registered_addresses': len(self._register_map),
             'disconnection_count': self.disconnection_count,

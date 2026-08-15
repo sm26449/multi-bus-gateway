@@ -178,10 +178,15 @@ def reconcile() -> None:
         # only the MANAGED set drives ser2net; changes to it trigger a reload.
         # An unchanged set only short-circuits while ser2net is actually alive —
         # otherwise a dead ser2net stayed dead until the next adapter change.
-        sig = {a["stable_id"] for a in managed}
-        prev = {a["stable_id"] for a in _adapters if a.get("available")}
+        # The signature includes the DEV PATH (audit DP-4): an unplug+replug
+        # inside one reconcile window keeps the stable_id set identical while
+        # the kernel renumbers the node — matching on ids alone left ser2net
+        # opening a dead /dev (or, with a recycled node, the WRONG bus)
+        # forever.
+        sig = {(a["stable_id"], a["dev"]) for a in managed}
+        prev = {(a["stable_id"], a["dev"]) for a in _adapters if a.get("available")}
         if sig == prev and _adapters and _ser2net and _ser2net.poll() is None:
-            _adapters = new                      # refresh dev names; no config change
+            _adapters = new                      # no set/path change → no reload
             return
         _save_map(pmap)
         _write_ser2net_config(managed)           # excluded adapters NOT in the config
@@ -231,18 +236,28 @@ def _http_server():
 
 
 def _udev_watch():
-    """Kernel-uevent trigger for instant hotplug; debounced. Falls back silently
-    to the periodic reconcile if udev/netlink is unavailable in the container."""
+    """Kernel-uevent trigger for instant hotplug; debounced. NOTE: on a
+    bridge-network container the kernel's uevent netlink usually delivers
+    NOTHING (uevents broadcast in the initial netns only) — this thread then
+    blocks forever in poll() and the 10s periodic reconcile is the real
+    hotplug mechanism. Kept for host-network deployments where it does fire."""
     try:
         import pyudev
         mon = pyudev.Monitor.from_netlink(pyudev.Context(), source="kernel")
         mon.filter_by(subsystem="tty")
         mon.start()
-        for _dev in iter(lambda: mon.poll(timeout=None), None):
-            time.sleep(1.0)                      # debounce: let enumeration settle
-            reconcile()
     except Exception as e:  # noqa: BLE001
-        print(f"[supervisor] udev watch off ({e}); periodic reconcile covers hotplug", flush=True)
+        print(f"[supervisor] udev watch unavailable ({e}); "
+              f"periodic reconcile covers hotplug", flush=True)
+        return
+    for _dev in iter(lambda: mon.poll(timeout=None), None):
+        time.sleep(1.0)                          # debounce: let enumeration settle
+        try:
+            reconcile()
+        except Exception as e:  # noqa: BLE001
+            # a reconcile hiccup must not kill the watch (audit DP-17 — and
+            # the old message blamed udev for what was a reconcile error)
+            print(f"[supervisor] reconcile from udev event failed: {e}", flush=True)
 
 
 def main():
@@ -252,7 +267,14 @@ def main():
     print(f"[supervisor] control API on :{CONTROL_PORT}/adapters", flush=True)
     while True:
         time.sleep(int(os.environ.get("BRIDGE_RECONCILE_S", "10")))
-        reconcile()                               # safety net
+        try:
+            reconcile()                           # safety net
+        except Exception as e:  # noqa: BLE001
+            # a transient OSError (full /data, EBUSY on os.replace, no free
+            # ports) used to kill the supervisor — and the container restart
+            # took a healthy ser2net down with it (audit DP-17). Log and let
+            # the next tick retry instead.
+            print(f"[supervisor] reconcile failed (will retry): {e}", flush=True)
 
 
 if __name__ == "__main__":
