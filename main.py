@@ -211,18 +211,12 @@ class GatewayApp:
             threading.Thread(target=_ensure_device_buckets, daemon=True,
                              name="DeviceBuckets").start()
 
-        # HA autodiscovery for NON-primary devices: register a hook per device
-        # so their sensors are (re)published on every MQTT (re)connect. Device
-        # #1 is handled by publish_ha_discovery() (unchanged).
-        if self.mqtt_publisher:
-            for device in self.config.devices:
-                if device.primary:
-                    continue
-                def _hook(dev=device):
-                    regs, _g = self.config.load_device_registers(dev)
-                    self.mqtt_publisher.publish_device_discovery(
-                        dev.id, dev.name, dev.mqtt_topic_prefix, regs, model=dev.template)
-                self.mqtt_publisher.discovery_hooks.append(_hook)
+        # HA autodiscovery hooks for NON-primary devices are registered by
+        # create_api's _sync_device_discovery() — the ONE owner, and the only
+        # builder that computes write_rules. This module used to append its
+        # own write-blind hooks here, which won the boot reconnect and
+        # downgraded every HA number/select to a plain sensor after a restart
+        # (external audit). Do not re-add hook registration here.
 
     def _connect_mqtt_background(self):
         """Connect to MQTT in background thread."""

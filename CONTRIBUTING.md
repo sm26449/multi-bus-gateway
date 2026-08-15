@@ -25,7 +25,15 @@ cd multi-bus-gateway
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt
 python -m pytest -q          # run the full suite (should be all green)
+ruff check .                 # lint — CI enforces a clean run
 ```
+
+CI runs exactly these plus a coverage floor (`--cov-fail-under=72`) and
+**random test order** (`pytest-randomly`) — a test that depends on another
+test running first will fail there even if it passes locally, so run
+`python -m pytest -p randomly -q` before pushing if you touched fixtures
+or module-level state. The seed is printed in the log header;
+`--randomly-seed=<seed>` reproduces a failing order.
 
 To run the whole stack locally: `docker compose up -d` (see the README Quick
 Start). The UI is at http://localhost:8080.

@@ -104,6 +104,13 @@ def validate_register_identity(registers: List[Dict]) -> None:
                 "if it truly measures something else", name, unit, cu, cu)
 
 
+def _devices_in(doc) -> int:
+    if not isinstance(doc, dict):
+        return 0
+    d = doc.get('devices')
+    return len(d) if isinstance(d, list) else 0
+
+
 def _version_tuple(v: str) -> tuple:
     """Numeric-compare form of a version string; unparsable parts count as 0
     (fail-open: a malformed stamp must never block a config load)."""
@@ -890,6 +897,20 @@ class Config:
             logger.error(f"device {device.id}: error loading registers: {e}")
             return [], dict(self.poll_groups)
 
+    def _good_would_regress(self, new_data: dict, good_path) -> bool:
+        """True when promoting ``new_data`` over the existing .good snapshot
+        would LOSE devices — the truncation signature (a cut file keeps the
+        early modbus/mqtt sections and drops the devices tail). Comparison
+        errors fail open (promote), so a weird snapshot never wedges loads."""
+        try:
+            if not good_path.exists():
+                return False
+            with open(good_path, 'r') as f:
+                good = yaml.safe_load(f) or {}
+            return _devices_in(new_data) < _devices_in(good)
+        except Exception:  # noqa: BLE001
+            return False
+
     def _load_yaml_config(self):
         """Load main YAML configuration."""
         if not self.config_path.exists():
@@ -1066,7 +1087,20 @@ class Config:
             if not getattr(self, '_healing', False):
                 try:
                     import shutil
-                    shutil.copyfile(self.config_path, self.config_path.with_suffix('.yaml.good'))
+                    good = self.config_path.with_suffix('.yaml.good')
+                    if self._good_would_regress(data, good):
+                        # Truncated-but-plausible file (external audit): a cut
+                        # at a section boundary can still parse AND carry
+                        # modbus/mqtt while having lost the devices tail.
+                        # Promoting it would destroy the only recovery copy.
+                        # Intentional shrinks refresh .good via save_config.
+                        logger.warning(
+                            "config.yaml lost devices relative to %s — NOT "
+                            "refreshing the last-known-good snapshot (an "
+                            "intentional device removal updates it on save)",
+                            good)
+                    else:
+                        shutil.copyfile(self.config_path, good)
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -1615,6 +1649,15 @@ class Config:
         try:
             os.chmod(self.config_path, 0o600)   # tighten an already-existing file too
         except OSError:
+            pass
+        # A SAVE is intentional, validated state — refresh the last-known-good
+        # snapshot here. This is what lets the load-time promotion below stay
+        # conservative (refuse on device-count shrink) without .good going
+        # stale after a legitimate device deletion.
+        try:
+            import shutil
+            shutil.copyfile(self.config_path, self.config_path.with_suffix('.yaml.good'))
+        except Exception:  # noqa: BLE001
             pass
 
         logger.info(f"Saved config to {self.config_path}")

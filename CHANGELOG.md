@@ -1,5 +1,62 @@
 # Changelog
 
+## 3.33.0
+
+### 2026-08-15 — reconciliation vs the re-verified external open list
+
+The external audit's "Open Audit Items" list (re-verified at 3.28.0) was
+reconciled against 3.32.0: most entries were already closed by the §I work
+(decode unification, Wh canonical + pinned counters, self-heal, sm16,
+WS key, lifecycle serialization, test-quality). These are the residuals
+that were still real:
+
+- **Boot discovery hooks are write-aware (HIGH)** — `main.py` registered
+  its own hooks that published HA discovery WITHOUT write rules, and the
+  write-aware `_sync_device_discovery` only ran from the device CRUD
+  routes. After a plain restart the write-blind hooks won the first MQTT
+  connect: every HA number/select was republished as a plain sensor and
+  its command topic unsubscribed — control worked until the first restart,
+  then silently died. ONE owner now: `create_api` registers the
+  write-aware set at boot; `main.py` registers nothing.
+- **A `read_bits` success resets the shared fail counter** — register
+  failures + bits successes on a mixed device interfered and could trip a
+  bogus forced reopen.
+- **`encode_string` no longer byte-swaps under badc/dcba** — the parser
+  documents strings as byte-sequential (ordering is a numeric-only
+  concern); the encoder disagreed, so 'ABCD' round-tripped as 'BADC'.
+- **`.good` promotion refuses a devices-shrink** — a file cut at a section
+  boundary can stay plausible (modbus/mqtt intact) while losing the
+  devices tail; promoting it destroyed the only recovery copy. Load now
+  skips the promotion (with a warning) when devices would shrink vs the
+  snapshot; an INTENTIONAL removal refreshes `.good` via `save_yaml_config`
+  directly, so the conservative gate never goes stale.
+- **The test suite does no outbound network I/O** — the write-guard tests
+  executed `/api/config/apply` on a default config and built a REAL
+  MQTTPublisher that connected to 192.168.1.100 in a daemon thread
+  (verified: "No route to host" during runs; on an unlucky LAN, a real
+  broker). Stubbed; a full run now opens zero non-loopback sockets.
+- **pytest.ini** (there was none): `testpaths`, `-rs` (skips visible with
+  reasons, never silent dots), and `error::DeprecationWarning` for our own
+  modules — which immediately caught a real one (`asyncio.get_event_loop`
+  in the poller thread, deprecated 3.12/removed 3.14) — fixed. CI coverage
+  now includes `main.py` (was invisible at ~10%); unused `pytest-asyncio`
+  dev-dependency dropped; catalog-test file handles closed.
+- Docs: upgrade-guide no longer contradicts itself about the
+  `config_version` stamp; the README test command uses `Dockerfile.test`
+  (the runtime image has no pytest); API.md documents the two deliberate
+  login-off 403s (snapshot download, secrets export); config-reference /
+  upgrade-guide / yaml-import linked from the README; CONTRIBUTING states
+  the real CI gates (ruff, coverage floor, random test order).
+
+Still deferred to the go-public window (unchanged, tracked in
+.audit/BACKLOG.md): GHCR release pipeline (B6), first-run generated
+password + bind default (B5), backfill schema-from-config (B3 — live is
+canonical post-Migration A, the public example is not), config.example
+refresh, AGPL headers + vendor NOTICE, capacity re-run (swarm still calls
+`slave=`), serial-bridge compose/doc alignment.
+
+- Tests: 5 new; suite at 896 passed, 0 skipped.
+
 ## 3.32.0
 
 ### 2026-08-15 — lifecycle serialization + test-quality (backlog §I CLOSED)

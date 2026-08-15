@@ -181,3 +181,67 @@ def test_vmeters_routes_are_sync_defs():
             assert not asyncio.iscoroutinefunction(fn), route.path
             checked += 1
     assert checked >= 10                            # the module's route surface
+
+
+# ── reconcile pass vs the re-verified external list (post-3.32.0) ────────────
+
+def test_read_bits_success_resets_shared_fail_counter():
+    # mixed device: register failures + bits SUCCESSES share one wire — a
+    # bits success must reset the counter or the paths interfere and trip a
+    # bogus forced reopen
+    conn = _wire_fake(ModbusConnection(ModbusConfig()))
+    conn.record_event = lambda *a: None
+    for _ in range(ModbusConnection._reopen_after_fails if isinstance(
+            getattr(ModbusConnection, '_reopen_after_fails', None), int) else 4):
+        conn.read_registers(0, 1)
+    assert conn._consecutive_fail > 0
+    _Client.ok = True
+    assert conn.read_bits(0, 1) == [True]
+    assert conn._consecutive_fail == 0            # link proven healthy
+
+
+def test_boot_discovery_hooks_are_write_aware(tmp_path):
+    import pytest
+    try:
+        from fastapi.testclient import TestClient  # noqa: F401
+    except Exception:
+        pytest.skip("TestClient not installed")
+    from multibus.api import create_api
+    from tests.test_devices import write_config
+    cfg = write_config(tmp_path, extra_yaml="""
+devices:
+  - id: em24-hala
+    connection: { protocol: tcp, host: 192.168.1.42, port: 1502, unit_id: 5 }
+""")
+    calls = []
+
+    class _Pub:
+        connected = False
+
+        def __init__(self):
+            self.discovery_hooks = []
+
+        def publish_device_discovery(self, *a, **kw):
+            calls.append(kw)
+
+        def __getattr__(self, name):              # everything else → no-op
+            return lambda *a, **k: None
+    pub = _Pub()
+    create_api(cfg, None, pub, None, devices=[(d, None) for d in cfg.devices])
+    # external audit: main.py's write-blind hooks used to own boot; now
+    # create_api registers the write-aware set itself
+    assert len(pub.discovery_hooks) == 1
+    pub.discovery_hooks[0]()
+    assert calls and "write_rules" in calls[0]
+
+
+def test_encode_string_roundtrips_under_all_orders():
+    # 'ABCD' must read back as 'ABCD' in every byte order — strings are
+    # byte-sequential; ordering is a numeric-only concern (parser contract)
+    from multibus.encoder import RegisterEncoder
+    from multibus.register_parser import RegisterParser
+    for order in ("big", "little", "badc", "dcba"):
+        enc = RegisterEncoder(order)
+        par = RegisterParser(order)
+        words = enc.encode_string("ABCD", 3)
+        assert par._parse_string(words) == "ABCD", order

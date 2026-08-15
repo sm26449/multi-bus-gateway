@@ -53,7 +53,10 @@ Fronius și orice PLC/SCADA văd fiecare meterul pe care îl așteaptă. Totul
 🔌 **[Referință API](docs/API.md)** ·
 📡 **[Spec meter virtual](docs/virtual-meter-spec.md)** ·
 🗂️ **[Catalog de dispozitive](docs/device-catalog.md)** ·
-🖼️ **[Ghid vizual UI](docs/GHID-UI.md)**
+🖼️ **[Ghid vizual UI](docs/GHID-UI.md)** ·
+⚙️ **[Referință configurare](docs/config-reference.md)** ·
+⬆️ **[Ghid de upgrade](docs/upgrade-guide.md)** ·
+📥 **[Import YAML](docs/yaml-import.md)**
 
 ## De ce software, nu o cutie?
 
@@ -402,9 +405,10 @@ python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 python main.py --debug
 
-# teste (în containerul imaginii)
+# teste (imaginea de test are pytest; cea de runtime NU)
+docker build -f Dockerfile.test -t multi-bus-gateway:test .
 docker run --rm -v "$(pwd)":/app -w /app --entrypoint sh \
-  multi-bus-gateway:latest -c "python -m pytest -q"
+  multi-bus-gateway:test -c "python -m pytest -q"
 ```
 
 ## Contributing

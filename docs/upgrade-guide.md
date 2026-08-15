@@ -23,9 +23,11 @@ keys it knows and fills defaults for anything missing, so an older
 (disabled until you enable them). Unknown keys are ignored at load time — a
 config carrying keys from an even newer version still parses.
 
-There is currently **no schema-version stamp** in `config.yaml` itself; the
-compatibility contract is exactly the above. (Device *templates* do carry a
-`schema_version`, and newer template schemas are rejected with a clear error.)
+Since 3.24.2 every save stamps `config_version` (the writing gateway's
+version) into `config.yaml` — see the downgrade section below. The stamp is
+informational: loading never depends on it, so the compatibility contract is
+exactly the above. (Device *templates* additionally carry a `schema_version`,
+and newer template schemas are rejected with a clear error.)
 
 ## Downgrade warning
 

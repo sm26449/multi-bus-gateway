@@ -134,3 +134,38 @@ def test_device_registers_heal_from_snapshot(tmp_path):
     (dev_dir / "selected_registers.json").write_text("[]")
     regs2, _ = c.load_device_registers(dev)
     assert len(regs2) == 2
+
+
+def _write_with_devices(path, host, n_devices):
+    doc = {"modbus": {"host": host, "port": 502},
+           "mqtt": {"enabled": False},
+           "devices": [{"id": f"dev{i}",
+                        "connection": {"protocol": "tcp", "host": "10.0.0.9",
+                                       "port": 1502, "unit_id": i + 2}}
+                       for i in range(n_devices)]}
+    path.write_text(yaml.safe_dump(doc))
+
+
+def test_good_not_clobbered_when_devices_vanish(tmp_path):
+    # the truncation signature: a cut file keeps the early sections (still
+    # plausible) but LOSES the devices tail — it may load, but it must not
+    # replace the only recovery copy
+    p = tmp_path / "config.yaml"
+    _write_with_devices(p, "10.0.0.5", 2)
+    Config(str(p))                                    # seeds .good (2 devices)
+    _write(p, "10.0.0.5")                             # plausible, devices GONE
+    Config(str(p))
+    good = yaml.safe_load((tmp_path / "config.yaml.good").read_text())
+    assert len(good.get("devices") or []) == 2        # snapshot survived
+
+
+def test_intentional_device_removal_refreshes_good_via_save(tmp_path):
+    # a legitimate shrink goes through save_config, which refreshes .good
+    # directly — so the conservative load gate never wedges the snapshot
+    p = tmp_path / "config.yaml"
+    _write_with_devices(p, "10.0.0.5", 2)
+    c = Config(str(p))
+    c._raw_devices = c._raw_devices[:1]               # operator deletes one
+    c.save_yaml_config()
+    good = yaml.safe_load((tmp_path / "config.yaml.good").read_text())
+    assert len(good.get("devices") or []) == 1        # .good follows the save

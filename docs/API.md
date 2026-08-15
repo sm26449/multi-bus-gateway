@@ -26,8 +26,11 @@ default on a trusted LAN):
    alternative to the password.
 
 When login is enabled, three roles exist. The **Role** column in the tables
-below is the *minimum* role required (with login disabled every endpoint is
-open, modulo allowlist/API key):
+below is the *minimum* role required. With login disabled, endpoints are open
+(modulo allowlist/API key) with two deliberate exceptions: snapshot download
+and secrets/identity export return 403 unless an admin session or a valid
+API key proves intent — a config bundle full of tokens must never be one
+anonymous GET away:
 
 | Role | May do |
 |---|---|

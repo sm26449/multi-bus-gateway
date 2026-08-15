@@ -189,7 +189,8 @@ def test_catalog_energy_units_are_canonical_wh_family():
     import glob
     import json
     for path in sorted(glob.glob("multibus/device_templates/*.json")):
-        regs = json.load(open(path)).get("device_template", {}).get("registers", [])
+        with open(path) as fh:
+            regs = json.load(fh).get("device_template", {}).get("registers", [])
         for r in regs:
             if str(r.get("name", "")).startswith("energy_"):
                 assert str(r.get("unit", "")) in ("Wh", "varh", "VAh"), (

@@ -89,7 +89,8 @@ def _render_index_html(path: str = "ui/templates/index.html",
     key = (mt, canonical_url)
     if mt is not None and _INDEX_CACHE["key"] == key and _INDEX_CACHE["html"] is not None:
         return _INDEX_CACHE["html"]
-    html = open(path, encoding="utf-8").read()
+    with open(path, encoding="utf-8") as _f:
+        html = _f.read()
 
     def _stamp(m):
         rel = m.group(2)
@@ -2911,5 +2912,16 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     # Mount static files last
     app.mount("/static", StaticFiles(directory="ui"), name="static")
+
+    # Register the WRITE-AWARE discovery hooks at boot (external audit):
+    # main.py used to append its own hooks that published device discovery
+    # WITHOUT write_rules, and _sync_device_discovery — which builds them
+    # with write rules — only ran from the device CRUD routes. So after a
+    # plain restart the write-blind hooks won the first MQTT connect: every
+    # writable register was republished as a plain sensor and its command
+    # topic unsubscribed. HA control worked until the first restart, then
+    # silently died. ONE owner now: this call (publish is skipped while the
+    # broker is still disconnected; the hooks fire on connect).
+    _sync_device_discovery()
 
     return app, ws_manager

@@ -209,6 +209,24 @@ def _isolate_api_key_env():
             _os.environ[k] = v
 
 
+@pytest.fixture(autouse=True)
+def _no_real_mqtt(monkeypatch):
+    """The write-guard tests EXECUTE /api/config/apply on a default Config
+    (mqtt.enabled=True, broker 192.168.1.100): the apply path then builds a
+    REAL MQTTPublisher and connects in a background thread — outbound network
+    I/O from the test suite (external audit), a leaked MQTT-Reconnect daemon
+    thread, and on an unlucky LAN an actual broker. Stub the constructor."""
+    import multibus.api as api_mod
+
+    class _StubPub:
+        def __init__(self, *a, **k):
+            self.connected = False
+
+        def __getattr__(self, name):            # any method → inert no-op
+            return lambda *a, **k: False
+    monkeypatch.setattr(api_mod, "MQTTPublisher", _StubPub)
+
+
 def _client(api_key=None):
     _os.environ.pop("API_KEY", None)
     _os.environ.pop("JANITZA_API_KEY", None)

@@ -2,7 +2,6 @@
 -r requirements.txt
 
 pytest>=7.4.0
-pytest-asyncio>=0.23.0
 pytest-cov>=4.1.0      # coverage gate in CI (fail-under floor)
 pytest-timeout>=2.2.0  # a hung loopback server must fail the job, not eat 6h
 pytest-randomly>=3.15.0  # random test order in CI — order-dependence (the E8 class) fails loudly, never by filename luck

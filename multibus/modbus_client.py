@@ -407,6 +407,11 @@ class ModbusConnection:
                             self.successful_reads += 1
                             self.last_success_ts = time.time()
                             self.last_success_mono = time.monotonic()
+                            # shared link verdict: a bits success proves the
+                            # SAME wire healthy — without this reset, register
+                            # failures + bits successes on a mixed device
+                            # interfere and trip a bogus forced reopen
+                            self._consecutive_fail = 0
                             self._note_reachable()
                             return list(result.bits)[:count]
                         self._count_error(result)
@@ -754,15 +759,14 @@ class RegisterPoller(threading.Thread):
         return results
 
     def run(self):
-        # Create event loop for this thread (required by pymodbus 3.x)
+        # Create event loop for this thread (required by pymodbus 3.x). A
+        # poller thread is always fresh, so build the loop directly —
+        # get_event_loop() in a loop-less thread is deprecated (3.12 warns,
+        # 3.14 raises) and only ever took the new-loop branch here anyway.
         import asyncio
-        created_loop = False
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            created_loop = True
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        created_loop = True
 
         # The STOP EVENT is the single source of truth (audit 2026-08-14 M1).
         # A stop() that lands between Thread.start() and this line used to be

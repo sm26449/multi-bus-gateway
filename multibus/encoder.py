@@ -175,10 +175,10 @@ class RegisterEncoder:
 
     def encode_string(self, text: str, length_regs: int) -> list[int]:
         """ASCII string into ``length_regs`` registers (2 chars/reg, null-padded).
-        Word order is sequential; byte-swap orders swap the two chars per word."""
+        Strings are byte-sequential and NEVER byte/word swapped — matching
+        ``RegisterParser._parse_string``, which documents ordering as a
+        numeric-only concern. (This used to byte-swap under badc/dcba, so
+        'ABCD' round-tripped as 'BADC' — external audit.)"""
         raw = text.encode('ascii', 'replace')[: length_regs * 2]
         raw = raw.ljust(length_regs * 2, b'\x00')
-        regs = [int.from_bytes(raw[i:i + 2], 'big') for i in range(0, len(raw), 2)]
-        if self._byteswap:
-            regs = [((r & 0xff) << 8) | ((r >> 8) & 0xff) for r in regs]
-        return regs
+        return [int.from_bytes(raw[i:i + 2], 'big') for i in range(0, len(raw), 2)]
