@@ -2,7 +2,7 @@
 
 Un tur ilustrat al fiecărei pagini, sub-pagini și tab din interfața web, cu note
 explicative pentru operator/integrator. Capturile sunt făcute pe **instanța de
-producție** (mbus.diysolar.ro), cu date reale: un **Janitza UMG 512-PRO** (Modbus
+producție** (instanța de producție a autorului), cu date reale: un **Janitza UMG 512-PRO** (Modbus
 TCP, 60 măsurători) și un **Fronius Meter** (Solar API / HTTP, 16 măsurători),
 plus două metere virtuale servite mai departe către Victron și Fronius
 DataManager. Bara de sus e identică peste tot: navigarea între pagini,
@@ -239,7 +239,7 @@ topicul din ce publică brokerul, nu-l tastezi orb). Pasul 2 alege template-ul
 - **Limbă**: EN + RO incluse; se adaugă altele copiind un fișier din
   `ui/languages/`.
 
-*Capturi generate pe versiunea 3.0.0, din producție (mbus.diysolar.ro). Când
+*Capturi generate pe versiunea 3.0.0, din producția autorului. Când
 UI-ul se schimbă vizibil, re-generează-le fie logat pe producție (script
 Playwright cu login), fie pe o instanță efemeră cu auth off — și rulează scriptul
 de captură.*
