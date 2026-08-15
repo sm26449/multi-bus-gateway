@@ -13,8 +13,9 @@ the API key are opt-in; **login is enabled automatically on a fresh install**
    including `/health` and `/metrics`.
 2. **API key** (`API_KEY` env, honoured as `JANITZA_API_KEY` for
    back-compat) — when set, every state-changing request
-   (POST/PUT/PATCH/DELETE) must send `X-API-Key: <key>`. The two read-only
-   query POSTs (`/api/query/register`, `/api/query/batch`) are exempt.
+   (POST/PUT/PATCH/DELETE) must send `X-API-Key: <key>`. Three POSTs are
+   exempt: `/api/query/register`, `/api/query/batch` (read-only) and
+   `/api/auth/logout` (ending your own session is not a state change).
    The builder command stream (`WS /api/builder/stream/…` — it can flash
    firmware OTA) requires the key too: send `X-API-Key` (non-browser
    clients), or the WebSocket subprotocol `mbg-api-key.<base64url(key)>`
@@ -56,16 +57,13 @@ conventional status codes (401 unauthenticated, 403 forbidden, 404 not found,
 |---|---|---|---|
 | GET | `/api/auth/status` | Is auth on; caller's role; whether viewer/operator accounts and passkeys exist | — |
 | POST | `/api/auth/login` | Log in (`{username, password}`); sets the session cookie; per-IP lockout | — |
-| POST | `/api/auth/logout` | Invalidate the session, clear the cookie | operator¹ |
+| POST | `/api/auth/logout` | Invalidate the session, clear the cookie | viewer |
 | POST | `/api/auth/passkey/register/begin` | Start WebAuthn enrollment for the logged-in account (needs a hostname, not an IP) | operator |
 | POST | `/api/auth/passkey/register/finish` | Verify and store the new passkey | operator |
 | GET | `/api/auth/passkeys` | List passkeys (admin sees all users', others their own) | viewer |
 | DELETE | `/api/auth/passkeys/{cred_id}` | Delete a passkey (own; admin: any) | operator |
 | POST | `/api/auth/passkey/login/begin` | Start a passkey login ceremony (shares the password lockout) | — |
 | POST | `/api/auth/passkey/login/finish` | Verify the assertion; sets the session cookie | — |
-
-¹ The write-guard middleware treats logout as an operator-class POST; a
-viewer session ends when its cookie expires or is cleared client-side.
 
 ## Devices (southbound sources)
 
@@ -114,7 +112,7 @@ viewer session ends when its cookie expires or is cleared client-side.
 | GET | `/api/meters` | Devices exposed as JSON feeds (http_output enabled) | viewer |
 | GET | `/api/meters/{id}` | Live values of one device as JSON, keyed by register name, with a `stale` flag | viewer |
 | GET | `/api/history/registers?device=` | Influx-enabled registers (+ calculated) for the history picker | viewer |
-| GET | `/api/history?name=&start=&stop=&every=&fn=&device=` | Aggregated history read back from InfluxDB (`fn=all` → mean/min/max band) | viewer |
+| GET | `/api/history?measurement=&name=&start=&stop=&every=&fn=&device=` | Aggregated history read back from InfluxDB (`fn=all` → mean/min/max band) | viewer |
 | GET | `/api/energy/fields?device=` | Energy-tab counter selection + auto-detected candidates | viewer |
 | POST | `/api/energy/fields?device=` | Save which cumulative counters the Energy tab totals | admin |
 | GET | `/api/energy/monthly?year=&month=&device=` | Monthly totals (counter deltas) + per-day breakdown, in the configured timezone | viewer |
@@ -147,8 +145,10 @@ viewer session ends when its cookie expires or is cleared client-side.
 
 ## Device Builder (ESPHome integration)
 
-All routes 503 until `esphome.enabled` + `esphome.url` are configured
-(Devices → Device Builder → ⚙). Node YAML can embed Wi-Fi/OTA credentials, so YAML
+Routes that talk to the dashboard 503 until `esphome.enabled` +
+`esphome.url` are configured (Devices → Device Builder → ⚙) — status,
+settings, profiles and generate work regardless, and the WS closes with
+code 1013 instead. Node YAML can embed Wi-Fi/OTA credentials, so YAML
 reads/writes, artifacts and command streams are **admin**-only while auth is
 enabled; dashboard errors surface as 502 with the reason.
 
@@ -170,7 +170,7 @@ enabled; dashboard errors surface as 502 with the reason.
 | GET | `/api/builder/profiles` | Hardware profiles (built-ins + user) | viewer |
 | POST | `/api/builder/profiles` | Save a user profile | admin |
 | DELETE | `/api/builder/profiles/{id}` | Delete a user profile (built-ins protected) | admin |
-| WS | `/api/builder/stream/{command}?configuration=` | Live relay of `compile` / `validate` / `upload` / `run` / `logs` / `clean` / `update-all` — frames `{event: line\|exit\|error}` | admin |
+| WS | `/api/builder/stream/{command}?configuration=&port=` | Live relay of `compile` / `validate` / `upload` / `run` / `logs` / `clean` / `update-all` — frames `{event: line\|exit\|error}` | admin |
 
 ## Discovery
 
@@ -222,7 +222,7 @@ enabled; dashboard errors surface as 502 with the reason.
 | GET / POST | `/api/config/influxdb` | Global InfluxDB sink settings (token never echoed) | viewer / admin |
 | GET / POST | `/api/config/general` | Report timezone (IANA-validated) + default widget colors | viewer / admin |
 | GET / POST | `/api/config/alerts` | Alert/webhook settings (header values masked, preserved on save); applied live | viewer / admin |
-| GET / POST | `/api/config/ui-security` | HTTPS + login/roles/lockout settings; passwords hashed on write, blank keeps current; enabling login requires a non-default admin password | viewer / admin |
+| GET / POST | `/api/config/ui-security` | HTTPS + login/roles/lockout settings; passwords hashed on write, blank keeps current; enabling login requires a non-default admin password. A password change revokes ALL sessions but re-issues the caller's own cookie in the response — rotating your own password never logs you out | viewer / admin |
 | GET / POST | `/api/config/security` | IP allowlist (+ caller's own IP), `allow_writes`, `allow_nonlan_http_devices` | viewer / admin |
 | POST | `/api/config/apply` | Reconnect all services with the saved config (creates publishers enabled after boot) | admin |
 | POST | `/api/config/reload-registers` | Reload the register selection without a full reconnect | operator |
@@ -260,7 +260,7 @@ enabled; dashboard errors surface as 502 with the reason.
 
 | Method | Path | Description | Role |
 |---|---|---|---|
-| GET | `/` | The single-page web UI | viewer |
+| GET | `/` | The single-page web UI (serves the login shell to an unauthenticated, allowlisted client; data needs a session) | — |
 | GET | `/static/*` | UI assets | — |
 | WS | `/ws` | Real-time value stream (init snapshot + updates; ping/pong). Enforces the IP allowlist, the session cookie and a same-origin check itself | viewer |
 
@@ -274,7 +274,7 @@ Read a register on demand:
 curl -s -X POST http://gateway:8080/api/query/register \
   -H 'Content-Type: application/json' \
   -d '{"address": 19026, "data_type": "float"}'
-# {"address":19026,"value":15230.4,"data_type":"float","register_type":"holding","timestamp":"..."}
+# {"address":19026,"value":15230.4,"corrected":15230.4,"data_type":"float","register_type":"holding","device_id":null,"timestamp":"..."}
 ```
 
 Write with a 5-second dead-man lease (auth + allow_writes required):

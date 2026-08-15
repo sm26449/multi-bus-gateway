@@ -1,5 +1,47 @@
 # Changelog
 
+## 3.35.2
+
+### 2026-08-16 — the last unverified docs, verified (and one real role-gate fix)
+
+Three independent verification agents covered the documents no prior pass
+had touched systematically. Route surface: **all 142 routes documented,
+zero ghosts**. What they caught:
+
+- **Operator role gate (CODE fix)** — the documented contract granted the
+  operator the fire-once TEST actions, but the segment matcher missed
+  three shapes: the ad-hoc `POST /api/devices/test` probe (commissioning,
+  4 segments) and the `rest-push/test` / `calculated/test` actions (6
+  segments) were de-facto admin-only. The matcher now allows exactly
+  those, nothing else at those depths; regression test added.
+- **virtual-meter-spec.md** substantially corrected: pinned cumulative
+  counters (excluded from device_fallback, frozen in EVERY policy — the
+  spec claimed uniform on_stale degradation), legacy is a per-row
+  fail-closed watchdog with the E1 unresolved-row withhold (not a "single
+  watchdog, gaps keep last words"), the 4-register pad above the map top,
+  the `fail` exception code pinned (2, same as an unmapped probe), the
+  legacy quality-block caveats (count words read 0), plus previously
+  unwritten wire behavior: all-stale ⇒ socket closed, write/FC1/FC2
+  refusal, the freshness bound cascade + monotonic clock, the full
+  sentinel-word table (incl. sm16/sm32 all-ones), sum semantics, the
+  HTTP/JSON view contract, and port range/uniqueness.
+- **API.md**: query `corrected` documented (single + batch + example),
+  ui-security session re-issue, the logout exemption (viewer, not
+  operator¹), builder routes that answer without ESPHome, `port=` on the
+  builder WS, `measurement=` on /api/history, `GET /` serves the login
+  shell.
+- **architecture.md**: sessions persist (was "in-memory"), 7-day TTL (was
+  12h), 120 min/200k buffer (was 10/50k), first-run login exception to
+  "off by default", the true store entry shape (mono/interval), the
+  correct decode stage order, apply_corrections as the one pipeline, the
+  bound-cascade tiers + 300 s cap, self-heal scope, ungated alert kinds.
+- **alerts-webhooks.md**: the three ungated alert conditions; no-redirects
+  applies to every webhook POST. **csv-import.md**: sm16/sm32 types, the
+  Wh unit contract, real alias lists, the example now matches the shipped
+  download, YAML-only decode options stated. **upgrade-guide.md**: the UI
+  path is Backup & Restore → Snapshots & Rollback. loadtest/README
+  verified clean.
+
 ## 3.35.1
 
 ### 2026-08-16 — docs-vs-compose verification pass (independent re-check)

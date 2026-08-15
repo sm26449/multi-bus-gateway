@@ -173,3 +173,19 @@ def test_operator_write_matcher_segment_anchored(clients):
     assert op.post("/api/devices/em24/test", json={}).status_code != 403
     assert op.post("/api/devices/em24/test/extra", json={}).status_code == 403
     assert op.post("/api/devices/em24/rename", json={}).status_code == 403
+
+
+@needs_tc
+def test_operator_test_actions_one_level_deeper(clients):
+    """The documented contract (API.md role column) grants the operator the
+    fire-once TEST actions: ad-hoc device probe (4 segments) and the
+    rest-push/calculated tests (6 segments). The segment matcher used to
+    miss all three shapes — 403 where the docs said operator."""
+    op = clients.op
+    # 403 = the ROLE gate refused; anything else means it passed the gate
+    assert op.post("/api/devices/test", json={}).status_code != 403
+    assert op.post("/api/devices/em24/rest-push/test", json={}).status_code != 403
+    assert op.post("/api/devices/em24/calculated/test", json={}).status_code != 403
+    # ...without widening anything else at that depth
+    assert op.post("/api/devices/em24/rest-push/enable", json={}).status_code == 403
+    assert op.post("/api/devices/restorable/rest-push/test", json={}).status_code == 403

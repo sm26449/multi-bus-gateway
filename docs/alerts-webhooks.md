@@ -17,7 +17,7 @@ the gateway deliberately does not reimplement a notification pipeline.
 
 ## Signals
 
-An alert fires on these conditions (each toggleable):
+An alert fires on these conditions (each toggleable), plus three ungated ones: config-load failure, a newer `config_version` stamp (downgrade), and InfluxDB rejecting writes (auth/bucket):
 
 | Signal | Default | Fires when |
 |---|---|---|
@@ -128,7 +128,7 @@ guarded like a Modbus write:
 - **Credentialed** — refused (`403`) unless login (`ui.auth`) is enabled or an
   `API_KEY` is set. On a default LAN-open deployment it can't be spammed anonymously.
 - **Throttled** — a short cooldown between fires (`429` if you retry too soon).
-- **No redirects** — the webhook POST carries your `webhook_headers` (e.g.
+- **No redirects** (this applies to EVERY webhook POST, not just tests) — the webhook POST carries your `webhook_headers` (e.g.
   `X-API-Key`); a `3xx` from the target is refused rather than followed, so those
   credentials can't be replayed to an unintended host.
 

@@ -444,10 +444,21 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         for pfx in _OPERATOR_WRITE_PREFIXES:
             if path == pfx or path.startswith(pfx + "/"):
                 return True
+        # ad-hoc probe of a NOT-YET-SAVED device — commissioning, the
+        # operator's job (the saved-device sibling below always was); the
+        # docs promised it and the matcher missed the 4-segment shape
+        if path == "/api/devices/test":
+            return True
         parts = path.split("/")   # ['', 'api', 'devices', '<id>', '<action>']
         if (len(parts) == 5 and parts[1] == "api" and parts[2] == "devices"
                 and parts[3] and parts[3] != "restorable"      # not the admin forget sub-tree
                 and parts[4] in ("write", "test", "payload-sample")):
+            return True
+        # live TEST actions one level deeper — fire-once, change nothing:
+        # /api/devices/<id>/rest-push/test and /api/devices/<id>/calculated/test
+        if (len(parts) == 6 and parts[1] == "api" and parts[2] == "devices"
+                and parts[3] and parts[3] != "restorable"
+                and parts[4] in ("rest-push", "calculated") and parts[5] == "test"):
             return True
         return False
 

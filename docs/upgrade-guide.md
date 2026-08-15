@@ -41,7 +41,7 @@ Going back to an older version is where data can be lost — **silently**:
 
 So before downgrading:
 
-1. Take a snapshot (**Config → Backup & Snapshots → Create**) or download a
+1. Take a snapshot (**Config → Backup & Restore → Snapshots & Rollback → Create**) or download a
    backup export.
 2. Downgrade and run.
 3. If something newer went missing after a save on the old version, restore the
@@ -67,7 +67,7 @@ snapshots itself:
   until it's repaired (surfaced in `/api/status` → `config_status`).
 
 Restore, download, diff ("what changed since this snapshot") and delete are all
-in **Config → Backup & Snapshots**.
+in **Config → Backup & Restore → Snapshots & Rollback**.
 
 ## Non-root containers (3.24.1+)
 

@@ -106,7 +106,9 @@ One paragraph per module group; every file lives in `multibus/` unless noted.
   poll or subscribe southbound; `device_registry.py` owns the live value
   stores; `config.py` owns `DeviceConfig` and the config bundle on disk.
 - **Decode** — `register_parser.py` (data types × word orders),
-  `value_decode.py` (enum/bitfield → text), `counter_filter.py` (monotonic
+  `value_decode.py` (`apply_corrections` — the ONE wire→value pipeline
+  shared by Modbus/HTTP/MQTT: nan sentinels → enum/bits → scale/offset →
+  monotonic hook), `counter_filter.py` (the monotonic
   guard for cumulative counters), `encoder.py` (the reverse direction:
   values → register words for virtual meters and writes, including SunSpec
   not-available sentinels).
@@ -152,8 +154,10 @@ One paragraph per module group; every file lives in `multibus/` unless noted.
 
 Owns the `(DeviceConfig, client)` pairs and **one live value store per
 device** (`values: {device_id → store}`). A store is a dict keyed by register
-**address**; each entry carries `{name, value, label, unit, timestamp,
-poll_group}` (and `calculated: True` for derived values). The primary
+**address**; each entry carries `{name, value, label, unit, poll_group, timestamp,
+ts, mono, interval}` (`mono` = the monotonic stamp and `interval` = the
+producing poll cadence — the virtual-meter freshness inputs; plus
+`calculated: True` for derived values). The primary
 device's store *is* the legacy `current_values` dict — same object, aliased —
 which is what keeps the migration invisible. Mutations (add/replace/remove/
 resync) are lock-protected; reads are lock-free snapshots.
@@ -294,7 +298,7 @@ sequenceDiagram
 
     PG->>DEV: batch read (registers merged up to max_gap,<br/>split around illegal_registers)
     DEV-->>PG: raw words (retries on timeout/exception,<br/>each attempt visible in the bus trace)
-    PG->>PG: decode (data type × word order),<br/>scale/offset · enum/bits · NaN sentinels ·<br/>monotonic guard · all-zero gate
+    PG->>PG: decode (data type × word order),<br/>NaN sentinels · enum/bits · scale/offset ·<br/>monotonic guard · all-zero gate
     PG->>ST: update {address: {value, name, unit, timestamp}}
     PG->>CE: run(poll_group)
     CE->>ST: read inputs (this device + device.register refs)
@@ -347,7 +351,7 @@ Every row resolves through a per-register staleness decision:
 ```mermaid
 stateDiagram-v2
     direction LR
-    [*] --> Fresh : value newer than its bound<br/>(row stale_after_s → derived poll-cadence bound →<br/>source device bound → instance bound)
+    [*] --> Fresh : value newer than its bound<br/>(row stale_after_s → max(derived poll-cadence<br/>bound, instance bound) → instance bound)
 
     Fresh --> Stale : age exceeds bound
     Stale --> Fresh : new value arrives
@@ -377,7 +381,7 @@ that cannot be encoded on a numeric row (a text enum/bits value) degrades
 that **row** to missing — it never aborts the whole block rebuild.
 
 **Freshness bounds are derived, not hand-tuned.** Drivers stamp each value
-with its poll-group interval, and a row's default bound is 2.5× that cadence
+with its poll-group interval, and a row's default bound is 2.5× that cadence (capped at 300 s — a genuinely slower source sets an explicit, uncapped row `stale_after_s`)
 (one missed poll plus jitter); calculated registers inherit the slowest
 input's interval. The cascade is loosening-only against the instance floor —
 a realtime row's sub-second cadence bound never *tightens* below the
@@ -489,8 +493,10 @@ everything degrades gracefully without it.
 ## 9. Security model
 
 Everything is **off by default** (trusted-LAN appliance) and opt-in per
-layer: IP allowlist → API key → login/roles → write gate. All layers apply
-independently. (Reporting and hardening guidance: [`SECURITY.md`](../SECURITY.md).)
+layer — except **login**, which a fresh install turns ON with a generated
+admin password printed once at first boot (`main.py`
+`_first_run_provision`). The other layers: IP allowlist → API key →
+write gate. All layers apply independently. (Reporting and hardening guidance: [`SECURITY.md`](../SECURITY.md).)
 
 ```mermaid
 flowchart TB
@@ -506,7 +512,7 @@ flowchart TB
     AUTH -- no --> H([handler])
     AUTH -- yes --> OPEN{open path?<br/>login · auth/status · health ·<br/>metrics · static · passkey login}
     OPEN -- yes --> H
-    OPEN -- no --> SESS{valid session cookie?<br/>12h sliding · PBKDF2 or passkey}
+    OPEN -- no --> SESS{valid session cookie?<br/>7-day sliding · PBKDF2 or passkey}
     SESS -- no --> D401b[401 / login page]
     SESS -- yes --> ROLE{role}
     ROLE -- viewer --> V{GET/HEAD only?<br/>+ read-only query POSTs}
@@ -530,8 +536,8 @@ Highlights (details in the manual):
 - **Roles**: `admin` (everything, including the Device Builder), `operator`
   (live commissioning actions, including bounded Modbus writes, but nothing
   that lands in a config file), `viewer` (read-only). Anti-enumeration
-  decoy hashing and per-IP lockout on login; sessions are in-memory
-  (restart logs everyone out).
+  decoy hashing and per-IP lockout on login; sessions persist across
+  restarts as SHA-256 token hashes (`config/sessions.json`, 0600).
 - **Passkeys (WebAuthn)**: per-user credentials in `config/passkeys.json`;
   require a secure context (localhost, or a hostname over HTTPS — an IP
   address is rejected as RP ID); passkey login shares the password lockout.
@@ -569,7 +575,8 @@ form the **config bundle**. Four mechanisms protect it:
 2. **Semantic diff & rollback** — snapshots diff key-by-key (YAML/JSON
    aware, secrets masked), and restore replaces the bundle verbatim after
    taking a `pre-restore` snapshot, so a rollback is itself reversible.
-3. **Self-healing config** — a good load keeps a `config.yaml.good`
+3. **Self-healing config** — the same `.good`/`.bad` contract also covers
+   the per-device `selected_registers.json` files; a good load keeps a `config.yaml.good`
    snapshot; a later corrupt edit falls back to that last-known-good config
    (not bare defaults), so the primary keeps polling the right host through
    a bad edit. The broken file is preserved as `.yaml.bad`, saves stay
@@ -593,7 +600,7 @@ so stripped secrets survive the round-trip.
 | `/metrics` (Prometheus) | `gateway_device_*`, `gateway_mqtt_*`, `gateway_influx_*`, `gateway_vmeter_*` (incl. per-state quality gauges) |
 | `/health` | container probe; HTTP 503 only for a genuinely down virtual meter — an unreachable upstream degrades the body but never restart-loops the container |
 | Event log (`config/events.jsonl`) | persisted ring of reachability edges, sink transitions, vmeter lifecycle + failover switches, rollbacks, alerts |
-| Alerts (`alerts:` block) | infrastructure-health signals (device/sink/latency/buffer) **and** value-threshold crossings (§7) to MQTT `<prefix>/alert` and/or an HTTP webhook — see [`alerts-webhooks.md`](alerts-webhooks.md) |
+| Alerts (`alerts:` block) | infrastructure-health signals (device/sink/latency/buffer) **and** value-threshold crossings (§7), plus three ungated conditions (config-load failure, config-downgrade stamp, InfluxDB write-auth rejection) to MQTT `<prefix>/alert` and/or an HTTP webhook — see [`alerts-webhooks.md`](alerts-webhooks.md) |
 | Home Assistant | per-device retained `…/availability` + `connectivity` binary_sensor, vmeter diagnostics via discovery |
 | Bus trace + register probe | frame-level TX/RX hex with per-retry entries; one-shot reads decoded as every type × word order |
 

@@ -14,35 +14,42 @@ required:
 | Field | Required | Aliases accepted | Notes |
 |-------|----------|------------------|-------|
 | `address` | yes* | `addr`, `reg`, `register`, `offset` | decimal or `0x` hex, 0–65535 |
-| `name` | yes | `key`, `tag`, `signal`, `point` | the canonical register name |
-| `label` | no | `description`, `desc`, `parameter`, `measurement` | human label |
-| `unit` | no | `units`, `uom` | `V`, `A`, `W`, `Hz`, … |
+| `name` | yes | `key`, `tag`, `signal`, `point`, `variable` | the canonical register name |
+| `label` | no | `description`, `desc`, `parameter`, `measurement`, `title`, `quantity` | human label |
+| `unit` | no | `units`, `uom` | `V`, `A`, `W`, `Hz`, … A canonical energy name promises **Wh** (varh/VAh) — a native-kWh map must fold ÷1000 into `scale`, else the save logs a unit-contract warning |
 | `data_type` | no | `type`, `format`, `dtype` | see types below (default: float) |
 | `scale` | no | `factor`, `multiplier`, `gain` | engineering = raw ÷ scale |
 | `category` | no | `group`, `cat` | grouping for the UI |
 | `poll_group` | no | `poll`, `rate` | `realtime` / `normal` / `slow` |
 | `access` | no | `rw`, `mode` | `RW`/`WR` → marks writable (informative) |
-| `register_type` | no | `regtype`, `fc`, `table`, `block` | `holding` (FC3, default) or `input` (aliases `input`/`ir`/`fc4`/`4` → FC4) |
+| `register_type` | no | `regtype`, `rtype`, `fc`, `table`, `block` | `holding` (FC3, default) or `input` (aliases `input`/`ir`/`fc4`/`4` → FC4) |
 | `json_path` | yes* | `path`, `json` | for HTTP/JSON devices (no Modbus address) |
 
 \* Provide **`address`** for Modbus devices, or **`json_path`** for HTTP/JSON
 devices (then a synthetic address is assigned automatically).
 
 **Data types:** `float`/`float32`, `double`, `int16`/`s16`, `uint16`/`u16`/`word`,
-`int32`/`s32`/`dint`, `uint32`/`u32`/`dword`, `int64`, `uint64`, `string`. Unknown
-types fall back to the chosen default with a warning.
+`int32`/`s32`/`dint`, `uint32`/`u32`/`dword`, `int64`, `uint64`, `string`, and
+signed-magnitude `sm16`/`sm32` (aliases `signmagnitude16`/`signmagnitude32`).
+Unknown types fall back to the chosen default with a warning.
 
 ## Example
 
 ```csv
-address,name,label,unit,type,scale,category
-0x0000,V_L1,Voltage L1-N,V,float,1,voltage
-0x0002,V_L2,Voltage L2-N,V,float,1,voltage
-40,P_total,Total active power,W,int32,10,power
-19000,Freq,Frequency,Hz,uint16,100,frequency
+address,name,label,unit,type,scale,category,json_path
+0x0000,voltage_l1_n,Voltage L1-N,V,float,1,voltage,
+0x0002,voltage_l2_n,Voltage L2-N,V,float,1,voltage,
+40,power_active_total,Total active power,W,int32,10,power,
+19000,frequency,Frequency,Hz,uint16,100,frequency,
 ```
 
-The **Import CSV** dialog has a *download example* link with this content.
+The **Import CSV** dialog has a *download example* link with this content
+(canonical names — see [canonical-fields.md](canonical-fields.md)).
+
+> Per-register decode options (`nan`, `monotonic`, `enum`/`bits`, `offset`)
+> have no CSV column — use the richer **YAML import**
+> ([yaml-import.md](yaml-import.md)) or set them in the template editor
+> after import.
 
 ## How it behaves
 
