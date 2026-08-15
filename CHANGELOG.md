@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.25.1
+
+### 2026-08-15 — non-root ergonomics + docs debt for the 3.24/3.25 wave
+
+- **chown-then-drop entrypoints (MBG + serial-bridge).** A fresh install
+  mounts a root-owned config volume, and the non-root app could read but
+  never write (snapshots/saves failed with PermissionError — caught by a
+  fresh-volume smoke test). The entrypoint now starts as root only to chown
+  the mounted volume (`/app/config` / `/data`), then drops via `setpriv`
+  (`--init-groups` keeps serial-bridge's dialout membership); the long-lived
+  process never runs as root, and no manual chown is needed on install or
+  upgrade.
+- **Docs debt closed:** shipped docker-compose.yml + both README `docker
+  run` examples gain the `ip_unprivileged_port_start=0` sysctl (with the
+  drop-them-together note for :502); upgrade-guide gains a "Non-root
+  containers (3.24.1+)" section (symptoms included); config-reference gains
+  the top-level `config_version` row and keeps the `compat_aliases` row.
+
 ## 3.25.0
 
 ### 2026-08-15 — Migration B: `mqtt.compat_aliases` (topic-migration dual-publish)

@@ -252,13 +252,16 @@ the GitHub Container Registry on every release:
 ```bash
 docker run -d --name multi-bus-gateway --restart unless-stopped \
   -p 8080:8080 -p 1502-1512:1502-1512 -p 502:502 \
+  --sysctl net.ipv4.ip_unprivileged_port_start=0 \
   --env-file .env -v "$PWD/config:/app/config" \
   ghcr.io/sm26449/multi-bus-gateway:latest
 ```
 
 > **Ports:** `8080` = Web UI · `1502-1512` = virtual meters (grow via
 > `VMETER_PORT_START/END`) · `502` = the standard Modbus port some
-> consumers poll (drop it if it's taken on the host). For RTU pass the
+> consumers poll (drop it if it's taken on the host; it is a privileged
+> port and the app runs non-root since 3.24.1, hence the
+> `net.ipv4.ip_unprivileged_port_start=0` sysctl above — drop them together). For RTU pass the
 > serial adapter into the container (`devices:` in compose). Full guide:
 > [docs/MANUAL.md](docs/MANUAL.md).
 

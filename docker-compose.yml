@@ -12,6 +12,12 @@ services:
       # Standard Modbus port — some consumers (e.g. the Fronius DataManager) poll
       # their meter on :502. Remove this line if host port 502 is already in use.
       - "502:502"
+    # The app runs as a non-root user (3.24.1+); :502 is a privileged port, so
+    # lower the unprivileged-port floor INSIDE the container's own network
+    # namespace. No capability grant, no host-wide sysctl. Only needed if a
+    # virtual meter binds a port below 1024 (like the :502 above).
+    sysctls:
+      - net.ipv4.ip_unprivileged_port_start=0
     volumes:
       - ./config:/app/config
       # (no docs mount — the image bakes docs/modbus_data.json, the only file

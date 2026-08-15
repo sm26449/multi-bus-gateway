@@ -26,7 +26,10 @@ EXPOSE 7000
 # Baked here so a standalone `docker run` gets monitoring, not just the stack.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD python3 -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7000/adapters', timeout=4).status == 200 else 1)" || exit 1
-# tini as PID 1 so ser2net (child of the supervisor) is reaped cleanly on stop
-USER bridge
-ENTRYPOINT ["/usr/bin/tini", "--"]
+# tini as PID 1 so ser2net (child of the supervisor) is reaped cleanly on
+# stop; the entrypoint then chowns the mounted /data and drops to `bridge`
+# (setpriv) — the long-lived supervisor+ser2net never run as root.
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
 CMD ["python3", "/app/supervisor.py"]

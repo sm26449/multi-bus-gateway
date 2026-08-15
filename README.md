@@ -252,13 +252,16 @@ GitHub Container Registry la fiecare release:
 ```bash
 docker run -d --name multi-bus-gateway --restart unless-stopped \
   -p 8080:8080 -p 1502-1512:1502-1512 -p 502:502 \
+  --sysctl net.ipv4.ip_unprivileged_port_start=0 \
   --env-file .env -v "$PWD/config:/app/config" \
   ghcr.io/sm26449/multi-bus-gateway:latest
 ```
 
 > **Porturi:** `8080` = Web UI · `1502-1512` = metere virtuale (extinde cu
 > `VMETER_PORT_START/END`) · `502` = portul Modbus standard pe care unii
-> consumatori îl interoghează (scoate-l dacă e ocupat pe host). Pentru RTU
+> consumatori îl interoghează (scoate-l dacă e ocupat pe host; fiind port
+> privilegiat iar aplicația rulând non-root din 3.24.1, cere sysctl-ul
+> `net.ipv4.ip_unprivileged_port_start=0` de mai sus — scoate-le împreună). Pentru RTU
 > treci adaptorul serial în container (`devices:` în compose). Ghid complet:
 > [docs/MANUAL.ro.md](docs/MANUAL.ro.md).
 

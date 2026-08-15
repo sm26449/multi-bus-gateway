@@ -96,6 +96,10 @@ A standalone gap-backfill tool for InfluxDB; it reads its own environment:
 
 ## config.yaml
 
+| top-level key | default | meaning |
+|---|---|---|
+| `config_version` | written automatically | version of the gateway that last saved the file (kept as the first key). A downgrade loading a newer-stamped file warns, raises a `config-downgrade` alert and flags `/api/status` → `config_status.written_by_newer`: saving from the older version drops settings the newer one introduced. See [upgrade-guide.md](upgrade-guide.md). |
+
 ### `modbus:` — the primary device connection
 
 The primary device is always Modbus TCP; its connection lives in this flat

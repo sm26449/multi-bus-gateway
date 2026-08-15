@@ -67,6 +67,25 @@ snapshots itself:
 Restore, download, diff ("what changed since this snapshot") and delete are all
 in **Config → Backup & Snapshots**.
 
+## Non-root containers (3.24.1+)
+
+The gateway process runs as a dedicated non-root user (uid 10001; the
+serial-bridge as 10002 in `dialout`). Two things follow:
+
+- **Config volume ownership is automatic.** The entrypoint starts as root
+  only to `chown` the mounted `/app/config` to the app user, then drops
+  privileges (`setpriv`) — fresh installs and upgrades need no manual
+  `chown`. Only if you override the container user (`docker run --user`)
+  must the host directory ownership match that user.
+- **Port `:502` needs one sysctl.** It is a privileged port, and the app no
+  longer runs as root — add `net.ipv4.ip_unprivileged_port_start=0` as a
+  *per-container* sysctl (already present in the shipped `docker-compose.yml`
+  and the README `docker run` example). It applies inside the container's own
+  network namespace only; no capabilities, no host-wide change. Ports ≥1024
+  (the default 1502–1512 range) need nothing. Symptom of a missing sysctl: a
+  virtual meter on 502 logs a bind `PermissionError` while meters on 1502+
+  serve fine.
+
 ## Downgrades and the config version stamp (3.24.2+)
 
 Every save writes a `config_version` stamp (the writing gateway's version) as

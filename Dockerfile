@@ -1,12 +1,14 @@
 # Multi-Bus Gateway
 FROM python:3.11-slim
 
-# Dedicated non-root user (fixed uid so the host chowns the mounted config
-# volume ONCE and it never drifts). The app image stays root-owned/read-only
-# to this user; the only writable path is the mounted /app/config. Binding
-# :502 (privileged) as non-root needs the compose-level per-container sysctl
+# Dedicated non-root user. The entrypoint starts as root ONLY to chown the
+# mounted config volume (bind mounts arrive with host ownership — root on a
+# fresh install), then drops to this user via setpriv; the long-lived process
+# never runs as root. The app image stays root-owned/read-only to this user;
+# the only writable path is the mounted /app/config. Binding :502
+# (privileged) as non-root needs the per-container sysctl
 # net.ipv4.ip_unprivileged_port_start=0 — scoped to the container's own
-# network namespace, no capabilities involved.
+# network namespace, no capabilities involved (see docker-compose.yml).
 RUN useradd --uid 10001 --user-group --no-create-home --shell /usr/sbin/nologin mbg
 
 WORKDIR /app
@@ -38,6 +40,8 @@ EXPOSE 8080 1502-1512 502
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD python -c "import os, urllib.request, sys; p = os.environ.get('UI_PORT', '8080'); sys.exit(0 if urllib.request.urlopen(f'http://localhost:{p}/health', timeout=5).status == 200 else 1)" || exit 1
 
-# Run application as the non-root user (the healthcheck inherits it too)
-USER mbg
+# chown-then-drop entrypoint (see the user comment above)
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "main.py", "-c", "config/config.yaml"]
