@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.34.3
+
+### 2026-08-15 — the canonical unit is visible where scales are set
+
+The canonical dictionary always carried a unit per field (the API exposed
+it), but the template editor never showed it — so nothing warned when a
+kWh row sat under an energy_* name that promises Wh, which is exactly how
+the Fronius 65A shipped mislabeled. The editor's Unit cell now:
+
+- shows the canonical unit as a tooltip whenever the row's name is
+  canonical ("canonical unit is Wh");
+- flags AMBER on a mismatch, live while typing, with the fix spelled out
+  (adjust the scale to deliver the canonical unit, or rename the row) —
+  the same affordance names already had.
+
+Server-side the save-time warning (3.30.0) remains the hard backstop;
+this puts the contract in front of the person typing the scale.
+
 ## 3.34.2
 
 ### 2026-08-15 — modal stacking + wide template editor (UI); Fronius 65A unit settled empirically

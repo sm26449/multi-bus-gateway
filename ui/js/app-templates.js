@@ -447,6 +447,24 @@ Object.assign(JanitzaMonitor.prototype, {
         this.openModal('devTplModal');
     },
 
+    // Unit cell, flagged amber when the row's CANONICAL name expects a
+    // different unit (the canonical dictionary is a unit contract too — a
+    // kWh value under an energy_* name is a silent 1000x error downstream;
+    // the Fronius 65A shipped mislabeled exactly this way).
+    _tplUnitCell(r) {
+        const cf = r.name && this._canonicalFields
+            && this._canonicalFields[String(r.name).toLowerCase()];
+        const want = (cf && cf.unit) || '';
+        const bad = !!(want && (r.unit || '') && r.unit !== want);
+        const title = bad
+            ? `${r.name}: ${this.t('devtpl.unitCanon', 'canonical unit is')} ${want} — `
+              + this.t('devtpl.unitFix', 'adjust the scale to deliver it (a native-kWh map needs scale/1000), or rename the register')
+            : (want ? `${this.t('devtpl.unitCanon', 'canonical unit is')} ${want}` : '');
+        return `<td><input class="input tpl-cell${bad ? ' tpl-noncanon' : ''}" data-f="unit" `
+             + `value="${this._esc(r.unit || '')}" style="width:56px" aria-label="Unit"`
+             + `${title ? ` title="${this._esc(title)}"` : ''}></td>`;
+    },
+
     // One template-editor Name cell, flagged amber + 'did you mean' title when
     // the name isn't canonical (uses the shared _isCanonical/_canonicalSuggest).
     _tplNameCell(r) {
@@ -489,7 +507,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <td><input class="input tpl-cell" data-f="address" type="number" min="0" max="65535" value="${r.address}" aria-label="Address"></td>
                 ${this._tplNameCell(r)}
                 <td><input class="input tpl-cell" data-f="label" value="${this._esc(r.label || '')}" aria-label="Label"></td>
-                <td><input class="input tpl-cell" data-f="unit" value="${this._esc(r.unit || '')}" style="width:56px" aria-label="Unit"></td>
+                ${this._tplUnitCell(r)}
                 <td><select class="input tpl-cell" data-f="data_type" aria-label="Data type">
                     ${dataTypes.map(t => `<option ${t === r.data_type ? 'selected' : ''}>${t}</option>`).join('')}</select></td>
                 <td><input class="input tpl-cell" data-f="scale" type="number" step="any" value="${r.scale ?? 1}" style="width:68px" aria-label="Scale"></td>
@@ -573,6 +591,21 @@ Object.assign(JanitzaMonitor.prototype, {
                     v = inp.value === '' ? null : parseFloat(inp.value);
                 else v = inp.value;
                 this._tplEdit.data.registers[idx][f] = v;
+                if (f === 'unit' || f === 'name') {
+                    // live unit-contract feedback on the row's Unit cell
+                    const row = this._tplEdit.data.registers[idx];
+                    const uinp = inp.closest('tr').querySelector('input[data-f="unit"]');
+                    if (uinp) {
+                        const cf = row.name && this._canonicalFields
+                            && this._canonicalFields[String(row.name).toLowerCase()];
+                        const want = (cf && cf.unit) || '';
+                        const bad = !!(want && (row.unit || '') && row.unit !== want);
+                        uinp.classList.toggle('tpl-noncanon', bad);
+                        uinp.title = bad
+                            ? `${row.name}: ${this.t('devtpl.unitCanon', 'canonical unit is')} ${want}`
+                            : (want ? `${this.t('devtpl.unitCanon', 'canonical unit is')} ${want}` : '');
+                    }
+                }
                 if (f === 'name') {
                     // live canonical feedback: flag the cell + refresh the summary
                     const canon = !v || this._isCanonical(v);
