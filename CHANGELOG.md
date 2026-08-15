@@ -2,7 +2,19 @@
 
 ## 3.34.2
 
-### 2026-08-15 — modal stacking + wide template editor (UI)
+### 2026-08-15 — modal stacking + wide template editor (UI); Fronius 65A unit settled empirically
+
+- **Fronius 65A energy unit: kWh×10, settled by measurement** — the day's
+  two magnitude-based conclusions were BOTH wrong (first "kWh" looked
+  impossible on the assumption the meter was days old; then "Wh" looked
+  right until the owner noted the meter is an old unit re-wired — its big
+  lifetime index is legitimate). The decisive test: 12.4 minutes at
+  ~±300 W moved both energy counters by ZERO ticks — impossible for a Wh
+  counter (tens of units expected), exactly right for kWh at 0.1
+  resolution. The catalog template and the live selection now convert
+  kWh×10 raw to canonical Wh via scale 0.01; the template description
+  records the method. Lesson encoded: for counter units, magnitude
+  arguments are not evidence — a rate test is.
 
 - **Nested modals stack by open order** — every modal shared z-index 1000,
   so which of two OPEN modals painted on top was DOM order: the enum
