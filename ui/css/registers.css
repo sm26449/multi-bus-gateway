@@ -286,7 +286,17 @@
    thresholds); 500px cramps the 3-up form rows. The template editor is a wide
    13-column grid. Give both room (still capped to the viewport on mobile). */
 #addRegisterModal .modal-content { max-width: 720px; }
-#devTplModal .modal-content { max-width: min(1120px, 96vw); }
+#devTplModal .modal-content { max-width: min(1560px, 96vw); }
+/* On desktop/laptop widths the 15-column grid must fit WITHOUT horizontal
+   scroll (vertical only) — tighter cell padding + shrinkable text cells.
+   Below ~1200px the table-container's overflow-x:auto stays as the fallback. */
+#devTplModal .data-table th,
+#devTplModal .data-table td { padding: 6px 5px; }
+#devTplModal .tpl-cell { min-width: 0; }
+#devTplModal .data-table input.tpl-cell:not([style*="width"]) { width: 100%; min-width: 70px; }
+/* selects (type / FC) must never truncate their shortest option */
+#devTplModal select.tpl-cell { min-width: 62px; }
+#devTplModal select.tpl-cell[data-f="data_type"] { min-width: 86px; }
 /* template-editor Name cell flagged when the value isn't a canonical field */
 .tpl-cell.tpl-noncanon {
     border-color: var(--warning-text, #e2a336);

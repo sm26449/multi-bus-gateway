@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.34.2
+
+### 2026-08-15 — modal stacking + wide template editor (UI)
+
+- **Nested modals stack by open order** — every modal shared z-index 1000,
+  so which of two OPEN modals painted on top was DOM order: the enum
+  "Decode states" builder (declared early in index.html) rendered BEHIND
+  the template editor that opened it. openModal now assigns an
+  incrementing z-index (reset on close), so the latest-opened dialog
+  always wins; closing a nested modal no longer unlocks the body scroll
+  while its parent is still open.
+- **Template editor fits without horizontal scroll on desktop** — the
+  15-column register grid was capped at 1120px and scrolled sideways.
+  Now min(1560px, 96vw) with tighter cell padding, shrinkable text cells
+  and explicit select widths (FC no longer truncates). Verified with
+  Playwright at 1536×864 and 1440×900 across three CSS density variants
+  (scrollWidth == clientWidth; vertical scroll only); below desktop
+  widths the overflow-x fallback remains.
+
 ## 3.34.1
 
 ### 2026-08-15 — a security save no longer logs out its own author

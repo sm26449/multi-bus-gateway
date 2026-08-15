@@ -234,6 +234,12 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!modal) return;
         this._modalReturnFocus = document.activeElement;      // restore on close
         modal.classList.add('active');
+        // Stacking: every .modal shares z-index 1000, so which of two OPEN
+        // modals paints on top used to be DOM order — the enum builder
+        // (declared early in index.html) rendered BEHIND the template editor
+        // that opened it. The latest-opened modal must always win.
+        this._modalZ = Math.max(this._modalZ || 1000, 1000) + 1;
+        modal.style.zIndex = this._modalZ;
         document.body.classList.add('modal-open');
         // Dialog semantics on the content box (the backdrop is just chrome).
         const dialog = modal.querySelector('.modal-content') || modal;
@@ -265,7 +271,12 @@ Object.assign(JanitzaMonitor.prototype, {
         const modal = modalId ? document.getElementById(modalId) : document.querySelector('.modal.active');
         if (!modal) return;
         modal.classList.remove('active');
-        document.body.classList.remove('modal-open');
+        modal.style.zIndex = '';                 // back to the stylesheet default
+        // nested modals (enum builder over the template editor): only unlock
+        // the body scroll when the LAST open modal closes
+        if (!document.querySelector('.modal.active')) {
+            document.body.classList.remove('modal-open');
+        }
         const dialog = modal.querySelector('.modal-content') || modal;
         dialog.removeAttribute('aria-modal');
         if (modal._trapHandler) {
