@@ -24,7 +24,7 @@ import signal
 import subprocess
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 STATE_FILE = os.environ.get("BRIDGE_STATE", "/data/portmap.json")
 # Lives in its own directory (owned by the non-root user) because the atomic
@@ -84,10 +84,25 @@ def enumerate_adapters() -> list[dict]:
 
 
 def _load_map() -> dict:
+    """Port map from disk. A corrupt/unreadable map is LOUD (audit DP-30):
+    silently starting from {} re-allocates ports in enumeration order, which
+    can hand a well-known port to the wrong adapter — MBG would then poll a
+    different physical bus. Entries are validated as int ports in range."""
+    if not os.path.exists(STATE_FILE):
+        return {}
     try:
         with open(STATE_FILE) as f:
-            return json.load(f)
-    except Exception:  # noqa: BLE001
+            raw = json.load(f)
+        out = {}
+        for k, v in raw.items():
+            if isinstance(v, int) and PORT_LOW <= v <= PORT_HIGH and v not in out.values():
+                out[str(k)] = v
+            else:
+                print(f"[supervisor] portmap entry dropped (invalid): {k}={v!r}", flush=True)
+        return out
+    except Exception as e:  # noqa: BLE001
+        print(f"[supervisor] PORTMAP UNREADABLE ({e}) — starting empty; "
+              f"port assignments may change, check adapter/port pairing!", flush=True)
         return {}
 
 
@@ -96,7 +111,9 @@ def _save_map(m: dict) -> None:
     tmp = STATE_FILE + ".tmp"
     with open(tmp, "w") as f:
         json.dump(m, f, indent=1)
-    os.replace(tmp, STATE_FILE)
+        f.flush()
+        os.fsync(f.fileno())      # durable before the rename (audit DP-30:
+    os.replace(tmp, STATE_FILE)   # a host freeze left a 0-byte map once)
 
 
 def _assign_port(stable_id: str, pmap: dict) -> int:
@@ -150,11 +167,37 @@ def _clear_stale_locks() -> None:
                 pass
 
 
+def _clear_dead_pid_locks() -> None:
+    """Remove UUCP lockfiles whose OWNER PID is dead — safe even while ser2net
+    is ALIVE (its own live locks carry a live PID). Audit DP-18: an orphan
+    lock with ser2net still running (the /dev node vanished under it at
+    replug) used to kill the bus indefinitely, because the full sweep above
+    only ever ran on respawn. UUCP lock format: the PID in the first line."""
+    for d in ("/run/lock", "/var/lock"):
+        for f in glob.glob(os.path.join(d, "LCK..*")):
+            try:
+                with open(f) as fh:
+                    pid = int(fh.read().split()[0])
+                os.kill(pid, 0)                  # raises if the PID is gone
+            except (ValueError, IndexError, OSError, ProcessLookupError):
+                try:
+                    os.unlink(f)
+                    print(f"[supervisor] removed dead-owner serial lock {f}", flush=True)
+                except OSError:
+                    pass
+
+
 def _reload_ser2net() -> None:
     global _ser2net
+    _clear_dead_pid_locks()                      # safe alongside a live ser2net
     if _ser2net and _ser2net.poll() is None:
         _ser2net.send_signal(signal.SIGHUP)      # non-disruptive: only changed ports restart
     else:
+        if _ser2net is not None:
+            # audit DP-18/32: a dying ser2net used to respawn silently —
+            # the exit code is the first diagnostic an operator needs
+            print(f"[supervisor] ser2net not running (exit code "
+                  f"{_ser2net.poll()}) — respawning", flush=True)
         _clear_stale_locks()                     # ser2net not running → locks are leftovers
         _ser2net = subprocess.Popen(["ser2net", "-n", "-c", SER2NET_CFG])
 
@@ -188,6 +231,12 @@ def reconcile() -> None:
         if sig == prev and _adapters and _ser2net and _ser2net.poll() is None:
             _adapters = new                      # no set/path change → no reload
             return
+        if not managed and not prev and _adapters is not None:
+            # zero adapters, still zero adapters (audit DP-32): rewriting the
+            # config + SIGHUP every 10s was pure noise exactly when the
+            # operator wants clean logs
+            _adapters = new
+            return
         _save_map(pmap)
         _write_ser2net_config(managed)           # excluded adapters NOT in the config
         _reload_ser2net()
@@ -199,6 +248,8 @@ def reconcile() -> None:
 
 
 class _Handler(BaseHTTPRequestHandler):
+    timeout = 10                                 # a mute client can't hold a thread forever
+
     def do_GET(self):  # noqa: N802
         path = self.path.rstrip("/") or "/"
         if path == "/adapters":
@@ -214,14 +265,25 @@ class _Handler(BaseHTTPRequestHandler):
                 } for a in _adapters]
             self._json({"adapters": data})
         elif path == "/health":
-            self._json({"status": "ok", "adapters": len(_adapters)})
+            # the DATA path matters, not just this API (audit DP-18): a dead
+            # ser2net with adapters to serve = the bus is down — report it so
+            # the container healthcheck stops declaring a dead bridge healthy
+            with _lock:
+                n_managed = sum(1 for a in _adapters
+                                if a.get("available") and not a.get("excluded"))
+            ser2net_ok = _ser2net is not None and _ser2net.poll() is None
+            if n_managed and not ser2net_ok:
+                self._json({"status": "down", "reason": "ser2net not running",
+                            "adapters": len(_adapters)}, code=500)
+            else:
+                self._json({"status": "ok", "adapters": len(_adapters)})
         else:
             self.send_response(404)
             self.end_headers()
 
-    def _json(self, obj):
+    def _json(self, obj, code: int = 200):
         body = json.dumps(obj).encode()
-        self.send_response(200)
+        self.send_response(code)
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(body)))
         self.end_headers()
@@ -232,7 +294,11 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 def _http_server():
-    HTTPServer(("0.0.0.0", CONTROL_PORT), _Handler).serve_forever()
+    # threading + per-connection timeout (audit DP-31): the old single-
+    # threaded server let one silent client wedge /adapters — and with it the
+    # container healthcheck, which then restarted a healthy ser2net
+    srv = ThreadingHTTPServer(("0.0.0.0", CONTROL_PORT), _Handler)
+    srv.serve_forever()
 
 
 def _udev_watch():

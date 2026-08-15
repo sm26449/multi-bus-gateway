@@ -63,6 +63,28 @@ class MonotonicFilter:
             return value
 
         if value >= self._last - self.noise:       # grew, flat, or within noise
+            # SYMMETRY (external audit): a corrupt read is as likely to jump
+            # UP as down — a flipped high word turns 1,000,000 Wh into 2.1e9,
+            # and accepting it both records a phantom mega-delta AND poisons
+            # the baseline so the next correct reads look like a "reset". An
+            # implausible upward step (>50% above baseline, beyond noise) now
+            # needs the same coherent confirmation as a downward one; real
+            # post-gap catch-up growth confirms in reset_confirm reads.
+            if (self._last > 0 and value > self._last * 1.5 + self.noise):
+                if (self._regressions == 0 or self._reset_first is None
+                        or not (abs(value - self._reset_first)
+                                <= max(self.noise, 0.05 * abs(value)))):
+                    self._reset_first = value
+                    self._regressions = 1
+                else:
+                    self._regressions += 1
+                if self._regressions >= self.reset_confirm:
+                    self._last = value
+                    self._regressions = 0
+                    self._reset_first = None
+                    self.just_reset = True
+                    return value
+                return None                        # implausible jump → hold
             if value > self._last:
                 self._last = value                 # never let the baseline slip down
             self._regressions = 0

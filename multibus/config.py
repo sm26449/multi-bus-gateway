@@ -290,7 +290,10 @@ class UIConfig:
     port: int = 8080
     auth_enabled: bool = False
     auth_username: str = "admin"
-    auth_password: str = "admin"
+    # empty by default (external audit: the old "admin" literal + the
+    # plaintext-compat fallback meant a hand-enabled auth accepted
+    # admin/admin from the whole LAN; the shipped example already says "")
+    auth_password: str = ""
     # read-only viewer account (optional) — GET only, no config changes
     viewer_username: str = ""
     viewer_password: str = ""

@@ -58,7 +58,15 @@ def _canonical_redirect_script(canonical_url: str) -> str:
     the operator if DNS/Traefik were down; this never can."""
     if not canonical_url:
         return ""
-    return ("<script>(function(){var C=" + json.dumps(canonical_url) + ";try{"
+    # json.dumps alone does NOT neutralize "</script>" — the HTML tokenizer
+    # ends the script element regardless of JS string context, so a crafted
+    # canonical_url became stored XSS on every page incl. the login shell
+    # (external audit). Escaping <, > and & inside the JSON string keeps the
+    # value byte-identical to JS (\u003c parses back to '<') while making it
+    # inert to the HTML parser.
+    _safe = (json.dumps(canonical_url).replace('<', '\\u003c')
+             .replace('>', '\\u003e').replace('&', '\\u0026'))
+    return ("<script>(function(){var C=" + _safe + ";try{"
             "var h=new URL(C).host;var p=new URLSearchParams(location.search);"
             "if(p.has('local')){try{localStorage.setItem('mbg-stay-local','1')}catch(e){}return;}"
             "if(localStorage.getItem('mbg-stay-local')==='1')return;"
@@ -373,16 +381,24 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             "img-src 'self' data:; connect-src 'self'; "
             "frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 
-    @app.middleware("http")
-    async def _security_headers(request, call_next):
-        resp = await call_next(request)
+    def _apply_security_headers(resp, scheme: str = "http"):
+        """Shared with the auth-guard's short-circuit shell return (external
+        audit): a response produced by an OUTER middleware never flows through
+        an inner one, so the LOGIN page — the one handling credentials — was
+        served with no CSP, no frame protection and no nosniff."""
         resp.headers.setdefault("Content-Security-Policy", _CSP)
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
         resp.headers.setdefault("X-Frame-Options", "DENY")
         resp.headers.setdefault("Referrer-Policy", "same-origin")
-        if request.url.scheme == "https":
+        if scheme == "https":
             resp.headers.setdefault("Strict-Transport-Security",
                                     "max-age=31536000; includeSubDomains")
+        return resp
+
+    @app.middleware("http")
+    async def _security_headers(request, call_next):
+        resp = await call_next(request)
+        _apply_security_headers(resp, request.url.scheme)
         return resp
 
     @app.middleware("http")
@@ -488,7 +504,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             if _allow_networks() and not _ip_allowed(_peer):
                 return JSONResponse({"detail": "forbidden (IP not in allowlist)"},
                                     status_code=403)
-            return HTMLResponse(_render_index_html(canonical_url=config.ui.canonical_url))
+            # this short-circuit bypasses the header middleware — apply the
+            # security headers directly (this IS the login page)
+            return _apply_security_headers(
+                HTMLResponse(_render_index_html(canonical_url=config.ui.canonical_url)),
+                request.url.scheme)
         # identity lands on request.state BEFORE any deny, so the audit trail
         # records WHO was refused, not an anonymous dash
         request.state.role = role
@@ -988,7 +1008,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     def _find_device(device_id: str):
         return registry.find(device_id)
 
-    def _make_lease_revert(dev, rt, addr, dt, sc, sv):
+    def _make_lease_revert(dev, rt, addr, dt, sc, sv, off=0.0):
         """Build the dead-man revert: resolve the *current* device client at
         revert time (surviving device restarts) and write the safe value. Used by
         both the live write path and boot recovery, so they behave identically."""
@@ -1003,7 +1023,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 # device gone/restarting — raise so the dead-man retries instead
                 # of silently dropping the lease with a live setpoint
                 raise RuntimeError(f"device {dev} not running; cannot revert to safe")
-            rok, rerr, _w = c.write_value(addr, rt, dt, sv, scale=sc)
+            rok, rerr, _w = c.write_value(addr, rt, dt, sv, scale=sc, offset=off)
             logger.warning("MODBUS WRITE (lease-revert) %s: device=%s addr=%s safe=%r%s",
                            "OK" if rok else "FAILED", dev, addr, sv, "" if rok else f" err={rerr}")
             if not rok:
@@ -1018,7 +1038,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     for _m in _lease_mgr.load_persisted():
         try:
             _rv = _make_lease_revert(_m['device'], _m['register_type'], int(_m['address']),
-                                     _m['data_type'], float(_m['scale']), _m['safe_value'])
+                                     _m['data_type'], float(_m['scale']), _m['safe_value'],
+                                     off=float(_m.get('offset', 0.0) or 0.0))
             _lease_mgr.arm(_m['device'], _m['register_type'], int(_m['address']),
                            int(_m.get('lease_ms') or 0), _rv, meta=_m, fire_now=True)
             logger.warning("WRITE-LEASE recovered after restart → reverting to safe: "
@@ -1166,6 +1187,31 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     raise ValueError
             except (TypeError, ValueError):
                 errors.append("connection.port: must be 1..65535")
+            if protocol == 'rtu-tcp':
+                # An rtu-tcp host:port IS a physical RS-485 line: the bridge
+                # generates it with max-connections:1 + kickolduser, so two
+                # devices on one endpoint evict each other forever, both
+                # showing timeouts with no explanation (external audit E2 —
+                # the same one-master-per-line rule the plain-RTU branch
+                # already enforces on serial_port). Multi-drop belongs on ONE
+                # device per line; distinct unit_ids do not change the rule.
+                _host = str(conn.get('host', '')).strip().lower()
+                try:
+                    _port = int(conn.get('port', 502))
+                except (TypeError, ValueError):
+                    _port = None
+                for d in config.devices:
+                    if (getattr(d, 'id', None) != existing_id
+                            and getattr(d, 'protocol', '') == 'rtu-tcp'
+                            and str(getattr(d.connection, 'host', '')).strip().lower() == _host
+                            and int(getattr(d.connection, 'port', 0) or 0) == _port):
+                        errors.append(
+                            f"connection: rtu-tcp endpoint {_host}:{_port} is "
+                            f"already used by device '{d.id}' — one master per "
+                            f"bridged serial line (the bridge kicks the older "
+                            f"client, so two devices would evict each other "
+                            f"forever)")
+                        break
             try:
                 unit = int(conn.get('unit_id', 1))
                 if not (0 <= unit <= 255):
@@ -1361,10 +1407,14 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             return
         store = registry.store_for(device_id)
         if store is not None and address in store:
-            e = store[address]
+            # whole-dict swap, like the poller (audit DP-35): field-by-field
+            # mutation was the one non-atomic store write — a concurrent
+            # reader could see the new value with the old mono stamp
+            e = dict(store[address])
             e['value'] = value
             e['ts'] = time.time()
             e['mono'] = time.monotonic()
+            store[address] = e
 
     def _mqtt_write_command(device_id, register, payload):
         """Execute an HA number/select command as a Modbus write. The broker is
@@ -1414,8 +1464,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             return
         data_type = (rule.data_type or 'uint16').lower()
         scale = float(rule.scale if rule.scale is not None else 1.0)
+        offset = float(getattr(rule, 'offset', 0.0) or 0.0)
         ok, err, _words = client.write_value(register.address, 'holding', data_type,
-                                             value, scale=scale)
+                                             value, scale=scale, offset=offset)
         logger.warning("MODBUS WRITE %s (via HA): device=%s addr=%s dtype=%s value=%r%s",
                        "OK" if ok else "FAILED", device_id, register.address, data_type,
                        value, "" if ok else f" err={err}")
@@ -1424,7 +1475,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 raw = client.read_register(register.address, data_type, 'holding')
                 if raw is not None:
                     _push_readback_to_store(device_id, register.address,
-                                            float(raw) / (scale or 1.0))
+                                            float(raw) / (scale or 1.0) + offset)
             except Exception:  # noqa: BLE001
                 pass
         try:
@@ -1923,6 +1974,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         # mismatched data_type/word-count. The payload's data_type/scale are ignored.
         data_type = (rule.data_type or 'uint16').lower()
         scale = float(rule.scale if rule.scale is not None else 1.0)
+        _w_offset = float(getattr(rule, 'offset', 0.0) or 0.0)
         prefer_fc6 = bool(payload.get('prefer_fc6', False))
         if rtype == 'holding':
             try:
@@ -1951,7 +2003,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         if client is None:
             raise HTTPException(status_code=409, detail={"errors": ["device is not running"]})
         ok, err, words = client.write_value(address, rtype, data_type,
-                                            payload.get('value'), scale=scale, prefer_fc6=prefer_fc6)
+                                            payload.get('value'), scale=scale,
+                                            offset=_w_offset, prefer_fc6=prefer_fc6)
         _who = getattr(request.state, "user", None) or ("api-key" if _api_key else "anon")
         _src = request.client.host if request.client else "?"
         logger.warning("MODBUS WRITE %s: by=%s@%s device=%s addr=%s type=%s dtype=%s value=%r words=%s%s",
@@ -1966,9 +2019,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             raise HTTPException(status_code=502, detail={"errors": [f"write failed: {err}"]})
         # arm/renew (or cancel) the dead-man lease for this register
         if lease_ms > 0:
-            _revert = _make_lease_revert(device_id, rtype, address, data_type, scale, rule.write_safe)
+            _revert = _make_lease_revert(device_id, rtype, address, data_type, scale,
+                                         rule.write_safe, off=_w_offset)
             meta = {'device': device_id, 'register_type': rtype, 'address': address,
-                    'data_type': data_type, 'scale': scale, 'safe_value': rule.write_safe,
+                    'data_type': data_type, 'scale': scale, 'offset': _w_offset,
+                    'safe_value': rule.write_safe,
                     'lease_ms': lease_ms}
             _lease_mgr.arm(device_id, rtype, address, lease_ms, _revert, meta=meta)
         else:
@@ -1985,7 +2040,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     # read_register returns the RAW value; the write applied *scale,
                     # so divide back to engineering units before comparing to `want`
                     # (otherwise `verified` is always false for any scale != 1).
-                    read_back = float(raw_back) / (scale or 1.0)
+                    read_back = float(raw_back) / (scale or 1.0) + _w_offset
                     verified = abs(read_back - float(want)) <= max(1e-6, abs(float(want)) * 1e-4)
                 # write-then-refresh: reflect the new value in the live store now
                 _push_readback_to_store(device_id, address, read_back)
@@ -2139,6 +2194,24 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             where = f"{conn.get('host','')}:{conn.get('port',502)}"
             # rtu-tcp: RTU frames over a raw TCP socket (serial-over-TCP bridge)
             _framer = {'framer': FramerType.RTU} if proto == 'rtu-tcp' else {}
+            if proto == 'rtu-tcp':
+                # audit DP-19: the bridge kicks the OLDER client — a test
+                # against an endpoint a running device is polling would boot
+                # the live poller mid-transaction and push it into the slow
+                # timeout path. Refuse; the operator can disable the device
+                # first if a raw probe is really needed.
+                _th = str(conn.get('host', '')).strip().lower()
+                _tp = int(conn.get('port', 502) or 502)
+                for _d in config.devices:
+                    if (getattr(_d, 'enabled', False)
+                            and getattr(_d, 'protocol', '') == 'rtu-tcp'
+                            and str(getattr(_d.connection, 'host', '')).strip().lower() == _th
+                            and int(getattr(_d.connection, 'port', 0) or 0) == _tp):
+                        return {"ok": False, "error":
+                                f"endpoint {where} is being live-polled by "
+                                f"device '{_d.id}' — a test would kick its "
+                                f"connection (bridge is single-client). "
+                                f"Disable the device first."}
             c = ModbusTcpClient(host=conn.get('host', ''),
                                 port=int(conn.get('port', 502)), timeout=timeout,
                                 **_framer)
@@ -2201,8 +2274,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             if conn.get('tls'):
                 try:
                     cli.tls_set()
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as e:  # noqa: BLE001
+                    # fail CLOSED (external audit): falling through would send
+                    # the operator's broker credentials over cleartext and
+                    # report the TLS config as working
+                    return {"ok": False, "error": f"TLS setup failed: {e}"}
 
             def _oc(c, u, f, rc, props=None):
                 got["connected"] = True
@@ -2766,7 +2842,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             await websocket.send_json({
                 'type': 'init',
                 'device': config.primary_device.id,   # the snapshot is the primary's
-                'values': current_values,
+                # snapshot, NOT the live dict (external audit: json.dumps
+                # walking the live store while pollers insert raises
+                # 'dictionary changed size' and drops the socket — the same
+                # bug values_routes.py already documents and fixes)
+                'values': dict(current_values),
                 'timestamp': last_update['timestamp'],
             })
 

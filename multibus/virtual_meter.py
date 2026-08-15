@@ -336,6 +336,11 @@ class VirtualMeter:
         self.stats = VMeterStats()              # in-RAM query log + counters
         self._failover_active: dict[int, str] = {}   # addr → active source name
         self._encode_failed: set[int] = set()        # addrs warned unencodable (edge-triggered)
+        # rows that have resolved at least once since this meter was built —
+        # a never-resolved row has no last value to hold, so legacy mode must
+        # fail the freshness verdict for it (external audit E1)
+        self._row_seen: set[int] = set()
+        self._row_unresolved_warned: set[int] = set()
         # Freshness is judged on the MONOTONIC clock (driver 'mono' stamps vs
         # time.monotonic()), so it is immune to wall-clock/NTP steps by
         # construction. This guard is kept only to emit a diagnostic clock_step
@@ -514,7 +519,27 @@ class VirtualMeter:
             for reg in self.t.registers:
                 regs, ts, src_bound = self._resolve(reg)
                 if regs is None:
+                    # "leave gap (keep last value)" assumes a last value
+                    # EXISTS. A row that has NEVER resolved (renamed source,
+                    # deselected register, template typo) has none — the
+                    # zero-seeded block would serve a hard 0 as a plausible
+                    # measurement (external audit E1; the spec's own rule:
+                    # "absence is never encodable as a plausible
+                    # measurement"). Until it resolves once, it fails the
+                    # verdict like a stale row — the meter stays down LOUDLY
+                    # instead of feeding 0 W to an ESS.
+                    if (reg.source_kind not in ("const", "const_str")
+                            and reg.addr not in self._row_seen):
+                        all_fresh = False
+                        if reg.addr not in self._row_unresolved_warned:
+                            self._row_unresolved_warned.add(reg.addr)
+                            msg = (f"0x{reg.addr:04x}: source never resolved — "
+                                   "meter withheld (would serve 0 otherwise)")
+                            self.stats.record_event("error", "unresolved", msg)
+                            logger.error("virtual meter %s: %s", self.t.id, msg)
                     continue                          # leave gap (keep last value)
+                self._row_seen.add(reg.addr)
+                self._row_unresolved_warned.discard(reg.addr)
                 out.append((reg.addr, [w & 0xffff for w in regs]))
                 if reg.source_kind in ("const", "const_str"):
                     continue                          # consts are never stale

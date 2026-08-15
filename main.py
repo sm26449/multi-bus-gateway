@@ -17,6 +17,7 @@
 #
 """Multi-Bus Gateway — main application."""
 
+import os
 import time
 import logging
 import argparse
@@ -125,7 +126,13 @@ class GatewayApp:
             elif device.protocol == 'http':
                 from multibus.http_client import HttpClient
                 regs, groups = self.config.load_device_registers(device)
-                client = HttpClient(http_cfg=device.http, registers=regs, poll_groups=groups)
+                client = HttpClient(
+                    http_cfg=device.http, registers=regs, poll_groups=groups,
+                    # external audit: the boot path was the ONE of three
+                    # constructors not passing this — an allowed non-LAN
+                    # device worked until the first restart, then died at
+                    # debug level
+                    allow_nonlan=self.config.security.allow_nonlan_http_devices)
                 logger.info(f"Device '{device.id}': HTTP/JSON, {len(regs)} registers, "
                             f"{device.http.get('url', '')}")
             elif device.protocol == 'mqtt':
@@ -475,9 +482,14 @@ def _ensure_self_signed(cert_path: str, key_path: str):
                 .not_valid_after(_dt.datetime.utcnow() + _dt.timedelta(days=3650))
                 .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), False)
                 .sign(keyobj, hashes.SHA256()))
-        kp.write_bytes(keyobj.private_bytes(
-            serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL,
-            serialization.NoEncryption()))
+        # 0600 from creation, like every other secret-bearing writer
+        # (external audit: this was the one exception — the key landed
+        # world-readable on the bind-mounted config volume)
+        _kfd = os.open(str(kp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(_kfd, 'wb') as _kf:
+            _kf.write(keyobj.private_bytes(
+                serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL,
+                serialization.NoEncryption()))
         cp.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
         logger.info(f"Generated self-signed certificate at {cert_path}")
     except ImportError:
@@ -487,6 +499,10 @@ def _ensure_self_signed(cert_path: str, key_path: str):
             "-keyout", key_path, "-out", cert_path, "-days", "3650",
             "-subj", "/CN=multi-bus-gateway",
         ], check=True)
+        try:
+            os.chmod(str(kp), 0o600)      # same guarantee on the fallback path
+        except OSError:
+            pass
         logger.info(f"Generated self-signed certificate (openssl) at {cert_path}")
 
 

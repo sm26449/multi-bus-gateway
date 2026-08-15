@@ -161,9 +161,22 @@ class AuthState:
             logger.warning("session store write failed: %s", e)
 
     def reload(self, ui_config) -> None:
-        """Pick up config changes (enable flag, credentials, lockout params)."""
+        """Pick up config changes (enable flag, credentials, lockout params).
+
+        The default-credential guard lives HERE, not only in the UI route
+        (external audit): hand-editing ui.auth.enabled, config import and
+        snapshot restore all reach reload() directly — enabling auth with an
+        empty or literal-default password produced a gateway that LOOKED
+        locked and accepted admin/admin from the whole LAN."""
         with self._lock:
             self.enabled = bool(ui_config.auth_enabled)
+            _pw = ui_config.auth_password or ""
+            if self.enabled and (_pw == "" or _pw == "admin"):
+                self.enabled = False
+                logger.error(
+                    "SECURITY: refusing to enable login with an empty/default "
+                    "admin password — set a real password (Settings → Security "
+                    "hashes it) and re-enable. Auth stays OFF.")
             self.admin_user = ui_config.auth_username or "admin"
             self.admin_pw = ui_config.auth_password or ""
             self.viewer_user = ui_config.viewer_username or ""

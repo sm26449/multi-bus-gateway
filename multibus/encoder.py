@@ -70,9 +70,18 @@ class RegisterEncoder:
     def register_count(self, data_type: str) -> int:
         return self.REGISTER_COUNTS.get(data_type.lower(), 2)
 
-    def encode(self, value: Any, data_type: str, scale: float = 1.0) -> list[int]:
-        """Encode ``value`` into a list of 16-bit registers for ``data_type``."""
+    def encode(self, value: Any, data_type: str, scale: float = 1.0,
+               offset: float = 0.0) -> list[int]:
+        """Encode ``value`` into a list of 16-bit registers for ``data_type``.
+
+        Exact inverse of the decode path (external audit: offset was applied
+        on read — engineering = raw/scale + offset — but silently DROPPED on
+        every write, so a scale:10/offset:-40 temperature setpoint written as
+        30 °C landed on the device as −10 °C): raw = (value − offset) × scale.
+        """
         dt = data_type.lower()
+        if offset and isinstance(value, (int, float)) and not isinstance(value, bool):
+            value = value - offset
         if dt in ('float', 'float32'):
             return self._enc_float(float(value) * scale)
         if dt == 'double':

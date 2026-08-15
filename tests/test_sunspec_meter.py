@@ -45,7 +45,11 @@ def test_sunspec_conformance():
                     if r.source_kind == 'live'}
     missing = set(VALUES_BY_ADDR) - set(live_by_addr)
     assert not missing, f"template lost live registers at {sorted(missing)}"
-    fed = {live_by_addr[a]: v for a, v in VALUES_BY_ADDR.items()}
+    # E1: every live row must RESOLVE at least once or the meter is withheld
+    # (never-resolved rows would serve a hard 0) — rows this test doesn't
+    # assert on get a benign 0.0 source value
+    fed = {name: 0.0 for name in live_by_addr.values()}
+    fed.update({live_by_addr[a]: v for a, v in VALUES_BY_ADDR.items()})
     now = time.monotonic()
     vm = VirtualMeter(t, lambda n: (fed[n], now) if n in fed else None,
                       stale_after_s=60, update_interval_s=0.3)

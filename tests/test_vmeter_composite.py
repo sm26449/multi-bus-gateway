@@ -145,16 +145,30 @@ def test_legacy_row_bound_cascade():
     assert vm._legacy_all_fresh is True
 
 
-def test_legacy_missing_row_keeps_gap_but_fresh_rows_gate():
-    """A MISSING row keeps the pinned gap contract (no verdict contribution);
-    the gate closes only when nothing at all is fresh."""
+def test_legacy_missing_row_gap_contract_needs_a_first_resolve():
+    """External audit E1 refined the legacy gap contract: a row that has
+    RESOLVED before keeps the pinned-gap behavior when it later goes missing
+    (the block holds its last words); a row that has NEVER resolved has no
+    last value — the zero-seeded block would serve a hard 0 as a plausible
+    measurement — so it fails the verdict until it resolves once."""
     now = time.monotonic()
     vals = {"A": (10.0, now)}                        # B absent entirely
     vm = VirtualMeter(T([live(0, "A"), live(2, "B")]),
                       lambda n: vals.get(n), stale_after_s=15, on_stale="legacy")
     vm._rebuild_block()
     assert words_at(vm, 2) is None                    # gap for the missing row
-    assert vm._legacy_all_fresh is True               # fresh A keeps the gate open
+    assert vm._legacy_all_fresh is False              # never-resolved B gates CLOSED
+    assert any(e["kind"] == "unresolved" for e in vm.stats.events)
+
+    # B resolves once → gate opens
+    vals["B"] = (20.0, time.monotonic())
+    vm._rebuild_block()
+    assert vm._legacy_all_fresh is True
+    # ...and NOW a disappearance keeps the pinned-gap contract (hold last)
+    del vals["B"]
+    vals["A"] = (10.0, time.monotonic())
+    vm._rebuild_block()
+    assert vm._legacy_all_fresh is True               # seen-before row → gap held
     vals.clear()                                      # everything vanishes
     vm._rebuild_block()
     assert vm._legacy_all_fresh is False              # nothing fresh → gate closed

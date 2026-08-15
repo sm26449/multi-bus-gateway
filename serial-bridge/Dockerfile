@@ -25,7 +25,7 @@ EXPOSE 7000
 # also owns ser2net respawn). stdlib urllib — no curl in the slim image.
 # Baked here so a standalone `docker run` gets monitoring, not just the stack.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD python3 -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7000/adapters', timeout=4).status == 200 else 1)" || exit 1
+    CMD python3 -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7000/health', timeout=4).status == 200 else 1)" || exit 1
 # tini as PID 1 so ser2net (child of the supervisor) is reaped cleanly on
 # stop; the entrypoint then chowns the mounted /data and drops to `bridge`
 # (setpriv) — the long-lived supervisor+ser2net never run as root.

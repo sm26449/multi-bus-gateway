@@ -129,6 +129,13 @@ class MqttInputClient:
         self.connected = False
 
     def _on_message(self, client, userdata, msg):
+        try:
+            self._on_message_inner(client, userdata, msg)
+        except Exception as e:  # noqa: BLE001
+            logger.error("MQTT-input message handling failed on %s: %s",
+                         getattr(msg, 'topic', '?'), e)
+
+    def _on_message_inner(self, client, userdata, msg):
         # A retained delivery carries no trustworthy measurement time; treat it
         # as absence (the staleness policy then does the right thing) unless the
         # operator explicitly opts in for this source.
@@ -166,7 +173,14 @@ class MqttInputClient:
             data[r.address] = {'value': val, 'register': r, 'ts': self.last_msg_ts, 'mono': self.last_msg_mono}
         if data and self.publish_callback:
             self.updates += len(data)
-            self.publish_callback('mqtt', data)
+            try:
+                self.publish_callback('mqtt', data)
+            except Exception as e:  # noqa: BLE001
+                # external audit: an exception here propagates into paho's
+                # network thread, which has no guard — the thread dies,
+                # `connected` stays True, and the source is silently dead
+                # until a process restart. Log and keep the client alive.
+                logger.error("MQTT-input fan-out failed for %s: %s", msg.topic, e)
 
     # ── lifecycle (ModbusClient-compatible) ───────────────────────────────
     def connect(self) -> bool:

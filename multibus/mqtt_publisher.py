@@ -189,14 +189,11 @@ class MQTTPublisher:
         # hot path does prefix math only. Every publish under `from` is ALSO
         # sent under `to` (leaf renames applied) — old consumers keep receiving
         # byte-identical topics while they migrate. See MQTTConfig.compat_aliases.
-        self._compat_aliases: List[tuple] = []
-        for al in (getattr(config, 'compat_aliases', None) or []):
-            src = str(al.get('from', '')).rstrip('/')
-            dst = str(al.get('to', '')).rstrip('/')
-            if src and dst and src != dst:
-                self._compat_aliases.append(
-                    (src + '/', dst, dict(al.get('leaves') or {})))
+        self._compat_aliases: List[tuple] = self._build_compat_aliases(config)
         self.messages_aliased = 0
+        self.aliases_failed = 0
+        self.publish_drops = 0        # values not even attempted (broker down)
+        self.commands_dropped = 0     # HA commands lost to a full queue
         # per-device availability (drives the HA connectivity binary_sensor);
         # publish only on change so a steady device doesn't churn the topic
         self._availability_last: Dict[str, str] = {}
@@ -207,6 +204,18 @@ class MQTTPublisher:
 
         if config.enabled:
             self._setup_client()
+
+    @staticmethod
+    def _build_compat_aliases(config) -> List[tuple]:
+        """Normalize mqtt.compat_aliases once — rebuilt on update_config too
+        (audit DP-22: alias edits used to require a process restart)."""
+        out: List[tuple] = []
+        for al in (getattr(config, 'compat_aliases', None) or []):
+            src = str(al.get('from', '')).rstrip('/')
+            dst = str(al.get('to', '')).rstrip('/')
+            if src and dst and src != dst:
+                out.append((src + '/', dst, dict(al.get('leaves') or {})))
+        return out
 
     def _setup_client(self):
         """Setup MQTT client with callbacks."""
@@ -267,6 +276,10 @@ class MQTTPublisher:
             # state would otherwise show every device topic EMPTY until the
             # device next flips state — could be days
             self._availability_last.clear()
+            # heartbeat clocks reset with the value cache — a surviving clock
+            # would defer the first post-reconnect heartbeat by a full period
+            with self.lock:
+                self.last_publish_at.clear()
 
             # Re-publish online status
             status_topic = f"{self.config.topic_prefix}/status"
@@ -437,20 +450,35 @@ class MQTTPublisher:
             return True
 
         with self.lock:
-            if topic not in self.last_values:
-                return True
+            return self._should_publish_locked(topic, value)
 
-            if self.last_values[topic] != value:
-                return True
-
-            # heartbeat: unchanged, but republish if it's been quiet too long so
-            # the value keeps a fresh timestamp for HA/consumers
-            if self.heartbeat_interval > 0:
-                last = self.last_publish_at.get(topic, 0)
-                if time.time() - last >= self.heartbeat_interval:
-                    return True
-
+    def _should_publish_locked(self, topic: str, value: Any) -> bool:
+        """Body of _should_publish; caller holds self.lock."""
+        # NaN/Inf guard — see _should_publish (this body is also entered
+        # directly by publish_if_changed, so the guard lives here too)
+        if isinstance(value, float) and not math.isfinite(value):
             return False
+        if self.publish_mode == 'all':
+            return True
+        if topic not in self.last_values:
+            return True
+
+        # compare what would actually be SENT: floats publish rounded to 3
+        # decimals, and the cache stores the rounded form — comparing the raw
+        # float against it made every sub-millidigit wiggle look like a change
+        # (audit DP-24: 'changed' degenerated toward 'all' on noisy registers)
+        cmp_value = round(value, 3) if isinstance(value, float) else value
+        if self.last_values[topic] != cmp_value:
+            return True
+
+        # heartbeat: unchanged, but republish if it's been quiet too long so
+        # the value keeps a fresh timestamp for HA/consumers
+        if self.heartbeat_interval > 0:
+            last = self.last_publish_at.get(topic, 0)
+            if time.time() - last >= self.heartbeat_interval:
+                return True
+
+        return False
 
     def _confirm_publish(self, topic: str, value: Any):
         """
@@ -459,11 +487,15 @@ class MQTTPublisher:
         preventing phantom re-publishes from floating-point drift.
         """
         with self.lock:
-            if isinstance(value, float):
-                self.last_values[topic] = round(value, 3)
-            else:
-                self.last_values[topic] = value
-            self.last_publish_at[topic] = time.time()   # heartbeat reference
+            self._confirm_publish_locked(topic, value)
+
+    def _confirm_publish_locked(self, topic: str, value: Any) -> None:
+        """Body of _confirm_publish; caller holds self.lock."""
+        if isinstance(value, float):
+            self.last_values[topic] = round(value, 3)
+        else:
+            self.last_values[topic] = value
+        self.last_publish_at[topic] = time.time()   # heartbeat reference
 
     def _publish(self, topic: str, payload: str, retain: bool = None) -> bool:
         """Internal publish method."""
@@ -487,11 +519,17 @@ class MQTTPublisher:
                         leaf = topic[len(src):]
                         alias_topic = f"{dst}/{leaves.get(leaf, leaf)}"
                         try:
-                            self.client.publish(alias_topic, payload,
-                                                qos=self.config.qos, retain=retain)
-                            self.messages_aliased += 1
+                            info = self.client.publish(alias_topic, payload,
+                                                       qos=self.config.qos, retain=retain)
+                            # count on the rc, not on the attempt (audit
+                            # DP-22: the counter used to report failures as
+                            # successes, making alias loss invisible)
+                            if info.rc == mqtt.MQTT_ERR_SUCCESS:
+                                self.messages_aliased += 1
+                            else:
+                                self.aliases_failed += 1
                         except Exception:  # noqa: BLE001
-                            pass
+                            self.aliases_failed += 1
                 return True
             # NO_CONN/CONN_LOST: the socket died between the keepalive and this
             # publish. Connection state is owned by the paho callbacks
@@ -517,21 +555,32 @@ class MQTTPublisher:
         return self._publish(topic, payload, retain)
 
     def publish_if_changed(self, topic: str, value: Any, retain: bool = None) -> bool:
-        """Publish only if value changed. Two-phase: check → publish → confirm."""
-        if self._should_publish(topic, value):
+        """Publish only if value changed — the WHOLE check→publish→confirm
+        sequence holds the cache lock (audit DP-21): two threads racing the
+        same topic (a calc register colliding with a raw one) could otherwise
+        interleave as send(old)/send(new)/confirm(new)/confirm(old), leaving
+        the broker retaining one value while the cache believed another — and
+        the right value was never resent. client.publish is a queue append,
+        so holding the lock across it costs microseconds."""
+        with self.lock:
+            if not self._should_publish_locked(topic, value):
+                self.messages_skipped += 1
+                return False
             if self.publish(topic, value, retain):
-                self._confirm_publish(topic, value)
+                self._confirm_publish_locked(topic, value)
                 return True
             return False
-
-        self.messages_skipped += 1
-        return False
 
     def publish_register_data(self, poll_group: str, data: Dict[int, Dict],
                               topic_prefix: Optional[str] = None):
         """Publish register data from a poll group. ``topic_prefix`` routes the
         values of one device (Tier 2); omitted = legacy global prefix."""
         if not self.connected:
+            # audit DP-25: an outage used to be invisible in stats (skipped and
+            # failed both flat) — count the values that never got a chance
+            self.publish_drops += sum(
+                1 for it in data.values()
+                if it.get('register') is not None and it['register'].mqtt_enabled)
             return
 
         for address, item in data.items():
@@ -570,21 +619,29 @@ class MQTTPublisher:
                 if self._publish(discovery_topic, json.dumps(config), retain=True):
                     count += 1
 
-        # clear configs we published before but no longer do → no ghost sensor
-        cleared = self._clear_stale_discovery(self._ha_discovery_topics - published)
-        self._ha_discovery_topics = published
+        # clear configs we published before but no longer do → no ghost sensor.
+        # FAILED clears stay in the tracking set so the next republish retries
+        # them (audit DP-25: a clear lost to a broker blip left the ghost HA
+        # entity alive forever).
+        cleared, failed_clear = self._clear_stale_discovery(
+            self._ha_discovery_topics - published)
+        self._ha_discovery_topics = published | failed_clear
         logger.info(f"Published {count} HA discovery configs" +
                     (f" (cleared {cleared} stale)" if cleared else ""))
         return count
 
-    def _clear_stale_discovery(self, topics) -> int:
+    def _clear_stale_discovery(self, topics):
         """Delete retained HA discovery configs by publishing an empty payload
-        (HA treats an empty retained config as 'remove this entity')."""
-        n = 0
+        (HA treats an empty retained config as 'remove this entity').
+        Returns (cleared_count, failed_set) — the caller keeps failures
+        tracked so they retry on the next republish (audit DP-25)."""
+        n, failed = 0, set()
         for topic in topics:
             if self._publish(topic, "", retain=True):
                 n += 1
-        return n
+            else:
+                failed.add(topic)
+        return n, failed
 
     def publish_device_discovery(self, device_id: str, device_name: str,
                                  topic_prefix: str, registers: List[SelectedRegister],
@@ -649,10 +706,11 @@ class MQTTPublisher:
         published.add(bs_disc)
         if self._publish(bs_disc, json.dumps(bs), retain=True):
             count += 1
-        # clear this device's configs for registers it no longer exposes
-        cleared = self._clear_stale_discovery(
+        # clear this device's configs for registers it no longer exposes;
+        # failed clears stay tracked and retry on the next republish (DP-25)
+        cleared, failed_clear = self._clear_stale_discovery(
             self._device_discovery_topics.get(device_id, set()) - published)
-        self._device_discovery_topics[device_id] = published
+        self._device_discovery_topics[device_id] = published | failed_clear
         logger.info(f"Published {count} HA discovery configs for device {device_id}" +
                     (f" (cleared {cleared} stale)" if cleared else ""))
         return count
@@ -681,6 +739,13 @@ class MQTTPublisher:
         self._command_map[command_topic] = (device_id, register)
         if self.client is not None:
             try:
+                # clear any RETAINED command first (external audit E7): an
+                # operator's one-off `mosquitto_pub -r` test or an HA
+                # automation with retain:true would otherwise re-write the
+                # hardware on EVERY reconnect/resubscribe, forever — each
+                # replay passing validation and looking like a legitimate
+                # write in the audit log
+                self.client.publish(command_topic, "", retain=True)
                 self.client.subscribe(command_topic)
             except Exception:  # noqa: BLE001
                 pass
@@ -753,10 +818,19 @@ class MQTTPublisher:
             entry = self._command_map.get(message.topic)
             if entry is None or self._write_handler is None:
                 return
+            # a RETAINED delivery is the broker replaying the past, not an
+            # operator acting now — never actuate hardware from it (external
+            # audit E7; the read path guards retained the same way)
+            if getattr(message, "retain", False):
+                if message.payload:                    # ignore our own clears
+                    logger.warning("MQTT command on %s ignored: retained "
+                                   "message (stale write replay)", message.topic)
+                return
             device_id, register = entry
             payload = message.payload.decode("utf-8", "replace").strip()
             self._command_queue.put_nowait((device_id, register, payload))
         except queue.Full:
+            self.commands_dropped += 1
             logger.warning("MQTT command on %s dropped: write queue full",
                            getattr(message, "topic", "?"))
         except Exception as e:  # noqa: BLE001
@@ -850,11 +924,33 @@ class MQTTPublisher:
         return config
 
     def update_config(self, new_config: MQTTConfig):
-        """Update MQTT configuration."""
+        """Update MQTT configuration. A change to the connection identity
+        (broker/credentials/TLS/topic prefix) forces a reconnect: the LWT is
+        armed at client setup with the OLD prefix (audit DP-23), so without
+        it a prefix change left the death notice on a topic nobody watches
+        and a stale retained 'online' on the old prefix forever."""
+        old = self.config
+        ident = ('broker', 'port', 'username', 'password', 'topic_prefix',
+                 'tls_enabled', 'tls_ca_cert', 'tls_client_cert',
+                 'tls_client_key', 'tls_insecure')
+        changed = any(getattr(old, k, None) != getattr(new_config, k, None)
+                      for k in ident)
+        prefix_changed = old.topic_prefix != new_config.topic_prefix
+        if prefix_changed and self.connected:
+            # clear the OLD prefix's retained liveness topics while we still
+            # can — consumers must not read a ghost 'online' forever
+            try:
+                self.client.publish(f"{old.topic_prefix}/status", "", qos=1, retain=True)
+            except Exception:  # noqa: BLE001
+                pass
         self.config = new_config
         self.publish_mode = new_config.publish_mode
         self.heartbeat_interval = int(getattr(new_config, 'heartbeat_interval', 0) or 0)
+        self._compat_aliases = self._build_compat_aliases(new_config)   # DP-22
         logger.info(f"MQTT config updated: {new_config.broker}:{new_config.port}")
+        if changed and self.config.enabled:
+            logger.info("MQTT connection identity changed — reconnecting to re-arm LWT")
+            self.reconnect()
 
     def update_registers(self, registers: List[SelectedRegister]):
         """Update register list."""
@@ -900,6 +996,9 @@ class MQTTPublisher:
             'messages_skipped': self.messages_skipped,
             'messages_failed': self.messages_failed,
             'messages_aliased': self.messages_aliased,
+            'aliases_failed': self.aliases_failed,
+            'publish_drops': self.publish_drops,
+            'commands_dropped': self.commands_dropped,
             'publish_mode': self.publish_mode,
             'connection_count': self.connection_count,
             'registered_topics': len(self._register_map),

@@ -82,3 +82,62 @@ def test_alias_survives_a_config_roundtrip(tmp_path):
     cfg.save_yaml_config()
     saved = yaml.safe_load(cfg_file.read_text())
     assert saved["mqtt"]["compat_aliases"] == ALIASES
+
+
+# ── audit DP-22/23/25: alias truth, config identity, retry-able clears ───────
+
+def test_alias_counters_split_on_rc():
+    p = _pub(ALIASES)
+    p._publish("meters/umg512/frequency", "50.0")     # primary+alias both ok
+    assert p.messages_aliased == 1 and p.aliases_failed == 0
+    p.client.publish.return_value = MagicMock(rc=mqtt.MQTT_ERR_NO_CONN)
+    # primary fails → no alias attempt either; simulate primary-ok/alias-fail
+    calls = {"n": 0}
+    def _pub_side(topic, payload, qos=0, retain=None):
+        calls["n"] += 1
+        rc = mqtt.MQTT_ERR_SUCCESS if calls["n"] % 2 == 1 else mqtt.MQTT_ERR_NO_CONN
+        return MagicMock(rc=rc)
+    p.client.publish.side_effect = _pub_side
+    p._publish("meters/umg512/frequency", "50.1")
+    assert p.aliases_failed == 1                       # failure counted as such
+
+
+def test_update_config_rebuilds_aliases_and_reconnects_on_identity_change():
+    p = _pub()
+    assert p._compat_aliases == []
+    recon = []
+    p.reconnect = lambda: recon.append(1)
+    import dataclasses
+    # same identity → no reconnect; aliases rebuilt
+    cfg2 = dataclasses.replace(p.config, compat_aliases=ALIASES)
+    p.update_config(cfg2)
+    assert len(p._compat_aliases) == 1 and recon == []
+    # prefix change = identity change → reconnect (re-arms the LWT)
+    cfg3 = dataclasses.replace(cfg2, topic_prefix="meters/renamed", enabled=True)
+    p.update_config(cfg3)
+    assert recon == [1]
+
+
+def test_failed_discovery_clear_is_retried():
+    from multibus.config import SelectedRegister
+    p = _pub()
+    reg = SelectedRegister(address=1, name="power", label="P", unit="W",
+                           data_type="uint16", poll_group="normal")
+    p.publish_device_discovery("dev1", "Dev", "meters/dev1", [reg])
+    ghosts = set(p._device_discovery_topics["dev1"])
+    # next republish drops the register; the CLEAR publishes fail
+    p._publish = lambda t, pl, retain=None: bool(pl)   # empty payload → fail
+    p.publish_device_discovery("dev1", "Dev", "meters/dev1", [])
+    # the un-cleared ghost stays tracked → retried next time
+    assert any(g in p._device_discovery_topics["dev1"] for g in ghosts)
+
+
+def test_outage_drops_are_counted():
+    from multibus.config import SelectedRegister
+    p = _pub()
+    p.connected = False
+    reg = SelectedRegister(address=1, name="power", label="P", unit="W",
+                           data_type="uint16", poll_group="normal")
+    p.publish_register_data("normal", {1: {"register": reg, "value": 5}})
+    assert p.publish_drops == 1
+    assert p.get_stats()["publish_drops"] == 1

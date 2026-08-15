@@ -422,42 +422,54 @@ class InfluxDBPublisher:
             return
         try:
             while True:
-                # take a run of consecutive same-bucket entries (order preserved)
+                # take up to 5000 entries and GROUP them by bucket (audit
+                # DP-26: consecutive-run chunking degenerated to a few points
+                # per write with interleaved multi-device traffic — hundreds
+                # of tiny synchronous writes per drain). Points carry their
+                # own timestamps, so per-bucket order inside one write batch
+                # is irrelevant to Influx; failures rebuffer per bucket.
                 with self._buf_lock:
-                    chunk = []
-                    chunk_bucket = None
-                    while self._buffer and len(chunk) < 5000:
-                        ts, bucket, line = self._buffer[0]
-                        if chunk_bucket is None:
-                            chunk_bucket = bucket
-                        elif bucket != chunk_bucket:
-                            break
-                        chunk.append(self._buffer.popleft())
-                if not chunk:
+                    grouped: Dict[Optional[str], list] = {}
+                    while self._buffer and sum(len(v) for v in grouped.values()) < 5000:
+                        entry = self._buffer.popleft()
+                        grouped.setdefault(entry[1], []).append(entry)
+                if not grouped:
                     break
-                try:
-                    wapi.write(bucket=chunk_bucket,
-                               record="\n".join(line for _, _, line in chunk))
-                    self.points_replayed += len(chunk)
-                except Exception as e:  # noqa: BLE001
-                    # Only 400/422 are PERMANENT rejections of this data
-                    # (malformed line protocol, field-type conflict) — re-buffering
-                    # those would block every later point behind the poison chunk
-                    # forever. Drop them and keep draining. 401/403/404 are
-                    # OPERATOR-fixable (rotated token, missing bucket — audit
-                    # DP-3): dropping would destroy up to 5000 good points per
-                    # chunk, so they re-buffer like 429/5xx/connection errors.
-                    _status = getattr(e, "status", None)
-                    if isinstance(_status, int) and _status in (400, 422):
-                        self.points_dropped = getattr(self, "points_dropped", 0) + len(chunk)
-                        self._invalidate_change_cache()      # audit DP-13
-                        logger.error(f"InfluxDB replay dropped {len(chunk)} points "
-                                     f"(permanent {_status}: {e}) — poison chunk skipped")
+                failed_stop = False
+                for chunk_bucket, chunk in grouped.items():
+                    if failed_stop:
+                        # a transient failure already stopped this drain —
+                        # return the untried buckets to the buffer untouched
+                        with self._buf_lock:
+                            self._buffer.extendleft(reversed(chunk))
                         continue
-                    with self._buf_lock:
-                        self._buffer.extendleft(reversed(chunk))
-                    logger.warning(f"InfluxDB replay failed ({e}) — will retry")
-                    self._handle_write_error(e)
+                    try:
+                        wapi.write(bucket=chunk_bucket,
+                                   record="\n".join(line for _, _, line in chunk))
+                        self.points_replayed += len(chunk)
+                    except Exception as e:  # noqa: BLE001
+                        # Only 400/422 are PERMANENT rejections of this data
+                        # (malformed line protocol, field-type conflict) —
+                        # re-buffering those would block every later point
+                        # behind the poison chunk forever. Drop them and keep
+                        # draining. 401/403/404 are OPERATOR-fixable (rotated
+                        # token, missing bucket — audit DP-3): dropping would
+                        # destroy up to 5000 good points per chunk, so they
+                        # re-buffer like 429/5xx/connection errors.
+                        _status = getattr(e, "status", None)
+                        if isinstance(_status, int) and _status in (400, 422):
+                            with self._buf_lock:
+                                self.points_dropped += len(chunk)
+                            self._invalidate_change_cache()      # audit DP-13
+                            logger.error(f"InfluxDB replay dropped {len(chunk)} points "
+                                         f"(permanent {_status}: {e}) — poison chunk skipped")
+                            continue
+                        with self._buf_lock:
+                            self._buffer.extendleft(reversed(chunk))
+                        logger.warning(f"InfluxDB replay failed ({e}) — will retry")
+                        self._handle_write_error(e)
+                        failed_stop = True
+                if failed_stop:
                     return
             logger.info(f"InfluxDB replay complete: {pending} points delivered")
             self._persist_buffer()          # buffer drained → clear the snapshot
@@ -683,7 +695,11 @@ class InfluxDBPublisher:
         if poll_group:
             point = point.tag('poll_group', poll_group)
 
-        field_name = register.name.lower().replace('[', '_').replace(']', '').replace('_g_', '')
+        # strip only the Janitza '_G_' PREFIX (audit DP-27: the unanchored
+        # replace also collapsed an interior '_g_', letting two different
+        # names share one field; verified identical on every live name)
+        _name_l = register.name.lower().replace('[', '_').replace(']', '')
+        field_name = _name_l[3:] if _name_l.startswith('_g_') else _name_l
         if isinstance(safe_val, (int, float)):
             point = point.field(field_name, float(safe_val))
             point = point.field('value', float(safe_val))
@@ -696,9 +712,21 @@ class InfluxDBPublisher:
         otherwise (or on enqueue failure) into the replay buffer. Either path
         guarantees eventual delivery within the buffer bounds."""
         bucket = bucket or self.config.bucket
-        if self.connected and self.write_api:
+        # snapshot the reference under the lock (audit DP-29): the monitor
+        # swaps + closes write_api during reconnect; a poller reading the
+        # attribute racily could enqueue into a just-closed Rx subject.
+        # NON-blocking on purpose — the hot path must never stall behind a
+        # slow reconnect (design contract, tested): if the monitor holds the
+        # lock mid-swap, the point simply takes the buffer path.
+        wapi = None
+        if self.lock.acquire(blocking=False):
             try:
-                self.write_api.write(bucket=bucket, record=point)
+                wapi = self.write_api if self.connected else None
+            finally:
+                self.lock.release()
+        if wapi is not None:
+            try:
+                wapi.write(bucket=bucket, record=point)
                 self.writes_total += 1
                 self.last_write_ts = time.time()
                 return

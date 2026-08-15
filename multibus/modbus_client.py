@@ -925,7 +925,8 @@ class ModbusClient:
         return None
 
     def write_value(self, address: int, register_type: str, data_type: str,
-                    value, scale: float = 1.0, prefer_fc6: bool = False):
+                    value, scale: float = 1.0, offset: float = 0.0,
+                    prefer_fc6: bool = False):
         """Encode `value` and write it. Holding → RegisterEncoder (FC6/FC16),
         respecting the device's byte order and scale; coil → a boolean (FC5).
         Returns (ok, error, written_words). Input/discrete are read-only.
@@ -938,7 +939,8 @@ class ModbusClient:
             return False, f"{register_type!r} registers are read-only", None
         from .encoder import RegisterEncoder
         try:
-            words = RegisterEncoder(self.byte_order).encode(value, data_type, scale)
+            words = RegisterEncoder(self.byte_order).encode(value, data_type, scale,
+                                                            offset=offset)
         except Exception as e:  # noqa: BLE001
             return False, f"encode failed: {e}", None
         ok, err = self.connection.write(address, register_type="holding",

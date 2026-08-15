@@ -1,5 +1,83 @@
 # Changelog
 
+## 3.28.0
+
+### 2026-08-15 — data-path audit CLOSED (batch 3) + external audit criticals
+
+Closes every remaining item of the internal data-path audit (DP-2, 18, 19,
+21-27, 29-33, 35) and folds in the verified criticals of an independent
+external audit (run against 3.25.1; adjudication:
+`.audit/audit-2026-08-15-external-adjudication.md`).
+
+- **Vmeter zero-serving closed (external E1, CRITICAL):** a template row
+  whose source NEVER resolved (rename/deselect/typo) was skipped with "keep
+  last value" — but there was no last value: the zero-seeded block served a
+  plausible 0 W to the inverter while the meter reported healthy, violating
+  the spec's own "absence is never encodable" rule. Such a row now fails the
+  freshness verdict (meter withheld LOUDLY, `unresolved` event) until it
+  resolves once; the pinned-gap contract still holds for rows seen before.
+- **One master per bridged line (external E2, CRITICAL + DP-19):** two
+  rtu-tcp devices on one bridge endpoint were accepted and then evicted each
+  other forever (bridge is kickolduser). The device validator now enforces
+  endpoint uniqueness like the plain-RTU branch does for serial ports, and
+  Test-connection refuses an endpoint a running device is polling.
+- **Retained commands never actuate hardware (external E7):** a retained
+  MQTT command (one `mosquitto_pub -r` test, one HA `retain: true`)
+  re-wrote the device on EVERY reconnect, passing all validation. Retained
+  deliveries on command topics are dropped and cleared at subscribe.
+- **Test suite no longer green by filename luck (external E8):** an
+  API_KEY env leak made the auth/RBAC suite order-dependent (reproduced:
+  25-82 failures under shuffling). Autouse isolation fixture; their exact
+  failing order now passes.
+- **Ship closed-er:** default `auth_password` "" (matches the shipped
+  example) and `AuthState.reload` refuses to enable login with an
+  empty/default password — covering hand-edit/import/restore, not just the
+  UI route. MQTT-TLS test probe fails CLOSED. `canonical_url` escaped
+  against `</script>` stored XSS. Security headers applied to the
+  login-shell short-circuit. TLS private key 0600 from creation.
+- **Write path is now the exact inverse of the read path:** `offset` is
+  applied on every write (raw = (value−offset)×scale), threaded through
+  the HA write, the manual route, the dead-man lease revert and both
+  read-backs — a scale:10/offset:−40 setpoint written as 30 °C used to
+  land as −10 °C, including on the safety revert.
+- **MonotonicFilter is symmetric:** an implausible UPWARD step (>50%)
+  needs the same coherent confirmation as a reset — a flipped high word
+  no longer injects a phantom mega-delta and poisons the baseline.
+- **MQTT correctness tail (DP-2/21..25):** the whole
+  check→publish→confirm sequence holds the cache lock (no more racing
+  same-topic writers desyncing broker vs cache); floats compare rounded
+  (changed-mode no longer degenerates to all on noisy registers);
+  update_config reconnects on connection-identity change (re-arms the LWT
+  on the new prefix, clears the old retained status) and rebuilds
+  compat_aliases; alias counters split on rc; failed HA-discovery clears
+  retry; outage drops + command drops are counted.
+- **Influx tail (DP-26/27/29):** replay groups per bucket (no more tiny
+  interleaved writes); `_g_` stripped as a PREFIX only (interior matches
+  collapsed two names into one field — verified identical on every live
+  name); write_api snapshot non-blocking under the swap lock.
+- **Bridge tail (DP-18/30/31/32):** dead-PID lockfile sweep runs on every
+  reconcile (an orphan lock beside a LIVE ser2net used to kill the bus
+  indefinitely); /health reports the DATA path (ser2net dead = unhealthy,
+  and the container healthcheck uses it); portmap fsync + loud corrupt
+  load + entry validation; threaded control API with client timeouts;
+  zero-adapter reconciles stop rewriting config every 10s; serial params
+  env-overridable (BRIDGE_SERIAL_PARAMS).
+- **Store/diag (DP-35/33):** the HA write read-back store update is a
+  whole-dict swap; bus_trace re-points the TransactionManager's captured
+  send so /api/bus-trace works again on pymodbus 3.15.
+- **WebSocket init serializes a snapshot** of the live store, not the live
+  dict (a poller insert mid-dumps dropped the socket); the MQTT-input
+  fan-out is exception-guarded so one poisoned payload can no longer
+  silently kill the source's network thread; the boot path passes
+  allow_nonlan_http_devices like the other two constructors.
+- Suite: 840 passed; the external report's exact order-dependent failure
+  case re-run green. Remaining external items adjudicated to backlog
+  (decode-pipeline unification, vmeter unit/counter failover semantics,
+  self-heal on truncated-valid YAML, sm16 encode, ws API-key gating) and
+  go-public (GHCR workflow, example config, license headers, capacity
+  re-run) — see the adjudication file.
+
+
 ## 3.27.0
 
 ### 2026-08-15 — data-path audit batch 2 (DP-5..14, 16 + DP-34/36)

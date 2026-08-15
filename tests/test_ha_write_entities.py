@@ -221,7 +221,7 @@ def _ctrl_tpl():
 
 class _FakeClient:
     def __init__(self): self.reg = {}
-    def write_value(self, address, register_type, data_type, value, scale=1.0, prefer_fc6=False):
+    def write_value(self, address, register_type, data_type, value, scale=1.0, offset=0.0, prefer_fc6=False):
         self.reg[address] = value
         return True, None, [int(float(value))]
     def read_register(self, address, data_type, register_type):

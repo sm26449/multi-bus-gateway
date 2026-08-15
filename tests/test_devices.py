@@ -230,7 +230,10 @@ def test_drain_writes_each_bucket_separately():
     pub.connected = True
     pub._drain_buffer()
     calls = [(c.kwargs["bucket"], c.kwargs["record"]) for c in wapi.write.call_args_list]
-    assert calls == [("b", "a 1"), ("warehouse", "w 1"), ("b", "b 2")]
+    # audit DP-26: entries are GROUPED per bucket (one write per bucket, order
+    # preserved within it) instead of run-length chunks that degenerated to
+    # tiny writes under interleaved multi-device traffic
+    assert sorted(calls) == sorted([("b", "a 1\nb 2"), ("warehouse", "w 1")])
     assert pub.points_replayed == 3
 
 

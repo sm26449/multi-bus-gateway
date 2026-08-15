@@ -48,9 +48,13 @@ def test_legacy_text_row_degrades_to_missing_not_frozen_block():
     # the text row is a gap (missing), the numeric row is served
     served = dict(vm._regs_out)
     assert 0x0000 in served and 0x0002 not in served
-    # the fail-safe verdict is still computed (rebuild completed): the numeric
-    # row is fresh, the text row is a gap — legacy gap semantics keep all_fresh
-    assert vm._legacy_all_fresh is True
+    # the fail-safe verdict is still computed (rebuild completed) — that was
+    # H1's point: no frozen block with a disarmed fail-safe. E1 tightened the
+    # verdict itself: a row that has NEVER resolved (this text row cannot)
+    # would otherwise serve a hard 0 from the zero-seeded block, so the meter
+    # is withheld LOUDLY instead — down, not silently wrong.
+    assert vm._legacy_all_fresh is False
+    assert any(e.get("kind") == "unresolved" for e in vm.stats.events)
     # edge-triggered: exactly one warn event for the unencodable row
     warns = [e for e in list(vm.stats.events) if e.get("kind") == "encode"]
     assert len(warns) == 1

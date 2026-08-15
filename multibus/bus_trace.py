@@ -171,13 +171,15 @@ class BusTrace:
         if orig_send is None or orig_recv is None:
             return  # not a sync pymodbus client — nothing to shadow
 
-        def send(request, _orig=orig_send):
+        def send(request, addr=None, _orig=orig_send):
             if self.enabled and request:
                 with state["lock"]:
                     if state["cur"] is not None:
                         self._commit_locked_state(state)
                     state["cur"] = {"ts": time.time(), "t0": time.perf_counter(),
                                     "tx": bytes(request), "rx": b""}
+            if addr is not None:
+                return _orig(request, addr=addr)
             return _orig(request)
 
         def recv(size, _orig=orig_recv):
@@ -191,6 +193,13 @@ class BusTrace:
             return data
 
         client.send, client.recv = send, recv
+        # pymodbus 3.15 (audit DP-33): TransactionManager captures the BOUND
+        # send at construction (tm.low_level_send = client.send), so the
+        # instance patch above never sees outgoing frames — re-point the
+        # captured reference too, or /api/bus-trace stays empty on rtu-tcp.
+        tm = getattr(client, "transaction", None)
+        if tm is not None and hasattr(tm, "low_level_send"):
+            tm.low_level_send = send
 
     def commit(self, client) -> None:
         """Close the in-flight transaction (call after each read/write attempt).

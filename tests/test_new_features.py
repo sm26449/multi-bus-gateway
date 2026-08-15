@@ -194,6 +194,21 @@ except Exception:                     # noqa: BLE001
 _needs_tc = pytest.mark.skipif(not _HAS_TESTCLIENT, reason="httpx/TestClient not installed")
 
 
+@pytest.fixture(autouse=True)
+def _isolate_api_key_env():
+    """External audit E8: _client() used to LEAK API_KEY into os.environ —
+    every later-created app (alphabetically-later test files!) then demanded
+    X-API-Key, so the suite was green only by filename ordering. Snapshot and
+    restore around every test in this module."""
+    saved = {k: _os.environ.get(k) for k in ("API_KEY", "JANITZA_API_KEY")}
+    yield
+    for k, v in saved.items():
+        if v is None:
+            _os.environ.pop(k, None)
+        else:
+            _os.environ[k] = v
+
+
 def _client(api_key=None):
     _os.environ.pop("API_KEY", None)
     _os.environ.pop("JANITZA_API_KEY", None)
