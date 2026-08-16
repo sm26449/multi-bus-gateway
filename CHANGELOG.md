@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.35.6
+
+### 2026-08-16 — Monitor empty-state placeholder, layout-aware and wrapped
+
+The last mobile quirk from the 3.35.5 sweep:
+
+- **The empty-chart hint no longer clips on phones** — the canvas text now
+  word-wraps to the chart width instead of drawing one long line.
+- **Direction follows the layout**: below 1024 px the value list sits
+  *under* the chart (the CSS flips the order), so both the canvas hint and
+  the "Getting started" banner now say "the list below" there; wide
+  touch/mouse layouts keep the "on the left" copy. New i18n keys
+  `monitor.hintNarrow` / `monitor.emptyHintNarrow` (EN+RO); the old touch
+  banner copy said "the list above", which was wrong everywhere.
+
+Known dev-mode wart (noted, not fixed here): several runtime paths
+(`config/influx_buffer.jsonl`, `config/audit.jsonl`, `config/events.jsonl`,
+snapshots) are CWD-relative, so an instance launched with `-c` pointing at
+another directory spills them into `./config` — harmless in the container
+(CWD=/app) but it polluted the repo checkout and briefly flaked the test
+suite during a local demo run.
+
 ## 3.35.5
 
 ### 2026-08-16 — mobile polish (post-deploy verification pass)

@@ -49,11 +49,16 @@ Object.assign(JanitzaMonitor.prototype, {
         const hint = document.createElement('div');
         hint.className = 'hint-banner';
         hint.id = 'monitorHint';
-        // device-appropriate copy: touch users tap, mouse users can also drag/zoom
+        // device-appropriate copy: touch users tap, mouse users can also drag/zoom.
+        // On narrow layouts the value list sits BELOW the chart (the CSS flips
+        // the order at 1024px), so the direction in the copy must follow.
         const touch = window.matchMedia('(pointer: coarse)').matches;
-        const body = touch
-            ? this.t('monitor.hintTouch', 'Tap a value in the list above to add it to the live graph. Tap again in the list to highlight it.')
-            : this.t('monitor.hintMouse', 'Click or drag measurements from the left sidebar onto the graph to monitor them in real-time. Use mouse wheel to zoom and drag to pan when zoomed.');
+        const narrow = window.matchMedia('(max-width: 1024px)').matches;
+        const body = narrow
+            ? this.t('monitor.hintNarrow', 'Tap a value in the list below the chart to add it to the live graph. Tap again to highlight it.')
+            : touch
+                ? this.t('monitor.hintTouch', 'Tap a value in the list on the left to add it to the live graph. Tap again in the list to highlight it.')
+                : this.t('monitor.hintMouse', 'Click or drag measurements from the left sidebar onto the graph to monitor them in real-time. Use mouse wheel to zoom and drag to pan when zoomed.');
         hint.innerHTML = `
             <span class="hint-banner-icon">💡</span>
             <span class="hint-banner-text">
@@ -752,14 +757,33 @@ Object.assign(JanitzaMonitor.prototype, {
             // rectangle with zero guidance (History has its banner; Monitor
             // needs the equivalent). Theme-aware, redrawn on resize.
             ctx.textAlign = 'center';
+            // Direction follows the layout (below 1024px the list is under the
+            // chart), and the hint word-wraps so it never clips on a phone.
+            const narrow = window.matchMedia('(max-width: 1024px)').matches;
+            const hintText = narrow
+                ? this.t('monitor.emptyHintNarrow', 'Tap a value in the list below to start charting it live.')
+                : this.t('monitor.emptyHint', 'Click a value in the list on the left to start charting it live.');
+            ctx.font = '13px system-ui, sans-serif';
+            const maxW = Math.max(120, width - 32);
+            const lines = [];
+            let line = '';
+            for (const word of hintText.split(' ')) {
+                const test = line ? `${line} ${word}` : word;
+                if (line && ctx.measureText(test).width > maxW) {
+                    lines.push(line); line = word;
+                } else {
+                    line = test;
+                }
+            }
+            if (line) lines.push(line);
+            const titleY = height / 2 - 14 - (lines.length - 1) * 9;
             ctx.fillStyle = theme.text;
             ctx.font = '600 15px system-ui, sans-serif';
             ctx.fillText(this.t('monitor.emptyTitle', 'Nothing monitored yet'),
-                         width / 2, height / 2 - 14);
+                         width / 2, titleY);
             ctx.fillStyle = theme.textFaint;
             ctx.font = '13px system-ui, sans-serif';
-            ctx.fillText(this.t('monitor.emptyHint', 'Click a value in the list on the left to start charting it live.'),
-                         width / 2, height / 2 + 10);
+            lines.forEach((l, i) => ctx.fillText(l, width / 2, titleY + 24 + i * 18));
             ctx.textAlign = 'left';
             return;
         }
