@@ -71,7 +71,7 @@ Object.assign(JanitzaMonitor.prototype, {
             ov.setAttribute('aria-labelledby', 'loginTitle');
             ov.innerHTML = `
               <form class="login-card" id="loginForm" autocomplete="on">
-                <div class="login-logo"><i class="bi bi-lightning-charge-fill" aria-hidden="true"></i> ${this.t('app.title', 'Modbus Gateway')}</div>
+                <div class="login-logo"><i class="bi bi-lightning-charge-fill" aria-hidden="true"></i> ${this.t('app.title', 'Multi-Bus Gateway')}</div>
                 <h3 id="loginTitle">${this.t('login.title', 'Sign in')}</h3>
                 <label class="sr-only" for="loginUser">${this.t('login.user', 'Username')}</label>
                 <input class="input" id="loginUser" placeholder="${this.t('login.user', 'Username')}" autocomplete="username" autofocus>

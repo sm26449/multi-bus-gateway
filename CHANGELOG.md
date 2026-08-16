@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.35.5
+
+### 2026-08-16 — mobile polish (post-deploy verification pass)
+
+Full mobile sweep (390×844, Playwright) across all 9 pages on a demo
+instance: no page-level horizontal scroll anywhere; wide tables scroll in
+their own containers. Two real quirks found and fixed:
+
+- **Login overlay said "Modbus Gateway"** — the overlay renders before the
+  language pack loads, so the pre-rebrand hardcoded fallback showed on
+  every cold login. Fallback updated to "Multi-Bus Gateway".
+- **History toolbar crushed its selects on phones** (device select showed
+  ~2 characters). The chart toolbar now wraps below 1024 px and each
+  select keeps a readable minimum width.
+
 ## 3.35.4
 
 ### 2026-08-16 — capacity campaign re-run on the current version

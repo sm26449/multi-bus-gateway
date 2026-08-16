@@ -295,6 +295,21 @@
     .monitor-main {
         min-height: 240px;
     }
+
+    /* Phones: let the chart toolbar wrap instead of crushing the selects
+       down to two letters — each select keeps a readable minimum width. */
+    .graph-toolbar {
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    .graph-controls {
+        flex-wrap: wrap;
+    }
+
+    .graph-controls .input-sm {
+        min-width: 100px;
+    }
 }
 
 /* ==================== HISTORY REGISTER PICKER ==================== */
