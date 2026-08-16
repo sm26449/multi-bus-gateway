@@ -125,7 +125,8 @@ class GatewayApp:
             self.influxdb_publisher = InfluxDBPublisher(
                 config=self.config.influxdb,
                 registers=self.config.selected_registers,
-                publish_mode=self.config.influxdb.publish_mode
+                publish_mode=self.config.influxdb.publish_mode,
+                buffer_dir=self.config.config_path.parent
             )
             logger.info("InfluxDB publisher initialized")
 
@@ -139,7 +140,8 @@ class GatewayApp:
         # — a non-big device (EM24, Fronius TS) must not decode word-swapped
         # garbage after a restart. create_api builds its own from the same files.
         from multibus.device_template import TemplateRegistry
-        self.template_registry = TemplateRegistry()
+        self.template_registry = TemplateRegistry(
+            user_dir=self.config.config_path.parent / 'device_templates')
 
         for device in self.config.devices:
             if device.primary:
@@ -217,12 +219,15 @@ class GatewayApp:
                     return float(getattr(d.connection, 'stale_after_s', 30) or 30)
             return None
 
+        _cfg_dir = self.config.config_path.parent
         self.vmeter_manager = VirtualMeterManager(self.app.state.current_values,
                                                   device_values=self.app.state.device_values,
                                                   primary_device_id=self.config.primary_device.id,
                                                   mqtt_publisher=self.mqtt_publisher,
                                                   modbus_client=self.modbus_client,
-                                                  bounds_for=_device_stale_bound)
+                                                  bounds_for=_device_stale_bound,
+                                                  config_path=str(_cfg_dir / 'virtual_meters.yaml'),
+                                                  templates_dir=str(_cfg_dir / 'templates'))
         self.app.state.vmeter_manager = self.vmeter_manager   # for the /api/virtual-meters routes
 
         # Ensure each non-primary device's InfluxDB bucket exists (off-thread;
@@ -457,8 +462,9 @@ def main():
     ssl_kwargs = {}
     ui_tls = getattr(monitor.config.ui, "tls_enabled", False)
     if ui_tls:
-        cert = monitor.config.ui.tls_cert or "config/certs/ui.crt"
-        key = monitor.config.ui.tls_key or "config/certs/ui.key"
+        _certs_dir = monitor.config.config_path.parent / "certs"
+        cert = monitor.config.ui.tls_cert or str(_certs_dir / "ui.crt")
+        key = monitor.config.ui.tls_key or str(_certs_dir / "ui.key")
         try:
             _ensure_self_signed(cert, key)
             ssl_kwargs = {"ssl_certfile": cert, "ssl_keyfile": key}

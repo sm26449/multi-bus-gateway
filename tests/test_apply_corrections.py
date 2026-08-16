@@ -265,7 +265,12 @@ def _query_app(regs):
         read_register=lambda addr, dt, rt: {1: 65535, 2: 2305, 3: 4}.get(addr),
         read_registers_batch=lambda rs: {r["address"]: {1: 65535, 2: 2305, 3: 4}.get(r["address"]) for r in rs},
     )
-    app, _ = create_api(Config(), fake, None, None)
+    # temp-anchored Config: create_api derives runtime paths (audit/events/…)
+    # from config_path.parent — a bare Config() would write into ./config
+    import os as _o
+    import tempfile as _tf
+    app, _ = create_api(Config(_o.path.join(_tf.mkdtemp(prefix="mbg-ac-"), "config.yaml")),
+                        fake, None, None)
     return TestClient(app, raise_server_exceptions=False)
 
 

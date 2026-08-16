@@ -58,10 +58,14 @@ class InfluxDBPublisher:
     """
 
     def __init__(self, config: InfluxDBConfig, registers: List[SelectedRegister],
-                 publish_mode: str = 'changed'):
+                 publish_mode: str = 'changed', buffer_dir=None):
         self.config = config
         self.registers = registers
         self.publish_mode = publish_mode
+        # Directory for the on-disk replay-buffer snapshot. Callers pass the
+        # config.yaml directory so a `-c /elsewhere/config.yaml` run does not
+        # spill into ./config; the bare default keeps old CWD behavior.
+        self._buffer_dir = buffer_dir
 
         self.client = None
         self.write_api = None
@@ -107,13 +111,16 @@ class InfluxDBPublisher:
         self.points_recovered = 0        # loaded from disk at boot
 
         # Optional on-disk persistence so the buffer survives a restart during
-        # an outage. Snapshot file lives next to config.yaml.
+        # an outage. Snapshot file lives next to config.yaml (buffer_dir);
+        # INFLUX_BUFFER_PATH overrides everything.
         self._persist_path = None
         self._persist_dirty = False
         if getattr(config, 'buffer_persist', False):
             from pathlib import Path
+            default = (Path(self._buffer_dir) / 'influx_buffer.jsonl'
+                       if self._buffer_dir else Path('config/influx_buffer.jsonl'))
             self._persist_path = Path(os.environ.get(
-                'INFLUX_BUFFER_PATH', 'config/influx_buffer.jsonl'))
+                'INFLUX_BUFFER_PATH', str(default)))
             self._load_persisted_buffer()
 
         # Reconnection thread

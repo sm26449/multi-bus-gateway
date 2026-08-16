@@ -733,7 +733,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # ── Persisted cross-subsystem event log + alerting hooks (Status page) ──
     from .event_log import EventLog
     from .alerts import AlertManager
-    event_log = EventLog()
+    event_log = EventLog(str(config.config_path.parent / "events.jsonl"))
     app.state.event_log = event_log
     alert_mgr = AlertManager(getattr(config, 'alerts', {}), mqtt_publisher, event_log)
     app.state.alert_manager = alert_mgr
@@ -917,7 +917,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # registry, so behaviour is unchanged.
     from .device_template import TemplateRegistry
     if template_registry is None:
-        template_registry = TemplateRegistry()
+        template_registry = TemplateRegistry(
+            user_dir=config.config_path.parent / "device_templates")
     app.state.template_registry = template_registry
 
     # ── Config snapshots (rollback + last-known-good) ───────────────────────
@@ -2448,7 +2449,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     influxdb_publisher = InfluxDBPublisher(
                         config=config.influxdb,
                         registers=config.selected_registers,
-                        publish_mode=config.influxdb.publish_mode
+                        publish_mode=config.influxdb.publish_mode,
+                        buffer_dir=config.config_path.parent
                     )
                     ctx.influxdb_publisher = influxdb_publisher   # mirror for route modules
                     results["influxdb"] = influxdb_publisher.connected

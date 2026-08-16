@@ -1,5 +1,36 @@
 # Changelog
 
+## 3.35.7
+
+### 2026-08-16 — runtime paths anchored to the config directory
+
+Closes the dev-mode wart noted in 3.35.6: every runtime file now derives
+from `config_path.parent`, so `python main.py -c /elsewhere/config.yaml`
+is fully self-contained instead of spilling into `./config` of whatever
+CWD it was launched from. In the container nothing changes (CWD=/app,
+config dir `/app/config` — resulting paths are byte-identical).
+
+- `create_api` passes the config dir to **EventLog** (`events.jsonl`) and
+  **TemplateRegistry** (`device_templates/`); main.py does the same for
+  its boot-path TemplateRegistry.
+- **InfluxDBPublisher** gains `buffer_dir` — the replay-buffer snapshot
+  (`influx_buffer.jsonl`) now really lives "next to config.yaml" as its
+  comment always claimed; `INFLUX_BUFFER_PATH` still overrides.
+- **VirtualMeterManager** gets `virtual_meters.yaml` + `templates/` from
+  the config dir (a `-c` instance no longer reads/persists vmeters in the
+  repo checkout).
+- **TLS fallback paths** (`certs/ui.crt|key`) follow the config dir.
+- Signature defaults keep the old CWD-relative values for back-compat
+  (standalone tools, tests that construct pieces directly).
+- Tests: the two suites that built a bare `Config()` through `create_api`
+  (write-guard, corrected-field) now anchor it in a temp dir — the test
+  suite itself no longer writes `config/audit.jsonl` into the checkout.
+  Two full randomized runs leave `config/` untouched.
+
+Verified live-style: an instance launched from the repo CWD with `-c` to a
+scratch dir wrote `events/audit/influx_buffer/virtual_meters` beside that
+config.yaml and nothing into the repo.
+
 ## 3.35.6
 
 ### 2026-08-16 — Monitor empty-state placeholder, layout-aware and wrapped

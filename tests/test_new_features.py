@@ -232,7 +232,12 @@ def _client(api_key=None):
     _os.environ.pop("JANITZA_API_KEY", None)
     if api_key:
         _os.environ["API_KEY"] = api_key
-    app, _ = create_api(Config(), None, None, None)   # key captured at create time
+    # Anchor the default Config in a temp dir — create_api derives every
+    # runtime path (audit/events/templates/...) from config_path.parent, and a
+    # bare Config() would point that at the repo's ./config and pollute it.
+    import tempfile
+    cfg = Config(_os.path.join(tempfile.mkdtemp(prefix="mbg-nf-"), "config.yaml"))
+    app, _ = create_api(cfg, None, None, None)   # key captured at create time
     return TestClient(app, raise_server_exceptions=False)
 
 
