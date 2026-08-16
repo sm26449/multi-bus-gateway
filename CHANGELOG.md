@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.35.4
+
+### 2026-08-16 — capacity campaign re-run on the current version
+
+The 2026-08-01 load campaign (measured on v3.4.1) was re-validated on
+v3.35.3 — the staleness notice on the capacity report is gone.
+
+- **Harness modernized** for the current codebase: `seed_via_api.py` sends
+  the explicit device `id` the API now requires and clones the vmeter
+  template per instance (one-instance-per-template rule), binding each
+  vmeter to a distinct seeded device; the loadtest compose seeds an
+  auth-off config on first boot (first-run provisioning would 401 the
+  seeder), builds the sim from `loadtest/` (root `.dockerignore` excludes
+  it from the main context), and the sim pins pymodbus 3.15.
+- **Results (§R in `loadtest/RESULTS.md`): no regression.** Composed ramp
+  to 51 devices + 12 vmeters (MQTT ON) at 9.5% CPU / 111 MiB; 200-client
+  swarm 790 reads/s, 0 errors, p99 15.8 ms; 30-min soak with 50,827 flap
+  reconnects, RAM flat, 12/12 vmeters fresh in all 88 samples; fail-safe
+  verified end-to-end with socket-refused proof and **stale-recovery
+  improved to 2–3 s** (was ~6 s on 3.4.1).
+- `loadtest/CAPACITY-REPORT.md` refreshed (v3.35.3 header, re-validation
+  summary, template-shaped cost coefficients, MQTT gap closed);
+  `docs/reliability.md` now cites the measured fail-safe proof.
+
 ## 3.35.3
 
 ### 2026-08-16 — two quirks caught by the screenshot session, fixed

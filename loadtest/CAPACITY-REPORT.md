@@ -1,15 +1,10 @@
 # MBG Capacity Report
 
-> **STALENESS NOTICE:** measured on **v3.4.1** (2026-08-01), which predates
-> the pymodbus 3.15 / SimData virtual-meter serving-core rewrite (3.24.x)
-> and the 3.25–3.33 hardening series. Treat every figure as a lower-bound
-> indication, not a current benchmark — re-run the campaign
-> (`loadtest/README.md`) against the current version before quoting numbers.
-> The swarm script has been updated for pymodbus 3.15 (`device_id=`).
-
-**System:** Multi-Bus Gateway v3.4.1  **Date:** 2026-08-01
-**Basis:** 7-phase load/stress campaign (§6.0–§6.8), full data in
-[`RESULTS.md`](RESULTS.md).
+**System:** Multi-Bus Gateway v3.35.3  **Date:** 2026-08-16
+**Basis:** 7-phase load/stress campaign on v3.4.1 (§6.0–§6.8, 2026-08-01),
+**re-validated on v3.35.3** (§R, 2026-08-16) after the pymodbus 3.15
+serving-core rewrite (3.24.x) and the 3.25–3.35 hardening series. Full data
+in [`RESULTS.md`](RESULTS.md).
 **Test hardware:** container capped at **2 CPU / 1 GiB**, `nofile`=1024, on a
 12-core host. Isolated stack; the baseline used the **real Janitza** (live data),
 the ramps used the sim fleet. Production was never touched.
@@ -24,6 +19,14 @@ then CPU/threads)** — never MBG's own logic. Production runs at **~2% of two
 cores**; the tested envelope reaches **~20× production scale at 36% CPU** with
 every SLO green. The freshness watchdog **fails safe** under source loss and the
 system shows **no leak** over sustained connection churn.
+
+**Re-validation (v3.35.3, §R):** the current version holds the same envelope —
+51 devices + 12 vmeters + 200 clients (**with MQTT publishing ON**, unlike the
+original ramps) at 24.5% CPU / 117 MiB / 615 FDs, 790 reads/s with 0 errors
+(p99 15.8 ms); a 30-min soak with 50k+ flap reconnects left RAM flat at
+138 MiB with 12/12 vmeters fresh in every sample; and the fail-safe verified
+end-to-end again, with **stale-recovery improved to 2–3 s** (was ~6 s).
+No regression from the 3.24 serving-core rewrite or the hardening series.
 
 ## Baseline (§6.0) — production shape, live Janitza data
 
@@ -42,6 +45,7 @@ system shows **no leak** over sustained connection churn.
 | **Virtual meters** (§6.3) | 50 | threads (2/vmeter) + FDs (4) | **~150–200** | 50 = 18% CPU, 111 threads, all fresh |
 | **Clients / vmeter** (§6.4) | 800 | **FDs** (1/client) | **~990 total** | 800 = p99 42 ms, 0 err, ~1 core |
 | **Combined** (§6.6) | 30+30+300 | **FD budget (additive)** | see model | 36% CPU, 733 FDs, all SLOs green |
+| **Combined re-run** (§R, v3.35.3) | 51+12+200, MQTT ON | FD budget (additive) | see model | 24.5% CPU, 615 FDs, 0 errors, P0 green |
 
 ## Resource cost model (the planning tool)
 
@@ -54,19 +58,30 @@ RAM(MiB) ≈  60  + 0.5·devices + 2.6·vmeters   (+ ~buffers)
 CPU      scales with total read rate; 20× production ≈ 36% of 2 cores
 ```
 
+Per-device coefficients are **template-shaped**: the 10 FDs / 3 threads per
+device above are the Janitza shape (67 regs, 3 poll groups). The v3.35.3
+re-run with the EM24 shape (16 regs, 2 poll groups) measured **~7 FDs /
+2 threads per device** — one poller thread + connection per poll group.
+Budget with your template's group count; the model's structure is confirmed
+on both shapes.
+
 - **FDs are the binding constraint** and compose **additively** (confirmed in
   §6.6: predicted 743, measured 733). Everything else has far more headroom.
 - Threads and CPU are sub-additive under combined load — no GIL blowup.
 
 ## Reliability findings
 
-- **No leak (§6.7):** 27.7 min soak, **523,394 connection churn cycles** → RAM
-  flat at 121 MiB, FDs/threads constant. The `_conn_seen` leak question (audit)
-  is closed — refuted.
-- **Fails safe (§6.8):** on source loss, vmeters serve last-good only within the
-  15 s freshness bound, then the supervisor **stops the servers**. Clients get
-  connection-refused, **never stale-as-fresh** (`err%`=0 throughout). Recovery
-  in **~6 s** when the source returns. No data beats stale data for the ESS.
+- **No leak (§6.7 + §R.5):** 27.7 min soak with **523,394 connection churn
+  cycles** on v3.4.1, re-confirmed on v3.35.3 with a 30-min soak (478,952
+  reads + 50,827 flap reconnects, 0 errors) → RAM flat (138.2 → 138.3 MiB
+  across thirds), FDs/threads constant. The `_conn_seen` leak question
+  (audit) is closed — refuted on both versions.
+- **Fails safe (§6.8 + §R.4):** on source loss, vmeters serve last-good only
+  within the 15 s freshness bound, then the supervisor **stops the servers**.
+  Clients get connection-refused, **never stale-as-fresh** (`err%`=0
+  throughout; socket probes during the stale window confirm
+  `ConnectionRefusedError`). Recovery when the source returns: ~6 s on
+  v3.4.1, **2–3 s on v3.35.3**. No data beats stale data for the ESS.
 
 ## Safe operating envelope (this hardware: 2 CPU / 1 GiB / nofile 1024)
 
@@ -99,9 +114,11 @@ this deployment.
 
 ## Not run (documented gaps)
 
-- §6.2 MQTT/InfluxDB write-load ramp — deferred (the sim doesn't churn the
-  janitza read addresses, so publish/write volume would be unrealistically low;
-  needs a churn-matched sim or the real primary to measure honestly).
+- §6.2 InfluxDB write-load ramp — still deferred. The MQTT half is
+  effectively covered now: the §R re-run ran **with MQTT publishing ON**
+  (51 devices + 12 vmeter state topics against a live sim that churns
+  values every 250 ms) and the whole envelope held — publish cost is
+  included in the §R figures.
 - §6.8 Scenario B (broker down live) — low-risk; the code already handles it
   (paho auto-reconnect + LWT). Scenario C (clock step) — unit-tested.
 - A full overnight 2–4 h soak — the 28-min trend was already conclusive.

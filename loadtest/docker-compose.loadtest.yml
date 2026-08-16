@@ -43,7 +43,11 @@ services:
       - INFLUXDB_ENABLED=false
     volumes:
       - loadtest-mbg-config:/app/config
-    command: ["python", "main.py", "-c", "config/config.yaml"]
+    # Seed a minimal auth-off config on the FIRST boot of the throwaway
+    # volume: since 3.34.0 a bare boot triggers first-run provisioning
+    # (generated admin password + login ON), which would 401 the seeder —
+    # a load rig wants a known-open API, not an appliance.
+    command: ["sh", "-c", "[ -f config/config.yaml ] || printf 'modbus: {host: loadtest-sim-devices, port: 6502, unit_id: 1}\nmqtt: {enabled: true, broker: loadtest-mosquitto}\nui: {port: 18080}\n' > config/config.yaml; exec python main.py -c config/config.yaml"]
     depends_on: [loadtest-mosquitto]
     deploy:
       resources:
@@ -61,13 +65,13 @@ services:
   # S1 — fake device fleet (add more with distinct ports/units for a bigger fleet)
   loadtest-sim-devices:
     build:
-      context: ..
-      dockerfile: loadtest/Dockerfile.sim
+      context: .
+      dockerfile: Dockerfile.sim
     image: multi-bus-gateway:loadtest-sim
     container_name: loadtest-sim-devices
     networks: [mbg-loadtest-net]
     command: ["python", "loadtest/sim_devices.py", "--host", "0.0.0.0",
-              "--port", "6502", "--units", "16", "--tick-ms", "250"]
+              "--port", "6502", "--units", "50", "--tick-ms", "250"]
 
   # Optional: disposable InfluxDB (enable INFLUXDB_ENABLED on loadtest-mbg to use)
   # loadtest-influxdb:

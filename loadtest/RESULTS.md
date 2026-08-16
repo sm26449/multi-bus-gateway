@@ -1,5 +1,105 @@
 # MBG load-test results
 
+## §R Re-run — v3.35.3 (2026-08-16)
+
+Re-validation of the 2026-08-01 campaign on the current version, after the
+pymodbus 3.15 / serving-core rewrite (3.24.x) and the 3.25–3.35 hardening
+series. Same isolated stack (`docker-compose.loadtest.yml`, 2 CPU / 1 GiB,
+`nofile` 1024), rebuilt from the current tree. Differences vs the original
+campaign, stated up front:
+
+- **Sim fleet is EM24-shaped**, not Janitza-shaped: 50 units, 16 registers
+  each via the `carlo_gavazzi_em24` template (2 poll groups, ~1 s effective
+  poll rate) — vs 67 regs / 3 groups / 0.25 s realtime in §6.1. Per-device
+  cost coefficients therefore differ from the historical model (fewer
+  threads/FDs per device); the historical Janitza numbers stay valid for
+  that shape.
+- **MQTT publishing was ON** the whole time (per-device topics + vmeter
+  state to the throwaway mosquitto) — the original ramps ran with MQTT off,
+  so this run *includes* the publish cost. InfluxDB off, as before.
+- **Vmeters honour the one-instance-per-template rule** (new since 3.2x):
+  the seeder now clones `em24_av53` into `lt_em24_av53_NN` templates, one
+  instance each, each sourcing a **distinct seeded device** (round-robin),
+  not the primary.
+
+### §R.1 Composed ramp (devices + vmeters together)
+
+90 s steady-state collection at each level (24 samples @ 3 s):
+
+| level | devices | vmeters | CPU avg (max) | RAM | threads | FDs | worst dev staleness | worst vm freshness | P0 |
+|---|---:|---:|---|---:|---:|---:|---:|---:|---|
+| L1 | 10+primary | 4 | 3.0% (9.6%) | 77 MiB | 40 | 103 | 0.6 s | 1.6 s | 4/4 every sample |
+| L2 | 25+primary | 8 | 5.8% (14.4%) | 92 MiB | 78 | 224 | 1.0 s | 1.4 s | 8/8 every sample |
+| L3 | 50+primary | 12 | 9.5% (12.4%) | 111 MiB | 136 | 415 | 1.0 s | 1.6 s | 12/12 every sample |
+
+Scaling is linear and cheap: **threads ≈ 10 + 2·dev + 2·vm** (EM24 template
+= 2 poll groups → 2 poller threads/device; the historical 3/device was the
+3-group Janitza shape), **FDs ≈ ~7/device + ~4/vmeter + base**, RAM
+≈ 0.65 MiB/device. Staleness is flat vs N (1.0 s tail at 51 devices = the
+~1 s poll cadence, not lag). MQTT publishing included at every level.
+
+### §R.2 Client swarm — 200 clients @ 250 ms over 12 vmeter ports
+
+150 s sustained: **118,951 reads (790/s), 0 errors, 0 connect failures**;
+latency p50 0.9 / p95 7.5 / **p99 15.8** / max 54 ms, conn-setup p99 130 ms.
+Container during load: CPU avg 24.5% (max 34%), RAM 117 MiB, FDs 615
+(415 + 200 clients — additive, as the historical model predicts), threads
+constant 136. **P0 held: 12/12 vmeters fresh (≤2.0 s) and worst device
+staleness 1.0 s in every sample** — client load does not starve the pollers.
+
+### §R.3 Flap — 30 clients reconnecting every cycle
+
+90 s: **7,622 clean connects (85/s), 0 failures**, p99 7.6 ms, conn-setup
+p99 110 ms. RAM flat (117.0–118.0 MiB), FDs oscillated 415–443 and returned
+to 415, threads constant. The connection path still does not accumulate.
+
+### §R.4 Failure injection — source loss under load (ESS-critical)
+
+12 vmeters live, sim killed at t≈31 s, restored ~20 s after full-stale:
+
+| t | phase | observed |
+|---|---|---|
+| 0–31 s | baseline | 12/12 ok, worst freshness 1.6–2.0 s |
+| 31 s | **sim killed** | freshness ages linearly 3.1 → 13.1 s |
+| ~47 s (≈16 s after kill) | **threshold (15 s) crossed** | **0/12 ok — all stale together** |
+| stale window | socket probe | **ports 21502/21510 REFUSE connections** (`ConnectionRefusedError`) — servers stopped, no stale data served |
+| restore | recovery | **12/12 ok in 2–3 s**, ports accept again |
+
+Same fail-safe as §6.8A — serve last-good only within the freshness bound,
+then **stop the servers** (clients get connection-refused, never
+stale-as-fresh) — with recovery now **2–3 s** vs ~6 s on 3.4.1 (the
+supervisor respawn path got faster through the serving-core rewrite).
+Verified twice (timeline run + socket-proof run).
+
+### §R.5 Soak — 30 min, 50 dev + 12 vm + 60 steady clients + 10 flap
+
+88 samples @ 20 s. Steady swarm: **428,125 reads (238/s), 0 errors**, p99
+11.0 ms. Flap swarm: **50,827 reconnects, 0 failures**, p99 6.8 ms.
+
+| metric | behaviour |
+|---|---|
+| RAM | **flat**: first-third mean 138.2 MiB, last-third 138.3 MiB (span 137.9–139.6) |
+| FDs | 415–485 oscillating with flap, no trend (means 478 → 474) |
+| threads | **136, constant** |
+| CPU | avg 20.7%, max 28.4% |
+| P0 | **12/12 fresh in all 88 samples**; worst freshness 2.0 s, worst device staleness 1.0 s |
+
+### Verdict (§R)
+
+**No regression.** The 3.24 serving-core rewrite plus the 3.25–3.35
+hardening series kept the whole envelope intact — linear scaling, zero
+errors under swarm/flap/soak, no leak — and *improved* stale-recovery
+(2–3 s vs ~6 s). The historical per-dimension ceilings below (measured on
+v3.4.1, Janitza-shaped) remain valid as lower bounds; this run adds the
+EM24-shape coefficients and confirms the fail-safe and the FD-additivity
+model on the current code.
+
+---
+
+> The sections below are the **original 2026-07/08 campaign on v3.4.1** —
+> kept as the full-depth reference (per-dimension ceilings ramped to their
+> knees). Re-validated at composed scale on v3.35.3 in §R above.
+
 ## §6.0 Baseline — production-shape, LIVE data (2026-07-31)
 
 **Setup:** isolated test-MBG (v3.4.1 image, `--cpus 2 --memory 1g`) polling the

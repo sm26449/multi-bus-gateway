@@ -21,6 +21,13 @@ Five principles run through everything:
 5. **Every persisted file is atomic, fsync'd and `0600`**, and the files
    that can brick a boot carry a `.good`/`.bad` self-heal pair.
 
+These claims are load-tested, not just designed: the capacity campaign
+([`loadtest/CAPACITY-REPORT.md`](../loadtest/CAPACITY-REPORT.md), re-validated
+on v3.35.3) drives the fail-safe end-to-end — source killed under load,
+virtual meters go stale exactly at the freshness bound, their sockets refuse
+connections rather than serve stale data, and recovery takes 2–3 s — plus
+soak/leak and swarm phases with zero errors.
+
 The tables below are grouped by layer, wire to consumer. File references
 point into `multibus/` unless noted.
 

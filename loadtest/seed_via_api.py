@@ -75,6 +75,7 @@ def main() -> None:
             print("!! --device-template is required to create devices"); break
         unit = (i % args.sim_units) + 1
         dev = {
+            "id": f"ltdev{i:03d}",
             "name": f"ltdev{i:03d}",
             "template": args.device_template,
             "protocol": "tcp",
@@ -88,16 +89,32 @@ def main() -> None:
         else:
             print(f"[dev] {dev['name']}  FAIL {code}: {resp}")
 
-    for j in range(args.vmeters):
-        if not args.vmeter_template:
-            print("!! --vmeter-template is required to create vmeters"); break
+    # One INSTANCE per template (the product enforces it), so N vmeters need
+    # N template copies: fetch the source template once, re-save it under
+    # lt_<name>_<j>, then instance each copy — bound to a seeded device in
+    # round-robin so the serving load spreads across real source stores.
+    tpl_doc = None
+    if args.vmeters:
+        code, tpl_doc = _req("GET", f"{args.base}/api/virtual-meters/template/{args.vmeter_template}")
+        if code != 200:
+            print(f"!! cannot fetch vmeter template {args.vmeter_template}: {code} {tpl_doc}")
+            tpl_doc = None
+    for j in range(args.vmeters if tpl_doc else 0):
+        tid = args.vmeter_template if j == 0 else f"lt_{args.vmeter_template}_{j:02d}"
+        if j > 0:
+            body = dict(tpl_doc.get("template") or tpl_doc)
+            body["id"] = tid
+            body["name"] = f"{body.get('name', tid)} (LT {j:02d})"
+            code, resp = _req("PUT", f"{args.base}/api/virtual-meters/template/{tid}", body)
+            if code != 200:
+                print(f"[vmeter] template {tid}  FAIL {code}: {resp}"); continue
         port = args.vmeter_port_start + j
         src = created_devs[j % len(created_devs)] if created_devs else ""
-        vm = {"template": args.vmeter_template, "port": port, "unit_id": 1,
+        vm = {"template": tid, "port": port, "unit_id": 1,
               "stale_after_s": args.stale_after_s, "device": src,
               "on_stale": "legacy", "enabled": True}
         code, resp = _req("POST", f"{args.base}/api/virtual-meters", vm)
-        print(f"[vmeter] port {port} src={src or 'primary'}  "
+        print(f"[vmeter] port {port} tpl={tid} src={src or 'primary'}  "
               f"{'OK' if code in (200,201) and 'error' not in resp else 'FAIL'} "
               f"{code}: {resp if code not in (200,201) else ''}")
 
