@@ -195,10 +195,15 @@ def build(ctx) -> APIRouter:
                         "measurement": x.influxdb_measurement,
                         "tags": x.influxdb_tags,
                     },
+                    # extras first, EXPLICIT fields last — ui_config round-trips
+                    # a stale copy of show_on_dashboard/widget, and spreading it
+                    # last silently overrode the field the caller actually set
+                    # (found while hiding dashboard cards: the flag kept
+                    # reverting to the ui_config copy)
                     "ui": {
+                        **x.ui_config,
                         "show_on_dashboard": x.ui_show_on_dashboard,
                         "widget": x.ui_widget,
-                        **x.ui_config,
                     },
                     "thresholds": x.thresholds.dict() if x.thresholds else None,
                 }

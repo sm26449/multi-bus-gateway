@@ -1,5 +1,26 @@
 # Changelog
 
+## 3.35.3
+
+### 2026-08-16 — two quirks caught by the screenshot session, fixed
+
+Both surfaced while building the demo environment for the UI-guide
+re-shoot — small, real, and now regression-tested:
+
+- **Explicit UI fields win over `ui_config`** — the register save path
+  spread `**ui_config` LAST, so its stale round-tripped copy of
+  `show_on_dashboard`/`widget` silently overrode the value the caller
+  actually set: hiding a dashboard card kept reverting on every save.
+  Extras still round-trip; the explicit fields now always win.
+- **Pure-Modbus discovery accepts loopback** — the scan/sweep/SunSpec
+  guards rejected `127.0.0.1`, blocking legitimate commissioning against
+  local simulators and, notably, probing the gateway's **own virtual
+  meters** (127.0.0.1:1502) as a self-test. A Modbus frame to a local
+  port cannot exploit an HTTP service, so loopback is now allowed there —
+  while every HTTP-fetch guard (HTTP devices, Fronius Solar-API
+  discovery) still rejects it: over HTTP, loopback is SSRF into the
+  gateway's own API and neighboring local services.
+
 ## 3.35.2
 
 ### 2026-08-16 — the last unverified docs, verified (and one real role-gate fix)

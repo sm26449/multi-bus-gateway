@@ -57,7 +57,15 @@ def lan_host_error(host: str, allow_nonlan: bool = False):
         return f"could not resolve {host}"
     for a in ips:
         ip = ipaddress.ip_address(a)
-        if (not ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast):
+        # Loopback is ALLOWED here: these guards protect pure-Modbus probes
+        # (scan/sweep/SunSpec), where a frame to a local port cannot exploit
+        # an HTTP service — and probing a local simulator or the gateway's
+        # OWN virtual meters (127.0.0.1:1502) is a legitimate commissioning
+        # step. The HTTP-fetch guards (http_client, fronius_discover) keep
+        # rejecting loopback: there it would be SSRF into local services.
+        if ip.is_loopback:
+            continue
+        if (not ip.is_private or ip.is_link_local or ip.is_multicast):
             return f"{host} ({a}) is not a private LAN address — scanning is restricted to the LAN"
     return None
 
@@ -78,7 +86,9 @@ def hosts_from_cidr(cidr: str, allow_nonlan: bool = False, max_hosts: int = MAX_
     if not allow_nonlan:
         for h in hosts:
             ip = ipaddress.ip_address(h)
-            if (not ip.is_private or ip.is_loopback or ip.is_link_local
+            if ip.is_loopback:          # local sims / own vmeters — see lan_error
+                continue
+            if (not ip.is_private or ip.is_link_local
                     or ip.is_multicast):
                 raise ValueError(f"{h} is not a private LAN address — scanning is restricted to the LAN")
     return hosts

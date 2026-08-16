@@ -866,3 +866,44 @@ def test_canonical_unit_and_cumulative_helpers():
     assert is_cumulative_field('energy_active_import_l2')
     assert not is_cumulative_field('power_active_total')
     assert not is_cumulative_field('voltage_l1_n')
+
+
+@needs_tc
+def test_ui_config_never_overrides_the_explicit_dashboard_flag(tmp_path):
+    """Found while hiding demo dashboard cards: the save path spread
+    ``**ui_config`` LAST, so its stale round-tripped copy of
+    show_on_dashboard silently overrode the field the caller actually set
+    — the flag kept reverting on every save. Explicit fields must win."""
+    _cfg, client = make_app(tmp_path)
+    sel = client.get("/api/registers/selected").json()["registers"]
+    assert sel, "fixture has a selected register"
+    reg = sel[0]
+    reg["ui_show_on_dashboard"] = False
+    reg["ui_config"] = {"show_on_dashboard": True, "widget": "value",
+                        "color": "teal"}          # stale copy + a real extra
+    assert client.post("/api/registers/selected", json=sel).status_code == 200
+    got = client.get("/api/registers/selected").json()["registers"][0]
+    assert got["ui_show_on_dashboard"] is False    # the explicit field won
+    assert got["ui_config"].get("color") == "teal"  # extras survive
+
+
+def test_modbus_discovery_guards_allow_loopback_http_guards_do_not():
+    """Loopback is legitimate for PURE-MODBUS probes (local simulators,
+    probing the gateway's own virtual meters on 127.0.0.1:1502) — a Modbus
+    frame cannot exploit an HTTP service. The HTTP-fetch guards keep
+    rejecting it: there loopback is SSRF into local services."""
+    from multibus import discovery
+    from multibus.http_client import _classify_lan
+
+    # pure-Modbus guards: loopback OK, public/link-local still refused
+    assert discovery.lan_host_error("127.0.0.1") is None
+    assert discovery.lan_host_error("8.8.8.8") is not None
+    assert discovery.lan_host_error("169.254.169.254") is not None
+    assert discovery.hosts_from_cidr("127.0.0.1/32") == ["127.0.0.1"]
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        discovery.hosts_from_cidr("8.8.8.0/30")
+
+    # HTTP guard: loopback still rejected (SSRF-to-self)
+    assert _classify_lan(["127.0.0.1"]) is not None
+    assert _classify_lan(["192.168.1.50"]) is None
