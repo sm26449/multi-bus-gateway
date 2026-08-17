@@ -967,7 +967,7 @@ external audit (run against 3.25.1; adjudication:
 - **Legacy `janitza-monitor` references retired** across the repo: HA discovery
   `manufacturer` is now `multi-bus-gateway` (identifiers/via_device untouched —
   those are stable HA registry keys), tool paths and doc-comments point at the
-  migrated data dir (`/docker-storage/pv-stack/multi-bus-gateway/`), bundled
+  renamed data dir, bundled
   template author renamed. Deployment side (same date): data dir renamed,
   compose paths/env (`MBG_UI_PORT`/`MBG_API_KEY`), legacy network alias
   dropped (no consumer left), backfill cron path fixed (was silently dead —
@@ -1316,7 +1316,7 @@ source: { failover: ["_G_P_SUM3", "fronius.power_active_total"] }
 Turns each register's **visual** thresholds — the same `warningLow/dangerLow/
 warningHigh/dangerHigh` limits that colour the dashboard — into alert **events**,
 delivered over the existing alert path (MQTT + webhook + event log) and onward to
-`pv-stack-alerts` (alertd) for Telegram/SMS. **Off by default**
+an external notification service for Telegram/SMS. **Off by default**
 (`alerts.signals.threshold: false`).
 
 - **Hysteresis state machine** (`multibus/threshold_engine.py`) — *fast to alarm,

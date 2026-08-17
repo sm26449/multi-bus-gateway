@@ -2,7 +2,8 @@
   "device": {
     "model": "UMG 512-PRO",
     "manufacturer": "Janitza electronics GmbH",
-    "document": "Modbus Address List"
+    "document": "Modbus Address List",
+    "source": "Factual register definitions transcribed from the publicly available Janitza \"Modbus Address List\" (UMG 512-PRO) for interoperability. See docs/VENDOR-DATA.md for provenance and licensing position."
   },
   "modbus": {
     "protocol": {

@@ -3,7 +3,7 @@
 # ⚠️  RULE ZERO — never touches production:
 #   * own network (mbg-loadtest-net), own throwaway broker + influx
 #   * UI on 18080, virtual meters on 21502-21562 (NOT 502/1502-1512/8080)
-#   * config in a fresh named volume (loadtest-mbg-config), NOT /docker-storage
+#   * config in a fresh named volume (loadtest-mbg-config), NOT the production data dir
 #   * resource limits so a runaway test can't starve the production containers
 #     sharing the host.
 #

@@ -478,6 +478,11 @@ offer them as a **network service** (SaaS) — you must make the **complete
 source code** available to those users, under the same license. Full terms in
 [LICENSE](LICENSE) · <https://www.gnu.org/licenses/agpl-3.0.html>
 
+The bundled device register maps are factual interoperability data
+transcribed from each manufacturer's publicly available Modbus
+documentation — provenance and licensing position in
+[docs/VENDOR-DATA.md](docs/VENDOR-DATA.md).
+
 ---
 
 **Disclaimer**: This software is provided "as is", without warranty of any

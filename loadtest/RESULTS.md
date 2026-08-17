@@ -103,7 +103,7 @@ model on the current code.
 ## §6.0 Baseline — production-shape, LIVE data (2026-07-31)
 
 **Setup:** isolated test-MBG (v3.4.1 image, `--cpus 2 --memory 1g`) polling the
-**real Janitza UMG512** at 192.168.1.207:502 (read-only, multi-client-safe;
+**real Janitza UMG512** at its LAN address, port 502 (read-only, multi-client-safe;
 production keeps polling it independently — no interference). Exact production
 config: `janitza_umg512_pro` template, 67 registers (addr 3813–19636), poll
 groups realtime 0.25s / normal 5s / slow 60s; two virtual meters

@@ -471,6 +471,11 @@ utilizatorilor **codul sursă complet**, sub aceeași licență. Termeni
 compleți în [LICENSE](LICENSE) ·
 <https://www.gnu.org/licenses/agpl-3.0.html>
 
+Hărțile de registre incluse sunt date factuale de interoperabilitate,
+transcrise din documentația Modbus publică a fiecărui producător —
+proveniența și poziția de licențiere în
+[docs/VENDOR-DATA.md](docs/VENDOR-DATA.md).
+
 ---
 
 **Disclaimer**: Acest software este furnizat „ca atare", fără nicio
