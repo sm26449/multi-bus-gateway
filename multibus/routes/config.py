@@ -13,12 +13,15 @@ rebound), so binding them once here is safe — unlike the publishers.
 """
 from __future__ import annotations
 
+import logging
 from typing import Dict
 
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from ._models import InfluxDBConfigUpdate, ModbusConfigUpdate, MQTTConfigUpdate
+
+logger = logging.getLogger(__name__)
 
 
 def build(ctx) -> APIRouter:
@@ -69,7 +72,8 @@ def build(ctx) -> APIRouter:
             config.save_yaml_config()
             return {"status": "ok", "message": "Modbus config updated. Apply to reconnect."}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            logger.exception("modbus config update failed")
+            raise HTTPException(status_code=500, detail=f"internal error ({type(e).__name__}) — see the server log")
 
     @r.get("/api/config/mqtt")
     async def get_mqtt_config():
@@ -104,7 +108,8 @@ def build(ctx) -> APIRouter:
             config.save_yaml_config()
             return {"status": "ok", "message": "MQTT config updated. Apply to reconnect."}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            logger.exception("mqtt config update failed")
+            raise HTTPException(status_code=500, detail=f"internal error ({type(e).__name__}) — see the server log")
 
     @r.get("/api/config/ui-security")
     async def get_ui_security():
@@ -293,6 +298,7 @@ def build(ctx) -> APIRouter:
             config.save_yaml_config()
             return {"status": "ok", "message": "InfluxDB config updated. Apply to reconnect."}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            logger.exception("influxdb config update failed")
+            raise HTTPException(status_code=500, detail=f"internal error ({type(e).__name__}) — see the server log")
 
     return r

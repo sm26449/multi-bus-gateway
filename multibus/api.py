@@ -2466,8 +2466,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 "message": "Configuration applied"
             }
         except Exception as e:
-            logger.error(f"Error applying config: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            logger.exception("Error applying config")
+            raise HTTPException(status_code=500,
+                                detail=f"internal error ({type(e).__name__}) — see the server log")
 
     @app.post("/api/config/reload-registers")
     def reload_registers():
@@ -2496,8 +2497,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 "message": "Registers reloaded"
             }
         except Exception as e:
-            logger.error(f"Error reloading registers: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            logger.exception("Error reloading registers")
+            raise HTTPException(status_code=500,
+                                detail=f"internal error ({type(e).__name__}) — see the server log")
 
     # --- Config backup / restore (ZIP) ---
 

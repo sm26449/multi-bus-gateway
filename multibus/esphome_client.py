@@ -44,6 +44,8 @@ import urllib.parse
 import urllib.request
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
+from .redact import redact_url
+
 logger = logging.getLogger(__name__)
 
 # spawn-style WS commands the dashboard exposes (whitelist — anything else 404s
@@ -72,7 +74,7 @@ class EsphomeDashboard:
                  timeout_s: float = 10.0):
         u = urllib.parse.urlparse(url or "")
         if u.scheme not in ("http", "https") or not u.netloc:
-            raise EsphomeError(f"invalid ESPHome URL: {url!r} (need http(s)://host:port)")
+            raise EsphomeError(f"invalid ESPHome URL: {redact_url(url)!r} (need http(s)://host:port)")
         self.base = f"{u.scheme}://{u.netloc}"
         self.ws_base = ("wss" if u.scheme == "https" else "ws") + f"://{u.netloc}"
         self.username = username or ""
@@ -108,7 +110,7 @@ class EsphomeDashboard:
                 e.close()               # release the socket/FD, don't wait for GC
         except (urllib.error.URLError, OSError, TimeoutError) as e:
             raise EsphomeError(
-                f"ESPHome unreachable at {self.base}: {getattr(e, 'reason', e)}")
+                f"ESPHome unreachable at {redact_url(self.base)}: {getattr(e, 'reason', e)}")
 
     def _login(self) -> None:
         data = urllib.parse.urlencode(
@@ -127,7 +129,7 @@ class EsphomeDashboard:
             if not cookie:
                 raise EsphomeError("ESPHome login failed (check username/password)")
         except (urllib.error.URLError, OSError) as e:
-            raise EsphomeError(f"ESPHome unreachable at {self.base}: {e}")
+            raise EsphomeError(f"ESPHome unreachable at {redact_url(self.base)}: {e}")
         if not cookie:
             raise EsphomeError("ESPHome login failed (no session cookie)")
         self._cookie = cookie.split(";", 1)[0]

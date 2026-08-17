@@ -21,9 +21,12 @@ Moved verbatim from create_api(); no shared state beyond the filesystem.
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 from fastapi import APIRouter, HTTPException
+
+logger = logging.getLogger(__name__)
 
 _LANG_DIR = os.path.join("ui", "languages")
 
@@ -65,6 +68,7 @@ def build(ctx) -> APIRouter:
             with open(path, encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:  # noqa: BLE001
-            raise HTTPException(status_code=500, detail=str(e))
+            logger.exception("language pack %s unreadable", code)
+            raise HTTPException(status_code=500, detail=f"internal error ({type(e).__name__}) — see the server log")
 
     return r

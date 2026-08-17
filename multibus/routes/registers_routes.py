@@ -22,6 +22,7 @@ time (rebindable via /api/config/apply).
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -30,6 +31,8 @@ from fastapi.responses import JSONResponse, Response
 
 from ._models import RegisterBatchQuery, RegisterQuery, SelectedRegisterUpdate
 from ..value_decode import apply_corrections
+
+logger = logging.getLogger(__name__)
 
 
 def build(ctx) -> APIRouter:
@@ -268,7 +271,8 @@ def build(ctx) -> APIRouter:
             # fix — a 400 with the exact collision, not a 500
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            logger.exception("selected-registers save failed")
+            raise HTTPException(status_code=500, detail=f"internal error ({type(e).__name__}) — see the server log")
 
     def _read_client(device_id):
         """The Modbus client an on-demand query must read from: the named

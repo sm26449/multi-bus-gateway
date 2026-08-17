@@ -1,5 +1,32 @@
 # Changelog
 
+## 3.35.8
+
+### 2026-08-17 — str(e) review (go-public audit item)
+
+Systematic sweep of every place raw exception text reaches an API client
+(~40 sites classified). The contract now enforced:
+
+- **Broad `except Exception` → 500 handlers return a generic detail**
+  (`internal error (<ClassName>) — see the server log`) and log the full
+  traceback server-side. Fixed: `/api/config/apply`, reload-registers,
+  the modbus/mqtt/influx config-update routes, the language-pack loader
+  and the selected-registers save path — an OSError there used to echo
+  container filesystem paths to the client.
+- **Deliberate validation errors keep passing through verbatim** — our own
+  `ValueError` messages (422/400) are the operator's fix-it text; the
+  probe/test endpoints (`/api/devices/test`, MQTT/TLS probes, register
+  probe) stay fully detailed by design. Regression-tested both directions
+  (`tests/test_error_disclosure.py`).
+- **Internal service URLs are redacted in error strings**: the serial
+  bridge "unreachable" diagnostic and all three ESPHome dashboard error
+  paths now run their URL through `redact_url` (userinfo/secret query
+  stripped, host kept for diagnosis) — a credentialed
+  `SERIAL_BRIDGE_URL`/ESPHome URL can no longer echo its password.
+- Reviewed the `except: pass` inventory: the remaining silent catches are
+  typed, best-effort persistence paths (audit/event-log writes) —
+  deliberate, left as-is.
+
 ## 3.35.7
 
 ### 2026-08-16 — runtime paths anchored to the config directory

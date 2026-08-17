@@ -32,6 +32,8 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter
 
+from ..redact import redact_url
+
 _BRIDGE_URL = os.environ.get("SERIAL_BRIDGE_URL", "http://pv-stack-serial-bridge:7000")
 
 
@@ -82,6 +84,6 @@ def build(ctx) -> APIRouter:
             return {"available": True, "bridge_host": host, **data}
         except Exception as e:  # noqa: BLE001
             return {"available": False, "bridge_host": host, "adapters": [],
-                    "error": f"serial bridge unreachable at {_BRIDGE_URL}: {e}"}
+                    "error": f"serial bridge unreachable at {redact_url(_BRIDGE_URL)}: {e}"}
 
     return r
