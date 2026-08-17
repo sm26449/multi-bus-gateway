@@ -1,5 +1,34 @@
 # Changelog
 
+## 3.35.9
+
+### 2026-08-17 — clean-clone walkthrough (go-public audit item) + fixes
+
+Followed the README literally on a fresh clone, as a stranger would:
+`git clone → cp .env.example .env → docker compose up -d` (full bundled
+stack), first-run credentials from the log, login, wizard test-connection,
+first device (EM24-shaped sim), first virtual meter, MQTT/HA discovery
+flowing, vmeter serving over Modbus TCP, and the documented Docker test
+path (`Dockerfile.test` → 907 passed). Three real gaps found and fixed:
+
+- **Bundled InfluxDB/Grafana host ports were hardcoded** (8086/3000) — the
+  exact audience of the bundled stack (people already running one) hit a
+  bind failure with no knob. New `INFLUXDB_HOST_PORT` / `GRAFANA_HOST_PORT`
+  in compose + `.env.example`.
+- **The `:502` mapping had no knob either** — now
+  `MODBUS_502_HOST_PORT` remaps the host side instead of editing the file.
+  (Docker note from the walkthrough: one port collision in an `up -d`
+  batch can leave OTHER containers half-created — running but with no
+  networks. `docker compose down && up -d` after fixing the port is the
+  clean recovery.)
+- **Loadtest sim served int32 word-swapped** (high-word-first) relative to
+  the EM24 wire convention (`Reg_s32l`, low-word-first) that the
+  `carlo_gavazzi_em24` template decodes. The decoded chain
+  (store → MQTT → vmeter) carried garbage that LOOKED consistent to an
+  equally-swapped test reader — caught because MQTT showed 15 MV. Sim now
+  writes low-word-first; capacity §R metrics (rates/latencies/footprints)
+  are unaffected, values were never asserted on.
+
 ## 3.35.8
 
 ### 2026-08-17 — str(e) review (go-public audit item)

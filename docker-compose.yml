@@ -10,8 +10,9 @@ services:
       # compose again; grow VMETER_PORT_END if you need more. (See docs/MANUAL.md §11.)
       - "${VMETER_PORT_START:-1502}-${VMETER_PORT_END:-1512}:${VMETER_PORT_START:-1502}-${VMETER_PORT_END:-1512}"
       # Standard Modbus port — some consumers (e.g. the Fronius DataManager) poll
-      # their meter on :502. Remove this line if host port 502 is already in use.
-      - "502:502"
+      # their meter on :502. Remap the HOST side (MODBUS_502_HOST_PORT in .env)
+      # if host port 502 is already in use, or remove the line entirely.
+      - "${MODBUS_502_HOST_PORT:-502}:502"
     # The app runs as a non-root user (3.24.1+); :502 is a privileged port, so
     # lower the unprivileged-port floor INSIDE the container's own network
     # namespace. No capability grant, no host-wide sysctl. Only needed if a
@@ -143,7 +144,8 @@ services:
     container_name: mbg-influxdb
     restart: unless-stopped
     ports:
-      - "8086:8086"
+      # host port only — remap when the host already runs an InfluxDB
+      - "${INFLUXDB_HOST_PORT:-8086}:8086"
     volumes:
       - influxdb-data:/var/lib/influxdb2
       - influxdb-config:/etc/influxdb2
@@ -166,7 +168,8 @@ services:
     container_name: mbg-grafana
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      # host port only — remap when the host already runs a Grafana
+      - "${GRAFANA_HOST_PORT:-3000}:3000"
     volumes:
       - grafana-data:/var/lib/grafana
     environment:

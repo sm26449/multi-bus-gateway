@@ -56,7 +56,11 @@ def _make_devices(units: int) -> list[SimDevice]:
 
 def _write_i32(regs: dict, uid: int, addr: int, value: int) -> None:
     hi, lo = _i32(value)
-    regs[uid][addr:addr + 2] = [hi, lo]         # atomic slice into the live block
+    # LOW word first — the EM24 wire convention (Reg_s32l) that the
+    # carlo_gavazzi_em24 template decodes. Serving hi-first made the whole
+    # decoded chain (store → MQTT → vmeter) carry word-swapped garbage while
+    # LOOKING consistent to an equally-swapped test reader.
+    regs[uid][addr:addr + 2] = [lo, hi]         # atomic slice into the live block
 
 
 async def _churn(regs: dict, units: int, tick_ms: float) -> None:
