@@ -2884,11 +2884,20 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                         pass
 
                 except asyncio.TimeoutError:
-                    # Send ping
+                    # Send ping — unless the socket already closed under us
+                    # (broadcast-path kick or the client vanished mid-timeout).
+                    from starlette.websockets import WebSocketState
+                    if websocket.application_state != WebSocketState.CONNECTED:
+                        break
                     await websocket.send_json({'type': 'ping'})
 
         except WebSocketDisconnect:
             pass
+        except RuntimeError as e:
+            # send/receive raced a close ("Unexpected ASGI message ... after
+            # 'websocket.close'") — normal client churn, not an error. Was
+            # ~3/h of ERROR noise in the production log.
+            logger.debug(f"WebSocket closed during send: {e}")
         except Exception as e:
             logger.error(f"WebSocket error: {e}")
         finally:

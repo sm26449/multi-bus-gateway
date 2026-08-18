@@ -948,6 +948,26 @@ un restore ar debloca autentificarea.
 configurație — protejează împotriva editărilor greșite, nu împotriva
 pierderii volumului. Ține și un ZIP exportat altundeva.
 
+**Disaster recovery (host pierdut / volum pierdut), cap-coadă:**
+
+1. Pe hostul nou: `git clone … && cp .env.example .env && docker compose
+   up -d` — gateway-ul proaspăt pornește cu credențialele de first-run
+   (afișate o singură dată în log).
+2. Loghează-te, Config → **Backup & Snapshots** → **Import**, încarcă
+   ZIP-ul exportat (un export cu secrete restaurează și passkey-urile și
+   credențialele device-urilor; unul sanitizat îți cere să reintroduci
+   secretele).
+3. Importul aplică dintr-o mișcare config, device-uri, selecțiile de
+   registre, vmeterele și preseturile calculate. Cu **mai mult de un
+   device**, răspunsul poate seta `restart_required` — repornește
+   containerul (`docker compose restart multi-bus-gateway`) ca toate
+   poller-ele să pornească pe definițiile restaurate.
+4. Verifică: `/health` arată meterele, Status arată fiecare device polling,
+   iar ESS-ul/consumatorii se reconectează singuri la porturile vmeter.
+5. Dacă folosești Device Builder, restaurează volumul `esphome-config` din
+   backupul de infrastructură (pasul de mai sus) — YAML-urile nodurilor nu
+   fac parte din ZIP-ul gateway-ului.
+
 ---
 
 ## 16. Securitate

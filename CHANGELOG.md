@@ -1,5 +1,30 @@
 # Changelog
 
+## 3.35.10
+
+### 2026-08-18 — end-to-end review pass (pre-ESPHome-test, pre-public)
+
+Full-system sweep: live health (30 h of logs, sinks, real consumers),
+complete reconciliation of every audit backlog, code sweep (one TODO in
+the whole tree — the intentional generated-YAML hint), i18n parity
+(1062 = 1062 keys), and a live rehearsal of the ESPHome Builder pipeline
+(template → generate → secrets → dashboard save → validate over the WS
+stream on a throwaway ESPHome 2026.5.3: "Configuration is valid!", exit 0).
+
+- **WS ping-after-close no longer logs ERROR** — the keepalive ping raced
+  client disconnects (~3/h of noise, the only error class in 30 h of
+  production logs). The handler now checks the socket state before the
+  ping and treats the ASGI close race as a debug-level disconnect.
+- **Bounded container logs in the bundled compose** (perf audit C5): a
+  shared `x-logging` anchor (json-file, 10 MB × 3) on all 7 services — an
+  appliance host can no longer fill its disk with container logs.
+- **Disaster-recovery runbook** added to MANUAL §15 (EN+RO): clone →
+  compose up → import ZIP → `restart_required` nuance with >1 device →
+  re-check, plus the `esphome-config` volume note.
+- Audit bookkeeping: two stale "remaining" lists corrected (.audit) — the
+  datapath audit line still advertised 15 open findings against a file
+  where all 36 are closed.
+
 ## 3.35.9
 
 ### 2026-08-17 — clean-clone walkthrough (go-public audit item) + fixes

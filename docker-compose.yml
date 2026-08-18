@@ -1,7 +1,17 @@
+# Bounded container logs (audit C5): without rotation the json-file driver
+# grows without limit and can fill the disk on an appliance host. Every
+# service below reuses this anchor.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   multi-bus-gateway:
     build: .
     container_name: multi-bus-gateway
+    logging: *default-logging
     restart: unless-stopped
     ports:
       - "${UI_PORT:-8080}:${UI_PORT:-8080}"
@@ -81,6 +91,7 @@ services:
     # Pinned minor: upstream :latest float has broken retain semantics before.
     image: eclipse-mosquitto:2.1.2-alpine
     container_name: mbg-mosquitto
+    logging: *default-logging
     restart: unless-stopped
     ports:
       # host-port mapping only (MQTT_PORT stays the GATEWAY override for an
@@ -98,6 +109,7 @@ services:
   mqtt-explorer:
     image: smeagolworms4/mqtt-explorer:latest
     container_name: mbg-mqtt-explorer
+    logging: *default-logging
     restart: unless-stopped
     ports:
       - "${MQTT_EXPLORER_PORT:-4000}:4000"
@@ -122,6 +134,7 @@ services:
   esphome:
     image: ghcr.io/esphome/esphome:latest
     container_name: esphome
+    logging: *default-logging
     restart: unless-stopped
     # ports:
     #   - "6052:6052"
@@ -142,6 +155,7 @@ services:
   influxdb:
     image: influxdb:2.7
     container_name: mbg-influxdb
+    logging: *default-logging
     restart: unless-stopped
     ports:
       # host port only — remap when the host already runs an InfluxDB
@@ -166,6 +180,7 @@ services:
   grafana:
     image: grafana/grafana:latest
     container_name: mbg-grafana
+    logging: *default-logging
     restart: unless-stopped
     ports:
       # host port only — remap when the host already runs a Grafana
@@ -189,6 +204,7 @@ services:
       context: ./serial-bridge
     image: mbg-serial-bridge:latest
     container_name: pv-stack-serial-bridge
+    logging: *default-logging
     restart: unless-stopped
     environment:
       # adapters to NEVER expose (claimed by another service). Comma-separated;

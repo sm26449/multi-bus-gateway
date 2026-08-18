@@ -902,6 +902,25 @@ unlock authentication.
 volume — they protect against bad edits, not against losing the volume.
 Keep an exported ZIP somewhere else too.
 
+**Disaster recovery (lost host / lost volume), start to finish:**
+
+1. On the new host: `git clone … && cp .env.example .env && docker compose
+   up -d` — a fresh gateway boots with first-run credentials (printed once
+   in the log).
+2. Log in, go to Config → **Backup & Snapshots** → **Import**, upload your
+   exported ZIP (a with-secrets export restores passkeys and device
+   credentials too; a sanitized one asks you to re-enter secrets).
+3. The import applies config, devices, register selections, virtual meters
+   and calculated presets in one shot. With **more than one device**, the
+   response may set `restart_required` — restart the container
+   (`docker compose restart multi-bus-gateway`) so every poller starts from
+   the restored definitions.
+4. Re-check: `/health` shows the meters, Status shows every device polling,
+   and your ESS/consumers reconnect to the virtual-meter ports on their own.
+5. If you use the Device Builder, restore the `esphome-config` volume from
+   your infrastructure backup (step above) — node YAMLs are not part of the
+   gateway ZIP.
+
 ---
 
 ## 16. Security
