@@ -23,7 +23,7 @@ from typing import Dict
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
-from ..pq_recorder import WAVEFORM_CHANNELS, supports_pq_recorder
+from ..pq_recorder import WAVEFORM_CHANNELS, template_supports_pq
 
 
 def build(ctx) -> APIRouter:
@@ -32,6 +32,11 @@ def build(ctx) -> APIRouter:
 
     def _manager():
         return getattr(ctx.app.state, "pq_manager", None)
+
+    def _supports(dev) -> bool:
+        reg = getattr(ctx, "template_registry", None)
+        tpl = reg.get(dev.template) if reg and dev.template else None
+        return template_supports_pq(tpl, dev.template)
 
     def _device(device: str):
         did = device or config.primary_device.id
@@ -47,7 +52,7 @@ def build(ctx) -> APIRouter:
         if mgr is None:
             return {"devices": [{
                 "device": d.id,
-                "supported": supports_pq_recorder(d.template),
+                "supported": _supports(d),
                 "enabled": bool((d.pq_recorder or {}).get("enabled")),
                 "running": False,
             } for d in config.devices]}
@@ -98,7 +103,7 @@ def build(ctx) -> APIRouter:
         Body: {enabled, poll_s?, archive_waveforms?, base_url?}. Non-GET, so
         the auth middleware already requires an operator/admin session."""
         dev = _device(device)
-        if payload.get("enabled") and not supports_pq_recorder(dev.template):
+        if payload.get("enabled") and not _supports(dev):
             raise HTTPException(
                 status_code=400,
                 detail=f"template {dev.template!r} has no Jasic PQ recorder")

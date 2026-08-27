@@ -183,6 +183,9 @@ class DeviceTemplate:
     # opt in to canonical field-name validation: when true, register names that
     # are not in multibus/canonical_fields are surfaced as load warnings.
     canonical: bool = False
+    # on-device PQ event recorder family ("jasic" = Janitza UMG web firmware);
+    # empty = the device has none. Gates the PQ recorder feature + UI tab.
+    pq_recorder: str = ""
     registers: List[TemplateRegister] = field(default_factory=list)
     # provenance (not serialized into exports)
     builtin: bool = False
@@ -201,6 +204,7 @@ class DeviceTemplate:
             'poll_groups': self.poll_groups,
             'categories': self.categories,
             'canonical': self.canonical,
+            **({'pq_recorder': self.pq_recorder} if self.pq_recorder else {}),
             'registers': [r.to_dict() for r in self.registers],
         }}
 
@@ -366,6 +370,7 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         poll_groups=t.get('poll_groups', {}) or {},
         categories=t.get('categories', {}) or {},
         canonical=bool(t.get('canonical', False)),
+        pq_recorder=str(t.get('pq_recorder', '') or ''),
         registers=regs, builtin=builtin, path=path,
     )
 

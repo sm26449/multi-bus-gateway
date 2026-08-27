@@ -399,6 +399,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 influxdb_enabled: dev.influxdb_enabled !== false,
                 http_output_enabled: dev.http_output_enabled === true,
                 selected_registers: dev.selected_registers ?? 0,
+                pq_supported: dev.pq_supported === true,
             },
             sinks: dev.sinks || {},
             entry: dev,                 // full live entry for the Overview tab
@@ -429,9 +430,6 @@ Object.assign(JanitzaMonitor.prototype, {
         const t = this.t.bind(this);
         const gMon = d.enabled ? '' : 'disabled title="Enable polling to view live values"';
         const gInf = d.influxdb_enabled ? '' : 'disabled title="Enable the InfluxDB output"';
-        const gPq = !d.pq_supported
-            ? 'disabled title="No Jasic PQ recorder on this device template"'
-            : (d.influxdb_enabled ? '' : 'disabled title="Enable the InfluxDB output"');
         return `
         <div class="section-header">
             <h2><button class="btn btn-ghost btn-sm" onclick="app.closeDeviceDetail()" aria-label="${t('common.back', 'Back')}"><i aria-hidden="true" class="bi bi-arrow-left"></i></button>
@@ -454,7 +452,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <button class="config-main-tab" data-dtab="monitor" ${gMon}><i aria-hidden="true" class="bi bi-graph-up"></i> ${t('nav.monitor', 'Monitor')}</button>
             <button class="config-main-tab" data-dtab="history" ${gInf}><i aria-hidden="true" class="bi bi-clock-history"></i> ${t('nav.history', 'History')}</button>
             <button class="config-main-tab" data-dtab="energy" ${gInf}><i aria-hidden="true" class="bi bi-lightning-charge"></i> ${t('nav.energy', 'Energy')}</button>
-            <button class="config-main-tab" data-dtab="pq" ${gPq}><i aria-hidden="true" class="bi bi-activity"></i> ${t('nav.pq', 'Power Quality')}</button>
+            ${d.pq_supported ? `<button class="config-main-tab" data-dtab="pq" ${gInf}><i aria-hidden="true" class="bi bi-activity"></i> ${t('nav.pq', 'Power Quality')}</button>` : ''}
         </div>
 
         <!-- host panels for the embedded, device-scoped views -->

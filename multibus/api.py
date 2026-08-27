@@ -1255,8 +1255,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         regs, _groups = config.load_device_registers(dev_cfg)
         entry['selected_registers'] = len(regs)
         entry['influxdb_device_tag'] = dev_cfg.influxdb_device_tag
-        from .pq_recorder import supports_pq_recorder
-        entry['pq_supported'] = supports_pq_recorder(dev_cfg.template)
+        from .pq_recorder import template_supports_pq
+        _tpl = (template_registry.get(dev_cfg.template)
+                if template_registry and dev_cfg.template else None)
+        entry['pq_supported'] = template_supports_pq(_tpl, dev_cfg.template)
         entry['pq_recorder'] = dict(dev_cfg.pq_recorder or {})
         # full connection block for the device detail editor
         c = dev_cfg.connection

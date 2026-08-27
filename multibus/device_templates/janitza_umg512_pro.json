@@ -42971,6 +42971,7 @@
     "category": "config_transformer",
     "description": "Lock Transformer Ratios, 0=not locked, 1=locked"
    }
-  ]
+  ],
+  "pq_recorder": "jasic"
  }
 }

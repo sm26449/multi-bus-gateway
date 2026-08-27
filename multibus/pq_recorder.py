@@ -103,8 +103,23 @@ WAVEFORM_CHANNELS: Dict[str, int] = {
 
 
 def supports_pq_recorder(template_id: str) -> bool:
-    """Whether a device template's hardware family has the Jasic PQ recorder."""
+    """Legacy id-based check — fallback for templates that predate the
+    ``pq_recorder`` template field. Prefer :func:`template_supports_pq`."""
     return (template_id or "").strip().lower() in JASIC_PQ_TEMPLATES
+
+
+def template_supports_pq(template: Any, template_id: str = "") -> bool:
+    """Whether a device has an on-device PQ recorder this module can read.
+
+    The capability is declared IN the device template (top-level
+    ``pq_recorder: "jasic"`` — the professional source of truth, so
+    community templates for other Jasic-family meters enable the feature
+    without code changes). Templates that predate the field fall back to
+    the known-id set."""
+    fam = str(getattr(template, "pq_recorder", "") or "").strip().lower()
+    if fam:
+        return fam == "jasic"
+    return supports_pq_recorder(template_id)
 
 
 def decode_reason(mask: int) -> List[Tuple[str, str]]:
@@ -441,11 +456,13 @@ class PqRecorderManager:
                  get_mqtt: Callable[[], Any],
                  event_log: Any,
                  state_dir: Path,
-                 get_alerts: Callable[[], Any] = lambda: None):
+                 get_alerts: Callable[[], Any] = lambda: None,
+                 get_template: Callable[[str], Any] = lambda _tid: None):
         self._config = config
         self._get_influx = get_influx
         self._get_mqtt = get_mqtt
         self._get_alerts = get_alerts
+        self._get_template = get_template
         self._event_log = event_log
         self._state_dir = Path(state_dir)
         self.recorders: Dict[str, PqRecorder] = {}
@@ -510,7 +527,8 @@ class PqRecorderManager:
             rec = self.recorders.get(device.id)
             entry = {
                 "device": device.id,
-                "supported": supports_pq_recorder(device.template),
+                "supported": template_supports_pq(
+                    self._get_template(device.template), device.template),
                 "enabled": bool((getattr(device, "pq_recorder", {}) or {})
                                 .get("enabled")),
                 "running": rec is not None and rec.is_alive(),

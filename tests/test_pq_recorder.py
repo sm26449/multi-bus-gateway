@@ -81,6 +81,28 @@ def test_supports_pq_recorder():
     assert not supports_pq_recorder("")
 
 
+def test_template_field_is_the_source_of_truth():
+    from multibus.pq_recorder import template_supports_pq
+
+    class Tpl:
+        pq_recorder = "jasic"
+
+    class NoPq:
+        pq_recorder = ""
+
+    assert template_supports_pq(Tpl(), "whatever_meter")          # field wins
+    assert not template_supports_pq(NoPq(), "eastron_sdm630")
+    # no field set → legacy id fallback
+    assert template_supports_pq(NoPq(), "janitza_umg512_pro")
+    assert template_supports_pq(None, "janitza_umg512_pro")
+
+
+def test_bundled_janitza_template_declares_pq():
+    import json
+    t = json.load(open("multibus/device_templates/janitza_umg512_pro.json"))
+    assert t["device_template"]["pq_recorder"] == "jasic"
+
+
 # --- alert severity ----------------------------------------------------------
 
 def test_alert_severity_mapping():

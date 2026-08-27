@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.37.1
+
+### 2026-08-27 — PQ tab: capability declared in the template + gating fix
+
+- **Fix**: the Power Quality tab appeared (disabled) on EVERY device and
+  stayed dead on the Janitza too — `_deviceDetailHtml` gates on the
+  workspace's trimmed `data` object, which never carried `pq_supported`.
+  The flag is now copied into `data`, and the tab is **hidden entirely**
+  on devices without the capability instead of rendered disabled.
+- **The capability now lives in the device template** (the proper source
+  of truth): top-level `pq_recorder: "jasic"` on `device_template` —
+  declared in the bundled `janitza_umg512_pro`, round-trips through
+  template export, and lets community templates for other Jasic-family
+  meters enable the feature without code changes. Resolution:
+  `template_supports_pq(template, template_id)` (template field first,
+  legacy id-set fallback for templates that predate the field) — used by
+  `/api/devices`, `/api/pq/*` and the recorder manager.
+
 ## 3.37.0
 
 ### 2026-08-27 — PQ recorder: UI config + alert integration
