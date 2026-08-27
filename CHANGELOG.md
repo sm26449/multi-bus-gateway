@@ -1,5 +1,25 @@
 # Changelog
 
+## 3.38.2
+
+### 2026-08-28 — CRITICAL: reject foreign-window waveform data
+
+Live finding on the UMG512: the meter's `mk_hww.html` serves **only its
+newest capture window** — a request for any older `_hww_nr` answers with
+the newest window's samples in the same JSON shape (wrong timestamps, no
+error). The read-through fallback and the recorder's archive path
+happily stored those as the requested event's waveform (all 31 backfilled
+traces from the 2026-08-27 forensics were the same newest window,
+mislabeled — since purged).
+
+- `fetch_waveform_live` and `_archive_waveforms` now validate every
+  sample against the requested window (`window-1 .. window+120 s`) and
+  drop foreign data — an unfetchable old window yields an honest empty
+  result instead of a wrong chart.
+- Docs: operational note on the newest-window-only limitation + the
+  recommendation to keep `poll_s` short (60 s) so a new event's trace is
+  archived before the next event displaces it.
+
 ## 3.38.1
 
 ### 2026-08-27 — waveform fetch: 60 s timeout + one retry

@@ -128,6 +128,18 @@ Each new event is published (retained) to `<device topic prefix>/pq/event`:
 
 ## Operational notes
 
+- **The meter serves only its NEWEST capture window over HTTP.** Verified
+  live on a UMG512: `mk_hww.html?_hww_nr=<older window>` answers with the
+  newest window's samples — same JSON shape, wrong timestamps — for any
+  window but the most recent one. The gateway validates every fetched
+  trace against the requested window and rejects foreign data, so nothing
+  wrong is ever archived; the practical consequence is that a waveform is
+  only capturable while its event is still the meter's latest. Keep
+  `poll_s` short (60 s is comfortable — the poll is two small GETs) so a
+  new event's trace is fetched before the next event displaces it; in an
+  event burst inside one poll interval, only the newest event's trace can
+  be saved.
+
 - **During a mains outage the meter itself is usually dark** (its aux supply
   tends to come from the measured side), so the outage's *onset* event may
   never be written by the device, and polls fail while the grid is down —

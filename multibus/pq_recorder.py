@@ -147,7 +147,13 @@ def fetch_waveform_live(base_url: str, event_s: float,
         data = fetch_json(base_url, path, timeout=60.0).get("data", [])
     except (OSError, ValueError):
         data = fetch_json(base_url, path, timeout=60.0).get("data", [])
-    return [(float(ts), float(v)) for ts, v in data]
+    out = [(float(ts), float(v)) for ts, v in data]
+    # CRITICAL validation: a busy/rotating meter has been observed answering
+    # a request for an old window with the data of its NEWEST window (same
+    # 200/JSON shape, wrong timestamps). Never return — and never let a
+    # caller archive — samples that don't belong to the requested window.
+    out = [(ts, v) for ts, v in out if window - 1.0 <= ts <= window + 120.0]
+    return out
 
 
 def supports_pq_recorder(template_id: str) -> bool:
@@ -465,6 +471,10 @@ class PqRecorder(threading.Thread):
             data = self._fetch_json(
                 f"/lib/events/mk_hww.html?_hww_nr={window:.2f}"
                 f"&_val_nr={val_nr}", timeout=60.0).get("data", [])
+            # same wrong-window guard as fetch_waveform_live: never archive
+            # samples that don't belong to the requested capture window
+            data = [(ts, v) for ts, v in data
+                    if window - 1.0 <= float(ts) <= window + 120.0]
             for ts, value in data:
                 p = (Point("pq_waveforms")
                      .tag("device", self.influx_device_tag)

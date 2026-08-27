@@ -184,6 +184,21 @@ def test_new_event_fires_alert_with_severity(tmp_path):
     assert sev == "warning" and key == "pq_jz" and source == "pq"
 
 
+def test_fetch_waveform_live_rejects_wrong_window_data(monkeypatch):
+    # Observed live (2026-08-27): asked for an old window, a busy meter
+    # answered with its NEWEST window's samples — same JSON shape, wrong
+    # timestamps. Those must be dropped, not returned/archived.
+    import multibus.pq_recorder as pq
+    payloads = {
+        "/lib/events/hww.html": {"hww": [[100.0, 150.0, 2, 1500, 5000]]},
+        "/lib/events/mk_hww.html?_hww_nr=100.00&_val_nr=1":
+            {"data": [[99999.0, 231.0], [99999.01, 231.2]]},   # foreign window
+    }
+    monkeypatch.setattr(pq, "fetch_json",
+                        lambda base, path, timeout=15.0: payloads[path])
+    assert pq.fetch_waveform_live("http://m", 120.0, "UL2") == []
+
+
 def test_fetch_waveform_live_matches_window(monkeypatch):
     import multibus.pq_recorder as pq
     payloads = {
