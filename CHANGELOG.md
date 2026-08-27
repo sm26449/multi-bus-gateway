@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.38.1
+
+### 2026-08-27 — waveform fetch: 60 s timeout + one retry
+
+The meter reconstructs a trace from its recording memory on demand —
+older windows can take tens of seconds and a busy meter occasionally
+times out once (observed live: same window, first call 3 s, second call
+>30 s). `fetch_waveform_live` and the recorder's archive path now use a
+60 s timeout with a single retry, so clicking an older event reliably
+completes instead of surfacing a load error.
+
 ## 3.38.0
 
 ### 2026-08-27 — PQ waveforms: read-through to the meter + page polish

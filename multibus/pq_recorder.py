@@ -138,9 +138,15 @@ def fetch_waveform_live(base_url: str, event_s: float,
             break
     if window is None:
         return []
-    data = fetch_json(base_url,
-                      f"/lib/events/mk_hww.html?_hww_nr={window:.2f}"
-                      f"&_val_nr={val_nr}", timeout=30.0).get("data", [])
+    # The meter reconstructs the trace from its recording memory on demand —
+    # older windows can take tens of seconds, and a busy meter occasionally
+    # times out once. Generous timeout + one retry.
+    path = (f"/lib/events/mk_hww.html?_hww_nr={window:.2f}"
+            f"&_val_nr={val_nr}")
+    try:
+        data = fetch_json(base_url, path, timeout=60.0).get("data", [])
+    except (OSError, ValueError):
+        data = fetch_json(base_url, path, timeout=60.0).get("data", [])
     return [(float(ts), float(v)) for ts, v in data]
 
 
@@ -458,7 +464,7 @@ class PqRecorder(threading.Thread):
             val_nr = WAVEFORM_CHANNELS[name]
             data = self._fetch_json(
                 f"/lib/events/mk_hww.html?_hww_nr={window:.2f}"
-                f"&_val_nr={val_nr}", timeout=30.0).get("data", [])
+                f"&_val_nr={val_nr}", timeout=60.0).get("data", [])
             for ts, value in data:
                 p = (Point("pq_waveforms")
                      .tag("device", self.influx_device_tag)
