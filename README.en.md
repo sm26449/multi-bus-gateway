@@ -39,6 +39,10 @@ in one container, on hardware you own.
   ESPHome firmware for far-away RS485 readers straight from the UI (builds
   on your own ESPHome container, browser USB flashing, OTA, automatic
   adoption as an MQTT device — zero double configuration).
+- ⚡ **PQ event recorder (Janitza)** — permanently archives the meter's
+  on-device power-quality event ring (dips/outages/RVC + RMS waveforms),
+  with a dedicated tab, alerts and a queryable history —
+  [manual §11c](docs/MANUAL.md#11c-power-quality--the-pq-event-recorder-janitza).
 
 > **Deliberate scope:** it is a **protocol gateway**, not an
 > energy/reporting application — cost, tariffs, billing and analytics stay

@@ -28,6 +28,7 @@ Companion documents:
 10. [REST push & the HTTP/JSON feed](#10-rest-push--the-httpjson-feed)
 11. [Virtual Meters — step by step](#11-virtual-meters--step-by-step)
 11b. [Device Builder — remote ESP32 nodes (ESPHome)](#11b-device-builder--remote-esp32-nodes-esphome)
+11c. [Power Quality — the PQ event recorder (Janitza)](#11c-power-quality--the-pq-event-recorder-janitza)
 12. [Alerts & webhooks](#12-alerts--webhooks)
 13. [Diagnostics](#13-diagnostics)
 14. [Modbus writes & dead-man leases](#14-modbus-writes--dead-man-leases)
@@ -721,6 +722,98 @@ roadmap.
   generic profiles are included.
 - Deleting a node **archives** it on the ESPHome dashboard — nothing is
   permanently lost.
+
+## 11c. Power Quality — the PQ event recorder (Janitza)
+
+Janitza UMG-series analyzers (604/605/508/511/512) record power-quality
+events on-device — voltage dips, swells, outages, rapid voltage changes
+(RVC), frequency excursions — plus ~50 s half-wave-RMS waveforms around
+each event. The catch: the meter keeps only a **32-entry event ring** (an
+agitated grid day wraps it within hours) and Modbus exposes only lifetime
+counters, not the records. The gateway reads the recorder through the
+meter's web firmware and **archives everything permanently** to InfluxDB.
+
+### What you need
+
+1. A device whose template is in the Jasic family — the template declares
+   the capability with a top-level `pq_recorder: "jasic"` key (bundled in
+   `janitza_umg512_pro`; for another UMG model just add the key to your
+   template — no code changes).
+2. The device's **InfluxDB output enabled** (that's where history lives).
+3. HTTP access from the gateway to the meter (port 80 — the Jasic web
+   firmware endpoints, unauthenticated).
+
+### Enabling (from the UI, ~30 seconds)
+
+**Devices → open the device → Outputs tab → "PQ event recorder" card** →
+tick *Enable*, keep *Poll* at 60 s and *Archive event waveforms* on →
+**Save**. The status line under the card confirms:
+`✓ recorder running · last poll … · N events / M transients`.
+
+`config.yaml` equivalent (primary = flat section; other devices inside
+their `devices[]` entry):
+
+```yaml
+pq_recorder:
+  enabled: true
+  poll_s: 60               # keep it short — see "Limitations" below
+  archive_waveforms: true
+  base_url: ""             # default: http://<connection host>
+```
+
+### Using it
+
+The **Power Quality** tab on the device page (shown only on devices whose
+template declares the capability):
+
+- **left** — the archived event history (not just the ring!), grouped by
+  day with a severity dot: red = outage, amber = voltage/current/frequency
+  excursion, teal = RVC. The range selector (24h/7d/30d/90d) filters it.
+- **right** — the selected event's details (per-phase causes, duration,
+  min/max/avg, trigger bound) and its recorded **waveform** (10 ms RMS);
+  the channel selector picks the trace (UL1..UL4, IL1..IL4, L-L pairs).
+  The newest event is auto-selected.
+
+### Where the data goes
+
+| Sink | What | When |
+|---|---|---|
+| InfluxDB `pq_events` | every event (cause+channel, duration, min/max/avg) | each poll, idempotent |
+| InfluxDB `pq_counters` | the meter's lifetime counters | each poll |
+| InfluxDB `pq_waveforms` | RMS traces of the implicated channels | on NEW events |
+| MQTT `<prefix>/pq/event` | latest new event as JSON (retained) | on new events |
+| Alerts (ch. 12) | outage → `critical`, excursion → `warning`, RVC → `info` | on new events, rate-limited per device |
+
+### Limitations to know about (measured on real hardware)
+
+- **The meter serves only its NEWEST capture window over HTTP.** Asking for
+  an older window returns the newest window's data in the same shape, with
+  no error — the gateway validates every trace and rejects foreign data,
+  so nothing wrong is ever archived; the practical consequence is that an
+  event's waveform can only be saved while it is still the meter's latest.
+  Hence `poll_s: 60`; in an event burst within one minute, only the newest
+  event keeps its trace.
+- **During a mains outage the meter itself is usually dark** (aux-powered
+  from the measured side): the outage's *onset* event may never be written,
+  and polls fail while the grid is down (the recorder retries by itself;
+  the first failure of a streak logs at info level). Want visibility
+  *inside* outages? Put the meter's aux supply on a UPS.
+- Events already in the ring **before** the recorder was enabled are
+  archived as events (the first sync is silent — no alerts), but their
+  waveforms are generally no longer recoverable — the UI shows an honest
+  "No waveform available".
+
+### Quick troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| No Power Quality tab | the device template doesn't declare `pq_recorder: "jasic"`, or the InfluxDB output is off |
+| Empty event list | the recorder was just enabled (history builds from now on) or the selected range is too short |
+| "No waveform available" | pre-recorder event, or an event burst — see Limitations |
+| `last error` in the status line | the meter isn't answering HTTP (outage? changed IP? check `base_url`) |
+
+Implementation details (endpoints, reason-bitmask decoding, measurement
+schema, API) live in [pq-recorder.md](pq-recorder.md).
 
 ## 12. Alerts & webhooks
 

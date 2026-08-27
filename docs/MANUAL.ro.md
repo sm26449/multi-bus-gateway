@@ -29,6 +29,7 @@ Documente însoțitoare:
 10. [REST push & feed-ul HTTP/JSON](#10-rest-push--feed-ul-httpjson)
 11. [Metere virtuale — pas cu pas](#11-metere-virtuale--pas-cu-pas)
 11b. [Device Builder — noduri ESP32 remote (ESPHome)](#11b-device-builder--noduri-esp32-remote-esphome)
+11c. [Power Quality — recorderul de evenimente PQ (Janitza)](#11c-power-quality--recorderul-de-evenimente-pq-janitza)
 12. [Alerte & webhook-uri](#12-alerte--webhook-uri)
 13. [Diagnostice](#13-diagnostice)
 14. [Scrieri Modbus & lease-uri dead-man](#14-scrieri-modbus--lease-uri-dead-man)
@@ -758,6 +759,101 @@ a proiectului.
   noduri; două profile generice sunt incluse.
 - Ștergerea unui nod îl **arhivează** pe dashboard-ul ESPHome — nimic nu se
   pierde definitiv.
+
+## 11c. Power Quality — recorderul de evenimente PQ (Janitza)
+
+Analizoarele Janitza din familia UMG (604/605/508/511/512) înregistrează
+intern evenimente de calitate a energiei — goluri de tensiune (dip),
+supratensiuni, întreruperi, variații rapide de tensiune (RVC), excursii de
+frecvență — plus ~50 s de forme de undă (RMS pe semiperioadă) în jurul
+fiecărui eveniment. Problema: aparatul ține doar un **ring de 32 de
+evenimente** (într-o zi agitată se suprascrie în câteva ore) și pe Modbus
+expune doar contoare, nu înregistrările. Gateway-ul citește recorder-ul prin
+firmware-ul web al aparatului și **arhivează totul permanent** în InfluxDB.
+
+### Ce îți trebuie
+
+1. Un device cu template din familia Jasic — template-ul declară
+   capabilitatea prin cheia `pq_recorder: "jasic"` (inclusă în template-ul
+   bundled `janitza_umg512_pro`; pentru alt model UMG adaugi cheia în
+   template-ul tău — fără modificări de cod).
+2. Ieșirea **InfluxDB activă** pe device (acolo se arhivează istoricul).
+3. Acces HTTP de la gateway la aparat (portul 80 — endpoint-urile web ale
+   firmware-ului Jasic, fără autentificare).
+
+### Activare (din UI, ~30 de secunde)
+
+**Devices → deschide device-ul → tab Outputs → cardul „PQ event
+recorder”** → bifează *Enable*, lasă *Poll* la 60 s și *Archive event
+waveforms* activ → **Save**. Linia de status de sub card confirmă:
+`✓ recorder running · last poll … · N events / M transients`.
+
+Echivalentul în `config.yaml` (primary = secțiune flat; alte device-uri în
+intrarea lor din `devices[]`):
+
+```yaml
+pq_recorder:
+  enabled: true
+  poll_s: 60               # ține-l scurt — vezi „Limitări” mai jos
+  archive_waveforms: true
+  base_url: ""             # implicit http://<host-ul conexiunii>
+```
+
+### Utilizare
+
+Tab-ul **Power Quality** de pe pagina device-ului (apare doar la device-uri
+cu capabilitatea în template):
+
+- **stânga** — istoricul arhivat de evenimente (nu doar ring-ul!), grupat pe
+  zile, cu punct de severitate: roșu = întrerupere, chihlimbar = excursie
+  de tensiune/curent/frecvență, turcoaz = RVC. Selectorul de interval
+  (24h/7d/30d/90d) filtrează lista.
+- **dreapta** — detaliile evenimentului selectat (cauze pe faze, durată,
+  min/max/avg, pragul de declanșare) și **forma de undă** înregistrată
+  (RMS la 10 ms); comutatorul de canal alege trace-ul (UL1..UL4, IL1..IL4,
+  perechile L-L). Cel mai nou eveniment se selectează automat.
+
+### Unde ajung datele
+
+| Destinație | Ce | Când |
+|---|---|---|
+| InfluxDB `pq_events` | fiecare eveniment (cauză+canal, durată, min/max/avg) | la fiecare poll, idempotent |
+| InfluxDB `pq_counters` | contoarele lifetime ale aparatului | la fiecare poll |
+| InfluxDB `pq_waveforms` | trace-urile RMS ale canalelor implicate | la evenimente NOI |
+| MQTT `<prefix>/pq/event` | ultimul eveniment nou, JSON (retained) | la eveniment nou |
+| Alerte (cap. 12) | întrerupere → `critical`, excursie → `warning`, RVC → `info` | la eveniment nou, cu rate-limit per device |
+
+### Limitări de care să știi (măsurate pe aparat real)
+
+- **Aparatul servește pe HTTP doar CEA MAI RECENTĂ fereastră de captură.**
+  O cerere pentru o fereastră mai veche primește datele celei mai noi, în
+  același format, fără eroare — gateway-ul validează fiecare trace și
+  respinge datele străine, deci nu se arhivează niciodată ceva greșit; dar
+  consecința practică e că forma de undă a unui eveniment se poate salva
+  doar cât timp el e încă „ultimul” pe aparat. De aceea `poll_s: 60`; la o
+  rafală de evenimente în același minut, doar ultimul își păstrează trace-ul.
+- **În timpul unei pane aparatul e de regulă el însuși în beznă** (alimentat
+  din partea măsurată): evenimentul de *început* al panei poate lipsi din
+  recorder, iar poll-urile eșuează cât timp rețeaua e jos (recorder-ul
+  reîncearcă singur, prima eroare a unei serii se loghează la nivel info).
+  Vrei vizibilitate și *în interiorul* panei? Pune alimentarea auxiliară a
+  aparatului pe UPS.
+- Evenimentele care existau în ring **înainte** de activarea recorder-ului
+  se arhivează ca evenimente (primul sync e silențios — fără alerte), dar
+  formele lor de undă de regulă nu mai sunt recuperabile — UI-ul afișează
+  onest „No waveform available”.
+
+### Depanare rapidă
+
+| Simptom | Cauză probabilă |
+|---|---|
+| Tab-ul Power Quality nu apare | template-ul device-ului nu declară `pq_recorder: "jasic"`, sau ieșirea InfluxDB e oprită |
+| Lista de evenimente e goală | recorder-ul abia a fost pornit (istoricul se construiește de-acum) sau intervalul selectat e prea scurt |
+| „No waveform available” | eveniment dinaintea activării, sau rafală — vezi Limitări |
+| `last error` în linia de status | aparatul nu răspunde pe HTTP (pană? IP schimbat? verifică `base_url`) |
+
+Detaliile de implementare (endpoint-uri, decodarea bitmask-ului de motive,
+schema măsurătorilor, API) sunt în [pq-recorder.md](pq-recorder.md).
 
 ## 12. Alerte & webhook-uri
 

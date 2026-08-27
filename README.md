@@ -43,6 +43,10 @@ Fronius și orice PLC/SCADA văd fiecare meterul pe care îl așteaptă. Totul
   flash-uiește firmware ESPHome pentru cititoare RS485 aflate la distanță,
   direct din UI (build pe containerul tău ESPHome, flash USB din browser,
   OTA, adopție automată ca dispozitiv MQTT — zero configurare dublă).
+- ⚡ **Recorder de evenimente PQ (Janitza)** — arhivează permanent ring-ul
+  de evenimente de calitate a energiei al aparatului (dip/întrerupere/RVC
+  + forme de undă RMS), cu tab dedicat, alerte și istoric interogabil —
+  [manual §11c](docs/MANUAL.ro.md#11c-power-quality--recorderul-de-evenimente-pq-janitza).
 
 > **Scop asumat:** e un **gateway de protocol**, nu o aplicație de
 > energie/raportare — costuri, tarife, facturare și analize rămân treaba
