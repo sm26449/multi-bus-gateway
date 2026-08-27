@@ -317,8 +317,10 @@
                                     <button class="btn btn-ghost btn-sm" id="pqRefresh"><i aria-hidden="true" class="bi bi-arrow-clockwise"></i> <span data-i18n="common.refresh">Refresh</span></button>
                                 </div>
                             </div>
-                            <div class="graph-container" id="pqGraphContainer">
+                            <div id="pqDetail" style="padding:2px 12px 6px;"></div>
+                            <div class="graph-container" id="pqGraphContainer" style="position:relative;">
                                 <canvas id="pqCanvas" role="img" aria-label="PQ event waveform chart"></canvas>
+                                <div id="pqOverlay" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--text-secondary);font-size:13px;text-align:center;padding:20px;"></div>
                             </div>
                             <div id="pqLegend" class="graph-legend"></div>
                             <div id="pqInfo" style="color:var(--text-secondary);font-size:11.5px;padding:2px 12px 8px;"></div>

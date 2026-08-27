@@ -184,6 +184,37 @@ def test_new_event_fires_alert_with_severity(tmp_path):
     assert sev == "warning" and key == "pq_jz" and source == "pq"
 
 
+def test_fetch_waveform_live_matches_window(monkeypatch):
+    import multibus.pq_recorder as pq
+    payloads = {
+        "/lib/events/hww.html": {"hww": [[900.0, 950.0, 2, 1500, 5000],
+                                         [100.0, 150.0, 2, 1500, 5000]]},
+        "/lib/events/mk_hww.html?_hww_nr=100.00&_val_nr=1":
+            {"data": [[100.0, 230.1], [100.01, 229.9]]},
+    }
+    monkeypatch.setattr(pq, "fetch_json",
+                        lambda base, path, timeout=15.0: payloads[path])
+    got = pq.fetch_waveform_live("http://m", 120.0, "UL2")
+    assert got == [(100.0, 230.1), (100.01, 229.9)]
+    assert pq.fetch_waveform_live("http://m", 500.0, "UL2") == []   # no window
+    assert pq.fetch_waveform_live("http://m", 120.0, "BOGUS") == []
+
+
+def test_device_base_url_resolution():
+    from multibus.pq_recorder import device_base_url
+
+    class Conn:
+        host = "192.168.1.9"
+
+    class Dev:
+        connection = Conn()
+        pq_recorder = {}
+
+    assert device_base_url(Dev()) == "http://192.168.1.9"
+    d = Dev(); d.pq_recorder = {"base_url": "http://other:8080/"}
+    assert device_base_url(d) == "http://other:8080/"
+
+
 def test_counters_parsed(tmp_path):
     rec = _make_recorder(tmp_path, [EV1])
     rec._poll_once()

@@ -1,5 +1,31 @@
 # Changelog
 
+## 3.38.0
+
+### 2026-08-27 — PQ waveforms: read-through to the meter + page polish
+
+- **Waveform read-through fallback**: `GET /api/pq/waveform` now falls
+  back to fetching the trace live from the meter when nothing is archived
+  (ring events that predate the recorder being enabled — the exact state
+  every fresh install starts in), and archives it in the same pass so the
+  next view is served from InfluxDB. Response carries `source: "device"`
+  when the fallback ran. Module helpers `fetch_json` /
+  `fetch_waveform_live` / `device_base_url` shared by recorder and route.
+- **Power Quality page redesign**: events grouped by day with a severity
+  dot (outage red / excursion amber / RVC teal); event detail header with
+  cause badges + duration/min/max/avg/trigger-bound; explicit
+  loading/empty/error overlays on the chart; newest event auto-selected on
+  open so the pane is never blank; tabular-numeric timestamps; the
+  "fetched live from the meter" source note.
+- **Fix**: after `POST /api/pq/config`, `/api/devices` kept serving the
+  stale `pq_recorder` block — `set_pq_recorder` rebuilds `config.devices`
+  with new objects while the registry kept the old instance. The route now
+  swaps it via `registry.replace()` (same idiom as the rest-push handler).
+- **E2E**: `tools/e2e/pq_e2e.mjs` — Playwright suite covering the whole
+  feature in a real browser (19 checks: login, template gating, event
+  list, waveform incl. live read-through, Outputs card, config
+  round-trip, tab hidden on non-Jasic devices, zero console errors).
+
 ## 3.37.1
 
 ### 2026-08-27 — PQ tab: capability declared in the template + gating fix

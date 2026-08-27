@@ -23,7 +23,8 @@ from typing import Dict
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
-from ..pq_recorder import WAVEFORM_CHANNELS, template_supports_pq
+from ..pq_recorder import (WAVEFORM_CHANNELS, device_base_url,
+                           fetch_waveform_live, template_supports_pq)
 
 
 def build(ctx) -> APIRouter:
@@ -94,7 +95,44 @@ def build(ctx) -> APIRouter:
             dev.influxdb_bucket, dev.influxdb_device_tag or dev.id)
         if "error" in res:
             raise HTTPException(status_code=400, detail=res["error"])
-        return res
+        if res.get("series"):
+            return res
+
+        # Read-through fallback: nothing archived (e.g. a ring event that
+        # predates the recorder being enabled) but the meter may still hold
+        # the capture window in its own few-day retention — fetch it live
+        # and archive it so the next view is served from InfluxDB.
+        base = device_base_url(dev)
+        if not base or not _supports(dev):
+            return res
+
+        def _live_and_archive():
+            from datetime import datetime, timezone
+            data = fetch_waveform_live(base, event / 1000.0, channel)
+            if not data:
+                return {"series": []}
+            try:
+                from influxdb_client import Point, WritePrecision
+                tag = dev.influxdb_device_tag or dev.id
+                for ts, value in data:
+                    p = (Point("pq_waveforms")
+                         .tag("device", tag)
+                         .tag("event", str(int(event)))
+                         .tag("channel", channel)
+                         .field("value", float(value))
+                         .time(int(ts * 1000), WritePrecision.MS))
+                    influx.write_point(p, bucket=dev.influxdb_bucket)
+            except Exception:  # noqa: BLE001 — archive is best-effort here
+                pass
+            iso = (lambda ts: datetime.fromtimestamp(ts, tz=timezone.utc)
+                   .isoformat().replace("+00:00", "Z"))
+            return {"series": [{"t": iso(ts), "v": v} for ts, v in data],
+                    "source": "device"}
+
+        try:
+            return await asyncio.to_thread(_live_and_archive)
+        except Exception:  # noqa: BLE001 — meter dark/unreachable → empty
+            return res
 
     @r.post("/api/pq/config")
     async def pq_config(payload: Dict = Body(...),
@@ -114,6 +152,16 @@ def build(ctx) -> APIRouter:
             config.set_pq_recorder(dev.id, cfg)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        # set_pq_recorder rebuilds config.devices with NEW DeviceConfig
+        # objects — swap the registry's instance too (keeping the running
+        # client), or /api/devices keeps serving the stale block.
+        new_dev = next((d for d in config.devices if d.id == dev.id), None)
+        reg = getattr(ctx, "registry", None)
+        if reg is not None and new_dev is not None:
+            try:
+                reg.replace(dev.id, new_dev)
+            except Exception:  # noqa: BLE001 — registry sync is best-effort
+                pass
         mgr = _manager()
         if mgr is not None:
             mgr.apply_device(dev.id)

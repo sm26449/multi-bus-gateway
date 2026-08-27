@@ -102,6 +102,48 @@ WAVEFORM_CHANNELS: Dict[str, int] = {
 }
 
 
+def fetch_json(base_url: str, path: str, timeout: float = 15.0) -> Any:
+    """GET a JSON document from the meter's Jasic web firmware."""
+    with urllib.request.urlopen(f"{base_url.rstrip('/')}{path}",
+                                timeout=timeout) as resp:
+        return json.load(resp)
+
+
+def device_base_url(device: Any) -> str:
+    """Resolve a device's PQ recorder base URL: explicit ``base_url`` from
+    its pq_recorder block, else ``http://<connection.host>``."""
+    cfg = dict(getattr(device, "pq_recorder", {}) or {})
+    base = (cfg.get("base_url") or "").strip()
+    if base:
+        return base
+    host = getattr(getattr(device, "connection", None), "host", "") or ""
+    return f"http://{host}" if host else ""
+
+
+def fetch_waveform_live(base_url: str, event_s: float,
+                        channel: str) -> List[Tuple[float, float]]:
+    """Fetch one channel's half-wave-RMS trace for an event straight from the
+    meter (used as a read-through fallback while the trace still exists in
+    the device's own few-day retention — e.g. ring events that predate the
+    recorder being enabled). Returns ``[(ts_seconds, value), ...]`` or []
+    when the meter no longer has a capture window for the event."""
+    val_nr = WAVEFORM_CHANNELS.get(channel)
+    if val_nr is None:
+        return []
+    index = fetch_json(base_url, "/lib/events/hww.html").get("hww", [])
+    window = None
+    for w in index:
+        if float(w[0]) - 1.0 <= event_s <= float(w[1]) + 1.0:
+            window = float(w[0])
+            break
+    if window is None:
+        return []
+    data = fetch_json(base_url,
+                      f"/lib/events/mk_hww.html?_hww_nr={window:.2f}"
+                      f"&_val_nr={val_nr}", timeout=30.0).get("data", [])
+    return [(float(ts), float(v)) for ts, v in data]
+
+
 def supports_pq_recorder(template_id: str) -> bool:
     """Legacy id-based check — fallback for templates that predate the
     ``pq_recorder`` template field. Prefer :func:`template_supports_pq`."""
@@ -238,9 +280,8 @@ class PqRecorder(threading.Thread):
     # -- device HTTP ---------------------------------------------------------
 
     def _fetch_json(self, path: str, timeout: float = 15.0) -> Any:
-        with urllib.request.urlopen(f"{self.base_url}{path}",
-                                    timeout=timeout) as resp:
-            return json.load(resp)
+        # thin instance wrapper over the module helper (patch point in tests)
+        return fetch_json(self.base_url, path, timeout)
 
     # -- polling loop --------------------------------------------------------
 
