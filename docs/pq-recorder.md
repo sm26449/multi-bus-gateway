@@ -61,7 +61,9 @@ for L/L causes). Validated against the firmware's own `lib/events/events.js`:
 RMS trace channel indexes (`_val_nr`): 0–3 = UL1..UL4, 4–7 = IL1..IL4,
 16–18 = UL1-L2 / UL2-L3 / UL3-L1.
 
-## Data model (InfluxDB, the device's bucket)
+## Data model (InfluxDB — the device's bucket, or the optional dedicated
+`pq_recorder.bucket` with infinite retention; grid disputes run on months,
+so PQ history deserves a longer life than high-frequency telemetry)
 
 | Measurement | Tags | Fields | Timestamp |
 |---|---|---|---|

@@ -256,9 +256,15 @@ same block inside their `devices[]` entry.
 ```yaml
 pq_recorder:
   enabled: true
-  poll_s: 300              # recorder poll interval (floor 30 s)
+  poll_s: 60               # recorder poll interval (floor 30 s; keep short —
+                           # the meter serves only its newest capture window)
   archive_waveforms: true  # fetch + store RMS traces for new events
   base_url: ""             # default: http://<connection.host>
+  bucket: ""               # optional dedicated InfluxDB bucket for PQ history
+                           # (created with infinite retention if missing) —
+                           # decouples forensically-precious PQ data from the
+                           # telemetry bucket's retention. Default: the
+                           # device's normal bucket.
 ```
 
 See [pq-recorder.md](pq-recorder.md) for the endpoints, the data model and

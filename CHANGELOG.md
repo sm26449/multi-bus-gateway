@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.39.0
+
+### 2026-08-28 — dedicated PQ history bucket (long retention)
+
+PQ history is small but forensically precious — grid disputes run on
+months, while a device's telemetry bucket typically expires in weeks.
+New optional `pq_recorder.bucket`: routes `pq_events`/`pq_counters`/
+`pq_waveforms` (and the API reads + the read-through archive) into a
+dedicated bucket, auto-created with infinite retention if missing.
+Default unchanged (the device's normal bucket).
+
 ## 3.38.2
 
 ### 2026-08-28 — CRITICAL: reject foreign-window waveform data

@@ -298,8 +298,18 @@ class PqRecorder(threading.Thread):
     # -- polling loop --------------------------------------------------------
 
     def run(self) -> None:
-        logger.info("pq[%s]: recorder started (%s, every %.0fs)",
-                    self.device_id, self.base_url, self.poll_s)
+        logger.info("pq[%s]: recorder started (%s, every %.0fs, bucket %s)",
+                    self.device_id, self.base_url, self.poll_s,
+                    self.influx_bucket)
+        # A dedicated PQ bucket may not exist yet — create it (infinite
+        # retention) before the first write, best-effort.
+        try:
+            influx = self._get_influx()
+            if influx is not None and hasattr(influx, "ensure_bucket"):
+                influx.ensure_bucket(self.influx_bucket)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("pq[%s]: ensure_bucket failed: %s",
+                         self.device_id, e)
         while not self._stop.is_set():
             try:
                 self._poll_once()
@@ -541,7 +551,11 @@ class PqRecorderManager:
             base_url=base_url,
             poll_s=cfg.get("poll_s", 300),
             archive_waveforms=cfg.get("archive_waveforms", True),
-            influx_bucket=device.influxdb_bucket,
+            # PQ history is small but forensically precious (grid disputes
+            # run on months) — an optional dedicated bucket decouples its
+            # retention from the device's high-frequency telemetry bucket.
+            influx_bucket=(cfg.get("bucket") or "").strip()
+                          or device.influxdb_bucket,
             influx_device_tag=device.influxdb_device_tag or device.id,
             mqtt_topic_prefix=device.mqtt_topic_prefix,
             get_influx=self._get_influx,

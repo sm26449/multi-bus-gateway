@@ -39,6 +39,12 @@ def build(ctx) -> APIRouter:
         tpl = reg.get(dev.template) if reg and dev.template else None
         return template_supports_pq(tpl, dev.template)
 
+    def _pq_bucket(dev) -> str:
+        """PQ history bucket: the device's pq_recorder.bucket override, or
+        its normal telemetry bucket."""
+        return ((dev.pq_recorder or {}).get("bucket") or "").strip() \
+            or dev.influxdb_bucket
+
     def _device(device: str):
         did = device or config.primary_device.id
         for d in config.devices:
@@ -70,7 +76,7 @@ def build(ctx) -> APIRouter:
         if influx is None or not influx.config.enabled:
             raise HTTPException(status_code=503, detail="InfluxDB not enabled")
         res = await asyncio.to_thread(
-            influx.query_pq_events, dev.influxdb_bucket,
+            influx.query_pq_events, _pq_bucket(dev),
             dev.influxdb_device_tag or dev.id, start, limit)
         if "error" in res:
             raise HTTPException(status_code=400, detail=res["error"])
@@ -92,7 +98,7 @@ def build(ctx) -> APIRouter:
             raise HTTPException(status_code=503, detail="InfluxDB not enabled")
         res = await asyncio.to_thread(
             influx.query_pq_waveform, event, channel,
-            dev.influxdb_bucket, dev.influxdb_device_tag or dev.id)
+            _pq_bucket(dev), dev.influxdb_device_tag or dev.id)
         if "error" in res:
             raise HTTPException(status_code=400, detail=res["error"])
         if res.get("series"):
@@ -121,7 +127,7 @@ def build(ctx) -> APIRouter:
                          .tag("channel", channel)
                          .field("value", float(value))
                          .time(int(ts * 1000), WritePrecision.MS))
-                    influx.write_point(p, bucket=dev.influxdb_bucket)
+                    influx.write_point(p, bucket=_pq_bucket(dev))
             except Exception:  # noqa: BLE001 — archive is best-effort here
                 pass
             iso = (lambda ts: datetime.fromtimestamp(ts, tz=timezone.utc)
@@ -146,7 +152,7 @@ def build(ctx) -> APIRouter:
                 status_code=400,
                 detail=f"template {dev.template!r} has no Jasic PQ recorder")
         cfg = {k: payload[k] for k in
-               ("enabled", "poll_s", "archive_waveforms", "base_url")
+               ("enabled", "poll_s", "archive_waveforms", "base_url", "bucket")
                if k in payload}
         try:
             config.set_pq_recorder(dev.id, cfg)

@@ -230,6 +230,35 @@ def test_device_base_url_resolution():
     assert device_base_url(d) == "http://other:8080/"
 
 
+def test_manager_bucket_override(tmp_path):
+    from multibus.pq_recorder import PqRecorderManager
+
+    class Conn:
+        host = "192.168.1.9"
+
+    class Dev:
+        id = "jz"
+        enabled = True
+        template = "janitza_umg512_pro"
+        connection = Conn()
+        influxdb_bucket = "janitza"
+        influxdb_device_tag = "janitza_umg512"
+        mqtt_topic_prefix = "meters/jz"
+        pq_recorder = {"enabled": True, "bucket": "janitza_pq"}
+
+    class Cfg:
+        devices = [Dev()]
+
+    mgr = PqRecorderManager(config=Cfg(), get_influx=lambda: None,
+                            get_mqtt=lambda: None, event_log=None,
+                            state_dir=tmp_path)
+    rec = mgr._build_one(Cfg.devices[0])
+    assert rec.influx_bucket == "janitza_pq"
+    Dev.pq_recorder = {"enabled": True}          # no override → device bucket
+    rec = mgr._build_one(Cfg.devices[0])
+    assert rec.influx_bucket == "janitza"
+
+
 def test_counters_parsed(tmp_path):
     rec = _make_recorder(tmp_path, [EV1])
     rec._poll_once()
