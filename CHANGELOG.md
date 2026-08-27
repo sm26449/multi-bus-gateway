@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.37.0
+
+### 2026-08-27 — PQ recorder: UI config + alert integration
+
+Phase 2 follow-up of the PQ recorder (3.36.0): the feature is now fully
+operable from the UI and wired into the alert channels.
+
+- **Outputs tab → "PQ event recorder" card** (Jasic-family devices only):
+  enable toggle, poll interval, waveform archiving, base-URL override —
+  saves via `POST /api/pq/config` and live-restarts the poller. Live
+  status line (running / last poll / lifetime counters / last error) from
+  `/api/pq/status`.
+- **Alerts**: every NEW PQ event also fires the AlertManager
+  (`alert_severity_for`: outage → critical, voltage/current/frequency
+  excursion → warning, bare rapid-voltage-change → info; per-device key
+  `pq_<id>` so the manager's min-interval throttles event bursts into one
+  notification on the MQTT `<prefix>/alert` topic + webhook).
+- `/api/devices` entries now carry the full `pq_recorder` config block
+  (for the card) alongside `pq_supported`.
+- EN 50160 weekly-verdict scraping was considered and **descoped**: the
+  meter exposes no computed verdict registers — its own EN50160 page
+  derives the indices client-side from FFT registers. A compliance
+  verdict belongs in downstream analytics over the now-archived data.
+
 ## 3.36.0
 
 ### 2026-08-27 — PQ event recorder (Janitza/Jasic)

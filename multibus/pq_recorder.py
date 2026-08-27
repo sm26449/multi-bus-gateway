@@ -121,6 +121,19 @@ def decode_reason(mask: int) -> List[Tuple[str, str]]:
     return out or [(f"unknown_0x{mask:x}", "all")]
 
 
+def alert_severity_for(causes: List[Tuple[str, str]]) -> str:
+    """Alert severity for an event's decoded causes: an outage is critical,
+    any voltage/current/frequency excursion is a warning, a bare rapid
+    voltage change (or unknown) is informational."""
+    worst = "info"
+    for cause, _ch in causes:
+        if "outage" in cause:
+            return "critical"
+        if cause.startswith(("over_", "under_", "dt_")):
+            worst = "warning"
+    return worst
+
+
 def waveform_channels_for(causes: List[Tuple[str, str]]) -> List[str]:
     """Which RMS traces to archive for an event's decoded causes.
 
@@ -166,7 +179,8 @@ class PqRecorder(threading.Thread):
                  get_influx: Callable[[], Any],
                  get_mqtt: Callable[[], Any],
                  event_log: Any,
-                 state_dir: Path):
+                 state_dir: Path,
+                 get_alerts: Callable[[], Any] = lambda: None):
         super().__init__(daemon=True, name=f"PQRecorder-{device_id}")
         self.device_id = device_id
         self.base_url = base_url.rstrip("/")
@@ -177,6 +191,7 @@ class PqRecorder(threading.Thread):
         self.mqtt_topic_prefix = (mqtt_topic_prefix or "").rstrip("/")
         self._get_influx = get_influx
         self._get_mqtt = get_mqtt
+        self._get_alerts = get_alerts
         self._event_log = event_log
         self._state_path = state_dir / f"pq_state_{device_id}.json"
         self._stop = threading.Event()
@@ -333,14 +348,24 @@ class PqRecorder(threading.Thread):
     def _announce(self, ev: dict) -> None:
         summary = ", ".join(f'{c["cause"]}[{c["channel"]}]'
                             for c in ev["causes"])
+        message = (f"{self.device_id}: PQ event {summary} "
+                   f"({ev['duration_ms']:.0f} ms, min {ev['vmin']:.1f})")
         if self._event_log is not None:
             try:
-                self._event_log.add(
-                    "warning", "pq",
-                    f"{self.device_id}: PQ event {summary} "
-                    f"({ev['duration_ms']:.0f} ms, min {ev['vmin']:.1f})")
+                self._event_log.add("warning", "pq", message)
             except Exception:  # noqa: BLE001
                 pass
+        alerts = self._get_alerts()
+        if alerts is not None:
+            try:
+                causes = [(c["cause"], c["channel"]) for c in ev["causes"]]
+                # per-device alert key → the AlertManager's own min_interval
+                # throttles a burst of events into one notification
+                alerts.fire(alert_severity_for(causes),
+                            f"pq_{self.device_id}", "pq", message)
+            except Exception as e:  # noqa: BLE001
+                logger.debug("pq[%s]: alert fire failed: %s",
+                             self.device_id, e)
         mqtt = self._get_mqtt()
         if mqtt is not None and self.mqtt_topic_prefix:
             try:
@@ -415,10 +440,12 @@ class PqRecorderManager:
                  get_influx: Callable[[], Any],
                  get_mqtt: Callable[[], Any],
                  event_log: Any,
-                 state_dir: Path):
+                 state_dir: Path,
+                 get_alerts: Callable[[], Any] = lambda: None):
         self._config = config
         self._get_influx = get_influx
         self._get_mqtt = get_mqtt
+        self._get_alerts = get_alerts
         self._event_log = event_log
         self._state_dir = Path(state_dir)
         self.recorders: Dict[str, PqRecorder] = {}
@@ -445,6 +472,7 @@ class PqRecorderManager:
             mqtt_topic_prefix=device.mqtt_topic_prefix,
             get_influx=self._get_influx,
             get_mqtt=self._get_mqtt,
+            get_alerts=self._get_alerts,
             event_log=self._event_log,
             state_dir=self._state_dir,
         )

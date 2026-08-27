@@ -1257,6 +1257,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         entry['influxdb_device_tag'] = dev_cfg.influxdb_device_tag
         from .pq_recorder import supports_pq_recorder
         entry['pq_supported'] = supports_pq_recorder(dev_cfg.template)
+        entry['pq_recorder'] = dict(dev_cfg.pq_recorder or {})
         # full connection block for the device detail editor
         c = dev_cfg.connection
         _url = dev_cfg.http.get('url', '') if dev_cfg.protocol == 'http' else ''

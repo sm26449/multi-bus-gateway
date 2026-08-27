@@ -577,6 +577,7 @@ Object.assign(JanitzaMonitor.prototype, {
             ${this._sinkCardInflux(d, primary)}
             ${this._sinkCardHttp(d, primary)}
             ${this._sinkCardRest(d, primary)}
+            ${d.pq_supported ? this._sinkCardPq(d, primary) : ''}
             <div class="settings-card"><div class="settings-card-footer">
                 <span class="save-feedback" id="ddvFeedback2"></span>
                 <button class="btn btn-primary btn-sm" onclick="app.saveDeviceDetail(this)"><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
@@ -671,7 +672,10 @@ Object.assign(JanitzaMonitor.prototype, {
             p.hidden = p.dataset.dpanel !== name);
         this._viewDevice = id;                        // lock the scoped views to THIS device
         if (name === 'overview') this._loadDeviceSnapshot(id);
-        else if (name === 'outputs') { if (this._devDetail?.data?.http_output_enabled) this._loadHttpFeed(id); }
+        else if (name === 'outputs') {
+            if (this._devDetail?.data?.http_output_enabled) this._loadHttpFeed(id);
+            if (this._devDetail?.data?.pq_supported) this._loadPqSinkStatus(id);
+        }
         else if (name === 'calculated') this._initCalculated(id);
         else if (name === 'measurements') this._embedRegisters(id);
         else if (name === 'monitor') this._embedWsPage('monitor', () => this.initMonitorPage());
@@ -964,6 +968,77 @@ Object.assign(JanitzaMonitor.prototype, {
                 <p class="field-hint"><i aria-hidden="true" class="bi bi-info-circle"></i> ${this.t('rest.note', 'POSTs the live values of this device as JSON to the URL every interval. External URLs are allowed. Put a Bearer / API key in Headers (stored masked).')}</p>
             </div>
         </div>`;
+    },
+
+    // PQ recorder card (Jasic/Janitza only — see docs/pq-recorder.md). The
+    // live status line (running / last poll / counters) is filled async by
+    // _loadPqSinkStatus when the Outputs tab opens.
+    _sinkCardPq(d, primary) {
+        const pq = this._devDetail.entry?.pq_recorder || d.pq_recorder || {};
+        const on = !!pq.enabled;
+        return `
+        <div class="settings-card">
+            <div class="settings-card-header">
+                <h3><i aria-hidden="true" class="bi bi-activity"></i> ${this.t('pq.sinkTitle', 'PQ event recorder')}</h3>
+                <label class="switch-label"><input type="checkbox" id="ddvPqEnabled" ${on ? 'checked' : ''}><span>${this.t('devices.sink.enable', 'Enable')}</span></label>
+            </div>
+            <div class="settings-card-body">
+                <div class="form-row">
+                    <div class="form-group" style="max-width:130px"><label class="form-label" for="ddvPqPoll">${this.t('pq.pollS', 'Poll (s)')}</label>
+                        <input type="number" id="ddvPqPoll" class="input" min="30" value="${pq.poll_s || 300}"></div>
+                    <div class="form-group flex-2"><label class="form-label" for="ddvPqBaseUrl">${this.t('pq.baseUrl', 'Base URL (blank = http://<host>)')}</label>
+                        <input type="text" id="ddvPqBaseUrl" class="input" value="${this._esc(pq.base_url || '')}" placeholder="http://192.168.1.50"></div>
+                </div>
+                <label style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+                    <input type="checkbox" id="ddvPqArchive" ${pq.archive_waveforms !== false ? 'checked' : ''}> ${this.t('pq.archiveWf', 'Archive event waveforms (RMS traces of the implicated channels)')}</label>
+                <div class="rest-status" id="ddvPqStatus"></div>
+                <div class="calc-editor-actions" style="margin-top:12px">
+                    <button class="btn btn-primary btn-sm" ${this._act('savePqRecorder', [this._devDetail.id])}><i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}</button>
+                </div>
+                <p class="field-hint"><i aria-hidden="true" class="bi bi-info-circle"></i> ${this.t('pq.sinkNote', 'Archives the on-device PQ event ring (dips, outages, rapid voltage changes) + waveforms into InfluxDB, publishes new events to MQTT and the alert channels. Browse them in the Power Quality tab.')}</p>
+            </div>
+        </div>`;
+    },
+
+    async savePqRecorder(id) {
+        const payload = {
+            enabled: document.getElementById('ddvPqEnabled').checked,
+            poll_s: parseInt(document.getElementById('ddvPqPoll').value) || 300,
+            archive_waveforms: document.getElementById('ddvPqArchive').checked,
+            base_url: document.getElementById('ddvPqBaseUrl').value.trim(),
+        };
+        try {
+            const r = await fetch(`/api/pq/config?device=${encodeURIComponent(id)}`,
+                { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(payload) });
+            if (!r.ok) throw new Error((await r.json()).detail || 'failed');
+            if (this._devDetail?.entry) this._devDetail.entry.pq_recorder = (await r.json()).pq_recorder;
+            this.showToast('success', this.t('pq.sinkTitle', 'PQ event recorder'), this.t('settings.saved', 'Saved & applied'));
+            this._fetchDevices(true);
+            this._loadPqSinkStatus(id);
+        } catch (e) {
+            this.showToast('error', this.t('pq.sinkTitle', 'PQ event recorder'), String(e.message || e));
+        }
+    },
+
+    async _loadPqSinkStatus(id) {
+        const el = document.getElementById('ddvPqStatus');
+        if (!el) return;
+        try {
+            const r = await fetch('/api/pq/status');
+            if (!r.ok) return;
+            const dev = ((await r.json()).devices || []).find(x => x.device === id);
+            if (!dev) return;
+            if (!dev.enabled) { el.textContent = ''; return; }
+            const bits = [];
+            bits.push(dev.running ? `✓ ${this.t('pq.running', 'recorder running')}`
+                                  : `✕ ${this.t('pq.notRunning', 'recorder not running')}`);
+            if (dev.last_poll) bits.push(`${this.t('pq.lastPoll', 'last poll')} ${new Date(dev.last_poll * 1000).toLocaleTimeString()}`);
+            const c = dev.counters || {};
+            if (c.events != null) bits.push(`${c.events} ${this.t('pq.eventsWord', 'events')} / ${c.transients ?? 0} ${this.t('pq.transients', 'transients')}`);
+            if (dev.last_error) bits.push(`${this.t('pq.lastError', 'last error')}: ${dev.last_error}`);
+            el.textContent = bits.join(' · ');
+        } catch (e) { /* best-effort status line */ }
     },
 
     _restPushPayload() {

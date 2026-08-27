@@ -9,8 +9,9 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from multibus.pq_recorder import (PqRecorder, decode_reason,
-                                  supports_pq_recorder, waveform_channels_for)
+from multibus.pq_recorder import (PqRecorder, alert_severity_for,
+                                  decode_reason, supports_pq_recorder,
+                                  waveform_channels_for)
 
 
 # --- decode_reason ---------------------------------------------------------
@@ -80,6 +81,18 @@ def test_supports_pq_recorder():
     assert not supports_pq_recorder("")
 
 
+# --- alert severity ----------------------------------------------------------
+
+def test_alert_severity_mapping():
+    assert alert_severity_for([("voltage_outage_ln", "L2")]) == "critical"
+    assert alert_severity_for([("under_voltage_ll", "L1-L2")]) == "warning"
+    assert alert_severity_for([("over_frequency", "all")]) == "warning"
+    assert alert_severity_for([("rapid_voltage_change_ln", "L3")]) == "info"
+    # outage wins over anything else in the same event
+    assert alert_severity_for([("rapid_voltage_change_ln", "L3"),
+                               ("voltage_outage_ll", "L1-L2")]) == "critical"
+
+
 # --- poller semantics --------------------------------------------------------
 
 def _make_recorder(tmp_path: Path, ring, counters=None) -> PqRecorder:
@@ -134,6 +147,19 @@ def test_high_water_persists_across_restart(tmp_path):
     rec2._announce = MagicMock()
     rec2._poll_once()                           # nothing newer → quiet
     rec2._announce.assert_not_called()
+
+
+def test_new_event_fires_alert_with_severity(tmp_path):
+    alerts = MagicMock()
+    rec = _make_recorder(tmp_path, [EV1])
+    rec._get_alerts = lambda: alerts
+    rec._poll_once()                            # first sync — silent
+    alerts.fire.assert_not_called()
+    rec._fetch_json = _make_recorder(tmp_path, [EV1, EV2])._fetch_json
+    rec._poll_once()                            # EV2 = under_voltage_ln L2
+    alerts.fire.assert_called_once()
+    sev, key, source, _msg = alerts.fire.call_args[0]
+    assert sev == "warning" and key == "pq_jz" and source == "pq"
 
 
 def test_counters_parsed(tmp_path):

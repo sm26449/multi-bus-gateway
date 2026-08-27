@@ -96,6 +96,26 @@ Jasic family member and the InfluxDB output is on): archived event list with
 decoded causes, click-through to the recorded waveform, lifetime counters in
 the footer.
 
+Device workspace → **Outputs** tab → "PQ event recorder" card: enable
+toggle, poll interval, waveform archiving, base-URL override, live recorder
+status — the full configuration without touching config.yaml.
+
+## Alerts
+
+Every NEW event also fires the gateway AlertManager (`alerts:` config block
+— MQTT `<prefix>/alert` + webhook): outage causes → `critical`,
+voltage/current/frequency excursions → `warning`, bare rapid voltage
+changes → `info`. The alert key is `pq_<device>`, so the manager's
+`min_interval_s` folds an event burst into one notification.
+
+## EN 50160 note
+
+The meter does **not** expose computed EN 50160 verdict registers — its own
+web page derives the indices client-side from FFT/average registers. A
+weekly compliance verdict therefore belongs in downstream analytics over
+the archived `pq_events`/`pq_waveforms` + the continuously polled
+voltage/THD/unbalance series, not in the gateway.
+
 ## MQTT
 
 Each new event is published (retained) to `<device topic prefix>/pq/event`:

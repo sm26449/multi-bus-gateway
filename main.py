@@ -229,6 +229,7 @@ class GatewayApp:
             config=self.config,
             get_influx=lambda: getattr(_api_ctx, 'influxdb_publisher', None),
             get_mqtt=lambda: getattr(_api_ctx, 'mqtt_publisher', None),
+            get_alerts=lambda: getattr(_api_ctx, 'alert_mgr', None),
             event_log=self.app.state.event_log,
             state_dir=self.config.config_path.parent,
         )
