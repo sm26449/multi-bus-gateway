@@ -1255,6 +1255,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         regs, _groups = config.load_device_registers(dev_cfg)
         entry['selected_registers'] = len(regs)
         entry['influxdb_device_tag'] = dev_cfg.influxdb_device_tag
+        from .pq_recorder import supports_pq_recorder
+        entry['pq_supported'] = supports_pq_recorder(dev_cfg.template)
         # full connection block for the device detail editor
         c = dev_cfg.connection
         _url = dev_cfg.http.get('url', '') if dev_cfg.protocol == 'http' else ''
@@ -2911,7 +2913,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     from .routes import (ApiCtx, auth_routes, builder_routes, calculated,
                          commissioning, config as config_routes, device_templates,
                          diagnostics, discovery_routes, energy, general_config,
-                         languages, metrics, registers_routes, status_routes,
+                         languages, metrics, pq, registers_routes, status_routes,
                          system, values_routes, vmeters)
     ctx = ApiCtx(
         app=app, config=config, registry=registry, calc_engine=calc_engine,
@@ -2927,7 +2929,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     app.state.ctx = ctx
     for _mod in (builder_routes, calculated, commissioning, config_routes,
                  device_templates, diagnostics, discovery_routes, energy,
-                 general_config, languages, metrics, registers_routes,
+                 general_config, languages, metrics, pq, registers_routes,
                  status_routes, system, auth_routes, values_routes, vmeters):
         app.include_router(_mod.build(ctx))
     app.include_router(auth_routes.build_passkeys(ctx))

@@ -195,6 +195,7 @@ class DeviceConfig:
     influxdb_enabled: bool = True            # route this device's values to InfluxDB
     http_output_enabled: bool = False        # serve this device's live values as JSON (GET /api/meters/<id>)
     rest_push: Dict[str, Any] = field(default_factory=dict)   # push values to a URL: {enabled,url,interval_s,headers,format,verify_tls,timeout}
+    pq_recorder: Dict[str, Any] = field(default_factory=dict)  # Jasic PQ event recorder: {enabled,poll_s,archive_waveforms,base_url}
 
     def summary(self) -> Dict[str, Any]:
         return {
@@ -205,6 +206,7 @@ class DeviceConfig:
             'influxdb_enabled': self.influxdb_enabled,
             'http_output_enabled': self.http_output_enabled,
             'rest_push_enabled': bool(self.rest_push.get('enabled')),
+            'pq_recorder_enabled': bool(self.pq_recorder.get('enabled')),
             'protocol': self.protocol,
             'host': self.connection.host, 'port': self.connection.port,
             'unit_id': self.connection.unit_id,
@@ -475,6 +477,9 @@ class Config:
         # Generic REST push for the PRIMARY device (non-primary carry their own in
         # the devices[] list). {enabled,url,interval_s,headers,format,verify_tls,timeout}.
         self.rest_push_primary: Dict[str, Any] = {}
+        # Jasic PQ event recorder for the PRIMARY device (non-primary carry their
+        # own block). {enabled,poll_s,archive_waveforms,base_url}. See pq_recorder.py.
+        self.pq_recorder_primary: Dict[str, Any] = {}
         # Original (pre-env) values of secrets overridden by env vars, so a save
         # writes the config value — never the env secret — to config.yaml.
         self._env_secret_shadow: Dict[str, str] = {}
@@ -518,6 +523,7 @@ class Config:
             influxdb_enabled=True,
             http_output_enabled=self.http_output_primary_enabled,
             rest_push=dict(self.rest_push_primary or {}),
+            pq_recorder=dict(self.pq_recorder_primary or {}),
         )]
         for d in self._raw_devices:
             did = str(d.get('id', '')).strip()
@@ -575,6 +581,7 @@ class Config:
                 influxdb_enabled=bool(influx_cfg.get('enabled', True)),
                 http_output_enabled=bool(http_out_cfg.get('enabled', False)),
                 rest_push=dict(d.get('rest_push', {}) or {}),
+                pq_recorder=dict(d.get('pq_recorder', {}) or {}),
               ))
             except (ValueError, TypeError) as e:
                 # A single malformed devices[] entry (e.g. port:"abc") must NOT
@@ -642,6 +649,25 @@ class Config:
             for d in self._raw_devices:
                 if d.get('id') == device_id:
                     d.setdefault('http_output', {})['enabled'] = bool(enabled)
+                    break
+            else:
+                raise ValueError(f"device {device_id!r} is not a configurable device")
+        self._build_devices()
+        self.save_yaml_config()
+
+    def set_pq_recorder(self, device_id: str, cfg: Dict) -> None:
+        """Set the PQ recorder config for a device and persist. Primary → flat
+        `pq_recorder:` section; non-primary → their `pq_recorder` block."""
+        dev = self.get_device(device_id)
+        if dev is None:
+            raise ValueError(f"device {device_id!r} not found")
+        cfg = dict(cfg or {})
+        if dev.primary:
+            self.pq_recorder_primary = cfg
+        else:
+            for d in self._raw_devices:
+                if d.get('id') == device_id:
+                    d['pq_recorder'] = cfg
                     break
             else:
                 raise ValueError(f"device {device_id!r} is not a configurable device")
@@ -1078,6 +1104,8 @@ class Config:
                     (data['http_output'] or {}).get('enabled', False))
             if 'rest_push' in data:
                 self.rest_push_primary = dict(data['rest_push'] or {})
+            if 'pq_recorder' in data:
+                self.pq_recorder_primary = dict(data['pq_recorder'] or {})
 
             # Additional southbound devices (Tier 2) — materialized in
             # _build_devices() after env overrides.
@@ -1618,6 +1646,11 @@ class Config:
         # Generic REST push for the primary (write when configured).
         if self.rest_push_primary.get('enabled') or self.rest_push_primary.get('url'):
             data['rest_push'] = self.rest_push_primary
+
+        # Jasic PQ event recorder for the primary (write when configured, so a
+        # deliberate enabled:false survives a save).
+        if self.pq_recorder_primary:
+            data['pq_recorder'] = self.pq_recorder_primary
 
         # Additional southbound devices (Tier 2). The primary device is NOT
         # written here — it lives in the flat sections above (invisible

@@ -240,6 +240,30 @@ rest_push:
   timeout: 10
 ```
 
+### `pq_recorder:` (primary device) — Janitza/Jasic PQ event recorder
+
+Opt-in acquisition of the meter's **on-device power-quality event recorder**
+(dips, swells, outages, rapid voltage changes) over the Jasic web firmware's
+HTTP endpoints — Janitza UMG 604/605/508/511/512 templates. The device keeps
+only a small event ring (32 entries on the UMG512); the gateway archives it
+permanently: events → InfluxDB `pq_events`, lifetime counters →
+`pq_counters`, and the half-wave-RMS traces of the channels implicated in
+each new event → `pq_waveforms`. New events are also published to MQTT
+(`<topic prefix>/pq/event`, retained) and the gateway event log. Browse them
+in the device workspace → **Power Quality** tab. Other devices carry the
+same block inside their `devices[]` entry.
+
+```yaml
+pq_recorder:
+  enabled: true
+  poll_s: 300              # recorder poll interval (floor 30 s)
+  archive_waveforms: true  # fetch + store RMS traces for new events
+  base_url: ""             # default: http://<connection.host>
+```
+
+See [pq-recorder.md](pq-recorder.md) for the endpoints, the data model and
+the reason-bitmask semantics.
+
 ### `devices:` — additional southbound devices
 
 Each entry describes one extra device (the primary comes from the flat sections
@@ -283,6 +307,7 @@ devices:
       enabled: true
     http_output: {enabled: false}
     rest_push: {}                # same shape as the primary's block
+    pq_recorder: {}              # same shape as the primary's block (Janitza only)
 ```
 
 `rtu-tcp` speaks RTU framing over a TCP socket (a ser2net-style serial bridge);

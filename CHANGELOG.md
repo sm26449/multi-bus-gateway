@@ -1,5 +1,44 @@
 # Changelog
 
+## 3.36.0
+
+### 2026-08-27 — PQ event recorder (Janitza/Jasic)
+
+New opt-in feature: per-device acquisition of the on-device power-quality
+event recorder on Janitza UMG-series meters (Jasic web firmware — UMG
+604/605/508/511/512). Born from a real forensics need: after a morning of
+grid outages the UMG512's 32-entry event ring had already wrapped, and the
+Modbus map only exposes lifetime counters — the records themselves are only
+served by the meter's unauthenticated web endpoints.
+
+- **`multibus/pq_recorder.py`** — per-device poller (`pq_recorder:` config
+  block, primary flat section or `devices[]` entry): reads
+  `/lib/events/getevt.html` + `json.do` counters, decodes the 64-bit reason
+  bitmask (one nibble per cause, one bit per channel — validated against the
+  firmware's own `events.js`), and archives idempotently to InfluxDB:
+  `pq_events` (per cause+channel, timestamped at event start),
+  `pq_counters`, and `pq_waveforms` — the ~50 s half-wave-RMS traces
+  (10 ms steps) of the channels implicated in each NEW event, fetched via
+  `hww.html`/`mk_hww.html` before the device's own few-day retention drops
+  them. New events also go to MQTT (`<prefix>/pq/event`, retained) and the
+  gateway event log. New-event detection via a persisted high-water mark;
+  the first sync archives the ring without announcing it.
+- **API** (`multibus/routes/pq.py`): `GET /api/pq/status`,
+  `GET /api/pq/events`, `GET /api/pq/waveform`, `POST /api/pq/config`
+  (persists via the new `Config.set_pq_recorder` and live-restarts the
+  poller).
+- **UI**: device workspace → **Power Quality** tab (gated on a Jasic-family
+  template + InfluxDB output): archived event list with decoded causes,
+  click-through waveform chart (reuses the shared canvas renderer),
+  lifetime counters.
+- **Publisher plumbing**: public `InfluxDBPublisher.write_point()` (custom
+  points ride the same connected-or-buffered delivery as register data) +
+  `query_pq_events`/`query_pq_waveform`; public
+  `MQTTPublisher.publish_topic()` for full-topic feature publishes.
+- Docs: `docs/pq-recorder.md`, config-reference + API tables. Tests:
+  `tests/test_pq_recorder.py` (decode table, waveform channel selection,
+  first-sync/new-event/high-water semantics).
+
 ## 3.35.10
 
 ### 2026-08-18 — end-to-end review pass (pre-ESPHome-test, pre-public)

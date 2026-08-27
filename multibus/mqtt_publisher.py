@@ -497,6 +497,12 @@ class MQTTPublisher:
             self.last_values[topic] = value
         self.last_publish_at[topic] = time.time()   # heartbeat reference
 
+    def publish_topic(self, topic: str, payload: str,
+                      retain: bool = True) -> bool:
+        """Public raw-topic publish for feature modules (PQ recorder etc.) —
+        the caller owns the full topic (e.g. a per-device prefix)."""
+        return self._publish(topic, payload, retain)
+
     def _publish(self, topic: str, payload: str, retain: bool = None) -> bool:
         """Internal publish method."""
         if not self.connected:

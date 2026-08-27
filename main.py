@@ -219,6 +219,21 @@ class GatewayApp:
                     return float(getattr(d.connection, 'stale_after_s', 30) or 30)
             return None
 
+        # PQ event recorder (Jasic/Janitza) — per-device pollers that archive
+        # the meter's on-device PQ ring (events + waveforms) through the
+        # gateway sinks. Publishers resolved via app.state.ctx at use time
+        # (config/apply can rebind them). Opt-in per device (pq_recorder:).
+        from multibus.pq_recorder import PqRecorderManager
+        _api_ctx = self.app.state.ctx
+        self.pq_manager = PqRecorderManager(
+            config=self.config,
+            get_influx=lambda: getattr(_api_ctx, 'influxdb_publisher', None),
+            get_mqtt=lambda: getattr(_api_ctx, 'mqtt_publisher', None),
+            event_log=self.app.state.event_log,
+            state_dir=self.config.config_path.parent,
+        )
+        self.app.state.pq_manager = self.pq_manager   # for the /api/pq routes
+
         _cfg_dir = self.config.config_path.parent
         self.vmeter_manager = VirtualMeterManager(self.app.state.current_values,
                                                   device_values=self.app.state.device_values,
@@ -374,6 +389,10 @@ class GatewayApp:
             self.vmeter_manager.start_all()
             self.vmeter_manager.start_state_publisher()   # publish health to MQTT for alertd
 
+        # PQ event recorders (opt-in per device)
+        if getattr(self, 'pq_manager', None):
+            self.pq_manager.start_all()
+
         logger.info(f"Starting web server on {self.config.ui.host}:{self.config.ui.port}")
 
     def stop(self):
@@ -383,6 +402,9 @@ class GatewayApp:
 
         if self.vmeter_manager:
             self.vmeter_manager.stop_all()
+
+        if getattr(self, 'pq_manager', None):
+            self.pq_manager.stop_all()
 
         # Disconnect devices in PARALLEL (external audit: sequential joins of
         # up to ~5 s per device could outlast docker's stop grace period —

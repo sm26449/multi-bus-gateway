@@ -671,6 +671,118 @@ class InfluxDBPublisher:
                 self._handle_write_error(e)
         self._buffer_line(point.to_line_protocol(), ts, bucket=bucket)
 
+    def write_point(self, point, ts: Optional[float] = None,
+                    bucket: Optional[str] = None) -> None:
+        """Public single-point write for feature modules (PQ recorder etc.).
+
+        Routes through the same connected-or-buffered delivery as register
+        data, so custom points survive an InfluxDB outage in the replay
+        buffer like everything else."""
+        if not self.config.enabled:
+            return
+        self._deliver(point, ts if ts is not None else time.time(),
+                      bucket=bucket)
+
+    def query_pq_events(self, bucket: Optional[str] = None,
+                        device_tag: Optional[str] = None,
+                        start: str = "-30d", limit: int = 500) -> Dict:
+        """Read back archived PQ events (measurement ``pq_events``) newest
+        first. Returns ``{"events": [{t, cause, channel, duration_ms, bound,
+        vmax, vmin, vavg}]}`` or ``{"error": ...}``."""
+        if not self.config.enabled:
+            return {"error": "influxdb disabled"}
+        if not self._RANGE_RE.match(str(start)) and not self._RFC3339_RE.match(str(start)):
+            return {"error": "bad start (use -30d / RFC3339)"}
+        limit = max(1, min(int(limit), 2000))
+        q_bucket = re.sub(r'[^A-Za-z0-9_\-. ]', "", str(bucket)) if bucket else self.config.bucket
+        dev_filter = ""
+        if device_tag:
+            sd = str(device_tag).replace("\\", "").replace('"', "")
+            if sd:
+                dev_filter = f'  |> filter(fn: (r) => r["device"] == "{sd}")\n'
+        flux = (f'from(bucket: "{q_bucket}")\n'
+                f'  |> range(start: {start})\n'
+                f'  |> filter(fn: (r) => r["_measurement"] == "pq_events")\n'
+                f'{dev_filter}'
+                f'  |> pivot(rowKey: ["_time", "cause", "channel"],'
+                f' columnKey: ["_field"], valueColumn: "_value")\n'
+                f'  |> group()\n'
+                f'  |> sort(columns: ["_time"], desc: true)\n'
+                f'  |> limit(n: {limit})')
+        return self._run_pq_query(flux, lambda rec: {
+            "t": rec.get_time().isoformat().replace("+00:00", "Z"),
+            "ts_ms": int(rec.get_time().timestamp() * 1000),
+            "cause": rec.values.get("cause"),
+            "channel": rec.values.get("channel"),
+            "duration_ms": rec.values.get("duration_ms"),
+            "bound": rec.values.get("bound"),
+            "vmax": rec.values.get("vmax"),
+            "vmin": rec.values.get("vmin"),
+            "vavg": rec.values.get("vavg"),
+        }, key="events")
+
+    def query_pq_waveform(self, event_ms: int, channel: str,
+                          bucket: Optional[str] = None,
+                          device_tag: Optional[str] = None) -> Dict:
+        """Read one archived RMS trace (measurement ``pq_waveforms``) of one
+        event (tag ``event`` = event-start ms) for one channel. Returns
+        ``{"series": [{t, v}]}`` or ``{"error": ...}``."""
+        if not self.config.enabled:
+            return {"error": "influxdb disabled"}
+        try:
+            event_ms = int(event_ms)
+        except (TypeError, ValueError):
+            return {"error": "bad event timestamp"}
+        safe_ch = re.sub(r'[^A-Za-z0-9_\-]', "", str(channel))
+        if not safe_ch:
+            return {"error": "channel required"}
+        q_bucket = re.sub(r'[^A-Za-z0-9_\-. ]', "", str(bucket)) if bucket else self.config.bucket
+        dev_filter = ""
+        if device_tag:
+            sd = str(device_tag).replace("\\", "").replace('"', "")
+            if sd:
+                dev_filter = f'  |> filter(fn: (r) => r["device"] == "{sd}")\n'
+        # Capture windows are ~50 s and may start before the event — a fixed
+        # ±120 s range brackets any window that carries this event tag.
+        s = (event_ms - 120_000) // 1000
+        e = (event_ms + 120_000) // 1000
+        flux = (f'from(bucket: "{q_bucket}")\n'
+                f'  |> range(start: {s}, stop: {e})\n'
+                f'  |> filter(fn: (r) => r["_measurement"] == "pq_waveforms")\n'
+                f'  |> filter(fn: (r) => r["event"] == "{event_ms}")\n'
+                f'  |> filter(fn: (r) => r["channel"] == "{safe_ch}")\n'
+                f'{dev_filter}'
+                f'  |> filter(fn: (r) => r["_field"] == "value")\n'
+                f'  |> keep(columns: ["_time", "_value"])\n'
+                f'  |> sort(columns: ["_time"])')
+        return self._run_pq_query(flux, lambda rec: {
+            "t": rec.get_time().isoformat().replace("+00:00", "Z"),
+            "v": rec.get_value(),
+        }, key="series")
+
+    def _run_pq_query(self, flux: str, row_fn, key: str) -> Dict:
+        """Execute one read-only Flux query on a short-lived client (same
+        isolation rationale as query_history)."""
+        try:
+            from influxdb_client import InfluxDBClient
+            client = InfluxDBClient(url=self.config.url, token=self.config.token,
+                                    org=self.config.org, timeout=10_000)
+        except Exception as ex:  # noqa: BLE001
+            return {"error": f"influxdb client unavailable: {ex}"}
+        try:
+            out = []
+            for table in client.query_api().query(flux, org=self.config.org):
+                for rec in table.records:
+                    out.append(row_fn(rec))
+            return {key: out}
+        except Exception as ex:  # noqa: BLE001
+            return {"error": f"query failed: {ex}"}
+        finally:
+            try:
+                client.close()
+            except Exception:  # noqa: BLE001
+                pass
+
     def write_register_data(self, poll_group: str, data: Dict[int, Dict],
                             bucket: Optional[str] = None,
                             device_tag: Optional[str] = None,

@@ -87,6 +87,15 @@ conventional status codes (401 unauthenticated, 403 forbidden, 404 not found,
 | POST | `/api/devices/{id}/rest-push/test` | Push once now and report the result | operator |
 | POST | `/api/devices/{id}/payload-sample` | Fetch one full payload from a saved MQTT/HTTP device (for the `json_path` picker) | operator |
 
+### Power quality (Janitza/Jasic PQ recorder — see [pq-recorder.md](pq-recorder.md))
+
+| Method | Path | Description | Role |
+|--------|------|-------------|------|
+| GET | `/api/pq/status` | Recorder support/enabled/health + lifetime counters per device | viewer |
+| GET | `/api/pq/events?device=&start=-30d&limit=200` | Archived PQ events from InfluxDB, newest first | viewer |
+| GET | `/api/pq/waveform?event=<ms>&channel=UL2&device=` | One archived half-wave-RMS trace of one event | viewer |
+| POST | `/api/pq/config?device=` | Set `{enabled, poll_s, archive_waveforms, base_url}` and (re)start the device's poller | admin |
+
 ### Modbus writes (gated)
 
 | Method | Path | Description | Role |
