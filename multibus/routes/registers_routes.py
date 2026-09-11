@@ -55,6 +55,7 @@ def build(ctx) -> APIRouter:
             "topic": getattr(x, "topic", ""),
             "scale": getattr(x, "scale", 1.0),
             "offset": getattr(x, "offset", 0.0),
+            "scale_from": getattr(x, "scale_from", ""),
             "nan": getattr(x, "nan", None),
             "monotonic": getattr(x, "monotonic", False),
             "enum": getattr(x, "enum", None),
@@ -200,6 +201,7 @@ def build(ctx) -> APIRouter:
                     "topic": getattr(x, "topic", ""),
                     "scale": x.scale,
                     "offset": getattr(x, "offset", 0.0),
+                    "scale_from": getattr(x, "scale_from", ""),
                     "nan": getattr(x, "nan", None),
                     "monotonic": getattr(x, "monotonic", False),
                     "enum": getattr(x, "enum", None),
@@ -338,7 +340,12 @@ def build(ctx) -> APIRouter:
         for reg in (getattr(client, 'registers', None) or []):
             if (getattr(reg, 'address', None) == address
                     and (getattr(reg, 'register_type', 'holding') or 'holding') == rt):
-                return apply_corrections(raw, reg)
+                # dynamic SF (scale_from): borrow the pollers' last-good
+                # exponents — read-only, so a debug query stays stateless
+                sibs = {}
+                for p in (getattr(client, 'pollers', None) or []):
+                    sibs.update(getattr(p, '_sf_last_good', None) or {})
+                return apply_corrections(raw, reg, siblings=sibs)
         return ...
 
     @r.post("/api/query/register")

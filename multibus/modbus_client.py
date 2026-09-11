@@ -555,6 +555,14 @@ class RegisterPoller(threading.Thread):
         # enum/bits registers whose decode failed — edge-triggered warn (DP-6)
         self._decode_failed: set = set()
 
+        # SunSpec dynamic scale factors: names referenced by any register's
+        # `scale_from`, plus their last-good raw exponents. The last-good dict
+        # bridges batches/cycles — a dependent may sit in an earlier group
+        # than its SF, and a failed group read must not unscale survivors.
+        self._sf_refs = {r.scale_from for r in registers
+                         if getattr(r, 'scale_from', '')}
+        self._sf_last_good: Dict[str, float] = {}
+
         # Data-readiness gate: drop an all-zero frame (sleepy device) — opt-in.
         self._drop_all_zero = bool(getattr(
             getattr(connection, 'config', None), 'drop_all_zero', False))
@@ -685,6 +693,24 @@ class RegisterPoller(threading.Thread):
                 logger.debug(f"{self._tag}Failed to read registers {group['start']}-{group['end']}")
                 continue
 
+            # SunSpec dynamic-SF prescan: parse referenced *_SF registers
+            # FIRST so same-batch dependents scale on this read's exponent
+            # (the SF conventionally sits at a HIGHER address than its
+            # dependents, so streaming order alone would lag one cycle).
+            if self._sf_refs:
+                for reg in group['registers']:
+                    if reg.name not in self._sf_refs:
+                        continue
+                    off = reg.address - group['start']
+                    cnt = self.parser.get_register_count(reg.data_type)
+                    if off + cnt <= len(raw_data):
+                        sf = self.parser.parse_value(
+                            raw_data[off:off + cnt], reg.data_type)
+                        if (isinstance(sf, (int, float))
+                                and not isinstance(sf, bool)
+                                and abs(sf) <= 10):
+                            self._sf_last_good[reg.name] = sf
+
             # Parse each register in this group
             for reg in group['registers']:
                 offset = reg.address - group['start']
@@ -705,7 +731,8 @@ class RegisterPoller(threading.Thread):
                                 f = self._counter_filters[reg.address] = MonotonicFilter()
                         _info: Dict[str, str] = {}
                         value = apply_corrections(value, reg, counter_filter=f,
-                                                  info=_info)
+                                                  info=_info,
+                                                  siblings=self._sf_last_good)
                         if value is None:
                             _stage = _info.get('stage')
                             if _stage == 'decode_failed':
@@ -720,6 +747,10 @@ class RegisterPoller(threading.Thread):
                             elif _stage == 'filter_drop':
                                 logger.debug(f"{self._tag}{reg.name}@{reg.address}: "
                                              f"dropped counter glitch (held)")
+                            elif _stage == 'sf_missing':
+                                logger.debug(f"{self._tag}{reg.name}@{reg.address}: "
+                                             f"no valid scale factor "
+                                             f"('{reg.scale_from}') yet — held")
                             continue          # sentinel/decode/filter → missing
                         if getattr(reg, 'enum', None) or getattr(reg, 'bits', None):
                             self._decode_failed.discard(reg.address)

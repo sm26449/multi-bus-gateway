@@ -81,6 +81,13 @@ class TemplateRegister:
     description: str = ""
     scale: float = 1.0
     offset: float = 0.0                      # engineering = raw / scale + offset
+    # SunSpec-style dynamic scale factor: the NAME of a sibling register whose
+    # current raw value is a signed base-10 exponent → engineering = raw × 10^SF.
+    # When set, the static `scale` is ignored. The referent should live in the
+    # same contiguous block (same batch) — the poller keeps a last-good SF as a
+    # bridge across batches/cycles and treats the value as missing when no
+    # valid SF (|SF| ≤ 10) has ever been seen.
+    scale_from: str = ""
     poll_group: str = ""                     # suggested group when selected
     json_path: str = ""                      # HTTP/JSON + MQTT input: path into the JSON payload
     topic: str = ""                          # MQTT input: the topic this register reads from
@@ -121,6 +128,8 @@ class TemplateRegister:
             d['scale'] = self.scale
         if self.offset:
             d['offset'] = self.offset
+        if self.scale_from:
+            d['scale_from'] = self.scale_from
         if self.poll_group:
             d['poll_group'] = self.poll_group
         if self.json_path:
@@ -317,6 +326,20 @@ def validate_template(data: Dict[str, Any]) -> List[str]:
                     r.get('write_min') is None or r.get('write_max') is None):
                 errors.append(f"{where}: writable register must declare write_min "
                               f"and write_max (bounds are required for writes)")
+    # scale_from must reference an existing register NAME in this template —
+    # a dangling referent would silently render every dependent value missing.
+    _names = {r.get('name') for r in regs if isinstance(r, dict)}
+    for i, r in enumerate(regs):
+        if not isinstance(r, dict):
+            continue
+        sf_ref = r.get('scale_from')
+        if sf_ref and sf_ref not in _names:
+            errors.append(f"register #{i} (addr {r.get('address')!r}, "
+                          f"name {r.get('name')!r}): scale_from "
+                          f"{sf_ref!r} does not match any register name")
+        if sf_ref and r.get('scale', 1) not in (1, 1.0):
+            errors.append(f"register #{i} (name {r.get('name')!r}): scale and "
+                          f"scale_from are mutually exclusive")
     return errors
 
 
@@ -337,6 +360,7 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         description=str(r.get('description', '')),
         scale=float(r.get('scale', 1)),
         offset=float(r.get('offset', 0) or 0),
+        scale_from=str(r.get('scale_from', '') or ''),
         poll_group=str(r.get('poll_group', '')),
         json_path=str(r.get('json_path', '')),
         topic=str(r.get('topic', '')),

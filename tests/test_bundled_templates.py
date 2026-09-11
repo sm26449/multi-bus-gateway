@@ -196,3 +196,55 @@ def test_catalog_energy_units_are_canonical_wh_family():
                 assert str(r.get("unit", "")) in ("Wh", "varh", "VAh"), (
                     f"{path}: {r.get('name')} declares {r.get('unit')!r}; "
                     "canonical energy units are Wh/varh/VAh")
+
+
+# ── scale_from (SunSpec dynamic SF, F0.2) — template contract ────────────────
+
+def _sunspec_stub(regs):
+    return {"device_template": {
+        "id": "x_sunspec", "name": "X",
+        "protocol": {"byte_order": "big", "word_order": "big"},
+        "registers": regs,
+    }}
+
+
+def test_scale_from_roundtrips_through_parse_and_to_dict():
+    regs = [
+        {"address": 40092, "name": "ac_power", "label": "AC Power",
+         "unit": "W", "data_type": "int16", "register_type": "holding",
+         "scale_from": "ac_power_sf", "nan": True},
+        {"address": 40093, "name": "ac_power_sf", "label": "AC Power SF",
+         "unit": "", "data_type": "int16", "register_type": "holding",
+         "nan": True},
+    ]
+    data = _sunspec_stub(regs)
+    assert validate_template(data) == []
+    t = parse_template(data)
+    dep = next(r for r in t.registers if r.name == "ac_power")
+    assert dep.scale_from == "ac_power_sf"
+    out = [r.to_dict() for r in t.registers]
+    assert next(r for r in out if r["name"] == "ac_power")["scale_from"] == "ac_power_sf"
+    # unset stays absent, not "" noise
+    assert "scale_from" not in next(r for r in out if r["name"] == "ac_power_sf")
+
+
+def test_scale_from_dangling_referent_is_a_validation_error():
+    data = _sunspec_stub([
+        {"address": 40092, "name": "ac_power", "label": "AC Power",
+         "unit": "W", "data_type": "int16", "register_type": "holding",
+         "scale_from": "nope_sf"},
+    ])
+    errs = validate_template(data)
+    assert any("scale_from" in e and "nope_sf" in e for e in errs)
+
+
+def test_scale_from_and_static_scale_are_mutually_exclusive():
+    data = _sunspec_stub([
+        {"address": 40092, "name": "ac_power", "label": "AC Power",
+         "unit": "W", "data_type": "int16", "register_type": "holding",
+         "scale": 10, "scale_from": "ac_power_sf"},
+        {"address": 40093, "name": "ac_power_sf", "label": "SF",
+         "unit": "", "data_type": "int16", "register_type": "holding"},
+    ])
+    errs = validate_template(data)
+    assert any("mutually exclusive" in e for e in errs)

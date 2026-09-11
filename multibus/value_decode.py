@@ -115,7 +115,8 @@ def is_sentinel_value(value, data_type: str, nan) -> bool:
     return False
 
 
-def apply_corrections(value, reg, *, counter_filter=None, info=None):
+def apply_corrections(value, reg, *, counter_filter=None, info=None,
+                      siblings=None):
     """The wire→value correction pipeline, shared by every transport.
 
     This logic used to exist in six drifted copies (external audit's
@@ -127,7 +128,15 @@ def apply_corrections(value, reg, *, counter_filter=None, info=None):
          last-good). Compared BEFORE scaling, like the parser always did.
       2. ``enum``/``bits`` → text (scale/offset/monotonic are numeric-only,
          so they are skipped for status registers).
-      3. engineering = raw/scale + offset.
+      3. engineering = raw/scale + offset — or, when the register declares
+         ``scale_from`` (SunSpec dynamic scale factor), engineering =
+         raw × 10^SF where SF is the referenced sibling's current raw value
+         taken from ``siblings`` ({name: value}, supplied by polling callers
+         from the batch's own reads + a last-good bridge). No valid SF
+         (missing, non-numeric or |SF| > 10) → the value is MISSING — a
+         wrongly-scaled reading is worse than no reading. Negative SF also
+         rounds to −SF decimals to kill float noise (parity with the SunSpec
+         collectors this replaces).
       4. monotonic counter filter — STATEFUL: only POLLING callers own a
          per-register MonotonicFilter and pass it. Diagnostic reads
          (query/read-back/views) must NOT pass one — a debug read must never
@@ -165,9 +174,22 @@ def apply_corrections(value, reg, *, counter_filter=None, info=None):
         return decoded
 
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        sc = _f("scale", 1.0) or 1.0
-        if sc != 1.0:
-            value = value / sc
+        sf_ref = _f("scale_from", "") or ""
+        if sf_ref:
+            sf = (siblings or {}).get(sf_ref)
+            if (not isinstance(sf, (int, float)) or isinstance(sf, bool)
+                    or abs(sf) > 10):
+                if info is not None:
+                    info["stage"] = "sf_missing"
+                return None
+            sf = int(sf)
+            value = value * (10.0 ** sf)
+            if sf < 0:
+                value = round(value, -sf)
+        else:
+            sc = _f("scale", 1.0) or 1.0
+            if sc != 1.0:
+                value = value / sc
         off = _f("offset", 0.0) or 0.0
         if off:
             value = value + off

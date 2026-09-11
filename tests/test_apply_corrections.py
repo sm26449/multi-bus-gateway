@@ -302,3 +302,46 @@ def test_query_batch_corrected_map():
     ]}).json()
     assert r["values"]["2"] == 2305 and r["values"]["3"] == 4
     assert r["corrected"] == {"2": 230.5}      # only the selected register
+
+
+# ── unit: scale_from (SunSpec dynamic scale factors, F0.2) ───────────────────
+
+def test_scale_from_positive_and_negative_exponent():
+    # engineering = raw × 10^SF, SF = sibling's raw signed exponent
+    reg = _reg(scale_from="w_sf")
+    assert apply_corrections(1234, reg, siblings={"w_sf": 1}) == 12340
+    assert apply_corrections(2305, reg, siblings={"w_sf": -1}) == 230.5
+    assert apply_corrections(2305, reg, siblings={"w_sf": 0}) == 2305
+
+
+def test_scale_from_negative_sf_rounds_float_noise():
+    # −SF decimals: 10^-2 on int raw must not leak 0.30000000000000004-style
+    reg = _reg(scale_from="pf_sf")
+    assert apply_corrections(3, reg, siblings={"pf_sf": -2}) == 0.03
+    assert apply_corrections(9955, reg, siblings={"pf_sf": -2}) == 99.55
+
+
+def test_scale_from_missing_or_invalid_sf_means_missing_value():
+    # a wrongly-scaled reading is worse than no reading
+    reg = _reg(scale_from="w_sf")
+    for sibs in (None, {}, {"other": 1}, {"w_sf": None},
+                 {"w_sf": "x"}, {"w_sf": True},
+                 {"w_sf": 11}, {"w_sf": -11}):     # |SF| > 10 → corrupt
+        info = {}
+        assert apply_corrections(100, reg, siblings=sibs, info=info) is None
+        assert info["stage"] == "sf_missing"
+
+
+def test_scale_from_wins_over_static_scale_and_applies_offset_after():
+    reg = _reg(scale_from="w_sf", scale=10.0, offset=1.0)
+    # static scale ignored; offset still applies after the dynamic scaling
+    assert apply_corrections(100, reg, siblings={"w_sf": -1}) == 11.0
+
+
+def test_scale_from_sentinel_checked_on_raw_before_sf():
+    # nan sentinel compares against the RAW value, before any scaling
+    reg = _reg(scale_from="w_sf", nan=[0x8000], data_type="int16")
+    info = {}
+    assert apply_corrections(0x8000, reg, siblings={"w_sf": -1},
+                             info=info) is None
+    assert info["stage"] == "sentinel"

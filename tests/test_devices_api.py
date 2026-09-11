@@ -926,7 +926,7 @@ devices:
     full = [{
         "address": 40072, "name": "ac_power", "label": "AC Power", "unit": "W",
         "data_type": "int16", "poll_group": "normal",
-        "scale": 0.1, "offset": 2.5,
+        "scale": 0.1, "offset": 2.5, "scale_from": "ac_power_sf",
         "nan": True, "monotonic": True,
         "enum": {"4": "MPPT", "7": "FAULT"},
         "mask": 240, "shift": 4,
@@ -948,6 +948,7 @@ devices:
     saved = _json.loads((tmp_path / "devices" / "em24" /
                          "selected_registers.json").read_text())["registers"][0]
     assert saved.get("offset") == 2.5
+    assert saved.get("scale_from") == "ac_power_sf"
     assert saved.get("nan") is True
     assert saved.get("monotonic") is True
     assert saved.get("enum") == {"4": "MPPT", "7": "FAULT"}
@@ -962,6 +963,7 @@ devices:
     # 2) the GET must serve them back (else the next UI save wipes them)
     got = client.get("/api/registers/selected?device=em24").json()["registers"][0]
     assert got["offset"] == 2.5
+    assert got["scale_from"] == "ac_power_sf"
     assert got["nan"] is True
     assert got["monotonic"] is True
     assert got["enum"] == {"4": "MPPT", "7": "FAULT"}

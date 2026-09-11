@@ -418,6 +418,8 @@ class SelectedRegister:
     topic: str = ""       # MQTT input: the topic this register reads from (else device base topic)
     scale: float = 1.0    # Modbus input: engineering_value = raw / scale (SunSpec 10^-SF etc.)
     offset: float = 0.0   # engineering_value = raw / scale + offset (zero-point / unit shift)
+    scale_from: str = ""  # dynamic SF: sibling register NAME whose raw value is the
+                          # base-10 exponent → engineering = raw × 10^SF (scale ignored)
     nan: Any = None       # not-available sentinel (True=std for type / value / list) → missing
     monotonic: bool = False   # cumulative counter (energy): reject downward glitches → HA/Victron safe
     # status-register decode (mutually exclusive): raw int → text
@@ -1276,6 +1278,7 @@ class Config:
                 topic=reg.get('topic', ''),
                 scale=float(reg.get('scale', 1) or 1),
                 offset=float(reg.get('offset', 0) or 0),
+                scale_from=str(reg.get('scale_from', '') or ''),
                 nan=reg.get('nan'),
                 monotonic=bool(reg.get('monotonic', False)),
                 enum=reg.get('enum'),

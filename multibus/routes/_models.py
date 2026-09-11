@@ -71,6 +71,7 @@ class SelectedRegisterUpdate(BaseModel):
     topic: str = ""            # MQTT input: the subscribe topic for this register
     scale: float = 1.0
     offset: float = 0.0
+    scale_from: str = ""
     nan: Optional[Any] = None            # not-available sentinel (True/value/list)
     monotonic: bool = False              # cumulative counter guard
     enum: Optional[Dict[str, str]] = None
