@@ -6,7 +6,7 @@
     "vendor": "Fronius",
     "model": "Smart Meter 63A/50kA (SunSpec 203)",
     "version": "1.0.0",
-    "description": "Fronius Smart Meter read through the DataManager (SunSpec model 203, int + scale factor — NOT the direct-Modbus 65A map, which is the separate fronius_smart_meter_65a template). Default unit ID on a DataManager is 240. Addresses are PDU (documented − 1).",
+    "description": "Fronius Smart Meter read THROUGH the DataManager/datalogger over Modbus TCP (SunSpec model 203, int + scale factor; full 3-phase set + per-phase import/export energies). The meter appears on the datalogger at unit ID 240 (default; 241/242 for additional meters). Use this when the meter hangs off a Fronius datalogger — for a Smart Meter wired DIRECTLY to your own RS-485 (RTU or an RTU-TCP bridge), use the separate 'Fronius Smart Meter 65A-3 (RTU)' template instead: same hardware, completely different register map. PF quirk as on the inverter template (generic ±100).",
     "source_document": "SunSpec Information Models (int+SF); register map verified live against a production Fronius fleet (raw-frame decode parity, 2026-09-11)",
     "protocol": {
       "byte_order": "big",

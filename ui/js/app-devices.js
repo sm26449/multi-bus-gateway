@@ -379,7 +379,7 @@ Object.assign(JanitzaMonitor.prototype, {
         catch (e) { console.error(e); }
         const c = dev.connection || {};
         this._devDetail = {
-            id, primary: !!dev.primary, templates,
+            id, primary: !!dev.primary, plant_id: dev.plant_id || '', templates,
             data: {
                 name: dev.name || id, template: dev.template || '',
                 enabled: dev.enabled !== false,
@@ -427,6 +427,7 @@ Object.assign(JanitzaMonitor.prototype, {
     _deviceDetailHtml() {
         const s = this._devDetail, d = s.data;
         const primary = s.primary;
+        const plantId = s.plant_id || '';
         const tcp = d.protocol !== 'rtu';
         const tplOptions = [`<option value="">${this.t('devices.detail.noTemplate', '(no template)')}</option>`]
             .concat(s.templates.map(t =>
@@ -440,7 +441,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 <i aria-hidden="true" class="bi bi-cpu"></i> ${this._esc(d.name)}
                 <span class="dev-chip">${this._esc(s.id)}</span></h2>
             <div class="header-actions">
-                ${primary ? '' : `<button class="btn btn-ghost btn-sm" ${this._act('deleteDevice', [s.id])}><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>`}
+                ${plantId ? `<span class="dev-chip" title="${t('devices.plantManaged', 'Managed through its plant — edit or delete the plant')}"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(plantId)}</span>` : ''}
+                ${(primary || plantId) ? '' : `<button class="btn btn-ghost btn-sm" ${this._act('deleteDevice', [s.id])}><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>`}
             </div>
         </div>
 
@@ -474,6 +476,35 @@ Object.assign(JanitzaMonitor.prototype, {
 
         <!-- ── Edit ── -->
         <div data-dpanel="edit" hidden>
+        ${plantId ? `
+        <div class="settings-card">
+            <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.plantUnit.title', 'Plant unit')}</h3></div>
+            <div class="settings-card-body">
+                <p style="margin:0 0 10px;">${t('devices.plantUnit.intro', 'This device is one unit of a plant — its connection, template and routing are defined once on the plant and applied to every unit.')}</p>
+                <div class="form-row" style="gap:24px;flex-wrap:wrap;">
+                    <div><div class="field-hint">${t('plants.id', 'Plant ID')}</div><b>${this._esc(plantId)}</b></div>
+                    <div><div class="field-hint">${this.t('lbl.unitId', 'Unit ID')}</div><b>${d.unit_id}</b></div>
+                    <div><div class="field-hint">${t('devices.detail.connection', 'Connection')}</div><b>${this._esc(d.protocol.toUpperCase())} · ${this._esc(d.host)}:${d.port}</b></div>
+                    <div><div class="field-hint">${t('devices.wizard.template', 'Template')}</div><b>${this._esc((s.templates.find(x => x.id === d.template) || {}).name || d.template || '—')}</b></div>
+                </div>
+                <div style="margin-top:14px;">
+                    <button class="btn btn-primary btn-sm" onclick="app.openPlantModal('${this._esc(plantId)}')"><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('devices.plantUnit.editPlant', 'Edit plant')}</button>
+                </div>
+                <p class="field-hint" style="margin-top:10px;">${t('devices.plantUnit.perUnit', 'Per-unit: the measurement selection (Measurements tab) and the poll intervals below stay editable on THIS unit only.')}</p>
+            </div>
+        </div>
+        <div class="settings-card">
+            <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-arrow-repeat"></i> ${t('devices.detail.polling', 'Polling')}</h3></div>
+            <div class="settings-card-body">
+                <div style="color:var(--text-secondary);font-size:12px;margin-bottom:6px;">${t('devices.pollGroups', 'Poll-group intervals (seconds)')}</div>
+                <div id="ddvPollGroups"><span class="field-hint">${t('common.loading', 'Loading…')}</span></div>
+                <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
+                    <button class="btn btn-secondary btn-sm" ${this._act('saveDevicePollGroups', [s.id], {el: true})}><i aria-hidden="true" class="bi bi-clock"></i> ${t('devices.savePollGroups', 'Save intervals')}</button>
+                    <span class="save-feedback" id="ddvPgFeedback"></span>
+                </div>
+            </div>
+        </div>
+        ` : `
         <div class="settings-card">
             <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-ethernet"></i> ${t('devices.detail.connection', 'Connection')}</h3></div>
             <div class="settings-card-body">
@@ -571,10 +602,26 @@ Object.assign(JanitzaMonitor.prototype, {
                 <button class="btn btn-primary btn-sm" onclick="app.saveDeviceDetail(this)"><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
             </div>
         </div>
+        `}
         </div>
 
         <!-- ── Outputs ── -->
         <div data-dpanel="outputs" hidden>
+            ${plantId ? `
+            <div class="settings-card">
+                <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-signpost-split"></i> ${t('devices.detail.outputs', 'Outputs')}</h3></div>
+                <div class="settings-card-body">
+                    <p style="margin:0 0 10px;">${t('devices.plantUnit.outputs', 'Output routing is defined on the plant (with per-unit substitution) and applied to every unit:')}</p>
+                    <div class="form-row" style="gap:24px;flex-wrap:wrap;">
+                        <div><div class="field-hint">MQTT</div><b>${d.mqtt_enabled ? '' : '(off) '}<code>${this._esc(d.topic_prefix)}/…</code></b></div>
+                        <div><div class="field-hint">InfluxDB</div><b>${d.influxdb_enabled ? '' : '(off) '}<code>${this._esc(d.bucket)}</code> · tag <code>${this._esc(d.device_tag)}</code></b></div>
+                    </div>
+                    <div style="margin-top:14px;">
+                        <button class="btn btn-primary btn-sm" onclick="app.openPlantModal('${this._esc(plantId)}')"><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('devices.plantUnit.editPlant', 'Edit plant')}</button>
+                    </div>
+                </div>
+            </div>
+            ` : `
             ${this._sinkCardMqtt(d, primary)}
             ${this._sinkCardInflux(d, primary)}
             ${this._sinkCardHttp(d, primary)}
@@ -584,6 +631,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <span class="save-feedback" id="ddvFeedback2"></span>
                 <button class="btn btn-primary btn-sm" onclick="app.saveDeviceDetail(this)"><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
             </div></div>
+            `}
         </div>`;
     },
 

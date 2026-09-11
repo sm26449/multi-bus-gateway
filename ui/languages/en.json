@@ -1089,5 +1089,10 @@
   "plants.deleteFail": "Delete failed",
   "plants.deleteConfirm": "Delete this plant and stop all its units? Register selections are kept on disk.",
   "devices.plantManaged": "Managed through its plant — edit or delete the plant",
-  "tip.addPlant": "Add several units of the same device behind one endpoint (e.g. 4 inverters on one datalogger)"
+  "tip.addPlant": "Add several units of the same device behind one endpoint (e.g. 4 inverters on one datalogger)",
+  "devices.plantUnit.title": "Plant unit",
+  "devices.plantUnit.intro": "This device is one unit of a plant — its connection, template and routing are defined once on the plant and applied to every unit.",
+  "devices.plantUnit.editPlant": "Edit plant",
+  "devices.plantUnit.perUnit": "Per-unit: the measurement selection (Measurements tab) and the poll intervals below stay editable on THIS unit only.",
+  "devices.plantUnit.outputs": "Output routing is defined on the plant (with per-unit substitution) and applied to every unit:"
 }

@@ -229,12 +229,19 @@ def main():
         "fronius_sunspec_inverter",
         "Fronius SunSpec inverter (int+SF, via datalogger)",
         "Symo / Primo / Eco (SunSpec 103)",
-        "Fronius inverter behind a DataManager/datalogger speaking SunSpec "
-        "int + scale-factor (models 1/103/160). Addresses are PDU (documented "
-        "− 1). Pair with a `plants:` entry to read several unit IDs behind "
-        "one datalogger — one socket per unit. PF is published with the "
-        "generic SunSpec decode (see template description for the Fronius "
-        "PF quirk).",
+        "Fronius inverter read THROUGH its DataManager/datalogger over Modbus "
+        "TCP, in the SunSpec int + scale-factor register mode (models "
+        "1/103/160: AC block, DC block, temperatures, status/events, per-"
+        "string MPPT, identity). Use this when the datalogger's Modbus TCP "
+        "slave is enabled and set to 'int+SF' (the Fronius default). For "
+        "SEVERAL inverters behind one datalogger, add a `plants:` entry with "
+        "this template and the unit IDs (1, 2, ...) — each unit becomes its "
+        "own device. CAUTION: dataloggers serve only a few concurrent Modbus "
+        "clients; if another system polls the same datalogger, keep poll "
+        "intervals modest (10-15 s) or reduce the number of units read in "
+        "parallel. Known vendor quirk: PF is published with the generic "
+        "SunSpec decode (±100); Fronius units report PF raw ±10000 with an "
+        "out-of-spec scale factor, so dedicated drivers show ±1.0.",
         build_registers(INVERTER_103, "normal", "fronius_inverter")
         + build_registers(MPPT_160, "normal", "fronius_inverter")
         + build_registers(IDENTITY_1, "static", "fronius_inverter"),
@@ -245,10 +252,15 @@ def main():
         "fronius_sunspec_meter",
         "Fronius SunSpec meter (int+SF, via datalogger)",
         "Smart Meter 63A/50kA (SunSpec 203)",
-        "Fronius Smart Meter read through the DataManager (SunSpec model 203, "
-        "int + scale factor — NOT the direct-Modbus 65A map, which is the "
-        "separate fronius_smart_meter_65a template). Default unit ID on a "
-        "DataManager is 240. Addresses are PDU (documented − 1).",
+        "Fronius Smart Meter read THROUGH the DataManager/datalogger over "
+        "Modbus TCP (SunSpec model 203, int + scale factor; full 3-phase set "
+        "+ per-phase import/export energies). The meter appears on the "
+        "datalogger at unit ID 240 (default; 241/242 for additional meters). "
+        "Use this when the meter hangs off a Fronius datalogger — for a "
+        "Smart Meter wired DIRECTLY to your own RS-485 (RTU or an RTU-TCP "
+        "bridge), use the separate 'Fronius Smart Meter 65A-3 (RTU)' "
+        "template instead: same hardware, completely different register "
+        "map. PF quirk as on the inverter template (generic ±100).",
         build_registers(METER_203, "normal", "fronius_meter")
         + build_registers(IDENTITY_1, "static", "fronius_meter"),
         {"normal": {"interval": 2, "description": "Measurements"},

@@ -217,7 +217,7 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 - **Transport:** FC03 (read holding registers) · byte order **little-endian, low word first (CDAB / word-swapped)**
 - **Source / provenance:** Field-verified against a physical Fronius Smart Meter 65A-3 over Modbus RTU (2026-08-11): |P|<=S per phase, S^2~=P^2+Q^2, PF=P/S, Freq=50Hz.
 
-> Fronius Smart Meter 65A-3, 3-phase, Modbus RTU. Register map field-verified against the physical meter: INT32 low-word-first (CDAB), holding registers (FC03), scales V/10 A/1000 W/10 Hz/10; energy raw kWh*10 -> canonical Wh (scale 0.01; unit settled by a live counter-rate test — magnitude arguments alone got it wrong twice). Frequency at register 49 (register 51 holds PF_sys). Meter model id 731 at 0x000B.
+> Fronius Smart Meter 65A-3, 3-phase, wired DIRECTLY to your own RS-485 line (Modbus RTU, or an RTU-over-TCP serial bridge). Register map field-verified against the physical meter: INT32 low-word-first (CDAB), holding registers from address 0. Use this ONLY for a direct serial connection to the meter itself. If the meter hangs off a Fronius DataManager/datalogger (the usual PV-system wiring, meter at unit 240), use the separate 'Fronius SunSpec meter (int+SF, via datalogger)' template instead: same hardware, completely different register map.
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
@@ -259,7 +259,7 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 - **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
 - **Source / provenance:** SunSpec Information Models (int+SF); register map verified live against a production Fronius fleet (raw-frame decode parity, 2026-09-11)
 
-> Fronius inverter behind a DataManager/datalogger speaking SunSpec int + scale-factor (models 1/103/160). Addresses are PDU (documented − 1). Pair with a `plants:` entry to read several unit IDs behind one datalogger — one socket per unit. PF is published with the generic SunSpec decode (see template description for the Fronius PF quirk).
+> Fronius inverter read THROUGH its DataManager/datalogger over Modbus TCP, in the SunSpec int + scale-factor register mode (models 1/103/160: AC block, DC block, temperatures, status/events, per-string MPPT, identity). Use this when the datalogger's Modbus TCP slave is enabled and set to 'int+SF' (the Fronius default). For SEVERAL inverters behind one datalogger, add a `plants:` entry with this template and the unit IDs (1, 2, ...) — each unit becomes its own device. CAUTION: dataloggers serve only a few concurrent Modbus clients; if another system polls the same datalogger, keep poll intervals modest (10-15 s) or reduce the number of units read in parallel. Known vendor quirk: PF is published with the generic SunSpec decode (±100); Fronius units report PF raw ±10000 with an out-of-spec scale factor, so dedicated drivers show ±1.0.
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
@@ -332,7 +332,7 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 - **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
 - **Source / provenance:** SunSpec Information Models (int+SF); register map verified live against a production Fronius fleet (raw-frame decode parity, 2026-09-11)
 
-> Fronius Smart Meter read through the DataManager (SunSpec model 203, int + scale factor — NOT the direct-Modbus 65A map, which is the separate fronius_smart_meter_65a template). Default unit ID on a DataManager is 240. Addresses are PDU (documented − 1).
+> Fronius Smart Meter read THROUGH the DataManager/datalogger over Modbus TCP (SunSpec model 203, int + scale factor; full 3-phase set + per-phase import/export energies). The meter appears on the datalogger at unit ID 240 (default; 241/242 for additional meters). Use this when the meter hangs off a Fronius datalogger — for a Smart Meter wired DIRECTLY to your own RS-485 (RTU or an RTU-TCP bridge), use the separate 'Fronius Smart Meter 65A-3 (RTU)' template instead: same hardware, completely different register map. PF quirk as on the inverter template (generic ±100).
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|

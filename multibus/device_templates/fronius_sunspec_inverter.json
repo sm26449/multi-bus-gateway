@@ -6,7 +6,7 @@
     "vendor": "Fronius",
     "model": "Symo / Primo / Eco (SunSpec 103)",
     "version": "1.0.0",
-    "description": "Fronius inverter behind a DataManager/datalogger speaking SunSpec int + scale-factor (models 1/103/160). Addresses are PDU (documented − 1). Pair with a `plants:` entry to read several unit IDs behind one datalogger — one socket per unit. PF is published with the generic SunSpec decode (see template description for the Fronius PF quirk).",
+    "description": "Fronius inverter read THROUGH its DataManager/datalogger over Modbus TCP, in the SunSpec int + scale-factor register mode (models 1/103/160: AC block, DC block, temperatures, status/events, per-string MPPT, identity). Use this when the datalogger's Modbus TCP slave is enabled and set to 'int+SF' (the Fronius default). For SEVERAL inverters behind one datalogger, add a `plants:` entry with this template and the unit IDs (1, 2, ...) — each unit becomes its own device. CAUTION: dataloggers serve only a few concurrent Modbus clients; if another system polls the same datalogger, keep poll intervals modest (10-15 s) or reduce the number of units read in parallel. Known vendor quirk: PF is published with the generic SunSpec decode (±100); Fronius units report PF raw ±10000 with an out-of-spec scale factor, so dedicated drivers show ±1.0.",
     "source_document": "SunSpec Information Models (int+SF); register map verified live against a production Fronius fleet (raw-frame decode parity, 2026-09-11)",
     "protocol": {
       "byte_order": "big",

@@ -172,14 +172,27 @@ def run():
                                          "shadow": payload if side == "shadow" else peer[0]}
             return
 
+    def on_connect(client, _u, _flags, rc):
+        # subscriptions MUST live here: paho re-runs on_connect after every
+        # reconnect, and subscriptions made outside it are silently lost on
+        # the first broker/network blip (the harness then sits "connected"
+        # receiving nothing — exactly the failure this replaces).
+        print(f"mqtt connected rc={rc} — (re)subscribing", flush=True)
+        for lp, sp in PAIRS:
+            client.subscribe(lp + "#")
+            client.subscribe(sp + "#")
+
+    def on_disconnect(_c, _u, rc):
+        print(f"mqtt disconnected rc={rc} — paho will retry", flush=True)
+
     c = mqtt.Client(client_id="fronius-shadow-parity")
     if user:
         c.username_pw_set(user, pw)
+    c.on_connect = on_connect
+    c.on_disconnect = on_disconnect
     c.on_message = on_msg
+    c.reconnect_delay_set(min_delay=1, max_delay=30)
     c.connect(host, port, 60)
-    for lp, sp in PAIRS:
-        c.subscribe(lp + "#")
-        c.subscribe(sp + "#")
     c.loop_start()
     print(f"parity harness up — pairs: {PAIRS}", flush=True)
 
