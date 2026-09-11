@@ -54,7 +54,12 @@ class ThresholdConfig(BaseModel):
 
 
 class SelectedRegisterUpdate(BaseModel):
-    """Request model for updating selected registers."""
+    """Request model for updating selected registers.
+
+    MUST mirror every field the persistence format understands
+    (config._parse_selected_payload) — a field missing here is silently
+    dropped on every UI save (G5, audit 2026-09-11: nan/monotonic/HA
+    typing were lost on round-trip, corrupting SunSpec selections)."""
     address: int
     name: str
     label: str
@@ -65,6 +70,19 @@ class SelectedRegisterUpdate(BaseModel):
     json_path: str = ""
     topic: str = ""            # MQTT input: the subscribe topic for this register
     scale: float = 1.0
+    offset: float = 0.0
+    nan: Optional[Any] = None            # not-available sentinel (True/value/list)
+    monotonic: bool = False              # cumulative counter guard
+    enum: Optional[Dict[str, str]] = None
+    bits: Optional[Dict[str, str]] = None
+    mask: Optional[int] = None
+    shift: Optional[int] = None
+    device_class: str = ""               # HA typing overrides
+    state_class: str = ""
+    entity_category: str = ""
+    enabled_by_default: Optional[bool] = None
+    icon: str = ""
+    suggested_display_precision: Optional[int] = None
     register_type: str = "holding"
     mqtt_enabled: bool = True
     mqtt_topic: str = ""

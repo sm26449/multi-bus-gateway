@@ -907,3 +907,74 @@ def test_modbus_discovery_guards_allow_loopback_http_guards_do_not():
     # HTTP guard: loopback still rejected (SSRF-to-self)
     assert _classify_lan(["127.0.0.1"]) is not None
     assert _classify_lan(["192.168.1.50"]) is None
+
+
+@needs_tc
+def test_selected_register_roundtrip_preserves_all_fields(tmp_path):
+    """G5 (audit 2026-09-11): the API layer must not lose register fields the
+    persistence format supports. A SunSpec fleet depends on exactly these:
+    nan sentinels, monotonic counters, offset, enum/bits decode and the HA
+    typing — losing them silently on every UI save corrupts the template's
+    instantiated selection."""
+    _cfg, client = make_app(tmp_path, extra_yaml="""
+devices:
+  - id: em24
+    template: janitza_umg512_pro
+    enabled: false
+    connection: { protocol: tcp, host: 192.0.2.10 }
+""")
+    full = [{
+        "address": 40072, "name": "ac_power", "label": "AC Power", "unit": "W",
+        "data_type": "int16", "poll_group": "normal",
+        "scale": 0.1, "offset": 2.5,
+        "nan": True, "monotonic": True,
+        "enum": {"4": "MPPT", "7": "FAULT"},
+        "mask": 240, "shift": 4,
+        "device_class": "power", "state_class": "measurement",
+        "entity_category": "diagnostic", "enabled_by_default": False,
+        "icon": "mdi:flash", "suggested_display_precision": 1,
+        "register_type": "holding",
+        "mqtt_enabled": True, "mqtt_topic": "W",
+        "influxdb_enabled": True, "influxdb_measurement": "fronius_inverter",
+        "influxdb_tags": {"device_type": "inverter"},
+        "ui_show_on_dashboard": False, "ui_widget": "value", "ui_config": {},
+        "thresholds": None,
+    }]
+    r = client.post("/api/registers/selected?device=em24", json=full)
+    assert r.status_code == 200
+
+    # 1) the persisted file must retain every field the loader understands
+    import json as _json
+    saved = _json.loads((tmp_path / "devices" / "em24" /
+                         "selected_registers.json").read_text())["registers"][0]
+    assert saved.get("offset") == 2.5
+    assert saved.get("nan") is True
+    assert saved.get("monotonic") is True
+    assert saved.get("enum") == {"4": "MPPT", "7": "FAULT"}
+    assert saved.get("mask") == 240 and saved.get("shift") == 4
+    assert saved.get("device_class") == "power"
+    assert saved.get("state_class") == "measurement"
+    assert saved.get("entity_category") == "diagnostic"
+    assert saved.get("enabled_by_default") is False
+    assert saved.get("icon") == "mdi:flash"
+    assert saved.get("suggested_display_precision") == 1
+
+    # 2) the GET must serve them back (else the next UI save wipes them)
+    got = client.get("/api/registers/selected?device=em24").json()["registers"][0]
+    assert got["offset"] == 2.5
+    assert got["nan"] is True
+    assert got["monotonic"] is True
+    assert got["enum"] == {"4": "MPPT", "7": "FAULT"}
+    assert got["mask"] == 240 and got["shift"] == 4
+    assert got["device_class"] == "power"
+    assert got["state_class"] == "measurement"
+    assert got["enabled_by_default"] is False
+    assert got["suggested_display_precision"] == 1
+
+    # 3) full loop: POST back exactly what GET returned → nothing degrades
+    r2 = client.post("/api/registers/selected?device=em24",
+                     json=client.get("/api/registers/selected?device=em24").json()["registers"])
+    assert r2.status_code == 200
+    saved2 = _json.loads((tmp_path / "devices" / "em24" /
+                          "selected_registers.json").read_text())["registers"][0]
+    assert saved2.get("monotonic") is True and saved2.get("nan") is True
