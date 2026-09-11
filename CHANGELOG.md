@@ -1,5 +1,21 @@
 # Changelog
 
+## 3.43.0
+
+### 2026-09-11 — MQTT namespace + plant-grouped devices page
+
+- **Namespace convention**: device values live under `mbg/devices/<id>/…`
+  (`mbg/vmeter/<id>/…` reserved for virtual-meter MQTT publishing).
+  `default_topic_pattern` seeds new devices accordingly; pre-existing
+  devices keep their persisted prefixes (routing identity is fixed).
+- **Devices page IA**: a plant's units now nest UNDER their plant as an
+  expandable group (chevron, unit census `N units`, `X/N online`,
+  plant edit/delete on the group row; expansion state persists). The
+  separate Plants card is gone — one list, reality-shaped.
+- Migration decision recorded: at the read cutover, consumers move to
+  the canonical topics (no long-lived legacy alias layer); the
+  compat_aliases stay a migration bridge only.
+
 ## 3.42.0
 
 ### 2026-09-11 — Fronius plants speak canonical (same output as every meter)

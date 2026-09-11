@@ -157,7 +157,7 @@ section. (Serial/RTU and other transports are available on additional
 | `ha_discovery.prefix` | `homeassistant` | |
 | `ha_discovery.device_name` | `Janitza UMG 512-PRO` | primary device's HA name |
 | `allow_write_entities` | `false` (opt-in) | expose writable registers as HA number/select entities and subscribe to their command topics. **Double-gated**: a command executes only when this AND `security.allow_writes` are true, the register is declared writable, and the value is within its envelope. |
-| `default_topic_pattern` | `meters/{device}` | topic-prefix pattern seeded onto **new** devices (`{device}` = device id) |
+| `default_topic_pattern` | `mbg/devices/{device}` | topic-prefix pattern seeded onto **new** devices (`{device}` = device id). Namespace convention: device values under `mbg/devices/<id>/…`; `mbg/vmeter/<id>/…` is reserved for virtual-meter MQTT publishing. Pre-existing devices keep their persisted prefixes. |
 | `compat_aliases` | `[]` | topic-migration dual-publish: every publish whose topic starts with `from` is *also* published under `to`, with `leaves` renaming individual tails — old consumers keep receiving byte-identical topics while they migrate. Example: `[{from: meters/umg512, to: janitza/umg512, leaves: {energy/active/import: energy/active/consumed}}]`. Remove the entry once no subscriber uses the old prefix. |
 | `tls_enabled` | `false` (opt-in) | broker TLS (8883) |
 | `tls_ca_cert` / `tls_client_cert` / `tls_client_key` | `""` | container-local paths; client pair adds mutual TLS |
@@ -343,7 +343,7 @@ plants:
       port: 502
     units: [1, 2, 3, 4]          # bare ids, or {unit_id: 3, id: inv3, name: East roof}
     mqtt:
-      topic_prefix: mbg/fronius/inverter/${unit_id}
+      topic_prefix: mbg/devices/${device_id}
       ha_discovery: false
     influxdb:
       bucket: fronius_shadow

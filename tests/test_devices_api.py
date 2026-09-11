@@ -401,12 +401,12 @@ def test_device_routing_defaults_and_ha_flag(tmp_path):
                     "ha_discovery_enabled": False})
     assert r.status_code == 200, r.text
     d = r.json()["device"]
-    assert d["mqtt_topic_prefix"] == "meters/meter-x"     # default_topic_pattern
+    assert d["mqtt_topic_prefix"] == "mbg/devices/meter-x"  # default_topic_pattern
     assert d["influxdb_bucket"] == "meter-x"              # default_bucket_pattern
     assert d["ha_discovery_enabled"] is False
     # config endpoints expose the patterns
     m = client.get("/api/config/mqtt").json()
-    assert m["default_topic_pattern"] == "meters/{device}"
+    assert m["default_topic_pattern"] == "mbg/devices/{device}"
     i = client.get("/api/config/influxdb").json()
     assert i["default_bucket_pattern"] == "{device}"
     # reload persists the ha flag

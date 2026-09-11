@@ -44,25 +44,27 @@ try {
   await dismissOnboarding();
   await page.screenshot({ path: SHOT('f1-01-devices') });
 
-  // ---- 2. plants card ----------------------------------------------------
-  const plantsCard = page.locator('#plantsCard');
-  check('plants card visible', await plantsCard.isVisible());
-  const plantRows = page.locator('#plantsList .device-row');
-  check('two plants listed', await plantRows.count() === 2,
-        `count=${await plantRows.count()}`);
-  const meterPlant = page.locator('#plantsList .device-row',
-                                  { hasText: 'fronius-meter' });
-  check('meter plant shows its unit chip',
-        await meterPlant.locator('.dev-chip', { hasText: 'unit' }).count() >= 1);
-  check('meter plant shows the SunSpec meter template',
-        (await meterPlant.textContent()).includes('fronius_sunspec_meter'));
+  // ---- 2. plant GROUPS in the devices list (units nested underneath) ------
+  const groups = page.locator('#devicesList .plant-row');
+  check('two plant groups listed', await groups.count() === 2,
+        `count=${await groups.count()}`);
+  const meterGroup = page.locator('#devicesList .plant-row', { hasText: 'fronius-meter' });
+  check('meter group shows the unit census chip',
+        await meterGroup.locator('.dev-chip', { hasText: /unit/ }).count() >= 1);
+  check('meter group shows the SunSpec meter template',
+        (await meterGroup.textContent()).includes('fronius_sunspec_meter'));
+  check('group has a chevron (expand affordance)',
+        await meterGroup.locator('.plant-chevron').count() === 1);
+  // collapse → nested container hides; expand back
+  await meterGroup.click();
+  const unitsBox = page.locator('[data-plant-units="fronius-meter"]');
+  check('collapse hides the plant units', !(await unitsBox.isVisible()));
+  await meterGroup.click();
+  check('expand shows the plant units', await unitsBox.isVisible());
 
-  // ---- 3. materialized device row -----------------------------------------
-  const row240 = page.locator('#devicesList .device-row',
-                              { hasText: 'fronius-meter-240' });
-  check('meter unit row exists', await row240.count() === 1);
-  check('meter unit row carries the plant chip',
-        await row240.locator('.dev-chip', { hasText: 'fronius-meter' }).count() >= 1);
+  // ---- 3. nested unit row --------------------------------------------------
+  const row240 = unitsBox.locator('.device-row', { hasText: 'fronius-meter-240' });
+  check('meter unit row nests under its plant group', await row240.count() === 1);
   check('meter unit row has NO delete button',
         await row240.locator('button[title="Delete"], button [class*="trash"]').count() === 0);
 

@@ -155,7 +155,7 @@ devices:
     ids = [d.id for d in cfg.devices]
     assert ids == [PRIMARY_DEVICE_ID, "em24-hala", "rtu-meter"]
     em24 = cfg.devices[1]
-    assert em24.mqtt_topic_prefix == "meters/em24-hala"      # ${device_id} default
+    assert em24.mqtt_topic_prefix == "mbg/devices/em24-hala"  # ${device_id} default
     assert em24.influxdb_bucket == "warehouse"
     assert em24.influxdb_device_tag == "em24-hala"
     assert em24.connection.port == 1502 and em24.connection.unit_id == 5

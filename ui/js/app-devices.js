@@ -62,14 +62,85 @@ Object.assign(JanitzaMonitor.prototype, {
         const devices = await this._fetchDevices(true);
         this._renderRegDeviceSelectors();
         this._renderRestorableDevices();          // deleted-but-restorable list
-        this.renderPlantsList();                  // plants card (hidden when none)
-        if (!devices.length) {
+        let plants = [];
+        try { plants = (await (await fetch('/api/plants')).json()).plants || []; }
+        catch (e) { console.error(e); }
+        this._plants = plants;
+        if (!devices.length && !plants.length) {
             el.innerHTML = `<span class="field-hint">${this.t('devices.none', 'No devices configured.')}</span>`;
             return;
         }
         const healthColor = { ok: 'var(--success,#22c55e)', degraded: 'var(--warning,#f59e0b)',
                               down: 'var(--danger,#ef4444)', idle: 'var(--text-secondary,var(--text-secondary))' };
-        el.innerHTML = devices.map(d => {
+        // Devices belonging to a plant render NESTED under their plant group
+        // (expandable); only standalone devices render as top-level rows.
+        const standalone = devices.filter(d => !d.plant_id);
+        const byPlant = {};
+        devices.forEach(d => { if (d.plant_id) (byPlant[d.plant_id] ||= []).push(d); });
+        const html = standalone.map(d => this._deviceRowHtml(d, healthColor)).join('')
+            + plants.map(p => this._plantGroupHtml(p, byPlant[p.id] || [], healthColor)).join('');
+        el.innerHTML = html;
+        // expand/collapse wiring (state persists per plant in localStorage)
+        el.querySelectorAll('[data-plant-toggle]').forEach(h =>
+            h.addEventListener('click', (ev) => {
+                if (ev.target.closest('.device-row-actions')) return;
+                const pid = h.dataset.plantToggle;
+                const open = !this._plantOpenState(pid);
+                try { localStorage.setItem(`mbg-plant-open-${pid}`, open ? '1' : '0'); } catch (e) { /* private mode */ }
+                const box = el.querySelector(`[data-plant-units="${CSS.escape(pid)}"]`);
+                if (box) box.style.display = open ? '' : 'none';
+                const chev = h.querySelector('.plant-chevron');
+                if (chev) chev.style.transform = open ? 'rotate(90deg)' : '';
+            }));
+    },
+
+    _plantOpenState(pid) {
+        try { return localStorage.getItem(`mbg-plant-open-${pid}`) !== '0'; }
+        catch (e) { return true; }
+    },
+
+    // One plant as an expandable GROUP: header row (identity + unit census +
+    // plant actions) + its unit devices nested underneath.
+    _plantGroupHtml(p, units, healthColor) {
+        const open = this._plantOpenState(p.id);
+        const conn = p.connection || {};
+        const proto = (conn.protocol || 'tcp') === 'rtu-tcp' ? 'RTU/TCP' : 'TCP';
+        const online = units.filter(u => u.connected).length;
+        const stats = p.enabled === false
+            ? this.t('devices.disabled', 'disabled')
+            : `${online}/${units.length} ${this.t('plants.online', 'online')}`;
+        const dot = p.enabled === false ? 'var(--text-secondary,#8a94a0)'
+            : online === units.length && units.length ? 'var(--success,#22c55e)'
+            : online ? 'var(--warning,#f59e0b)' : 'var(--danger,#ef4444)';
+        const rows = units.map(d => this._deviceRowHtml(d, healthColor, true)).join('')
+            || `<div class="field-hint" style="margin:6px 0 6px 34px;">${this.t('plants.noUnits', 'No units materialized.')}</div>`;
+        return `
+        <div class="device-row plant-row" role="button" tabindex="0" data-plant-toggle="${this._esc(p.id)}" data-key-enter
+             title="${this.t('plants.toggle', 'Click to expand/collapse the plant’s units')}">
+            <i aria-hidden="true" class="bi bi-chevron-right plant-chevron"
+               style="transition:transform .15s;${open ? 'transform:rotate(90deg);' : ''}"></i>
+            <span class="status-dot" style="--dot:${dot}" title="${this._esc(stats)}"></span>
+            <div class="device-row-main">
+                <div class="device-row-title"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(p.name || p.id)}
+                    <span class="dev-chip">${this._esc(p.id)}</span>
+                    <span class="dev-chip">${units.length} ${units.length === 1 ? this.t('plants.unit', 'unit') : this.t('plants.units', 'units')}</span></div>
+                <div class="device-row-sub">${proto} · ${this._esc(conn.host || '')}:${conn.port || 502}
+                    · ${this._esc(p.template || '—')}</div>
+            </div>
+            <div class="device-row-stats">${stats}</div>
+            <div class="device-row-actions">
+                <button class="btn btn-ghost btn-sm" ${this._act('openPlantModal', [p.id])} title="${this.t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
+                <button class="btn btn-ghost btn-sm" ${this._act('deletePlantUi', [p.id])} title="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
+            </div>
+        </div>
+        <div data-plant-units="${this._esc(p.id)}" style="display:${open ? '' : 'none'};
+             margin-left:22px;border-left:2px solid var(--border,#e5e7eb);padding-left:8px;">
+            ${rows}
+        </div>`;
+    },
+
+    _deviceRowHtml(d, healthColor, nested = false) {
+        {
             const proto = d.protocol === 'rtu'
                 ? `RTU · ${this._esc(d.serial?.serial_port || '—')}`
                 : d.protocol === 'http'
@@ -93,7 +164,8 @@ Object.assign(JanitzaMonitor.prototype, {
             if (!d.primary && !d.plant_id) {
                 actions.push(`<button class="btn btn-ghost btn-sm" ${this._act('deleteDevice', [d.id])} title="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>`);
             }
-            const plantChip = d.plant_id
+            // nested rows sit under their plant group — the chip would repeat it
+            const plantChip = (d.plant_id && !nested)
                 ? ` <span class="dev-chip" title="${this.t('devices.plantManaged', 'Managed through its plant — edit or delete the plant')}"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(d.plant_id)}</span>`
                 : '';
             // The row (outside its action buttons) opens the full-page detail;
@@ -114,7 +186,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="device-row-stats">${stats}</div>
                 <div class="device-row-actions">${actions.join('')}</div>
             </div>`;
-        }).join('');
+        }
     },
 
     // Deleted devices whose settings were kept — restore rebuilds the exact

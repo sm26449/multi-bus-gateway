@@ -253,7 +253,12 @@ class MQTTConfig:
     allow_write_entities: bool = False
     # Default topic prefix pattern for NEW devices ({device} = the device id).
     # Device #1 keeps its migrated prefix; this only seeds new devices.
-    default_topic_pattern: str = "meters/{device}"
+    # Namespace convention (2026-09-11): device values live under
+    # mbg/devices/<id>/… (entity-typed root — mbg/vmeter/<id>/… is reserved
+    # for virtual-meter MQTT publishing when that lands). Pre-existing devices
+    # keep their persisted prefixes (routing identity is fixed); this only
+    # seeds NEW devices.
+    default_topic_pattern: str = "mbg/devices/{device}"
     # Compatibility aliases (topic migrations, e.g. janitza/… → meters/…):
     # every publish whose topic starts with `from` is ALSO published under
     # `to`, with `leaves` renaming individual topic tails (old consumers keep
@@ -575,7 +580,7 @@ class Config:
         mqtt_cfg = d.get('mqtt', {}) or {}
         influx_cfg = d.get('influxdb', {}) or {}
         http_out_cfg = d.get('http_output', {}) or {}
-        prefix = mqtt_cfg.get('topic_prefix', 'meters/${device_id}')
+        prefix = mqtt_cfg.get('topic_prefix', 'mbg/devices/${device_id}')
         prefix = prefix.replace('${device_id}', did).replace('${id}', did)
         try:
             return DeviceConfig(
