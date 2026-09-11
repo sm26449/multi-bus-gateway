@@ -13,9 +13,10 @@ power-factor/temperatures AVERAGE) and published:
   units, tagged ``device=<plant_id>`` + ``aggregate=plant`` — a dashboard
   reads plant totals exactly like it reads a device, filtered by tag.
 
-Freshness: a unit contributes only values younger than 3× their poll cadence
-(minimum 30 s) — a stalled unit silently drops out of the aggregate instead
-of freezing it, and ``units_online`` says how many are contributing.
+Freshness: a unit contributes only values younger than 4× their poll cadence
+(minimum 60 s) — a stalled unit silently drops out of the aggregate instead
+of freezing it (its production IS unknown), and ``units_online`` says how
+many are contributing, so a consumer can tell a partial total apart.
 
 Opt-out per plant with ``aggregates: false`` in the ``plants:`` entry.
 """
@@ -69,7 +70,7 @@ def compute_plant_aggregates(config, registry, plant_id: str,
             if not name or not isinstance(val, (int, float)) or isinstance(val, bool):
                 continue
             interval = entry.get("interval") or 30
-            if ts is None or (now - ts) > max(3 * float(interval), 30.0):
+            if ts is None or (now - ts) > max(4 * float(interval), 60.0):
                 continue
             fresh_any = True
             rule = _rule_for(name)
@@ -104,16 +105,19 @@ class PlantAggregator(threading.Thread):
         self._stop.set()
 
     def run(self):
+        logger.info("plant aggregator started (interval %.0fs)", self._interval)
         # small startup delay so the first cycle sees warmed-up stores
         self._stop.wait(self._interval)
+        n = 0
         while not self._stop.is_set():
             try:
-                self._publish_all()
+                self._publish_all(log=(n % 60 == 0))
             except Exception as e:  # noqa: BLE001 — the loop must survive anything
-                logger.warning("plant aggregator cycle failed: %s", e)
+                logger.warning("plant aggregator cycle failed: %s", e, exc_info=True)
+            n += 1
             self._stop.wait(self._interval)
 
-    def _publish_all(self):
+    def _publish_all(self, log: bool = False):
         for p in self._config.plants:
             pid = p.get("id")
             if not pid or not bool(p.get("enabled", True)):
@@ -121,6 +125,11 @@ class PlantAggregator(threading.Thread):
             if not bool(p.get("aggregates", True)):
                 continue
             agg = compute_plant_aggregates(self._config, self._registry, pid)
+            if log:
+                logger.info("plant %s aggregates: online=%s/%s fields=%d "
+                            "(power_active_total=%s)", pid,
+                            agg.get("units_online"), agg.get("units_total"),
+                            len(agg) - 2, agg.get("power_active_total"))
             if agg.get("units_online", 0) == 0:
                 continue                       # nothing fresh — publish nothing
             self._publish_mqtt(pid, agg)
