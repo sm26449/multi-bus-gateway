@@ -144,18 +144,19 @@ def test_validate_string_type_needs_length():
     assert not any("string" in e for e in errs_ok)
 
 
-def test_validate_requires_bounds_on_writable_holding():
-    # a writable holding register without write_min/max would silently clamp on
-    # an out-of-range write instead of being refused → require the bounds
-    errs = validate_template(_tpl([
+def test_validate_write_guards_optional_but_coherent():
+    # F3a: guards are OPT-IN — a writable register without bounds is legal
+    # (the write dialog requires an explicit confirmation instead). Declared
+    # guards still have to be coherent.
+    ok = validate_template(_tpl([
         {"address": 10, "name": "w", "data_type": "uint16", "writable": True},
     ]))
-    assert any("write_min" in e for e in errs)
-    ok = validate_template(_tpl([
+    assert not any("write" in e for e in ok)
+    errs = validate_template(_tpl([
         {"address": 10, "name": "w", "data_type": "uint16", "writable": True,
-         "write_min": 0, "write_max": 100},
+         "write_min": 100, "write_max": 0},
     ]))
-    assert not any("write_min" in e for e in ok)
+    assert any("write_min" in e for e in errs)
 
 
 # ── batch read respects the Modbus 125-register limit ─────────────────────────

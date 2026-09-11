@@ -1707,6 +1707,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         # Same for the REST push config (managed from the Outputs tab).
         if dev_cfg.rest_push:
             raw['rest_push'] = dev_cfg.rest_push
+        # Same for the write lock (managed from its own endpoint — an edit
+        # payload that omits it must not silently unlock the device).
+        if dev_cfg.write_locked:
+            raw['write_locked'] = True
         # Preserve real HTTP header secrets across an edit: the API echoes header
         # VALUES masked ("******"), and the UI does not manage headers, so an
         # update that omits or masks them must keep the stored values rather than
@@ -1862,13 +1866,18 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     def write_device_register(device_id: str, request: Request, payload: Dict = Body(...)):
         """Write a value to a device (Modbus FC5 coil / FC6+FC16 holding).
 
-        GATED and secure-by-default:
-        - refused unless security.allow_writes is true (writing real hardware is
-          irreversible);
-        - the primary device is always read-only;
+        F3a trust model — CAPABILITY IS THE BASE, GUARDS ARE OPT-IN:
+        - armed by the security.allow_writes master switch (default off);
+        - per-device `write_locked` refuses everything (the primary ships
+          locked via security.primary_write_locked — configuration, not code);
+        - a register DECLARED writable writes with its template encoding, and
+          any guards the user declared (write_min/write_max/write_allowed)
+          enforce — they are the user's own declaration, not a product limit;
+        - an UNDECLARED register can still be written through the raw path by
+          passing `unguarded: true` (+ its data_type/scale) — the deliberate
+          statement that no envelope exists;
         - HTTP/JSON devices and input/discrete registers cannot be written;
-        - admin-only (the auth middleware blocks the viewer role from POSTs);
-        - every attempt is audit-logged; the written value is read back to verify.
+        - authenticated + rate-limited + audited; the value is read back.
         """
         from .config import normalize_register_type
         from .modbus_client import coil_truthy as _coil_truthy
@@ -1887,9 +1896,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         _idx, dev_cfg, client = _find_device(device_id)
         if dev_cfg is None:
             raise HTTPException(status_code=404, detail="device not found")
-        if dev_cfg.primary:
+        if dev_cfg.write_locked:
             raise HTTPException(status_code=403, detail={"errors": [
-                "the primary device is read-only"]})
+                f"device '{device_id}' is write-locked — unlock it "
+                + ("via security.primary_write_locked" if dev_cfg.primary
+                   else "in the device's Outputs tab (write protection)")]})
         if dev_cfg.protocol == 'http':
             raise HTTPException(status_code=400, detail={"errors": [
                 "HTTP/JSON devices cannot be written"]})
@@ -1904,19 +1915,43 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             raise HTTPException(status_code=422, detail={"errors": ["address must be an integer 0..65535"]})
         if 'value' not in payload:
             raise HTTPException(status_code=422, detail={"errors": ["value is required"]})
-        # ── write safety envelope: allowlist + bounds (declared in the template) ──
+        # ── write envelope: declared path (guards enforce) or raw path (opt-in) ──
         rule = _write_rule(dev_cfg, address, rtype)
-        if rule is None or not rule.writable:
+        unguarded = False
+        if rule is not None and rule.writable:
+            # DECLARED: encoding is a property of the register (its template
+            # row), NOT caller-controlled — a declared register always writes
+            # with its declared type and scale, so a caller can't corrupt it
+            # (or an adjacent register) with a mismatched data_type/word-count.
+            data_type = (rule.data_type or 'uint16').lower()
+            scale = float(rule.scale if rule.scale is not None else 1.0)
+            _w_offset = float(getattr(rule, 'offset', 0.0) or 0.0)
+        elif bool(payload.get('unguarded')):
+            # RAW (L0): the caller explicitly states no envelope exists. The
+            # payload owns the encoding; nothing is clamped or checked beyond
+            # type sanity. Master switch + device lock + auth + rate limit +
+            # audit still apply — safety by configuration, not prohibition.
+            unguarded = True
+            rule = None
+            data_type = str(payload.get('data_type') or 'uint16').lower()
+            from .register_parser import RegisterParser as _RP
+            if data_type not in _RP.REGISTER_COUNTS or data_type.startswith('string'):
+                raise HTTPException(status_code=422, detail={"errors": [
+                    f"data_type '{data_type}' is not writable — use one of: "
+                    + ", ".join(sorted(k for k in _RP.REGISTER_COUNTS
+                                       if not k.startswith('string')))]})
+            try:
+                scale = float(payload.get('scale', 1) or 1)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422, detail={"errors": ["scale must be numeric"]})
+            _w_offset = 0.0
+        else:
             raise HTTPException(status_code=403, detail={"errors": [
-                f"address {address} ({rtype}) is not writable on this device — "
-                f"declare it writable in the device template"]})
-        # Encoding is a property of the register (its template row), NOT caller-
-        # controlled — a writable register always writes with its declared type
-        # and scale, so a caller can't corrupt it (or an adjacent register) with a
-        # mismatched data_type/word-count. The payload's data_type/scale are ignored.
-        data_type = (rule.data_type or 'uint16').lower()
-        scale = float(rule.scale if rule.scale is not None else 1.0)
-        _w_offset = float(getattr(rule, 'offset', 0.0) or 0.0)
+                f"address {address} ({rtype}) is not declared writable on this "
+                f"device. Either declare it writable in the device template "
+                f"(guards optional — each one you declare is enforced and "
+                f"improves the UI), or pass unguarded:true for a raw write "
+                f"with your own data_type/scale."]})
         prefer_fc6 = bool(payload.get('prefer_fc6', False))
         if rtype == 'holding':
             try:
@@ -1932,16 +1967,24 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             if not _math.isfinite(_fval):
                 raise HTTPException(status_code=422, detail={"errors": [
                     "value must be a finite number (NaN/Infinity rejected)"]})
-            if rule.write_min is not None and _fval < rule.write_min:
+            # declared guards enforce — each one is the user's own declaration
+            if rule is not None and rule.write_min is not None and _fval < rule.write_min:
                 raise HTTPException(status_code=422, detail={"errors": [
                     f"value {_fval} is below the register minimum {rule.write_min}"]})
-            if rule.write_max is not None and _fval > rule.write_max:
+            if rule is not None and rule.write_max is not None and _fval > rule.write_max:
                 raise HTTPException(status_code=422, detail={"errors": [
                     f"value {_fval} is above the register maximum {rule.write_max}"]})
+            if (rule is not None and getattr(rule, 'write_allowed', None)
+                    and _fval not in [float(v) for v in rule.write_allowed]):
+                raise HTTPException(status_code=422, detail={"errors": [
+                    f"value {_fval} is not in the register's allowed set "
+                    f"{rule.write_allowed}"]})
+        _safe = rule.write_safe if rule is not None else None
         lease_ms = int(payload.get('lease_ms', 0) or 0)
-        if lease_ms > 0 and rule.write_safe is None:
+        if lease_ms > 0 and _safe is None:
             raise HTTPException(status_code=422, detail={"errors": [
-                "lease requested but the register has no write_safe value in the template"]})
+                "lease requested but the register has no write_safe value in "
+                "the template (raw unguarded writes cannot lease)"]})
         if client is None:
             raise HTTPException(status_code=409, detail={"errors": ["device is not running"]})
         ok, err, words = client.write_value(address, rtype, data_type,
@@ -1956,16 +1999,17 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                          target=f"{device_id} {rtype}@{address}",
                          status="ok" if ok else "failed",
                          detail={"value": payload.get('value'), "data_type": data_type,
-                                 "lease_ms": lease_ms})
+                                 "lease_ms": lease_ms,
+                                 **({"unguarded": True} if unguarded else {})})
         if not ok:
             raise HTTPException(status_code=502, detail={"errors": [f"write failed: {err}"]})
         # arm/renew (or cancel) the dead-man lease for this register
         if lease_ms > 0:
             _revert = _make_lease_revert(device_id, rtype, address, data_type, scale,
-                                         rule.write_safe, off=_w_offset)
+                                         _safe, off=_w_offset)
             meta = {'device': device_id, 'register_type': rtype, 'address': address,
                     'data_type': data_type, 'scale': scale, 'offset': _w_offset,
-                    'safe_value': rule.write_safe,
+                    'safe_value': _safe,
                     'lease_ms': lease_ms}
             _lease_mgr.arm(device_id, rtype, address, lease_ms, _revert, meta=meta)
         else:
@@ -1992,7 +2036,58 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 "data_type": data_type, "written": payload.get('value'),
                 "words": words, "read_back": read_back, "verified": verified,
                 "lease_ms": lease_ms or None,
-                "reverts_to": rule.write_safe if lease_ms > 0 else None}
+                "reverts_to": _safe if lease_ms > 0 else None,
+                "unguarded": unguarded or None}
+
+    @app.post("/api/devices/{device_id}/write-lock")
+    @_serialized_mutation
+    def set_device_write_lock(device_id: str, request: Request, payload: Dict = Body(...)):
+        """Set/clear the per-device write lock (F3a). A locked device refuses
+        every write regardless of guards. Plant units lock at the PLANT level
+        (one physical endpoint — its units lock together); the primary maps to
+        security.primary_write_locked. Audited."""
+        if 'locked' not in payload:
+            raise HTTPException(status_code=422, detail={"errors": ["'locked' (bool) is required"]})
+        locked = bool(payload.get('locked'))
+        try:
+            config.set_write_locked(device_id, locked)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        # refresh the registry snapshot so /api/devices reflects the new lock
+        registry.resync(config.devices, modbus_client)
+        _who = getattr(request.state, "user", None) or ("api-key" if _api_key else "anon")
+        _src = request.client.host if request.client else "?"
+        audit_log.append(user=_who, ip=_src, action="write-lock",
+                         target=device_id, status="ok",
+                         detail={"locked": locked})
+        logger.warning("WRITE-LOCK %s: device=%s by=%s@%s",
+                       "SET" if locked else "CLEARED", device_id, _who, _src)
+        return {"ok": True, "device": device_id, "write_locked": locked}
+
+    @app.get("/api/devices/{device_id}/write-info/{register_type}/{address}")
+    def get_write_info(device_id: str, register_type: str, address: int):
+        """What a write to (register_type, address) would look like: declared?
+        guards? lock state? — drives the write dialog's affordances (bounded
+        input / dropdown / raw-with-confirmation)."""
+        from .config import normalize_register_type
+        _i, dev_cfg, _c = _find_device(device_id)
+        if dev_cfg is None:
+            raise HTTPException(status_code=404, detail="device not found")
+        rtype = normalize_register_type(register_type)
+        rule = _write_rule(dev_cfg, address, rtype)
+        declared = bool(rule is not None and rule.writable)
+        return {
+            "device": device_id, "address": address, "register_type": rtype,
+            "writes_enabled": bool(config.security.allow_writes),
+            "write_locked": bool(dev_cfg.write_locked),
+            "declared": declared,
+            "data_type": (rule.data_type if declared else None),
+            "scale": (rule.scale if declared else None),
+            "write_min": (rule.write_min if declared else None),
+            "write_max": (rule.write_max if declared else None),
+            "write_allowed": (getattr(rule, 'write_allowed', None) if declared else None),
+            "write_safe": (rule.write_safe if declared else None),
+        }
 
     @app.get("/api/writes/leases")
     def list_write_leases():

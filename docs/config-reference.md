@@ -204,7 +204,8 @@ section. (Serial/RTU and other transports are available on additional
 |-----|---------|-------|
 | `allowlist` | `[]` (open) | IPs/CIDRs allowed to reach the HTTP API/UI. Loopback and the docker gateway are always allowed. |
 | `allow_nonlan_http_devices` | `false` (opt-in) | SSRF guard: HTTP/JSON device URLs must point at a private LAN host unless this is true |
-| `allow_writes` | `false` (opt-in) | master gate for Modbus writes (FC5/6/15/16) to devices. The primary device stays read-only regardless. |
+| `allow_writes` | `false` (opt-in) | master **arming** switch for Modbus writes (FC5/6/15/16). When armed, any device that is not `write_locked` can be written — declared registers with their template encoding + whatever guards were declared; undeclared registers via the raw path (`unguarded: true` in the payload). Every write is authenticated, rate-limited and audited. |
+| `primary_write_locked` | `true` | per-device write LOCK for the primary. Read-only used to be hardcoded; it is now this flag, defaulting to locked so the historical behavior survives upgrades. Unlock deliberately. Non-primary devices carry `write_locked` in their `devices[]`/`plants:` entry (default unlocked) — toggle from the device's Outputs tab. |
 | `write_rate_limit_per_s` | `10.0` | per-client-IP write rate limit on the write API; excess gets 429; `0` disables |
 
 ### `polling:`
@@ -445,9 +446,10 @@ Ambiguous names like `le` are deliberately rejected (they fall back to big).
 |-----|---------|
 | `access` | `RD` / `RD/WR` (informative) |
 | `category` | UI grouping (validated against the template's `categories` when declared) |
-| `writable` | opt-in: register may be written via the write API |
-| `write_min` / `write_max` | engineering-value bounds — **required** for a writable holding register |
-| `write_safe` | value to revert to when a write-lease expires |
+| `writable` | declares the register for the write API / HA write entities. **Guards below are OPT-IN** — capability is the base; each guard you declare is enforced on every write AND improves the write dialog. A writable register with no guards accepts any finite value after an explicit confirmation; even an *undeclared* register can be written through the raw path (`unguarded: true`). |
+| `write_min` / `write_max` | optional engineering-value bounds — out-of-range writes are refused (min must be ≤ max) |
+| `write_allowed` | optional list of exactly-allowed values (e.g. `[0, 1, 4]` for a mode register) — anything else is refused; renders as a dropdown |
+| `write_safe` | value to revert to when a write-lease expires (required to use `lease_ms`; raw unguarded writes cannot lease) |
 
 See also: [MANUAL.md](MANUAL.md) · [upgrade-guide.md](upgrade-guide.md) ·
 [canonical-fields.md](canonical-fields.md) · [csv-import.md](csv-import.md) ·

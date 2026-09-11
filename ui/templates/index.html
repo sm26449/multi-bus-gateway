@@ -984,7 +984,7 @@
 
                                 <div class="settings-subsection">
                                     <h4 data-i18n="security.writes.title">Modbus writes</h4>
-                                    <p class="field-hint" data-i18n="security.writes.hint">Off by default — writing to real hardware is irreversible. When on, only registers declared <b>writable</b> in a device template can be written, within their bounds, and every write is confirmed, authenticated and audited. The primary device stays read-only.</p>
+                                    <p class="field-hint" data-i18n="security.writes.hint">Off by default — this is the master arming switch; writing to real hardware is irreversible. When on, any device that is not write-locked can be written: declared registers use their template encoding and enforce whatever guards you declared (min/max/allowed — each guard you declare buys enforcement and a better write dialog), and undeclared registers accept a raw write after an explicit unguarded acknowledgement. Every write is confirmed, authenticated, rate-limited and audited. The primary device ships write-locked.</p>
                                     <label class="checkbox-label">
                                         <input type="checkbox" id="cfgAllowWrites" aria-label="Allow Modbus writes">
                                         <span data-i18n="security.writes.enable">Allow Modbus writes (FC5 / FC6 / FC16)</span>

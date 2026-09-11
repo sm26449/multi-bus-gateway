@@ -1,5 +1,31 @@
 # Changelog
 
+## 3.41.0
+
+### 2026-09-11 — writes foundation: capability first, guards opt-in (F3a)
+
+The write trust model is inverted: the product no longer decides what a
+user may write — the USER does, and every restriction they declare buys
+them something back.
+
+- **Raw writes (L0)**: any register on any Modbus device can be written,
+  even undeclared in the template, by passing `unguarded: true` — the
+  explicit statement that no envelope exists. The master arming switch,
+  per-device lock, authentication, rate limit and audit still apply:
+  safety by configuration, not prohibition.
+- **Guards are opt-in (L1)**: `write_min`/`write_max` are no longer
+  required on writable registers; new `write_allowed` (exact-value set)
+  guard. Declared guards enforce on every write and drive the write
+  dialog (bounds shown and pre-checked, allowed sets, unguarded
+  acknowledgement checkbox).
+- **Per-device write lock**: the primary's hardcoded read-only became
+  `security.primary_write_locked` (default true — behavior preserved);
+  every other device gets `write_locked` (devices[]/plants entry,
+  default unlocked) with a Write-protection card in the Outputs tab
+  and an audited toggle endpoint. Plant units lock at plant level.
+- New `GET /api/devices/{id}/write-info/{rtype}/{address}` feeds the
+  dialog: declared? guards? lock? — before anything touches the bus.
+
 ## 3.40.0
 
 ### 2026-09-11 — SunSpec dynamic scale factors + plants

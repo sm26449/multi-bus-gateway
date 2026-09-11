@@ -198,12 +198,15 @@ class DeviceConfig:
     pq_recorder: Dict[str, Any] = field(default_factory=dict)  # Jasic PQ event recorder: {enabled,poll_s,archive_waveforms,base_url}
     plant_id: str = ""    # non-empty → materialized from a `plants:` entry
                           # (managed via the plant, not the device CRUD)
+    write_locked: bool = False   # per-device write lock (F3a): refuses every
+                                 # write regardless of guards. The primary
+                                 # defaults to locked (security.primary_write_locked).
 
     def summary(self) -> Dict[str, Any]:
         return {
             'id': self.id, 'name': self.name, 'template': self.template,
             'enabled': self.enabled, 'primary': self.primary,
-            'plant_id': self.plant_id,
+            'plant_id': self.plant_id, 'write_locked': self.write_locked,
             'ha_discovery_enabled': self.ha_discovery_enabled,
             'mqtt_enabled': self.mqtt_enabled,
             'influxdb_enabled': self.influxdb_enabled,
@@ -308,9 +311,12 @@ class SecurityConfig:
     # true only if you knowingly poll a non-LAN endpoint (opens an SSRF path).
     allow_nonlan_http_devices: bool = False
     # Modbus WRITE gate: FC5/6/15/16 writes to devices are refused unless this is
-    # true. Off by default — writing to real hardware is irreversible. The
-    # primary device stays read-only regardless.
+    # true. Off by default — writing to real hardware is irreversible.
     allow_writes: bool = False
+    # Write LOCK for the primary device (F3a): read-only used to be hardcoded;
+    # it is now a per-device lock, and the primary DEFAULTS to locked so the
+    # historical behavior survives every upgrade. Unlock deliberately here.
+    primary_write_locked: bool = True
     # Per-client-IP write rate limit (writes/second) on the Modbus write API. A
     # flood of writes contends the shared Modbus lock and can starve the pollers;
     # excess writes get 429. 0 disables the limit. Generous by default so a normal
@@ -532,6 +538,7 @@ class Config:
             http_output_enabled=self.http_output_primary_enabled,
             rest_push=dict(self.rest_push_primary or {}),
             pq_recorder=dict(self.pq_recorder_primary or {}),
+            write_locked=self.security.primary_write_locked,
         )]
         for d in self._raw_devices:
             did = str(d.get('id', '')).strip()
@@ -574,6 +581,7 @@ class Config:
             return DeviceConfig(
                 id=did,
                 plant_id=plant_id,
+                write_locked=bool(d.get('write_locked', False)),
                 name=d.get('name', did),
                 template=d.get('template', ''),
                 enabled=bool(d.get('enabled', True)),
@@ -687,6 +695,7 @@ class Config:
                     'name': u['name'] or f"{p.get('name') or pid} unit {uid}",
                     'template': p.get('template', ''),
                     'enabled': bool(p.get('enabled', True)),
+                    'write_locked': bool(p.get('write_locked', False)),
                     'connection': {**conn, 'unit_id': uid},
                     'mqtt': m,
                     'influxdb': i,
@@ -742,6 +751,33 @@ class Config:
             self._raw_devices = _snapshot
             self._build_devices()
             raise
+
+    def set_write_locked(self, device_id: str, locked: bool) -> None:
+        """Set the per-device write lock and persist. Primary → the
+        security.primary_write_locked flag; devices[] entries → their dict;
+        plant units → the PLANT's flag (applies to every unit — a plant is one
+        physical endpoint, its units lock together)."""
+        dev = self.get_device(device_id)
+        if dev is None:
+            raise ValueError(f"device {device_id!r} not found")
+        if dev.primary:
+            self.security.primary_write_locked = bool(locked)
+        elif dev.plant_id:
+            for p in self._raw_plants:
+                if p.get('id') == dev.plant_id:
+                    p['write_locked'] = bool(locked)
+                    break
+            else:
+                raise ValueError(f"plant {dev.plant_id!r} not found")
+        else:
+            for d in self._raw_devices:
+                if d.get('id') == device_id:
+                    d['write_locked'] = bool(locked)
+                    break
+            else:
+                raise ValueError(f"device {device_id!r} is not a configurable device")
+        self._build_devices()
+        self.save_yaml_config()
 
     def set_http_output(self, device_id: str, enabled: bool) -> None:
         """Enable/disable the HTTP/JSON output sink for a device and persist.
@@ -1245,6 +1281,7 @@ class Config:
                     allow_nonlan_http_devices=bool(
                         s.get('allow_nonlan_http_devices', False)),
                     allow_writes=bool(s.get('allow_writes', False)),
+                    primary_write_locked=bool(s.get('primary_write_locked', True)),
                     write_rate_limit_per_s=float(s.get('write_rate_limit_per_s', 10.0)),
                 )
 
@@ -1791,6 +1828,7 @@ class Config:
                 'allowlist': self.security.allowlist,
                 'allow_nonlan_http_devices': self.security.allow_nonlan_http_devices,
                 'allow_writes': self.security.allow_writes,
+                'primary_write_locked': self.security.primary_write_locked,
                 'write_rate_limit_per_s': self.security.write_rate_limit_per_s,
             },
             'polling': {

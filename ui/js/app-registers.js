@@ -1442,12 +1442,10 @@ Object.assign(JanitzaMonitor.prototype, {
 
     // ── Modbus write (FC5/FC6/FC16) — gated, non-primary only ─────────────
     openWriteModal() {
+        // F3a: no hardcoded read-only — the per-device write LOCK decides
+        // (the primary ships locked by default; the envelope lookup in
+        // submitWrite surfaces the lock with a clear message).
         const id = this._regDevice || this._primaryDeviceId();
-        if (id === this._primaryDeviceId()) {
-            this.showToast('info', this.t('write.primaryTitle', 'Read-only'),
-                           this.t('write.primaryMsg', 'The primary device is read-only. Writes apply to other devices.'));
-            return;
-        }
         this._writeDeviceId = id;
         ['writeAddr', 'writeValue', 'writeLease'].forEach(k => { const e = document.getElementById(k); if (e) e.value = ''; });
         document.getElementById('writeScale').value = '1';
@@ -1484,18 +1482,55 @@ Object.assign(JanitzaMonitor.prototype, {
         }
         const leaseS = parseInt(document.getElementById('writeLease').value, 10);
         if (Number.isInteger(leaseS) && leaseS > 0) body.lease_ms = leaseS * 1000;
+
+        // Envelope lookup (F3a): declared register → its guards enforce and the
+        // server owns the encoding; undeclared → raw path with an explicit
+        // unguarded acknowledgement in the confirm card.
+        let info = null;
+        try {
+            info = await (await fetch(`/api/devices/${encodeURIComponent(id)}/write-info/${rtype}/${address}`)).json();
+        } catch (e) { /* offline lookup → treat as undeclared */ }
+        const box = document.getElementById('writeResult');
+        if (info?.write_locked) {
+            box.innerHTML = `<div class="settings-card" style="padding:8px 12px;color:var(--danger-text,#c0392b);">
+                <i aria-hidden="true" class="bi bi-lock"></i> ${this.t('write.locked', 'This device is write-locked. Unlock it in the Outputs tab (write protection) first.')}</div>`;
+            return;
+        }
+        let guardTxt = '';
+        if (info?.declared) {
+            const g = [];
+            if (info.write_min != null || info.write_max != null)
+                g.push(`${info.write_min ?? '−∞'} … ${info.write_max ?? '+∞'}`);
+            if (info.write_allowed) g.push(`${this.t('write.allowed', 'allowed')}: ${info.write_allowed.join(', ')}`);
+            // client-side pre-check so the user gets the verdict before confirming
+            const v = Number(body.value);
+            if (info.write_min != null && v < info.write_min || info.write_max != null && v > info.write_max
+                || (info.write_allowed && !info.write_allowed.includes(v))) {
+                box.innerHTML = `<div class="settings-card" style="padding:8px 12px;color:var(--danger-text,#c0392b);">
+                    ${this.t('write.guardFail', 'Value is outside this register’s declared envelope')} (${this._esc(g.join(' · '))}).</div>`;
+                return;
+            }
+            guardTxt = `<div style="font-size:12px;margin-top:4px;color:var(--success-text,#1a8f4c);">
+                <i aria-hidden="true" class="bi bi-shield-check"></i> ${this.t('write.guarded', 'Declared register')} · ${this._esc(info.data_type || '')}${g.length ? ' · ' + this._esc(g.join(' · ')) : ' · ' + this.t('write.noGuards', 'no guards declared')}</div>`;
+        } else {
+            body.unguarded = true;
+            guardTxt = `<div style="font-size:12px;margin-top:6px;color:var(--warning-text,#c77700);">
+                <i aria-hidden="true" class="bi bi-exclamation-octagon"></i> <b>${this.t('write.unguardedTitle', 'UNGUARDED write')}</b> — ${this.t('write.unguardedMsg', 'this register is not declared in the template; the value is sent verbatim with the type/scale above. Nothing is checked or clamped.')}<br>
+                <label style="display:flex;align-items:center;gap:6px;margin-top:6px;"><input type="checkbox" id="writeUnguardedAck"> ${this.t('write.unguardedAck', 'I understand — write it anyway')}</label></div>`;
+        }
         // Review-and-confirm: a write hits real hardware, so never fire on the
         // first click — show exactly what will be written and require a second,
         // deliberate confirmation.
-        this._pendingWrite = { id, body };
+        this._pendingWrite = { id, body, needsAck: !info?.declared };
         const fc = rtype === 'coil' ? 'FC5' : 'FC6/16';
         const leaseTxt = body.lease_ms ? ` · ${this.t('write.lease', 'Auto-revert (s)')}: ${body.lease_ms / 1000}s` : '';
-        document.getElementById('writeResult').innerHTML = `
+        box.innerHTML = `
             <div class="settings-card" style="border-left:3px solid #e08e0b;padding:10px 12px;">
               <div style="font-weight:600;margin-bottom:6px;color:var(--warning-text,#c77700);"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> ${this.t('write.confirmTitle', 'Confirm write to hardware')}</div>
               <div style="font-size:13px;font-variant-numeric:tabular-nums;">
                 ${this.t('lbl.name', 'Name')}: <b>${this._esc(id)}</b> · ${this.t('lbl.address', 'Address')}: <b>${address}</b> (${fc}) · ${this.t('lbl.value', 'Value')}: <b>${this._esc(String(body.value))}</b>${leaseTxt}
               </div>
+              ${guardTxt}
               <div style="margin-top:8px;display:flex;gap:8px;">
                 <button class="btn btn-ghost btn-sm" onclick="app._cancelWrite()">${this.t('common.cancel', 'Cancel')}</button>
                 <button class="btn btn-primary btn-sm" onclick="app.confirmWrite(this)"><i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('write.confirm', 'Confirm write')}</button>
@@ -1510,6 +1545,11 @@ Object.assign(JanitzaMonitor.prototype, {
 
     async confirmWrite(btn) {
         if (!this._pendingWrite) return;
+        if (this._pendingWrite.needsAck && !document.getElementById('writeUnguardedAck')?.checked) {
+            this.showToast('error', this.t('write.unguardedTitle', 'UNGUARDED write'),
+                           this.t('write.ackFirst', 'Tick the acknowledgement first.'));
+            return;
+        }
         const { id, body } = this._pendingWrite;
         const address = body.address;
         const box = document.getElementById('writeResult');

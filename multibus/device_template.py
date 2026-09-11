@@ -93,10 +93,17 @@ class TemplateRegister:
     topic: str = ""                          # MQTT input: the topic this register reads from
     register_type: str = "holding"           # holding (FC3) | input (FC4) | coil (FC1/5) | discrete (FC2)
     defaults: Dict[str, Any] = field(default_factory=dict)
-    # ── write safety envelope (opt-in; a register is unwritable unless declared) ──
-    writable: bool = False                   # may be written via the write API
-    write_min: Optional[float] = None        # reject engineering values below this
-    write_max: Optional[float] = None        # reject engineering values above this
+    # ── write envelope — GUARDS ARE OPT-IN (F3a trust model) ─────────────────
+    # `writable: true` marks the register for the declared write path (UI
+    # affordances, HA write entities). Guards are the USER'S declaration, not a
+    # product limitation: each one declared buys enforcement + a better UI
+    # (min/max → bounded input, allowed → dropdown, safe → auto-revert lease).
+    # A register with NO guards still writes verbatim; even an UNdeclared
+    # register can be written through the raw path (`unguarded: true`).
+    writable: bool = False                   # declared for the write API / HA
+    write_min: Optional[float] = None        # optional: reject values below this
+    write_max: Optional[float] = None        # optional: reject values above this
+    write_allowed: Optional[list] = None     # optional: only these exact values
     write_safe: Optional[float] = None       # value to revert to when a write-lease expires
     # not-available sentinel: True = the type's SunSpec not-implemented value
     # (0x8000/0xFFFF/…), or a raw value / list; a match reads as missing, not data
@@ -146,6 +153,8 @@ class TemplateRegister:
                 d['write_min'] = self.write_min
             if self.write_max is not None:
                 d['write_max'] = self.write_max
+            if self.write_allowed is not None:
+                d['write_allowed'] = self.write_allowed
             if self.write_safe is not None:
                 d['write_safe'] = self.write_safe
         if self.nan is not None:
@@ -317,15 +326,21 @@ def validate_template(data: Dict[str, Any]) -> List[str]:
         scale = r.get('scale', 1)
         if not isinstance(scale, (int, float)) or scale == 0:
             errors.append(f"{where}: scale must be a non-zero number")
-        # A writable holding register must declare BOTH bounds — otherwise an
-        # out-of-range write silently clamps to the data-type limit at the encoder
-        # instead of being refused. Coils are single bits, so they need no bounds.
+        # Write guards are OPT-IN (F3a): a writable register without bounds is
+        # legal (the value is sent verbatim after an explicit confirmation).
+        # What IS validated: declared guards must be coherent.
         if r.get('writable'):
-            rt = str(r.get('register_type', 'holding')).lower()
-            if rt in ('holding', 'input', 'fc3', 'fc4', 'fc6', 'fc16') and (
-                    r.get('write_min') is None or r.get('write_max') is None):
-                errors.append(f"{where}: writable register must declare write_min "
-                              f"and write_max (bounds are required for writes)")
+            wmin, wmax = r.get('write_min'), r.get('write_max')
+            if (wmin is not None and wmax is not None
+                    and float(wmin) > float(wmax)):
+                errors.append(f"{where}: write_min {wmin} > write_max {wmax}")
+            wa = r.get('write_allowed')
+            if wa is not None:
+                if (not isinstance(wa, list) or not wa
+                        or not all(isinstance(v, (int, float))
+                                   and not isinstance(v, bool) for v in wa)):
+                    errors.append(f"{where}: write_allowed must be a non-empty "
+                                  f"list of numbers")
     # scale_from must reference an existing register NAME in this template —
     # a dangling referent would silently render every dependent value missing.
     _names = {r.get('name') for r in regs if isinstance(r, dict)}
@@ -369,6 +384,8 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         writable=bool(r.get('writable', False)),
         write_min=(float(r['write_min']) if r.get('write_min') is not None else None),
         write_max=(float(r['write_max']) if r.get('write_max') is not None else None),
+        write_allowed=(list(r['write_allowed'])
+                       if isinstance(r.get('write_allowed'), list) else None),
         write_safe=(float(r['write_safe']) if r.get('write_safe') is not None else None),
         nan=r.get('nan'),
         monotonic=bool(r.get('monotonic', False)),

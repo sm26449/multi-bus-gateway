@@ -182,11 +182,13 @@ def test_write_requires_authentication(tmp_path):
 
 
 @needs_tc
-def test_primary_is_read_only_even_when_writes_enabled(tmp_path):
+def test_primary_ships_write_locked_by_default(tmp_path):
+    """F3a: the primary's read-only is now the DEFAULT per-device lock
+    (security.primary_write_locked), configuration instead of hardcode."""
     _cfg, client = _app(tmp_path, auth=True, allow_writes=True)
     r = client.post("/api/devices/umg512/write",
                     json={"address": 10, "value": 1, "register_type": "holding"})
-    assert r.status_code == 403 and "read-only" in str(r.json())
+    assert r.status_code == 403 and "write-locked" in str(r.json())
 
 
 @needs_tc

@@ -406,6 +406,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 http_output_enabled: dev.http_output_enabled === true,
                 selected_registers: dev.selected_registers ?? 0,
                 pq_supported: dev.pq_supported === true,
+                write_locked: dev.write_locked === true,
             },
             sinks: dev.sinks || {},
             entry: dev,                 // full live entry for the Overview tab
@@ -618,6 +619,9 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div class="form-row" style="gap:24px;flex-wrap:wrap;">
                         <div><div class="field-hint">MQTT</div><b>${d.mqtt_enabled ? '' : '(off) '}<code>${this._esc(d.topic_prefix)}/…</code></b></div>
                         <div><div class="field-hint">InfluxDB</div><b>${d.influxdb_enabled ? '' : '(off) '}<code>${this._esc(d.bucket)}</code> · tag <code>${this._esc(d.device_tag)}</code></b></div>
+                        <div><div class="field-hint">${this.t('devices.writeLock.title', 'Write protection')}</div><b>${d.write_locked
+                            ? `<i aria-hidden="true" class="bi bi-lock-fill"></i> ${this.t('devices.writeLock.locked', 'locked')}`
+                            : this.t('devices.writeLock.unlocked', 'writes allowed')} <span class="field-hint">(${this.t('devices.writeLock.plantLevel', 'plant-level: write_locked on the plants: entry')})</span></b></div>
                     </div>
                     <div style="margin-top:14px;">
                         <button class="btn btn-primary btn-sm" onclick="app.openPlantModal('${this._esc(plantId)}')"><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('devices.plantUnit.editPlant', 'Edit plant')}</button>
@@ -630,12 +634,60 @@ Object.assign(JanitzaMonitor.prototype, {
             ${this._sinkCardHttp(d, primary)}
             ${this._sinkCardRest(d, primary)}
             ${d.pq_supported ? this._sinkCardPq(d, primary) : ''}
+            ${this._sinkCardWriteLock(d, primary)}
             <div class="settings-card"><div class="settings-card-footer">
                 <span class="save-feedback" id="ddvFeedback2"></span>
                 <button class="btn btn-primary btn-sm" onclick="app.saveDeviceDetail(this)"><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
             </div></div>
             `}
         </div>`;
+    },
+
+    // Write protection (F3a): the per-device lock. Locked = every write is
+    // refused regardless of guards. Toggle is immediate + audited (own
+    // endpoint, admin-only) — not part of the Save & Apply payload.
+    _sinkCardWriteLock(d, primary) {
+        const locked = !!d.write_locked;
+        return `
+        <div class="settings-card">
+            <div class="settings-card-header">
+                <h3><i aria-hidden="true" class="bi bi-${locked ? 'lock-fill' : 'unlock'}"></i> ${this.t('devices.writeLock.title', 'Write protection')}
+                    ${locked ? `<span class="sink-pill warn">${this.t('devices.writeLock.locked', 'locked')}</span>`
+                             : `<span class="sink-pill ok">${this.t('devices.writeLock.unlocked', 'writes allowed')}</span>`}</h3>
+                <label class="switch-label">
+                    <input type="checkbox" id="ddvWriteLock" ${locked ? 'checked' : ''}
+                           onchange="app.toggleWriteLock('${this._esc(this._devDetail.id)}', this)">
+                    <span>${this.t('devices.writeLock.lock', 'Lock')}</span>
+                </label>
+            </div>
+            <div class="settings-card-body">
+                <p class="field-hint" style="margin:0;">${primary
+                    ? this.t('devices.writeLock.primaryHint', 'The primary device ships locked (security.primary_write_locked). Unlock only deliberately — this is the meter your live systems read.')
+                    : this.t('devices.writeLock.hint', 'Locked: every Modbus write to this device is refused, declared or not. The global master switch (Settings → Security → Allow Modbus writes) must also be on for any write.')}</p>
+            </div>
+        </div>`;
+    },
+
+    async toggleWriteLock(id, cb) {
+        const locked = !!cb.checked;
+        cb.disabled = true;
+        try {
+            const r = await fetch(`/api/devices/${encodeURIComponent(id)}/write-lock`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ locked }) });
+            const res = await r.json().catch(() => ({}));
+            if (!r.ok) {
+                cb.checked = !locked;
+                const errs = res.detail?.errors || [res.detail || 'failed'];
+                this.showToast('error', this.t('devices.writeLock.title', 'Write protection'),
+                               Array.isArray(errs) ? errs.join(' · ') : String(errs));
+                return;
+            }
+            if (this._devDetail?.data) this._devDetail.data.write_locked = locked;
+            this.showToast('success', this.t('devices.writeLock.title', 'Write protection'),
+                           locked ? this.t('devices.writeLock.nowLocked', 'Device locked — writes refused')
+                                  : this.t('devices.writeLock.nowUnlocked', 'Device unlocked — writes allowed (master switch permitting)'));
+        } finally { cb.disabled = false; }
     },
 
     // Live status pill for a sink. green = actively delivering; amber "idle" =
