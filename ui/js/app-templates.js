@@ -176,7 +176,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <td style="padding:2px 10px 2px 0;"><code>${this._esc(r.name || '')}</code></td>
                 <td style="padding:2px 10px 2px 0;">${this._esc(r.label || '')}</td>
                 <td style="padding:2px 10px 2px 0;">${this._esc(r.data_type || '')}${(r.register_type === 'input') ? ' <span style="color:var(--text-secondary);">(FC04)</span>' : ''}</td>
-                <td style="padding:2px 10px 2px 0;text-align:right;font-variant-numeric:tabular-nums;">${this._esc(String(r.scale ?? 1))}</td>
+                <td style="padding:2px 10px 2px 0;text-align:right;font-variant-numeric:tabular-nums;" ${r.scale_from ? `title="dynamic SunSpec scale factor: engineering = raw × 10^${this._esc(r.scale_from)}"` : ''}>${r.scale_from ? `×10^<code>${this._esc(r.scale_from)}</code>` : this._esc(String(r.scale ?? 1))}</td>
                 <td style="padding:2px 10px 2px 0;">${this._esc(r.unit || '')}</td>
                 <td style="padding:2px 0;color:var(--text-secondary);">${this._esc(r.poll_group || '')}</td>
               </tr>`;

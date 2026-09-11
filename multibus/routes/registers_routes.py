@@ -97,9 +97,16 @@ def build(ctx) -> APIRouter:
         if _cached is not None and _cached[0] is t:
             return _cached[1]
         cats: Dict[str, Dict] = {}
-        ordered = sorted(t.categories.items(), key=lambda kv: kv[1].get('order', 99))
+
+        def _cmeta(v) -> Dict:
+            # categories values are canonically {label, order} dicts, but a
+            # plain-string label ("ac": "AC measurements") must render, not 500
+            return v if isinstance(v, dict) else {"label": str(v)}
+
+        ordered = sorted(t.categories.items(),
+                         key=lambda kv: _cmeta(kv[1]).get('order', 99))
         for cid, cmeta in ordered:
-            cats[cid] = {"name": cmeta.get('label', cid), "entries": []}
+            cats[cid] = {"name": _cmeta(cmeta).get('label', cid), "entries": []}
         for x in t.registers:
             cats.setdefault(x.category, {"name": x.category, "entries": []})
             cats[x.category]["entries"].append({

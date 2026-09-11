@@ -214,13 +214,20 @@ def template(tid, name, model, description, registers, poll_groups):
         "protocol": {"byte_order": "big", "default_register_type": "holding"},
         "poll_groups": poll_groups,
         "categories": {
-            "ac": "AC measurements", "dc": "DC side", "energy": "Energy",
-            "temperature": "Temperatures", "status": "Status & events",
-            "mppt": "MPPT strings", "identity": "Device identity",
-            "sf": "SunSpec scale factors",
+            "ac": {"label": "AC measurements", "order": 1},
+            "dc": {"label": "DC side", "order": 2},
+            "mppt": {"label": "MPPT strings", "order": 3},
+            "energy": {"label": "Energy", "order": 4},
+            "temperature": {"label": "Temperatures", "order": 5},
+            "status": {"label": "Status & events", "order": 6},
+            "identity": {"label": "Device identity", "order": 7},
+            "sf": {"label": "SunSpec scale factors", "order": 8},
         },
         "registers": registers,
-        "canonical": True,
+        # NOT canonical-dictionary names: registers deliberately mirror the
+        # SunSpec points / reference-collector schema (parity requirement) —
+        # keeps the canonical-naming lint from flagging all 61 names.
+        "canonical": False,
     }}
 
 
