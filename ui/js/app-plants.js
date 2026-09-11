@@ -52,6 +52,17 @@ Object.assign(JanitzaMonitor.prototype, {
             </div>
             <div class="field-hint" style="margin:-4px 0 8px;">${this.t('plants.subHint',
                 'Use \${unit_id} / \${plant_id} in the topic prefix, bucket and tag — substituted per unit.')}</div>
+            <div class="form-row" style="gap:20px;flex-wrap:wrap;">
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                    <input type="checkbox" id="plMqttEnabled" ${p ? ((p.mqtt || {}).enabled !== false ? 'checked' : '') : 'checked'}>
+                    ${this.t('plants.mqttEnabled', 'Publish units to MQTT')}</label>
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                    <input type="checkbox" id="plInfluxEnabled" ${p ? ((p.influxdb || {}).enabled !== false ? 'checked' : '') : 'checked'}>
+                    ${this.t('plants.influxEnabled', 'Write units to InfluxDB')}</label>
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                    <input type="checkbox" id="plHaDisc" ${p ? ((p.mqtt || {}).ha_discovery ? 'checked' : '') : ''}>
+                    ${this.t('devices.wizard.haDiscovery', 'Publish Home Assistant MQTT discovery for this device')}</label>
+            </div>
             <label class="form-label" style="display:flex;align-items:center;gap:8px;">
                 <input type="checkbox" id="plEnabled" ${p ? (p.enabled ? 'checked' : '') : 'checked'}>
                 ${this.t('devices.wizard.enabled', 'Start polling immediately after saving')}</label>`;
@@ -96,14 +107,16 @@ Object.assign(JanitzaMonitor.prototype, {
             units,
         };
         const topic = document.getElementById('plTopic').value.trim();
-        if (topic) body.mqtt = { topic_prefix: topic };
+        body.mqtt = {
+            enabled: !!document.getElementById('plMqttEnabled')?.checked,
+            ha_discovery: !!document.getElementById('plHaDisc')?.checked,
+        };
+        if (topic) body.mqtt.topic_prefix = topic;
         const bucket = document.getElementById('plBucket').value.trim();
         const tag = document.getElementById('plTag').value.trim();
-        if (bucket || tag) {
-            body.influxdb = {};
-            if (bucket) body.influxdb.bucket = bucket;
-            if (tag) body.influxdb.device_tag = tag;
-        }
+        body.influxdb = { enabled: !!document.getElementById('plInfluxEnabled')?.checked };
+        if (bucket) body.influxdb.bucket = bucket;
+        if (tag) body.influxdb.device_tag = tag;
         const url = this._plantEditId
             ? `/api/plants/${encodeURIComponent(this._plantEditId)}` : '/api/plants';
         const rsp = await fetch(url, {

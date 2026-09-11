@@ -74,31 +74,39 @@ try {
   await page.screenshot({ path: SHOT('f1-02-overview') });
   await page.click('#deviceWsTabs [data-dtab="edit"]');
   const editPanel = page.locator('[data-dpanel="edit"]');
-  check('edit tab shows the Plant unit card',
-        await editPanel.locator('h3', { hasText: /Plant unit|Unitate/ }).count() === 1);
-  const editText = await editPanel.textContent();
-  check('edit tab names the plant', editText.includes('fronius-meter'));
-  check('edit tab shows unit 240', /240/.test(editText));
-  check('edit tab shows the datalogger meter template name',
-        editText.includes('via datalogger'));
-  check('edit tab has NO generic connection form',
-        await editPanel.locator('#ddvHost').count() === 0);
+  // UNIFIED workspace: same layout as any device, plant-owned fields locked
+  check('edit tab shows the plant-owned banner with Edit plant',
+        await editPanel.locator('button:has-text("Edit plant")').count() >= 1);
+  check('edit tab shows the STANDARD connection form',
+        await editPanel.locator('#ddvHost').count() === 1);
+  check('connection fields are locked (plant-owned)',
+        await editPanel.locator('#ddvHost').isDisabled()
+        && await editPanel.locator('#ddvUnit').isDisabled());
+  check('unit id shows 240', await editPanel.locator('#ddvUnit').inputValue() === '240');
+  check('template select locked with the meter template selected',
+        await editPanel.locator('#ddvTemplate').isDisabled()
+        && (await editPanel.locator('#ddvTemplate option:checked').textContent()).includes('via datalogger'));
   check('edit tab has NO Save & Apply (plant owns the definition)',
         await editPanel.locator('button:has-text("Save & Apply")').count() === 0);
   check('edit tab keeps per-unit poll intervals',
         await editPanel.locator('#ddvPollGroups .ddv-pg').count() >= 1);
   await page.screenshot({ path: SHOT('f1-03-edit-plant-managed') });
 
-  // ---- 5. outputs tab: plant routing summary -------------------------------
+  // ---- 5. outputs tab: SAME sink cards, plant-level toggles locked ---------
   await page.click('#deviceWsTabs [data-dtab="outputs"]');
   const outPanel = page.locator('[data-dpanel="outputs"]');
-  const outText = await outPanel.textContent();
-  check('outputs tab shows the plant topic prefix',
-        outText.includes('mbg/fronius/meter/240'));
-  check('outputs tab shows the shadow bucket',
-        outText.includes('fronius_shadow'));
-  check('outputs tab has NO per-device sink toggles',
-        await outPanel.locator('#ddvMqttEnabled').count() === 0);
+  check('outputs shows the unit topic prefix',
+        (await outPanel.locator('#ddvTopic').inputValue()).includes('fronius-meter-240')
+        || (await outPanel.locator('#ddvTopic').inputValue()).includes('meter/240'));
+  check('outputs shows the shadow bucket',
+        (await outPanel.locator('#ddvBucket').inputValue()) === 'fronius_shadow');
+  check('sink toggles present but plant-locked',
+        await outPanel.locator('#ddvMqttEnabled').isDisabled()
+        && await outPanel.locator('#ddvInfluxEnabled').isDisabled());
+  check('write-protection card present on the unit',
+        await outPanel.locator('#ddvWriteLock').count() === 1);
+  check('outputs has NO Save & Apply for plant units',
+        await outPanel.locator('button:has-text("Save & Apply")').count() === 0);
   await page.screenshot({ path: SHOT('f1-04-outputs-plant') });
 
   // ---- 6. measurements tab reachable + populated ---------------------------

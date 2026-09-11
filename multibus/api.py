@@ -2241,6 +2241,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'running': client is not None,
                 'connected': bool(getattr(client, 'connected', False)),
             })
+        from .plant_aggregator import compute_plant_aggregates
+        try:
+            agg = compute_plant_aggregates(config, registry, pid)
+        except Exception:  # noqa: BLE001 — aggregates must never break the list
+            agg = {}
         return {'id': pid, 'name': p.get('name') or pid,
                 'template': p.get('template', ''),
                 'enabled': bool(p.get('enabled', True)),
@@ -2248,6 +2253,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'mqtt': dict(p.get('mqtt', {}) or {}),
                 'influxdb': dict(p.get('influxdb', {}) or {}),
                 'units': units,
+                'aggregates': agg,
                 'online_units': sum(1 for u in units if u['connected']),
                 'total_units': len(units)}
 

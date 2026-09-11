@@ -1,5 +1,26 @@
 # Changelog
 
+## 3.44.0
+
+### 2026-09-11 — plants publish their own output; unit workspace unified
+
+- **Plant aggregates**: a plant is a real entity, so it publishes its own
+  data — sums (powers, currents, energies) and averages (voltages,
+  frequency, power factor, temperatures) of its units' fresh values, on
+  `mbg/plants/<id>/<canonical topic>` plus `units_online`/`units_total`,
+  and into InfluxDB under the SAME canonical measurements tagged
+  `device=<plant_id>, aggregate=plant`. Freshness-aware: a stalled unit
+  drops out instead of freezing the total. Opt out with
+  `aggregates: false` on the plants: entry. The devices list shows the
+  live plant total (Σ kW) on the group row.
+- **Unit workspace unified**: a plant unit's Edit/Outputs tabs are now
+  the SAME layout as every other device — plant-owned fields (connection,
+  template, routing, sink toggles) render locked with an "Edit plant"
+  banner instead of a special panel; per-unit things (measurement
+  selection, poll intervals, write-protection at plant level) stay
+  editable in place. Plant dialog gains MQTT/InfluxDB/HA-discovery
+  toggles.
+
 ## 3.43.0
 
 ### 2026-09-11 — MQTT namespace + plant-grouped devices page

@@ -1113,5 +1113,12 @@
   "devices.writeLock.primaryHint": "The primary device ships locked (security.primary_write_locked). Unlock only deliberately — this is the meter your live systems read.",
   "devices.writeLock.plantLevel": "plant-level: write_locked on the plants: entry",
   "devices.writeLock.nowLocked": "Device locked — writes refused",
-  "devices.writeLock.nowUnlocked": "Device unlocked — writes allowed (master switch permitting)"
+  "devices.writeLock.nowUnlocked": "Device unlocked — writes allowed (master switch permitting)",
+  "devices.plantOwned": "Connection, template and routing are defined on the plant and apply to every unit — locked fields below are edited on the plant.",
+  "devices.sink.plantLevel": "Set on the plant — applies to every unit",
+  "devices.writeLock.plantHint": "Plant-level lock — locking/unlocking here applies to EVERY unit of the plant (one physical endpoint). The global master switch must also be on for any write.",
+  "plants.mqttEnabled": "Publish units to MQTT",
+  "plants.influxEnabled": "Write units to InfluxDB",
+  "plants.noUnits": "No units materialized.",
+  "plants.toggle": "Click to expand/collapse the plant's units"
 }

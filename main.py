@@ -250,6 +250,15 @@ class GatewayApp:
         self.app.state.pq_manager = self.pq_manager   # for the /api/pq routes
 
         _cfg_dir = self.config.config_path.parent
+        # Plant aggregates: a plant is a real entity, so it publishes its own
+        # output (sums/averages of its units) on mbg/plants/<id>/… + InfluxDB.
+        from multibus.plant_aggregator import PlantAggregator
+        self.plant_aggregator = PlantAggregator(
+            self.config, self.app.state.registry,
+            get_mqtt=lambda: getattr(_api_ctx, 'mqtt_publisher', None),
+            get_influx=lambda: getattr(_api_ctx, 'influxdb_publisher', None))
+        self.plant_aggregator.start()
+
         self.vmeter_manager = VirtualMeterManager(self.app.state.current_values,
                                                   device_values=self.app.state.device_values,
                                                   primary_device_id=self.config.primary_device.id,
@@ -417,6 +426,8 @@ class GatewayApp:
 
         if self.vmeter_manager:
             self.vmeter_manager.stop_all()
+        if getattr(self, 'plant_aggregator', None):
+            self.plant_aggregator.stop()
 
         if getattr(self, 'pq_manager', None):
             self.pq_manager.stop_all()

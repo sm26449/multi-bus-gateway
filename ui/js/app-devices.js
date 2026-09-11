@@ -106,9 +106,12 @@ Object.assign(JanitzaMonitor.prototype, {
         const conn = p.connection || {};
         const proto = (conn.protocol || 'tcp') === 'rtu-tcp' ? 'RTU/TCP' : 'TCP';
         const online = units.filter(u => u.connected).length;
+        const pw = p.aggregates?.power_active_total;
+        const pwTxt = (typeof pw === 'number')
+            ? `Σ ${pw >= 10000 ? (pw / 1000).toFixed(1) + ' kW' : Math.round(pw) + ' W'} · ` : '';
         const stats = p.enabled === false
             ? this.t('devices.disabled', 'disabled')
-            : `${online}/${units.length} ${this.t('plants.online', 'online')}`;
+            : `${pwTxt}${online}/${units.length} ${this.t('plants.online', 'online')}`;
         const dot = p.enabled === false ? 'var(--text-secondary,#8a94a0)'
             : online === units.length && units.length ? 'var(--success,#22c55e)'
             : online ? 'var(--warning,#f59e0b)' : 'var(--danger,#ef4444)';
@@ -503,6 +506,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const s = this._devDetail, d = s.data;
         const primary = s.primary;
         const plantId = s.plant_id || '';
+        const plantLk = plantId ? 'disabled' : '';   // plant-owned field lock
         const tcp = d.protocol !== 'rtu';
         const tplOptions = [`<option value="">${this.t('devices.detail.noTemplate', '(no template)')}</option>`]
             .concat(s.templates.map(t =>
@@ -549,37 +553,15 @@ Object.assign(JanitzaMonitor.prototype, {
         <!-- ── Overview (read-only) ── -->
         <div data-dpanel="overview">${this._deviceOverviewHtml(d, s.entry || {})}</div>
 
-        <!-- ── Edit ── -->
+        <!-- ── Edit ── one layout for every device; plant-owned fields are
+             disabled and marked (defined once on the plant), never a
+             different page -->
         <div data-dpanel="edit" hidden>
         ${plantId ? `
-        <div class="settings-card">
-            <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.plantUnit.title', 'Plant unit')}</h3></div>
-            <div class="settings-card-body">
-                <p style="margin:0 0 10px;">${t('devices.plantUnit.intro', 'This device is one unit of a plant — its connection, template and routing are defined once on the plant and applied to every unit.')}</p>
-                <div class="form-row" style="gap:24px;flex-wrap:wrap;">
-                    <div><div class="field-hint">${t('plants.id', 'Plant ID')}</div><b>${this._esc(plantId)}</b></div>
-                    <div><div class="field-hint">${this.t('lbl.unitId', 'Unit ID')}</div><b>${d.unit_id}</b></div>
-                    <div><div class="field-hint">${t('devices.detail.connection', 'Connection')}</div><b>${this._esc(d.protocol.toUpperCase())} · ${this._esc(d.host)}:${d.port}</b></div>
-                    <div><div class="field-hint">${t('devices.wizard.template', 'Template')}</div><b>${this._esc((s.templates.find(x => x.id === d.template) || {}).name || d.template || '—')}</b></div>
-                </div>
-                <div style="margin-top:14px;">
-                    <button class="btn btn-primary btn-sm" onclick="app.openPlantModal('${this._esc(plantId)}')"><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('devices.plantUnit.editPlant', 'Edit plant')}</button>
-                </div>
-                <p class="field-hint" style="margin-top:10px;">${t('devices.plantUnit.perUnit', 'Per-unit: the measurement selection (Measurements tab) and the poll intervals below stay editable on THIS unit only.')}</p>
-            </div>
-        </div>
-        <div class="settings-card">
-            <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-arrow-repeat"></i> ${t('devices.detail.polling', 'Polling')}</h3></div>
-            <div class="settings-card-body">
-                <div style="color:var(--text-secondary);font-size:12px;margin-bottom:6px;">${t('devices.pollGroups', 'Poll-group intervals (seconds)')}</div>
-                <div id="ddvPollGroups"><span class="field-hint">${t('common.loading', 'Loading…')}</span></div>
-                <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-                    <button class="btn btn-secondary btn-sm" ${this._act('saveDevicePollGroups', [s.id], {el: true})}><i aria-hidden="true" class="bi bi-clock"></i> ${t('devices.savePollGroups', 'Save intervals')}</button>
-                    <span class="save-feedback" id="ddvPgFeedback"></span>
-                </div>
-            </div>
-        </div>
-        ` : `
+        <div class="field-hint" style="margin:0 0 12px;display:flex;align-items:center;gap:10px;">
+            <span><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.plantOwned', 'Connection, template and routing are defined on the plant and apply to every unit — locked fields below are edited on the plant.')}</span>
+            <button class="btn btn-secondary btn-sm" onclick="app.openPlantModal('${this._esc(plantId)}')"><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('devices.plantUnit.editPlant', 'Edit plant')}</button>
+        </div>` : ''}
         <div class="settings-card">
             <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-ethernet"></i> ${t('devices.detail.connection', 'Connection')}</h3></div>
             <div class="settings-card-body">
@@ -596,48 +578,48 @@ Object.assign(JanitzaMonitor.prototype, {
                 </div>
                 <div id="ddvHttp" style="display:${d.protocol === 'http' ? '' : 'none'}">
                     <div class="form-group"><label class="form-label" for="ddvUrl">${t('devices.wizard.httpUrl', 'JSON endpoint URL')}</label>
-                        <input type="text" id="ddvUrl" class="input" value="${this._esc(d.url || '')}" placeholder="http://192.168.1.50/rpc/Shelly.GetStatus"></div>
+                        <input type="text" id="ddvUrl" class="input" value="${this._esc(d.url || '')}" ${plantLk} placeholder="http://192.168.1.50/rpc/Shelly.GetStatus"></div>
                 </div>
                 <div id="ddvTcp" style="display:${(d.protocol === 'tcp' || d.protocol === 'rtu-tcp') ? '' : 'none'}">
                     <div class="form-row">
                         <div class="form-group flex-2"><label class="form-label" for="ddvHost">${this.t('lbl.hostIp', "Host / IP")}</label>
-                            <input type="text" id="ddvHost" class="input" value="${this._esc(d.host)}" placeholder="192.168.1.60"></div>
+                            <input type="text" id="ddvHost" class="input" value="${this._esc(d.host)}" ${plantLk} placeholder="192.168.1.60"></div>
                         <div class="form-group"><label class="form-label" for="ddvPort">${this.t('lbl.port', "Port")}</label>
-                            <input type="number" id="ddvPort" class="input" aria-label="Port" value="${d.port}" min="1" max="65535"></div>
+                            <input type="number" id="ddvPort" class="input" aria-label="Port" value="${d.port}" ${plantLk} min="1" max="65535"></div>
                         <div class="form-group"><label class="form-label" for="ddvUnit">${this.t('lbl.unitId', "Unit ID")}</label>
-                            <input type="number" id="ddvUnit" class="input" aria-label="Unit ID" value="${d.unit_id}" min="0" max="255"></div>
+                            <input type="number" id="ddvUnit" class="input" aria-label="Unit ID" value="${d.unit_id}" ${plantLk} min="0" max="255"></div>
                         <div class="form-group"><label class="form-label" for="ddvTimeout">${this.t('lbl.timeoutS', "Timeout (s)")}</label>
-                            <input type="number" id="ddvTimeout" class="input" aria-label="Timeout seconds" value="${d.timeout}" min="1" max="30"></div>
+                            <input type="number" id="ddvTimeout" class="input" aria-label="Timeout seconds" value="${d.timeout}" ${plantLk} min="1" max="30"></div>
                     </div>
                 </div>
                 <div id="ddvRtu" style="display:${d.protocol === 'rtu' ? '' : 'none'}">
                     <div class="form-row">
                         <div class="form-group flex-2"><label class="form-label" for="ddvSerial">${t('devices.wizard.serialPort', 'Serial port')}</label>
-                            <input type="text" id="ddvSerial" class="input" value="${this._esc(d.serial_port)}" placeholder="/dev/ttyUSB0"></div>
+                            <input type="text" id="ddvSerial" class="input" value="${this._esc(d.serial_port)}" ${plantLk} placeholder="/dev/ttyUSB0"></div>
                         <div class="form-group"><label class="form-label" for="ddvBaud">${this.t('lbl.baudrate', "Baudrate")}</label>
-                            <select id="ddvBaud" class="input" aria-label="Baudrate">${[9600, 19200, 38400, 57600, 115200].map(b => `<option ${b === +d.baudrate ? 'selected' : ''}>${b}</option>`).join('')}</select></div>
+                            <select id="ddvBaud" class="input" aria-label="Baudrate" ${plantLk}>${[9600, 19200, 38400, 57600, 115200].map(b => `<option ${b === +d.baudrate ? 'selected' : ''}>${b}</option>`).join('')}</select></div>
                         <div class="form-group"><label class="form-label" for="ddvParity">${this.t('lbl.parity', "Parity")}</label>
-                            <select id="ddvParity" class="input" aria-label="Parity">${['N', 'E', 'O'].map(x => `<option ${x === d.parity ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+                            <select id="ddvParity" class="input" aria-label="Parity" ${plantLk}>${['N', 'E', 'O'].map(x => `<option ${x === d.parity ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
                         <div class="form-group"><label class="form-label" for="ddvUnitR">${this.t('lbl.unitId', "Unit ID")}</label>
-                            <input type="number" id="ddvUnitR" class="input" aria-label="Unit ID" value="${d.unit_id}" min="0" max="255"></div>
+                            <input type="number" id="ddvUnitR" class="input" aria-label="Unit ID" value="${d.unit_id}" ${plantLk} min="0" max="255"></div>
                     </div>
                 </div>
                 <div id="ddvMqtt" style="display:${d.protocol === 'mqtt' ? '' : 'none'}">
                     <div class="form-row">
                         <div class="form-group flex-2"><label class="form-label" for="ddvBroker">${t('devices.wizard.broker', 'MQTT broker')}</label>
-                            <input type="text" id="ddvBroker" class="input" value="${this._esc(d.broker || '')}" placeholder="192.168.1.100"></div>
+                            <input type="text" id="ddvBroker" class="input" value="${this._esc(d.broker || '')}" ${plantLk} placeholder="192.168.1.100"></div>
                         <div class="form-group"><label class="form-label" for="ddvMqttPort">${this.t('lbl.port', 'Port')}</label>
-                            <input type="number" id="ddvMqttPort" class="input" value="${d.mqtt_port || 1883}" min="1" max="65535"></div>
+                            <input type="number" id="ddvMqttPort" class="input" value="${d.mqtt_port || 1883}" ${plantLk} min="1" max="65535"></div>
                     </div>
                     <div class="form-group"><label class="form-label" for="ddvMqttTopic">${t('devices.wizard.mqttTopic', 'Topic (subscribe)')}</label>
-                        <input type="text" id="ddvMqttTopic" class="input" value="${this._esc(d.topic || '')}" placeholder="sensors/# or shellies/shelly1/status"></div>
+                        <input type="text" id="ddvMqttTopic" class="input" value="${this._esc(d.topic || '')}" ${plantLk} placeholder="sensors/# or shellies/shelly1/status"></div>
                     <div class="form-row">
                         <div class="form-group"><label class="form-label" for="ddvMqttUser">${this.t('lbl.username', 'Username')}</label>
-                            <input type="text" id="ddvMqttUser" class="input" value="${this._esc(d.mqtt_username || '')}" autocomplete="off"></div>
+                            <input type="text" id="ddvMqttUser" class="input" value="${this._esc(d.mqtt_username || '')}" ${plantLk} autocomplete="off"></div>
                         <div class="form-group"><label class="form-label" for="ddvMqttPass">${this.t('lbl.password', 'Password')}</label>
-                            <input type="password" id="ddvMqttPass" class="input" value="" placeholder="••••••" autocomplete="new-password"></div>
+                            <input type="password" id="ddvMqttPass" class="input" value="" placeholder="••••••" ${plantLk} autocomplete="new-password"></div>
                         <div class="form-group" style="align-self:end;"><label style="display:flex;align-items:center;gap:8px;">
-                            <input type="checkbox" id="ddvMqttTls" ${d.mqtt_tls ? 'checked' : ''}> ${t('devices.wizard.mqttTls', 'TLS (8883)')}</label></div>
+                            <input type="checkbox" id="ddvMqttTls" ${d.mqtt_tls ? 'checked' : ''} ${plantLk}> ${t('devices.wizard.mqttTls', 'TLS (8883)')}</label></div>
                     </div>
                     <div class="field-hint">${t('devices.editPassKeep', 'Leave the password blank to keep the stored one.')}</div>
                 </div>
@@ -651,9 +633,9 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="settings-card-body">
                 <div class="form-row">
                     <div class="form-group flex-2"><label class="form-label" for="ddvName">${t('devices.wizard.name', 'Device name')}</label>
-                        <input type="text" id="ddvName" class="input" value="${this._esc(d.name)}"></div>
+                        <input type="text" id="ddvName" class="input" value="${this._esc(d.name)}" ${plantLk}></div>
                     <div class="form-group"><label class="form-label" for="ddvTemplate">${t('devices.wizard.template', 'Template')}</label>
-                        <select id="ddvTemplate" class="input" aria-label="${t('devices.wizard.template', 'Template')}">${tplOptions}</select></div>
+                        <select id="ddvTemplate" class="input" aria-label="${t('devices.wizard.template', 'Template')}" ${plantLk}>${tplOptions}</select></div>
                 </div>
             </div>
         </div>
@@ -662,7 +644,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-arrow-repeat"></i> ${t('devices.detail.polling', 'Polling')}</h3></div>
             <div class="settings-card-body">
                 <label style="display:flex;align-items:center;gap:8px;">
-                    <input type="checkbox" id="ddvEnabled" ${d.enabled ? 'checked' : ''}>
+                    <input type="checkbox" id="ddvEnabled" ${d.enabled ? 'checked' : ''} ${plantLk}>
                     ${t('devices.wizard.enabled', 'Start polling immediately after saving')}</label>
                 <div style="margin-top:14px;">
                     <div style="color:var(--text-secondary);font-size:12px;margin-bottom:6px;">${t('devices.pollGroups', 'Poll-group intervals (seconds)')}</div>
@@ -670,48 +652,37 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
                         <button class="btn btn-secondary btn-sm" ${this._act('saveDevicePollGroups', [s.id], {el: true})}><i aria-hidden="true" class="bi bi-clock"></i> ${t('devices.savePollGroups', 'Save intervals')}</button>
                         <span class="save-feedback" id="ddvPgFeedback"></span>
+                        ${plantId ? `<span class="field-hint">${t('devices.plantUnit.perUnit', 'Per-unit: the measurement selection (Measurements tab) and the poll intervals stay editable on THIS unit only.')}</span>` : ''}
                     </div>
                 </div>
             </div>
+            ${plantId ? '' : `
             <div class="settings-card-footer">
                 <span class="save-feedback" id="ddvFeedback"></span>
                 <button class="btn btn-primary btn-sm" onclick="app.saveDeviceDetail(this)"><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
-            </div>
+            </div>`}
         </div>
-        `}
         </div>
 
-        <!-- ── Outputs ── -->
+        <!-- ── Outputs ── same cards for every device; plant-level toggles are
+             disabled on units and edited on the plant -->
         <div data-dpanel="outputs" hidden>
             ${plantId ? `
-            <div class="settings-card">
-                <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-signpost-split"></i> ${t('devices.detail.outputs', 'Outputs')}</h3></div>
-                <div class="settings-card-body">
-                    <p style="margin:0 0 10px;">${t('devices.plantUnit.outputs', 'Output routing is defined on the plant (with per-unit substitution) and applied to every unit:')}</p>
-                    <div class="form-row" style="gap:24px;flex-wrap:wrap;">
-                        <div><div class="field-hint">MQTT</div><b>${d.mqtt_enabled ? '' : '(off) '}<code>${this._esc(d.topic_prefix)}/…</code></b></div>
-                        <div><div class="field-hint">InfluxDB</div><b>${d.influxdb_enabled ? '' : '(off) '}<code>${this._esc(d.bucket)}</code> · tag <code>${this._esc(d.device_tag)}</code></b></div>
-                        <div><div class="field-hint">${this.t('devices.writeLock.title', 'Write protection')}</div><b>${d.write_locked
-                            ? `<i aria-hidden="true" class="bi bi-lock-fill"></i> ${this.t('devices.writeLock.locked', 'locked')}`
-                            : this.t('devices.writeLock.unlocked', 'writes allowed')} <span class="field-hint">(${this.t('devices.writeLock.plantLevel', 'plant-level: write_locked on the plants: entry')})</span></b></div>
-                    </div>
-                    <div style="margin-top:14px;">
-                        <button class="btn btn-primary btn-sm" onclick="app.openPlantModal('${this._esc(plantId)}')"><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('devices.plantUnit.editPlant', 'Edit plant')}</button>
-                    </div>
-                </div>
-            </div>
-            ` : `
+            <div class="field-hint" style="margin:0 0 12px;display:flex;align-items:center;gap:10px;">
+                <span><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.plantUnit.outputs', 'Output routing is defined on the plant (with per-unit substitution) and applied to every unit:')}</span>
+                <button class="btn btn-secondary btn-sm" onclick="app.openPlantModal('${this._esc(plantId)}')"><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('devices.plantUnit.editPlant', 'Edit plant')}</button>
+            </div>` : ''}
             ${this._sinkCardMqtt(d, primary)}
             ${this._sinkCardInflux(d, primary)}
-            ${this._sinkCardHttp(d, primary)}
-            ${this._sinkCardRest(d, primary)}
-            ${d.pq_supported ? this._sinkCardPq(d, primary) : ''}
+            ${plantId ? '' : this._sinkCardHttp(d, primary)}
+            ${plantId ? '' : this._sinkCardRest(d, primary)}
+            ${d.pq_supported && !plantId ? this._sinkCardPq(d, primary) : ''}
             ${this._sinkCardWriteLock(d, primary)}
+            ${plantId ? '' : `
             <div class="settings-card"><div class="settings-card-footer">
                 <span class="save-feedback" id="ddvFeedback2"></span>
                 <button class="btn btn-primary btn-sm" onclick="app.saveDeviceDetail(this)"><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
-            </div></div>
-            `}
+            </div></div>`}
         </div>`;
     },
 
@@ -735,6 +706,8 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="settings-card-body">
                 <p class="field-hint" style="margin:0;">${primary
                     ? this.t('devices.writeLock.primaryHint', 'The primary device ships locked (security.primary_write_locked). Unlock only deliberately — this is the meter your live systems read.')
+                    : this._devDetail?.plant_id
+                    ? this.t('devices.writeLock.plantHint', 'Plant-level lock — locking/unlocking here applies to EVERY unit of the plant (one physical endpoint). The global master switch must also be on for any write.')
                     : this.t('devices.writeLock.hint', 'Locked: every Modbus write to this device is refused, declared or not. The global master switch (Settings → Security → Allow Modbus writes) must also be on for any write.')}</p>
             </div>
         </div>`;
@@ -775,12 +748,13 @@ Object.assign(JanitzaMonitor.prototype, {
 
     _sinkCardMqtt(d, primary) {
         const s = this._devDetail.sinks?.mqtt || {};
-        const lock = primary;   // device #1 always publishes (protects HA/dashboards)
+        const plant = !!this._devDetail?.plant_id;
+        const lock = primary || plant;   // #1 always publishes; plant units follow the plant
         return `
         <div class="settings-card">
             <div class="settings-card-header">
                 <h3><i aria-hidden="true" class="bi bi-broadcast"></i> MQTT ${this._sinkStatusPill(s, d.mqtt_enabled, this._devDetail?.entry?.connected)}</h3>
-                <label class="switch-label" title="${lock ? this.t('devices.sink.lockedPrimary', 'Always on for device #1') : ''}">
+                <label class="switch-label" title="${primary ? this.t('devices.sink.lockedPrimary', 'Always on for device #1') : plant ? this.t('devices.sink.plantLevel', 'Set on the plant — applies to every unit') : ''}">
                     <input type="checkbox" id="ddvMqttEnabled" ${d.mqtt_enabled ? 'checked' : ''} ${lock ? 'disabled' : ''}>
                     <span>${this.t('devices.sink.enable', 'Enable')}</span>
                 </label>
@@ -791,10 +765,12 @@ Object.assign(JanitzaMonitor.prototype, {
                         <input type="text" id="ddvTopic" class="input" value="${this._esc(d.topic_prefix)}" disabled></div>
                 </div>
                 <label style="display:flex;align-items:center;gap:8px;margin-top:6px;">
-                    <input type="checkbox" id="ddvHaDisc" ${d.ha_discovery_enabled ? 'checked' : ''}>
+                    <input type="checkbox" id="ddvHaDisc" ${d.ha_discovery_enabled ? 'checked' : ''} ${plant ? 'disabled' : ''}>
                     ${this.t('devices.wizard.haDiscovery', 'Publish Home Assistant MQTT discovery for this device')}</label>
                 <p class="field-hint"><i aria-hidden="true" class="bi bi-lock"></i> ${primary
                     ? this.t('devices.sink.mqttLockNote', 'Topic and MQTT output are fixed for device #1 (protects existing history & Home Assistant).')
+                    : plant
+                    ? this.t('devices.sink.plantLevel', 'Set on the plant — applies to every unit')
                     : this.t('devices.sink.routeLockNote', 'Topic prefix is fixed after creation — changing it would orphan existing history & HA entities.')}</p>
             </div>
         </div>`;
@@ -802,12 +778,13 @@ Object.assign(JanitzaMonitor.prototype, {
 
     _sinkCardInflux(d, primary) {
         const s = this._devDetail.sinks?.influxdb || {};
-        const lock = primary;
+        const plant = !!this._devDetail?.plant_id;
+        const lock = primary || plant;
         return `
         <div class="settings-card">
             <div class="settings-card-header">
                 <h3><i aria-hidden="true" class="bi bi-database"></i> InfluxDB ${this._sinkStatusPill(s, d.influxdb_enabled, this._devDetail?.entry?.connected)}</h3>
-                <label class="switch-label" title="${lock ? this.t('devices.sink.lockedPrimary', 'Always on for device #1') : ''}">
+                <label class="switch-label" title="${primary ? this.t('devices.sink.lockedPrimary', 'Always on for device #1') : plant ? this.t('devices.sink.plantLevel', 'Set on the plant — applies to every unit') : ''}">
                     <input type="checkbox" id="ddvInfluxEnabled" ${d.influxdb_enabled ? 'checked' : ''} ${lock ? 'disabled' : ''}>
                     <span>${this.t('devices.sink.enable', 'Enable')}</span>
                 </label>

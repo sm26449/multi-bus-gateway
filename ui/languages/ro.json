@@ -1113,5 +1113,12 @@
   "devices.writeLock.primaryHint": "Dispozitivul primar vine blocat (security.primary_write_locked). Deblochează doar deliberat — e contorul citit de sistemele live.",
   "devices.writeLock.plantLevel": "la nivel de centrală: write_locked pe intrarea plants:",
   "devices.writeLock.nowLocked": "Dispozitiv blocat — scrierile sunt refuzate",
-  "devices.writeLock.nowUnlocked": "Dispozitiv deblocat — scrierile sunt permise (dacă e pornit comutatorul general)"
+  "devices.writeLock.nowUnlocked": "Dispozitiv deblocat — scrierile sunt permise (dacă e pornit comutatorul general)",
+  "devices.plantOwned": "Conexiunea, template-ul și rutarea se definesc pe centrală și se aplică fiecărei unități — câmpurile blocate de mai jos se editează pe centrală.",
+  "devices.sink.plantLevel": "Se setează pe centrală — se aplică fiecărei unități",
+  "devices.writeLock.plantHint": "Lacăt la nivel de centrală — blocarea/deblocarea de aici se aplică TUTUROR unităților (un singur endpoint fizic). Comutatorul general trebuie de asemenea pornit.",
+  "plants.mqttEnabled": "Publică unitățile pe MQTT",
+  "plants.influxEnabled": "Scrie unitățile în InfluxDB",
+  "plants.noUnits": "Nicio unitate materializată.",
+  "plants.toggle": "Click pentru a expanda/strânge unitățile centralei"
 }
