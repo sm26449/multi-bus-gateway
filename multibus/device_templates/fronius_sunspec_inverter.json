@@ -1,0 +1,1647 @@
+{
+  "device_template": {
+    "schema_version": 1,
+    "id": "fronius_sunspec_inverter",
+    "name": "Fronius SunSpec inverter (int+SF, via datalogger)",
+    "vendor": "Fronius",
+    "model": "Symo / Primo / Eco (SunSpec 103)",
+    "version": "1.0.0",
+    "description": "Fronius inverter behind a DataManager/datalogger speaking SunSpec int + scale-factor (models 1/103/160). Addresses are PDU (documented − 1). Pair with a `plants:` entry to read several unit IDs behind one datalogger — one socket per unit. PF is published with the generic SunSpec decode (see template description for the Fronius PF quirk).",
+    "source_document": "SunSpec Information Models (int+SF); register map verified live against a production Fronius fleet (raw-frame decode parity, 2026-09-11)",
+    "protocol": {
+      "byte_order": "big",
+      "default_register_type": "holding"
+    },
+    "poll_groups": {
+      "normal": {
+        "interval": 5,
+        "description": "Measurements + MPPT"
+      },
+      "static": {
+        "interval": 3600,
+        "description": "Identity strings"
+      }
+    },
+    "categories": {
+      "ac": "AC measurements",
+      "dc": "DC side",
+      "energy": "Energy",
+      "temperature": "Temperatures",
+      "status": "Status & events",
+      "mppt": "MPPT strings",
+      "identity": "Device identity",
+      "sf": "SunSpec scale factors"
+    },
+    "registers": [
+      {
+        "address": 40071,
+        "name": "ac_current",
+        "label": "Ac Current",
+        "unit": "A",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "ac",
+        "poll_group": "normal",
+        "scale_from": "a_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "A"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40072,
+        "name": "ac_current_a",
+        "label": "Ac Current A",
+        "unit": "A",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "ac",
+        "poll_group": "normal",
+        "scale_from": "a_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "AphA"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40073,
+        "name": "ac_current_b",
+        "label": "Ac Current B",
+        "unit": "A",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "ac",
+        "poll_group": "normal",
+        "scale_from": "a_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "AphB"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40074,
+        "name": "ac_current_c",
+        "label": "Ac Current C",
+        "unit": "A",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "ac",
+        "poll_group": "normal",
+        "scale_from": "a_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "AphC"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40075,
+        "name": "a_sf",
+        "label": "A SF",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "sf",
+        "poll_group": "normal",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": false,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": false,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40076,
+        "name": "ac_voltage_ab",
+        "label": "Ac Voltage Ab",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "ac",
+        "poll_group": "normal",
+        "scale_from": "v_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "PPVphAB"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40077,
+        "name": "ac_voltage_bc",
+        "label": "Ac Voltage Bc",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "ac",
+        "poll_group": "normal",
+        "scale_from": "v_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "PPVphBC"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40078,
+        "name": "ac_voltage_ca",
+        "label": "Ac Voltage Ca",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "ac",
+        "poll_group": "normal",
+        "scale_from": "v_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "PPVphCA"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40079,
+        "name": "ac_voltage_an",
+        "label": "Ac Voltage An",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "ac",
+        "poll_group": "normal",
+        "scale_from": "v_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "PhVphA"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40080,
+        "name": "ac_voltage_bn",
+        "label": "Ac Voltage Bn",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "ac",
+        "poll_group": "normal",
+        "scale_from": "v_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "PhVphB"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40081,
+        "name": "ac_voltage_cn",
+        "label": "Ac Voltage Cn",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "ac",
+        "poll_group": "normal",
+        "scale_from": "v_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "PhVphC"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40082,
+        "name": "v_sf",
+        "label": "V SF",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "sf",
+        "poll_group": "normal",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": false,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": false,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40083,
+        "name": "ac_power",
+        "label": "Ac Power",
+        "unit": "W",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "ac",
+        "poll_group": "normal",
+        "scale_from": "w_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "W"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": true,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40084,
+        "name": "w_sf",
+        "label": "W SF",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "sf",
+        "poll_group": "normal",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": false,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": false,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40085,
+        "name": "ac_frequency",
+        "label": "Ac Frequency",
+        "unit": "Hz",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "ac",
+        "poll_group": "normal",
+        "scale_from": "hz_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "Hz"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40086,
+        "name": "hz_sf",
+        "label": "HZ SF",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "sf",
+        "poll_group": "normal",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": false,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": false,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40087,
+        "name": "apparent_power",
+        "label": "Apparent Power",
+        "unit": "VA",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "ac",
+        "poll_group": "normal",
+        "scale_from": "va_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "VA"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40088,
+        "name": "va_sf",
+        "label": "VA SF",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "sf",
+        "poll_group": "normal",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": false,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": false,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40089,
+        "name": "reactive_power",
+        "label": "Reactive Power",
+        "unit": "var",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "ac",
+        "poll_group": "normal",
+        "scale_from": "var_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "VAr"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40090,
+        "name": "var_sf",
+        "label": "VAR SF",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "sf",
+        "poll_group": "normal",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": false,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": false,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40091,
+        "name": "power_factor",
+        "label": "Power Factor",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "ac",
+        "poll_group": "normal",
+        "scale_from": "pf_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "PF"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40092,
+        "name": "pf_sf",
+        "label": "PF SF",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "sf",
+        "poll_group": "normal",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": false,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": false,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40093,
+        "name": "lifetime_energy",
+        "label": "Lifetime Energy",
+        "unit": "Wh",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "category": "energy",
+        "poll_group": "normal",
+        "scale_from": "wh_sf",
+        "nan": true,
+        "monotonic": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "WH"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": true,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40095,
+        "name": "wh_sf",
+        "label": "WH SF",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "sf",
+        "poll_group": "normal",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": false,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": false,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40096,
+        "name": "dc_current",
+        "label": "Dc Current",
+        "unit": "A",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "dc",
+        "poll_group": "normal",
+        "scale_from": "dca_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "DCA"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40097,
+        "name": "dca_sf",
+        "label": "DCA SF",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "sf",
+        "poll_group": "normal",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": false,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": false,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40098,
+        "name": "dc_voltage",
+        "label": "Dc Voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "dc",
+        "poll_group": "normal",
+        "scale_from": "dcv_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "DCV"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40099,
+        "name": "dcv_sf",
+        "label": "DCV SF",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "sf",
+        "poll_group": "normal",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": false,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": false,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40100,
+        "name": "dc_power",
+        "label": "Dc Power",
+        "unit": "W",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "dc",
+        "poll_group": "normal",
+        "scale_from": "dcw_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "DCW"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": true,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40101,
+        "name": "dcw_sf",
+        "label": "DCW SF",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "sf",
+        "poll_group": "normal",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": false,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": false,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40102,
+        "name": "temp_cabinet",
+        "label": "Temp Cabinet",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "temperature",
+        "poll_group": "normal",
+        "scale_from": "tmp_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "TmpCab"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40103,
+        "name": "temp_heatsink",
+        "label": "Temp Heatsink",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "temperature",
+        "poll_group": "normal",
+        "scale_from": "tmp_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "TmpSnk"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40104,
+        "name": "temp_transformer",
+        "label": "Temp Transformer",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "temperature",
+        "poll_group": "normal",
+        "scale_from": "tmp_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "TmpTrns"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40105,
+        "name": "temp_other",
+        "label": "Temp Other",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "temperature",
+        "poll_group": "normal",
+        "scale_from": "tmp_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "TmpOt"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40106,
+        "name": "tmp_sf",
+        "label": "TMP SF",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "sf",
+        "poll_group": "normal",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": false,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": false,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40107,
+        "name": "status_code",
+        "label": "Status Code",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "status",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "St"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": true,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40108,
+        "name": "status_vendor",
+        "label": "Status Vendor",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "status",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "StVnd"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40109,
+        "name": "evt1",
+        "label": "Evt1",
+        "unit": "",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "category": "status",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "evt1"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40111,
+        "name": "evt2",
+        "label": "Evt2",
+        "unit": "",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "category": "status",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "evt2"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40113,
+        "name": "evt_vnd1",
+        "label": "Evt Vnd1",
+        "unit": "",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "category": "status",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "evt_vnd1"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40115,
+        "name": "evt_vnd2",
+        "label": "Evt Vnd2",
+        "unit": "",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "category": "status",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "evt_vnd2"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40117,
+        "name": "evt_vnd3",
+        "label": "Evt Vnd3",
+        "unit": "",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "category": "status",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "evt_vnd3"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40119,
+        "name": "evt_vnd4",
+        "label": "Evt Vnd4",
+        "unit": "",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "category": "status",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "evt_vnd4"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40255,
+        "name": "dca_mppt_sf",
+        "label": "DCA_MPPT SF",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "sf",
+        "poll_group": "normal",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": false,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": false,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40256,
+        "name": "dcv_mppt_sf",
+        "label": "DCV_MPPT SF",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "sf",
+        "poll_group": "normal",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": false,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": false,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40257,
+        "name": "dcw_mppt_sf",
+        "label": "DCW_MPPT SF",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "sf",
+        "poll_group": "normal",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": false,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": false,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40258,
+        "name": "dcwh_mppt_sf",
+        "label": "DCWH_MPPT SF",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "sf",
+        "poll_group": "normal",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": false,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": false,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40261,
+        "name": "mppt_num_modules",
+        "label": "Mppt Num Modules",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "mppt",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "mppt/num_modules"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40272,
+        "name": "mppt1_dc_current",
+        "label": "Mppt1 Dc Current",
+        "unit": "A",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "mppt",
+        "poll_group": "normal",
+        "scale_from": "dca_mppt_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "mppt/string1/DCA"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40273,
+        "name": "mppt1_dc_voltage",
+        "label": "Mppt1 Dc Voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "mppt",
+        "poll_group": "normal",
+        "scale_from": "dcv_mppt_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "mppt/string1/DCV"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40274,
+        "name": "mppt1_dc_power",
+        "label": "Mppt1 Dc Power",
+        "unit": "W",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "mppt",
+        "poll_group": "normal",
+        "scale_from": "dcw_mppt_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "mppt/string1/DCW"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40275,
+        "name": "mppt1_dc_energy",
+        "label": "Mppt1 Dc Energy",
+        "unit": "Wh",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "category": "mppt",
+        "poll_group": "normal",
+        "scale_from": "dcwh_mppt_sf",
+        "nan": true,
+        "monotonic": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "mppt/string1/DCWH"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40279,
+        "name": "mppt1_temperature",
+        "label": "Mppt1 Temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "mppt",
+        "poll_group": "normal",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "mppt/string1/Tmp"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40292,
+        "name": "mppt2_dc_current",
+        "label": "Mppt2 Dc Current",
+        "unit": "A",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "mppt",
+        "poll_group": "normal",
+        "scale_from": "dca_mppt_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "mppt/string2/DCA"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40293,
+        "name": "mppt2_dc_voltage",
+        "label": "Mppt2 Dc Voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "mppt",
+        "poll_group": "normal",
+        "scale_from": "dcv_mppt_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "mppt/string2/DCV"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40294,
+        "name": "mppt2_dc_power",
+        "label": "Mppt2 Dc Power",
+        "unit": "W",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "mppt",
+        "poll_group": "normal",
+        "scale_from": "dcw_mppt_sf",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "mppt/string2/DCW"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40295,
+        "name": "mppt2_dc_energy",
+        "label": "Mppt2 Dc Energy",
+        "unit": "Wh",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "category": "mppt",
+        "poll_group": "normal",
+        "scale_from": "dcwh_mppt_sf",
+        "nan": true,
+        "monotonic": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "mppt/string2/DCWH"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40299,
+        "name": "mppt2_temperature",
+        "label": "Mppt2 Temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "mppt",
+        "poll_group": "normal",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "mppt/string2/Tmp"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40004,
+        "name": "manufacturer",
+        "label": "Manufacturer",
+        "unit": "",
+        "data_type": "string:16",
+        "register_type": "holding",
+        "category": "identity",
+        "poll_group": "static",
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "manufacturer"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40020,
+        "name": "model",
+        "label": "Model",
+        "unit": "",
+        "data_type": "string:16",
+        "register_type": "holding",
+        "category": "identity",
+        "poll_group": "static",
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "model"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40052,
+        "name": "serial_number",
+        "label": "Serial Number",
+        "unit": "",
+        "data_type": "string:16",
+        "register_type": "holding",
+        "category": "identity",
+        "poll_group": "static",
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": "serial_number"
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "fronius_inverter",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      }
+    ],
+    "canonical": true
+  }
+}

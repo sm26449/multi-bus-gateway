@@ -4,7 +4,7 @@
 
 Every built-in device map, with its Modbus transport (function code + byte/word order), the exact register table, and the **source it was verified against**. We do not fabricate maps — each entry cites its provenance. **Confidence varies by entry:** some are *vendor-verified* (confirmed against the manufacturer manual or a field-tested driver — e.g. ABB B23 vs the ABB manual, Schneider iEM3000 vs volkszaehler/mbmd, Carlo Gavazzi EM24 vs Victron), while others are *community-sourced* and their description says to verify against your specific unit's manual before billing-grade use (e.g. the Eastron SDM entries). Read each entry's Source line. `scale` is a divisor — engineering value = raw / scale.
 
-**11 device maps.**
+**13 device maps.**
 
 | Map | Vendor | Model | Registers | Transport |
 |---|---|---|---|---|
@@ -16,6 +16,8 @@ Every built-in device map, with its Modbus transport (function code + byte/word 
 | [Eastron SDM120 (single-phase)](#eastron-sdm120-single-phase) | Eastron | SDM120 Modbus | 10 | FC04 / big |
 | [Eastron SDM630 (3-phase)](#eastron-sdm630-3-phase) | Eastron | SDM630 Modbus V2 | 29 | FC04 / big |
 | [Fronius Smart Meter 65A-3 (RTU)](#fronius-smart-meter-65a-3-rtu) | Fronius | Smart Meter 65A-3 | 30 | FC03 / little |
+| [Fronius SunSpec inverter (int+SF, via datalogger)](#fronius-sunspec-inverter-intsf-via-datalogger) | Fronius | Symo / Primo / Eco (SunSpec 103) | 61 | FC03 / big |
+| [Fronius SunSpec meter (int+SF, via datalogger)](#fronius-sunspec-meter-intsf-via-datalogger) | Fronius | Smart Meter 63A/50kA (SunSpec 203) | 48 | FC03 / big |
 | [Generic MQTT (JSON)](#generic-mqtt-json) | Generic | MQTT JSON source | 3 | FC03 / big |
 | [Schneider iEM3000 (3-phase)](#schneider-iem3000-3-phase) | Schneider Electric | iEM3155 / iEM3255 / iEM3455 / iEM3555 | 22 | FC03 / big |
 | [Zigbee sensor (zigbee2mqtt)](#zigbee-sensor-zigbee2mqtt) | Zigbee2MQTT | climate / battery sensor | 6 | FC03 / big |
@@ -249,6 +251,139 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 78 / 0x004E | `energy_active_export` | Energy Export Total | int32 | 0.01 | Wh | slow |
 | 4096 / 0x1000 | `firmware_rev` | Firmware / revision | uint16 | 1.0 | — | slow |
 | 20480 / 0x5000 | `serial` | Serial / ID (ASCII) | string:7 | 1.0 | — | slow |
+
+## Fronius SunSpec inverter (int+SF, via datalogger)
+
+**id** `fronius_sunspec_inverter` · **vendor** Fronius · **model** Symo / Primo / Eco (SunSpec 103) · **version** 1.0.0 · **registers** 61
+
+- **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
+- **Source / provenance:** SunSpec Information Models (int+SF); register map verified live against a production Fronius fleet (raw-frame decode parity, 2026-09-11)
+
+> Fronius inverter behind a DataManager/datalogger speaking SunSpec int + scale-factor (models 1/103/160). Addresses are PDU (documented − 1). Pair with a `plants:` entry to read several unit IDs behind one datalogger — one socket per unit. PF is published with the generic SunSpec decode (see template description for the Fronius PF quirk).
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 40004 / 0x9C44 | `manufacturer` | Manufacturer | string:16 | 1 | — | static |
+| 40020 / 0x9C54 | `model` | Model | string:16 | 1 | — | static |
+| 40052 / 0x9C74 | `serial_number` | Serial Number | string:16 | 1 | — | static |
+| 40071 / 0x9C87 | `ac_current` | Ac Current | uint16 | 1 | A | normal |
+| 40072 / 0x9C88 | `ac_current_a` | Ac Current A | uint16 | 1 | A | normal |
+| 40073 / 0x9C89 | `ac_current_b` | Ac Current B | uint16 | 1 | A | normal |
+| 40074 / 0x9C8A | `ac_current_c` | Ac Current C | uint16 | 1 | A | normal |
+| 40075 / 0x9C8B | `a_sf` | A SF | int16 | 1 | — | normal |
+| 40076 / 0x9C8C | `ac_voltage_ab` | Ac Voltage Ab | uint16 | 1 | V | normal |
+| 40077 / 0x9C8D | `ac_voltage_bc` | Ac Voltage Bc | uint16 | 1 | V | normal |
+| 40078 / 0x9C8E | `ac_voltage_ca` | Ac Voltage Ca | uint16 | 1 | V | normal |
+| 40079 / 0x9C8F | `ac_voltage_an` | Ac Voltage An | uint16 | 1 | V | normal |
+| 40080 / 0x9C90 | `ac_voltage_bn` | Ac Voltage Bn | uint16 | 1 | V | normal |
+| 40081 / 0x9C91 | `ac_voltage_cn` | Ac Voltage Cn | uint16 | 1 | V | normal |
+| 40082 / 0x9C92 | `v_sf` | V SF | int16 | 1 | — | normal |
+| 40083 / 0x9C93 | `ac_power` | Ac Power | int16 | 1 | W | normal |
+| 40084 / 0x9C94 | `w_sf` | W SF | int16 | 1 | — | normal |
+| 40085 / 0x9C95 | `ac_frequency` | Ac Frequency | uint16 | 1 | Hz | normal |
+| 40086 / 0x9C96 | `hz_sf` | HZ SF | int16 | 1 | — | normal |
+| 40087 / 0x9C97 | `apparent_power` | Apparent Power | int16 | 1 | VA | normal |
+| 40088 / 0x9C98 | `va_sf` | VA SF | int16 | 1 | — | normal |
+| 40089 / 0x9C99 | `reactive_power` | Reactive Power | int16 | 1 | var | normal |
+| 40090 / 0x9C9A | `var_sf` | VAR SF | int16 | 1 | — | normal |
+| 40091 / 0x9C9B | `power_factor` | Power Factor | int16 | 1 | — | normal |
+| 40092 / 0x9C9C | `pf_sf` | PF SF | int16 | 1 | — | normal |
+| 40093 / 0x9C9D | `lifetime_energy` | Lifetime Energy | uint32 | 1 | Wh | normal |
+| 40095 / 0x9C9F | `wh_sf` | WH SF | int16 | 1 | — | normal |
+| 40096 / 0x9CA0 | `dc_current` | Dc Current | uint16 | 1 | A | normal |
+| 40097 / 0x9CA1 | `dca_sf` | DCA SF | int16 | 1 | — | normal |
+| 40098 / 0x9CA2 | `dc_voltage` | Dc Voltage | uint16 | 1 | V | normal |
+| 40099 / 0x9CA3 | `dcv_sf` | DCV SF | int16 | 1 | — | normal |
+| 40100 / 0x9CA4 | `dc_power` | Dc Power | int16 | 1 | W | normal |
+| 40101 / 0x9CA5 | `dcw_sf` | DCW SF | int16 | 1 | — | normal |
+| 40102 / 0x9CA6 | `temp_cabinet` | Temp Cabinet | int16 | 1 | °C | normal |
+| 40103 / 0x9CA7 | `temp_heatsink` | Temp Heatsink | int16 | 1 | °C | normal |
+| 40104 / 0x9CA8 | `temp_transformer` | Temp Transformer | int16 | 1 | °C | normal |
+| 40105 / 0x9CA9 | `temp_other` | Temp Other | int16 | 1 | °C | normal |
+| 40106 / 0x9CAA | `tmp_sf` | TMP SF | int16 | 1 | — | normal |
+| 40107 / 0x9CAB | `status_code` | Status Code | uint16 | 1 | — | normal |
+| 40108 / 0x9CAC | `status_vendor` | Status Vendor | uint16 | 1 | — | normal |
+| 40109 / 0x9CAD | `evt1` | Evt1 | uint32 | 1 | — | normal |
+| 40111 / 0x9CAF | `evt2` | Evt2 | uint32 | 1 | — | normal |
+| 40113 / 0x9CB1 | `evt_vnd1` | Evt Vnd1 | uint32 | 1 | — | normal |
+| 40115 / 0x9CB3 | `evt_vnd2` | Evt Vnd2 | uint32 | 1 | — | normal |
+| 40117 / 0x9CB5 | `evt_vnd3` | Evt Vnd3 | uint32 | 1 | — | normal |
+| 40119 / 0x9CB7 | `evt_vnd4` | Evt Vnd4 | uint32 | 1 | — | normal |
+| 40255 / 0x9D3F | `dca_mppt_sf` | DCA_MPPT SF | int16 | 1 | — | normal |
+| 40256 / 0x9D40 | `dcv_mppt_sf` | DCV_MPPT SF | int16 | 1 | — | normal |
+| 40257 / 0x9D41 | `dcw_mppt_sf` | DCW_MPPT SF | int16 | 1 | — | normal |
+| 40258 / 0x9D42 | `dcwh_mppt_sf` | DCWH_MPPT SF | int16 | 1 | — | normal |
+| 40261 / 0x9D45 | `mppt_num_modules` | Mppt Num Modules | uint16 | 1 | — | normal |
+| 40272 / 0x9D50 | `mppt1_dc_current` | Mppt1 Dc Current | uint16 | 1 | A | normal |
+| 40273 / 0x9D51 | `mppt1_dc_voltage` | Mppt1 Dc Voltage | uint16 | 1 | V | normal |
+| 40274 / 0x9D52 | `mppt1_dc_power` | Mppt1 Dc Power | uint16 | 1 | W | normal |
+| 40275 / 0x9D53 | `mppt1_dc_energy` | Mppt1 Dc Energy | uint32 | 1 | Wh | normal |
+| 40279 / 0x9D57 | `mppt1_temperature` | Mppt1 Temperature | int16 | 1 | °C | normal |
+| 40292 / 0x9D64 | `mppt2_dc_current` | Mppt2 Dc Current | uint16 | 1 | A | normal |
+| 40293 / 0x9D65 | `mppt2_dc_voltage` | Mppt2 Dc Voltage | uint16 | 1 | V | normal |
+| 40294 / 0x9D66 | `mppt2_dc_power` | Mppt2 Dc Power | uint16 | 1 | W | normal |
+| 40295 / 0x9D67 | `mppt2_dc_energy` | Mppt2 Dc Energy | uint32 | 1 | Wh | normal |
+| 40299 / 0x9D6B | `mppt2_temperature` | Mppt2 Temperature | int16 | 1 | °C | normal |
+
+## Fronius SunSpec meter (int+SF, via datalogger)
+
+**id** `fronius_sunspec_meter` · **vendor** Fronius · **model** Smart Meter 63A/50kA (SunSpec 203) · **version** 1.0.0 · **registers** 48
+
+- **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
+- **Source / provenance:** SunSpec Information Models (int+SF); register map verified live against a production Fronius fleet (raw-frame decode parity, 2026-09-11)
+
+> Fronius Smart Meter read through the DataManager (SunSpec model 203, int + scale factor — NOT the direct-Modbus 65A map, which is the separate fronius_smart_meter_65a template). Default unit ID on a DataManager is 240. Addresses are PDU (documented − 1).
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 40004 / 0x9C44 | `manufacturer` | Manufacturer | string:16 | 1 | — | static |
+| 40020 / 0x9C54 | `model` | Model | string:16 | 1 | — | static |
+| 40052 / 0x9C74 | `serial_number` | Serial Number | string:16 | 1 | — | static |
+| 40071 / 0x9C87 | `current_total` | Current Total | int16 | 1 | A | normal |
+| 40072 / 0x9C88 | `current_a` | Current A | int16 | 1 | A | normal |
+| 40073 / 0x9C89 | `current_b` | Current B | int16 | 1 | A | normal |
+| 40074 / 0x9C8A | `current_c` | Current C | int16 | 1 | A | normal |
+| 40075 / 0x9C8B | `a_sf` | A SF | int16 | 1 | — | normal |
+| 40076 / 0x9C8C | `voltage_ln_avg` | Voltage Ln Avg | int16 | 1 | V | normal |
+| 40077 / 0x9C8D | `voltage_an` | Voltage An | int16 | 1 | V | normal |
+| 40078 / 0x9C8E | `voltage_bn` | Voltage Bn | int16 | 1 | V | normal |
+| 40079 / 0x9C8F | `voltage_cn` | Voltage Cn | int16 | 1 | V | normal |
+| 40080 / 0x9C90 | `voltage_ll_avg` | Voltage Ll Avg | int16 | 1 | V | normal |
+| 40081 / 0x9C91 | `voltage_ab` | Voltage Ab | int16 | 1 | V | normal |
+| 40082 / 0x9C92 | `voltage_bc` | Voltage Bc | int16 | 1 | V | normal |
+| 40083 / 0x9C93 | `voltage_ca` | Voltage Ca | int16 | 1 | V | normal |
+| 40084 / 0x9C94 | `v_sf` | V SF | int16 | 1 | — | normal |
+| 40085 / 0x9C95 | `frequency` | Frequency | int16 | 1 | Hz | normal |
+| 40086 / 0x9C96 | `hz_sf` | HZ SF | int16 | 1 | — | normal |
+| 40087 / 0x9C97 | `power_total` | Power Total | int16 | 1 | W | normal |
+| 40088 / 0x9C98 | `power_a` | Power A | int16 | 1 | W | normal |
+| 40089 / 0x9C99 | `power_b` | Power B | int16 | 1 | W | normal |
+| 40090 / 0x9C9A | `power_c` | Power C | int16 | 1 | W | normal |
+| 40091 / 0x9C9B | `w_sf` | W SF | int16 | 1 | — | normal |
+| 40092 / 0x9C9C | `va_total` | Va Total | int16 | 1 | VA | normal |
+| 40093 / 0x9C9D | `va_a` | Va A | int16 | 1 | VA | normal |
+| 40094 / 0x9C9E | `va_b` | Va B | int16 | 1 | VA | normal |
+| 40095 / 0x9C9F | `va_c` | Va C | int16 | 1 | VA | normal |
+| 40096 / 0x9CA0 | `va_sf` | VA SF | int16 | 1 | — | normal |
+| 40097 / 0x9CA1 | `var_total` | Var Total | int16 | 1 | var | normal |
+| 40098 / 0x9CA2 | `var_a` | Var A | int16 | 1 | var | normal |
+| 40099 / 0x9CA3 | `var_b` | Var B | int16 | 1 | var | normal |
+| 40100 / 0x9CA4 | `var_c` | Var C | int16 | 1 | var | normal |
+| 40101 / 0x9CA5 | `var_sf` | VAR SF | int16 | 1 | — | normal |
+| 40102 / 0x9CA6 | `pf_avg` | Pf Avg | int16 | 1 | — | normal |
+| 40103 / 0x9CA7 | `pf_a` | Pf A | int16 | 1 | — | normal |
+| 40104 / 0x9CA8 | `pf_b` | Pf B | int16 | 1 | — | normal |
+| 40105 / 0x9CA9 | `pf_c` | Pf C | int16 | 1 | — | normal |
+| 40106 / 0x9CAA | `pf_sf` | PF SF | int16 | 1 | — | normal |
+| 40107 / 0x9CAB | `energy_exported` | Energy Exported | uint32 | 1 | Wh | normal |
+| 40109 / 0x9CAD | `energy_exported_a` | Energy Exported A | uint32 | 1 | Wh | normal |
+| 40111 / 0x9CAF | `energy_exported_b` | Energy Exported B | uint32 | 1 | Wh | normal |
+| 40113 / 0x9CB1 | `energy_exported_c` | Energy Exported C | uint32 | 1 | Wh | normal |
+| 40115 / 0x9CB3 | `energy_imported` | Energy Imported | uint32 | 1 | Wh | normal |
+| 40117 / 0x9CB5 | `energy_imported_a` | Energy Imported A | uint32 | 1 | Wh | normal |
+| 40119 / 0x9CB7 | `energy_imported_b` | Energy Imported B | uint32 | 1 | Wh | normal |
+| 40121 / 0x9CB9 | `energy_imported_c` | Energy Imported C | uint32 | 1 | Wh | normal |
+| 40123 / 0x9CBB | `wh_sf` | WH SF | int16 | 1 | — | normal |
 
 ## Generic MQTT (JSON)
 
