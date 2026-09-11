@@ -164,6 +164,56 @@ DASHBOARD = {"ac_power", "dc_power", "lifetime_energy", "status_code",
              "power_total", "energy_exported", "energy_imported"}
 
 
+# Display labels (names stay collector-parity; labels are electrician-speak:
+# phases as L1/L2/L3, acronyms uppercased). Anything not covered falls back to
+# a smart title-case.
+_PHASE = {"a": "L1", "b": "L2", "c": "L3", "an": "L1-N", "bn": "L2-N",
+          "cn": "L3-N", "ab": "L1-L2", "bc": "L2-L3", "ca": "L3-L1"}
+_LABELS = {
+    "ac_current": "AC Current", "ac_power": "AC Power",
+    "ac_frequency": "AC Frequency", "apparent_power": "Apparent Power",
+    "reactive_power": "Reactive Power", "power_factor": "Power Factor",
+    "lifetime_energy": "Lifetime Energy", "dc_current": "DC Current",
+    "dc_voltage": "DC Voltage", "dc_power": "DC Power",
+    "temp_cabinet": "Cabinet Temperature", "temp_heatsink": "Heatsink Temperature",
+    "temp_transformer": "Transformer Temperature", "temp_other": "Other Temperature",
+    "status_code": "Operating State", "status_vendor": "Vendor State",
+    "mppt_num_modules": "MPPT Modules",
+    "current_total": "Current Total", "voltage_ln_avg": "Voltage L-N Average",
+    "voltage_ll_avg": "Voltage L-L Average", "frequency": "Frequency",
+    "power_total": "Active Power Total", "va_total": "Apparent Power Total",
+    "var_total": "Reactive Power Total", "pf_avg": "Power Factor",
+    "energy_exported": "Energy Exported", "energy_imported": "Energy Imported",
+    "manufacturer": "Manufacturer", "model": "Model",
+    "serial_number": "Serial Number",
+}
+_BASE = {"ac_current": "AC Current", "ac_voltage": "Voltage",
+         "voltage": "Voltage", "current": "Current", "power": "Active Power",
+         "va": "Apparent Power", "var": "Reactive Power", "pf": "Power Factor",
+         "energy_exported": "Energy Exported", "energy_imported": "Energy Imported"}
+
+
+def label_for(name: str, is_sf: bool) -> str:
+    if is_sf:
+        return name.upper().replace("_SF", "").replace("_MPPT", " MPPT") + " Scale Factor"
+    if name in _LABELS:
+        return _LABELS[name]
+    if name.startswith("evt_vnd"):
+        return f"Vendor Event Flags {name[-1]}"
+    if name.startswith("evt"):
+        return f"Event Flags {name[-1]}"
+    m = __import__("re").match(r"^mppt(\d)_(dc_\w+|temperature)$", name)
+    if m:
+        part = {"dc_current": "DC Current", "dc_voltage": "DC Voltage",
+                "dc_power": "DC Power", "dc_energy": "DC Energy",
+                "temperature": "Temperature"}[m.group(2)]
+        return f"MPPT String {m.group(1)} {part}"
+    m = __import__("re").match(r"^(.*)_(an|bn|cn|ab|bc|ca|a|b|c)$", name)
+    if m and m.group(1) in _BASE:
+        return f"{_BASE[m.group(1)]} {_PHASE[m.group(2)]}"
+    return name.replace("_", " ").title()
+
+
 def build_registers(rows, poll_group, measurement):
     out = []
     for doc_addr, name, dtype, sf_ref, topic, unit, cat in rows:
@@ -171,8 +221,7 @@ def build_registers(rows, poll_group, measurement):
         r = {
             "address": doc_addr - 1,          # PDU = documented SunSpec − 1
             "name": name,
-            "label": name.replace("_", " ").title() if not is_sf
-                     else name.upper().replace("_SF", " SF"),
+            "label": label_for(name, is_sf),
             "unit": unit,
             "data_type": dtype,
             "register_type": "holding",

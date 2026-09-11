@@ -1094,5 +1094,6 @@
   "devices.plantUnit.intro": "This device is one unit of a plant — its connection, template and routing are defined once on the plant and applied to every unit.",
   "devices.plantUnit.editPlant": "Edit plant",
   "devices.plantUnit.perUnit": "Per-unit: the measurement selection (Measurements tab) and the poll intervals below stay editable on THIS unit only.",
-  "devices.plantUnit.outputs": "Output routing is defined on the plant (with per-unit substitution) and applied to every unit:"
+  "devices.plantUnit.outputs": "Output routing is defined on the plant (with per-unit substitution) and applied to every unit:",
+  "devices.disabled": "disabled"
 }

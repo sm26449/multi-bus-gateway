@@ -34,7 +34,9 @@ Object.assign(JanitzaMonitor.prototype, {
                         · ${this._esc(p.template || '—')} · ${p.total_units} ${this.t('plants.units', 'units')}</div>
                     <div class="device-row-routing">${unitChips}</div>
                 </div>
-                <div class="device-row-stats">${p.online_units}/${p.total_units} ${this.t('plants.online', 'online')}</div>
+                <div class="device-row-stats">${p.enabled === false
+                    ? this.t('devices.disabled', 'disabled')
+                    : `${p.online_units}/${p.total_units} ${this.t('plants.online', 'online')}`}</div>
                 <div class="device-row-actions">
                     <button class="btn btn-ghost btn-sm" ${this._act('openPlantModal', [p.id])} title="${this.t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
                     <button class="btn btn-ghost btn-sm" ${this._act('deletePlantUi', [p.id])} title="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>

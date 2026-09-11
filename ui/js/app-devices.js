@@ -82,6 +82,8 @@ Object.assign(JanitzaMonitor.prototype, {
             const stats = d.connected
                 ? `${(d.poll_rate ?? 0).toFixed ? (d.poll_rate ?? 0).toFixed(1) : d.poll_rate} poll/s · ` +
                   `${d.staleness_age_s != null ? d.staleness_age_s + 's' : '—'} ${this.t('devices.age', 'age')}`
+                : d.enabled === false
+                ? this.t('devices.disabled', 'disabled')
                 : this.t('devices.notConnected', 'not connected');
             const actions = [
                 `<button class="btn btn-ghost btn-sm" ${this._act('jumpToDeviceRegisters', [d.id])} title="${this.t('devices.registers', 'Measurements')}"><i aria-hidden="true" class="bi bi-list-check"></i></button>`,
@@ -512,6 +514,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <label class="form-label">${t('devices.wizard.protocol', 'Protocol')}</label>
                     <div style="display:flex;gap:14px;flex-wrap:wrap;">
                         <label><input type="radio" name="ddvProto" value="tcp" ${d.protocol === 'tcp' ? 'checked' : ''} disabled> Modbus TCP</label>
+                        <label><input type="radio" name="ddvProto" value="rtu-tcp" ${d.protocol === 'rtu-tcp' ? 'checked' : ''} disabled> Modbus RTU over TCP</label>
                         <label style="opacity:.55;"><input type="radio" name="ddvProto" value="rtu" ${d.protocol === 'rtu' ? 'checked' : ''} disabled> Modbus RTU</label>
                         <label><input type="radio" name="ddvProto" value="http" ${d.protocol === 'http' ? 'checked' : ''} disabled> HTTP / JSON</label>
                         <label><input type="radio" name="ddvProto" value="mqtt" ${d.protocol === 'mqtt' ? 'checked' : ''} disabled> MQTT</label>
@@ -522,7 +525,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div class="form-group"><label class="form-label" for="ddvUrl">${t('devices.wizard.httpUrl', 'JSON endpoint URL')}</label>
                         <input type="text" id="ddvUrl" class="input" value="${this._esc(d.url || '')}" placeholder="http://192.168.1.50/rpc/Shelly.GetStatus"></div>
                 </div>
-                <div id="ddvTcp" style="display:${d.protocol === 'tcp' ? '' : 'none'}">
+                <div id="ddvTcp" style="display:${(d.protocol === 'tcp' || d.protocol === 'rtu-tcp') ? '' : 'none'}">
                     <div class="form-row">
                         <div class="form-group flex-2"><label class="form-label" for="ddvHost">${this.t('lbl.hostIp', "Host / IP")}</label>
                             <input type="text" id="ddvHost" class="input" value="${this._esc(d.host)}" placeholder="192.168.1.60"></div>
@@ -704,7 +707,7 @@ Object.assign(JanitzaMonitor.prototype, {
             r.addEventListener('change', () => {
                 const p = document.querySelector('input[name="ddvProto"]:checked')?.value || 'tcp';
                 const show = (id, on) => { const e = document.getElementById(id); if (e) e.style.display = on ? '' : 'none'; };
-                show('ddvTcp', p === 'tcp'); show('ddvRtu', p === 'rtu'); show('ddvHttp', p === 'http'); show('ddvMqtt', p === 'mqtt');
+                show('ddvTcp', p === 'tcp' || p === 'rtu-tcp'); show('ddvRtu', p === 'rtu'); show('ddvHttp', p === 'http'); show('ddvMqtt', p === 'mqtt');
             }));
         // in-place workspace tabs (Overview / Edit / Outputs)
         document.querySelectorAll('#deviceWsTabs .config-main-tab[data-dtab]').forEach(tab =>
@@ -883,7 +886,10 @@ Object.assign(JanitzaMonitor.prototype, {
     _gatherDeviceDetail() {
         const g = id => document.getElementById(id);
         const s = this._devDetail, d = s.data;
-        d.protocol = document.querySelector('input[name="ddvProto"]:checked')?.value || 'tcp';
+        // protocol is fixed after creation — fall back to the STORED protocol,
+        // never to 'tcp' (a missing radio must not silently rewrite rtu-tcp)
+        d.protocol = document.querySelector('input[name="ddvProto"]:checked')?.value
+            || s.data.protocol || 'tcp';
         d.name = g('ddvName')?.value.trim() || s.id;
         d.template = g('ddvTemplate')?.value || '';
         d.enabled = !!g('ddvEnabled')?.checked;
@@ -1228,8 +1234,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 : d.protocol === 'mqtt'
                 ? { protocol: 'mqtt', broker: d.broker, port: d.mqtt_port || 1883, topic: d.topic,
                     username: d.mqtt_username || '', password: d.mqtt_password || '', tls: !!d.mqtt_tls }
-                : d.protocol === 'tcp'
-                ? { protocol: 'tcp', host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout }
+                : (d.protocol === 'tcp' || d.protocol === 'rtu-tcp')
+                ? { protocol: d.protocol, host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout }
                 : { protocol: 'rtu', serial_port: d.serial_port, baudrate: d.baudrate, parity: d.parity, stopbits: d.stopbits, unit_id: d.unit_id },
             mqtt: { topic_prefix: d.topic_prefix || `meters/${s.id}`, enabled: d.mqtt_enabled },
             influxdb: { bucket: d.bucket || undefined, device_tag: d.device_tag || undefined, enabled: d.influxdb_enabled },

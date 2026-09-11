@@ -60,7 +60,7 @@
       {
         "address": 40071,
         "name": "ac_current",
-        "label": "Ac Current",
+        "label": "AC Current",
         "unit": "A",
         "data_type": "uint16",
         "register_type": "holding",
@@ -87,7 +87,7 @@
       {
         "address": 40072,
         "name": "ac_current_a",
-        "label": "Ac Current A",
+        "label": "AC Current L1",
         "unit": "A",
         "data_type": "uint16",
         "register_type": "holding",
@@ -114,7 +114,7 @@
       {
         "address": 40073,
         "name": "ac_current_b",
-        "label": "Ac Current B",
+        "label": "AC Current L2",
         "unit": "A",
         "data_type": "uint16",
         "register_type": "holding",
@@ -141,7 +141,7 @@
       {
         "address": 40074,
         "name": "ac_current_c",
-        "label": "Ac Current C",
+        "label": "AC Current L3",
         "unit": "A",
         "data_type": "uint16",
         "register_type": "holding",
@@ -168,7 +168,7 @@
       {
         "address": 40075,
         "name": "a_sf",
-        "label": "A SF",
+        "label": "A Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -194,7 +194,7 @@
       {
         "address": 40076,
         "name": "ac_voltage_ab",
-        "label": "Ac Voltage Ab",
+        "label": "Voltage L1-L2",
         "unit": "V",
         "data_type": "uint16",
         "register_type": "holding",
@@ -221,7 +221,7 @@
       {
         "address": 40077,
         "name": "ac_voltage_bc",
-        "label": "Ac Voltage Bc",
+        "label": "Voltage L2-L3",
         "unit": "V",
         "data_type": "uint16",
         "register_type": "holding",
@@ -248,7 +248,7 @@
       {
         "address": 40078,
         "name": "ac_voltage_ca",
-        "label": "Ac Voltage Ca",
+        "label": "Voltage L3-L1",
         "unit": "V",
         "data_type": "uint16",
         "register_type": "holding",
@@ -275,7 +275,7 @@
       {
         "address": 40079,
         "name": "ac_voltage_an",
-        "label": "Ac Voltage An",
+        "label": "Voltage L1-N",
         "unit": "V",
         "data_type": "uint16",
         "register_type": "holding",
@@ -302,7 +302,7 @@
       {
         "address": 40080,
         "name": "ac_voltage_bn",
-        "label": "Ac Voltage Bn",
+        "label": "Voltage L2-N",
         "unit": "V",
         "data_type": "uint16",
         "register_type": "holding",
@@ -329,7 +329,7 @@
       {
         "address": 40081,
         "name": "ac_voltage_cn",
-        "label": "Ac Voltage Cn",
+        "label": "Voltage L3-N",
         "unit": "V",
         "data_type": "uint16",
         "register_type": "holding",
@@ -356,7 +356,7 @@
       {
         "address": 40082,
         "name": "v_sf",
-        "label": "V SF",
+        "label": "V Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -382,7 +382,7 @@
       {
         "address": 40083,
         "name": "ac_power",
-        "label": "Ac Power",
+        "label": "AC Power",
         "unit": "W",
         "data_type": "int16",
         "register_type": "holding",
@@ -409,7 +409,7 @@
       {
         "address": 40084,
         "name": "w_sf",
-        "label": "W SF",
+        "label": "W Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -435,7 +435,7 @@
       {
         "address": 40085,
         "name": "ac_frequency",
-        "label": "Ac Frequency",
+        "label": "AC Frequency",
         "unit": "Hz",
         "data_type": "uint16",
         "register_type": "holding",
@@ -462,7 +462,7 @@
       {
         "address": 40086,
         "name": "hz_sf",
-        "label": "HZ SF",
+        "label": "HZ Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -515,7 +515,7 @@
       {
         "address": 40088,
         "name": "va_sf",
-        "label": "VA SF",
+        "label": "VA Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -568,7 +568,7 @@
       {
         "address": 40090,
         "name": "var_sf",
-        "label": "VAR SF",
+        "label": "VAR Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -621,7 +621,7 @@
       {
         "address": 40092,
         "name": "pf_sf",
-        "label": "PF SF",
+        "label": "PF Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -675,7 +675,7 @@
       {
         "address": 40095,
         "name": "wh_sf",
-        "label": "WH SF",
+        "label": "WH Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -701,7 +701,7 @@
       {
         "address": 40096,
         "name": "dc_current",
-        "label": "Dc Current",
+        "label": "DC Current",
         "unit": "A",
         "data_type": "uint16",
         "register_type": "holding",
@@ -728,7 +728,7 @@
       {
         "address": 40097,
         "name": "dca_sf",
-        "label": "DCA SF",
+        "label": "DCA Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -754,7 +754,7 @@
       {
         "address": 40098,
         "name": "dc_voltage",
-        "label": "Dc Voltage",
+        "label": "DC Voltage",
         "unit": "V",
         "data_type": "uint16",
         "register_type": "holding",
@@ -781,7 +781,7 @@
       {
         "address": 40099,
         "name": "dcv_sf",
-        "label": "DCV SF",
+        "label": "DCV Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -807,7 +807,7 @@
       {
         "address": 40100,
         "name": "dc_power",
-        "label": "Dc Power",
+        "label": "DC Power",
         "unit": "W",
         "data_type": "int16",
         "register_type": "holding",
@@ -834,7 +834,7 @@
       {
         "address": 40101,
         "name": "dcw_sf",
-        "label": "DCW SF",
+        "label": "DCW Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -860,7 +860,7 @@
       {
         "address": 40102,
         "name": "temp_cabinet",
-        "label": "Temp Cabinet",
+        "label": "Cabinet Temperature",
         "unit": "°C",
         "data_type": "int16",
         "register_type": "holding",
@@ -887,7 +887,7 @@
       {
         "address": 40103,
         "name": "temp_heatsink",
-        "label": "Temp Heatsink",
+        "label": "Heatsink Temperature",
         "unit": "°C",
         "data_type": "int16",
         "register_type": "holding",
@@ -914,7 +914,7 @@
       {
         "address": 40104,
         "name": "temp_transformer",
-        "label": "Temp Transformer",
+        "label": "Transformer Temperature",
         "unit": "°C",
         "data_type": "int16",
         "register_type": "holding",
@@ -941,7 +941,7 @@
       {
         "address": 40105,
         "name": "temp_other",
-        "label": "Temp Other",
+        "label": "Other Temperature",
         "unit": "°C",
         "data_type": "int16",
         "register_type": "holding",
@@ -968,7 +968,7 @@
       {
         "address": 40106,
         "name": "tmp_sf",
-        "label": "TMP SF",
+        "label": "TMP Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -994,7 +994,7 @@
       {
         "address": 40107,
         "name": "status_code",
-        "label": "Status Code",
+        "label": "Operating State",
         "unit": "",
         "data_type": "uint16",
         "register_type": "holding",
@@ -1019,7 +1019,7 @@
       {
         "address": 40108,
         "name": "status_vendor",
-        "label": "Status Vendor",
+        "label": "Vendor State",
         "unit": "",
         "data_type": "uint16",
         "register_type": "holding",
@@ -1044,7 +1044,7 @@
       {
         "address": 40109,
         "name": "evt1",
-        "label": "Evt1",
+        "label": "Event Flags 1",
         "unit": "",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1069,7 +1069,7 @@
       {
         "address": 40111,
         "name": "evt2",
-        "label": "Evt2",
+        "label": "Event Flags 2",
         "unit": "",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1094,7 +1094,7 @@
       {
         "address": 40113,
         "name": "evt_vnd1",
-        "label": "Evt Vnd1",
+        "label": "Vendor Event Flags 1",
         "unit": "",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1119,7 +1119,7 @@
       {
         "address": 40115,
         "name": "evt_vnd2",
-        "label": "Evt Vnd2",
+        "label": "Vendor Event Flags 2",
         "unit": "",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1144,7 +1144,7 @@
       {
         "address": 40117,
         "name": "evt_vnd3",
-        "label": "Evt Vnd3",
+        "label": "Vendor Event Flags 3",
         "unit": "",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1169,7 +1169,7 @@
       {
         "address": 40119,
         "name": "evt_vnd4",
-        "label": "Evt Vnd4",
+        "label": "Vendor Event Flags 4",
         "unit": "",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1194,7 +1194,7 @@
       {
         "address": 40255,
         "name": "dca_mppt_sf",
-        "label": "DCA_MPPT SF",
+        "label": "DCA MPPT Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -1220,7 +1220,7 @@
       {
         "address": 40256,
         "name": "dcv_mppt_sf",
-        "label": "DCV_MPPT SF",
+        "label": "DCV MPPT Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -1246,7 +1246,7 @@
       {
         "address": 40257,
         "name": "dcw_mppt_sf",
-        "label": "DCW_MPPT SF",
+        "label": "DCW MPPT Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -1272,7 +1272,7 @@
       {
         "address": 40258,
         "name": "dcwh_mppt_sf",
-        "label": "DCWH_MPPT SF",
+        "label": "DCWH MPPT Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -1298,7 +1298,7 @@
       {
         "address": 40261,
         "name": "mppt_num_modules",
-        "label": "Mppt Num Modules",
+        "label": "MPPT Modules",
         "unit": "",
         "data_type": "uint16",
         "register_type": "holding",
@@ -1323,7 +1323,7 @@
       {
         "address": 40272,
         "name": "mppt1_dc_current",
-        "label": "Mppt1 Dc Current",
+        "label": "MPPT String 1 DC Current",
         "unit": "A",
         "data_type": "uint16",
         "register_type": "holding",
@@ -1350,7 +1350,7 @@
       {
         "address": 40273,
         "name": "mppt1_dc_voltage",
-        "label": "Mppt1 Dc Voltage",
+        "label": "MPPT String 1 DC Voltage",
         "unit": "V",
         "data_type": "uint16",
         "register_type": "holding",
@@ -1377,7 +1377,7 @@
       {
         "address": 40274,
         "name": "mppt1_dc_power",
-        "label": "Mppt1 Dc Power",
+        "label": "MPPT String 1 DC Power",
         "unit": "W",
         "data_type": "uint16",
         "register_type": "holding",
@@ -1404,7 +1404,7 @@
       {
         "address": 40275,
         "name": "mppt1_dc_energy",
-        "label": "Mppt1 Dc Energy",
+        "label": "MPPT String 1 DC Energy",
         "unit": "Wh",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1432,7 +1432,7 @@
       {
         "address": 40279,
         "name": "mppt1_temperature",
-        "label": "Mppt1 Temperature",
+        "label": "MPPT String 1 Temperature",
         "unit": "°C",
         "data_type": "int16",
         "register_type": "holding",
@@ -1458,7 +1458,7 @@
       {
         "address": 40292,
         "name": "mppt2_dc_current",
-        "label": "Mppt2 Dc Current",
+        "label": "MPPT String 2 DC Current",
         "unit": "A",
         "data_type": "uint16",
         "register_type": "holding",
@@ -1485,7 +1485,7 @@
       {
         "address": 40293,
         "name": "mppt2_dc_voltage",
-        "label": "Mppt2 Dc Voltage",
+        "label": "MPPT String 2 DC Voltage",
         "unit": "V",
         "data_type": "uint16",
         "register_type": "holding",
@@ -1512,7 +1512,7 @@
       {
         "address": 40294,
         "name": "mppt2_dc_power",
-        "label": "Mppt2 Dc Power",
+        "label": "MPPT String 2 DC Power",
         "unit": "W",
         "data_type": "uint16",
         "register_type": "holding",
@@ -1539,7 +1539,7 @@
       {
         "address": 40295,
         "name": "mppt2_dc_energy",
-        "label": "Mppt2 Dc Energy",
+        "label": "MPPT String 2 DC Energy",
         "unit": "Wh",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1567,7 +1567,7 @@
       {
         "address": 40299,
         "name": "mppt2_temperature",
-        "label": "Mppt2 Temperature",
+        "label": "MPPT String 2 Temperature",
         "unit": "°C",
         "data_type": "int16",
         "register_type": "holding",

@@ -1094,5 +1094,6 @@
   "devices.plantUnit.intro": "Acest dispozitiv este o unitate a unei centrale — conexiunea, template-ul și rutarea se definesc o singură dată pe centrală și se aplică fiecărei unități.",
   "devices.plantUnit.editPlant": "Editează centrala",
   "devices.plantUnit.perUnit": "Per unitate: selecția de măsurători (tab-ul Measurements) și intervalele de citire de mai jos rămân editabile doar pe ACEASTĂ unitate.",
-  "devices.plantUnit.outputs": "Rutarea ieșirilor se definește pe centrală (cu substituție per unitate) și se aplică fiecărei unități:"
+  "devices.plantUnit.outputs": "Rutarea ieșirilor se definește pe centrală (cu substituție per unitate) și se aplică fiecărei unități:",
+  "devices.disabled": "dezactivat"
 }

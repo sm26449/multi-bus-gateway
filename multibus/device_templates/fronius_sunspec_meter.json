@@ -87,7 +87,7 @@
       {
         "address": 40072,
         "name": "current_a",
-        "label": "Current A",
+        "label": "Current L1",
         "unit": "A",
         "data_type": "int16",
         "register_type": "holding",
@@ -114,7 +114,7 @@
       {
         "address": 40073,
         "name": "current_b",
-        "label": "Current B",
+        "label": "Current L2",
         "unit": "A",
         "data_type": "int16",
         "register_type": "holding",
@@ -141,7 +141,7 @@
       {
         "address": 40074,
         "name": "current_c",
-        "label": "Current C",
+        "label": "Current L3",
         "unit": "A",
         "data_type": "int16",
         "register_type": "holding",
@@ -168,7 +168,7 @@
       {
         "address": 40075,
         "name": "a_sf",
-        "label": "A SF",
+        "label": "A Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -194,7 +194,7 @@
       {
         "address": 40076,
         "name": "voltage_ln_avg",
-        "label": "Voltage Ln Avg",
+        "label": "Voltage L-N Average",
         "unit": "V",
         "data_type": "int16",
         "register_type": "holding",
@@ -221,7 +221,7 @@
       {
         "address": 40077,
         "name": "voltage_an",
-        "label": "Voltage An",
+        "label": "Voltage L1-N",
         "unit": "V",
         "data_type": "int16",
         "register_type": "holding",
@@ -248,7 +248,7 @@
       {
         "address": 40078,
         "name": "voltage_bn",
-        "label": "Voltage Bn",
+        "label": "Voltage L2-N",
         "unit": "V",
         "data_type": "int16",
         "register_type": "holding",
@@ -275,7 +275,7 @@
       {
         "address": 40079,
         "name": "voltage_cn",
-        "label": "Voltage Cn",
+        "label": "Voltage L3-N",
         "unit": "V",
         "data_type": "int16",
         "register_type": "holding",
@@ -302,7 +302,7 @@
       {
         "address": 40080,
         "name": "voltage_ll_avg",
-        "label": "Voltage Ll Avg",
+        "label": "Voltage L-L Average",
         "unit": "V",
         "data_type": "int16",
         "register_type": "holding",
@@ -329,7 +329,7 @@
       {
         "address": 40081,
         "name": "voltage_ab",
-        "label": "Voltage Ab",
+        "label": "Voltage L1-L2",
         "unit": "V",
         "data_type": "int16",
         "register_type": "holding",
@@ -356,7 +356,7 @@
       {
         "address": 40082,
         "name": "voltage_bc",
-        "label": "Voltage Bc",
+        "label": "Voltage L2-L3",
         "unit": "V",
         "data_type": "int16",
         "register_type": "holding",
@@ -383,7 +383,7 @@
       {
         "address": 40083,
         "name": "voltage_ca",
-        "label": "Voltage Ca",
+        "label": "Voltage L3-L1",
         "unit": "V",
         "data_type": "int16",
         "register_type": "holding",
@@ -410,7 +410,7 @@
       {
         "address": 40084,
         "name": "v_sf",
-        "label": "V SF",
+        "label": "V Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -463,7 +463,7 @@
       {
         "address": 40086,
         "name": "hz_sf",
-        "label": "HZ SF",
+        "label": "HZ Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -489,7 +489,7 @@
       {
         "address": 40087,
         "name": "power_total",
-        "label": "Power Total",
+        "label": "Active Power Total",
         "unit": "W",
         "data_type": "int16",
         "register_type": "holding",
@@ -516,7 +516,7 @@
       {
         "address": 40088,
         "name": "power_a",
-        "label": "Power A",
+        "label": "Active Power L1",
         "unit": "W",
         "data_type": "int16",
         "register_type": "holding",
@@ -543,7 +543,7 @@
       {
         "address": 40089,
         "name": "power_b",
-        "label": "Power B",
+        "label": "Active Power L2",
         "unit": "W",
         "data_type": "int16",
         "register_type": "holding",
@@ -570,7 +570,7 @@
       {
         "address": 40090,
         "name": "power_c",
-        "label": "Power C",
+        "label": "Active Power L3",
         "unit": "W",
         "data_type": "int16",
         "register_type": "holding",
@@ -597,7 +597,7 @@
       {
         "address": 40091,
         "name": "w_sf",
-        "label": "W SF",
+        "label": "W Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -623,7 +623,7 @@
       {
         "address": 40092,
         "name": "va_total",
-        "label": "Va Total",
+        "label": "Apparent Power Total",
         "unit": "VA",
         "data_type": "int16",
         "register_type": "holding",
@@ -650,7 +650,7 @@
       {
         "address": 40093,
         "name": "va_a",
-        "label": "Va A",
+        "label": "Apparent Power L1",
         "unit": "VA",
         "data_type": "int16",
         "register_type": "holding",
@@ -677,7 +677,7 @@
       {
         "address": 40094,
         "name": "va_b",
-        "label": "Va B",
+        "label": "Apparent Power L2",
         "unit": "VA",
         "data_type": "int16",
         "register_type": "holding",
@@ -704,7 +704,7 @@
       {
         "address": 40095,
         "name": "va_c",
-        "label": "Va C",
+        "label": "Apparent Power L3",
         "unit": "VA",
         "data_type": "int16",
         "register_type": "holding",
@@ -731,7 +731,7 @@
       {
         "address": 40096,
         "name": "va_sf",
-        "label": "VA SF",
+        "label": "VA Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -757,7 +757,7 @@
       {
         "address": 40097,
         "name": "var_total",
-        "label": "Var Total",
+        "label": "Reactive Power Total",
         "unit": "var",
         "data_type": "int16",
         "register_type": "holding",
@@ -784,7 +784,7 @@
       {
         "address": 40098,
         "name": "var_a",
-        "label": "Var A",
+        "label": "Reactive Power L1",
         "unit": "var",
         "data_type": "int16",
         "register_type": "holding",
@@ -811,7 +811,7 @@
       {
         "address": 40099,
         "name": "var_b",
-        "label": "Var B",
+        "label": "Reactive Power L2",
         "unit": "var",
         "data_type": "int16",
         "register_type": "holding",
@@ -838,7 +838,7 @@
       {
         "address": 40100,
         "name": "var_c",
-        "label": "Var C",
+        "label": "Reactive Power L3",
         "unit": "var",
         "data_type": "int16",
         "register_type": "holding",
@@ -865,7 +865,7 @@
       {
         "address": 40101,
         "name": "var_sf",
-        "label": "VAR SF",
+        "label": "VAR Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -891,7 +891,7 @@
       {
         "address": 40102,
         "name": "pf_avg",
-        "label": "Pf Avg",
+        "label": "Power Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -918,7 +918,7 @@
       {
         "address": 40103,
         "name": "pf_a",
-        "label": "Pf A",
+        "label": "Power Factor L1",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -945,7 +945,7 @@
       {
         "address": 40104,
         "name": "pf_b",
-        "label": "Pf B",
+        "label": "Power Factor L2",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -972,7 +972,7 @@
       {
         "address": 40105,
         "name": "pf_c",
-        "label": "Pf C",
+        "label": "Power Factor L3",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -999,7 +999,7 @@
       {
         "address": 40106,
         "name": "pf_sf",
-        "label": "PF SF",
+        "label": "PF Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -1053,7 +1053,7 @@
       {
         "address": 40109,
         "name": "energy_exported_a",
-        "label": "Energy Exported A",
+        "label": "Energy Exported L1",
         "unit": "Wh",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1081,7 +1081,7 @@
       {
         "address": 40111,
         "name": "energy_exported_b",
-        "label": "Energy Exported B",
+        "label": "Energy Exported L2",
         "unit": "Wh",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1109,7 +1109,7 @@
       {
         "address": 40113,
         "name": "energy_exported_c",
-        "label": "Energy Exported C",
+        "label": "Energy Exported L3",
         "unit": "Wh",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1165,7 +1165,7 @@
       {
         "address": 40117,
         "name": "energy_imported_a",
-        "label": "Energy Imported A",
+        "label": "Energy Imported L1",
         "unit": "Wh",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1193,7 +1193,7 @@
       {
         "address": 40119,
         "name": "energy_imported_b",
-        "label": "Energy Imported B",
+        "label": "Energy Imported L2",
         "unit": "Wh",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1221,7 +1221,7 @@
       {
         "address": 40121,
         "name": "energy_imported_c",
-        "label": "Energy Imported C",
+        "label": "Energy Imported L3",
         "unit": "Wh",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1249,7 +1249,7 @@
       {
         "address": 40123,
         "name": "wh_sf",
-        "label": "WH SF",
+        "label": "WH Scale Factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",

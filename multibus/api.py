@@ -2001,11 +2001,17 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     @app.get("/api/devices/{device_id}/poll-groups")
     def get_device_poll_groups(device_id: str):
-        """Current poll-group intervals for a device (from its registers file)."""
+        """Current poll-group intervals for a device (from its registers file).
+        Only groups the device's registers actually USE are returned — the
+        merged global groups (e.g. the primary's 0.25 s realtime) used to show
+        on every device and read as if the device polled at that rate."""
         _i, dev_cfg, _c = _find_device(device_id)
         if dev_cfg is None:
             raise HTTPException(status_code=404, detail="device not found")
-        _regs, groups = config.load_device_registers(dev_cfg)
+        regs, groups = config.load_device_registers(dev_cfg)
+        used = {r.poll_group or 'normal' for r in regs}
+        if used:                       # no registers yet → show all (seed view)
+            groups = {n: g for n, g in groups.items() if n in used}
         return {"device": device_id, "poll_groups": {
             n: {"interval": g.interval, "description": g.description} for n, g in groups.items()}}
 
