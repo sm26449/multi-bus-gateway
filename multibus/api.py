@@ -24,7 +24,7 @@ import os
 import re
 import threading
 import time
-from typing import Dict, Optional, Set
+from typing import Dict, List, Optional, Set
 from datetime import datetime
 from contextlib import asynccontextmanager
 
@@ -36,7 +36,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import __version__
 from .mqtt_publisher import MQTTPublisher
 from .influxdb_publisher import InfluxDBPublisher
-from .canonical_fields import mqtt_topic_for, measurement_for
 
 logger = logging.getLogger(__name__)
 
@@ -1520,86 +1519,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         return raw
 
     def _autoselect_template_registers(dev_cfg):
-        """Seed a new device with ALL of its template's registers (poll groups +
-        intervals from the template) so it polls immediately — no manual picking.
-        Skips if it already has a selection or has no template."""
-        if not dev_cfg.template or dev_cfg.primary:
-            return
-        tpl = template_registry.get(dev_cfg.template)
-        if tpl is None or not tpl.registers:
-            return
-        existing, _g = config.load_device_registers(dev_cfg)
-        if existing:
-            # A kept file from a PREVIOUS device at this id may belong to a
-            # different template — reusing it would decode against the wrong
-            # map. Keep it only if it still fits (any selected name is in the
-            # assigned template); otherwise fall through and re-seed.
-            tpl_names = {r.name for r in tpl.registers}
-            if any(getattr(r, 'name', None) in tpl_names for r in existing):
-                return
-            logger.warning(f"device {dev_cfg.id}: kept registers don't match "
-                           f"template {tpl.id} — re-seeding from the template")
-        # Curated templates mark a recommended subset via per-register `defaults`
-        # (the Janitza map has 58 of 4126) — seed only those. A template without
-        # defaults is seeded whole, but capped so a huge map can't flood
-        # MQTT/InfluxDB with thousands of series on a single click.
-        chosen = [r for r in tpl.registers if r.defaults]
-        if not chosen:
-            chosen = tpl.registers
-            if len(chosen) > 300:
-                logger.warning(f"device {dev_cfg.id}: template {tpl.id} has "
-                               f"{len(chosen)} registers and no curated defaults — "
-                               "auto-selecting none (pick registers in the UI)")
-                return
-
-        def _seed_output(r):
-            """MQTT topic + InfluxDB measurement + UI for a seeded register.
-            Precedence: the template's explicit per-register ``defaults`` win;
-            else derive from the canonical dictionary (name → hierarchical MQTT
-            topic + InfluxDB measurement). A non-canonical name (e.g. a raw
-            vendor map) leaves BOTH empty so the publisher owns the fallback
-            uniformly — MQTT to the flat register name, InfluxDB to the
-            name/unit heuristic in ``_get_measurement`` — instead of pinning the
-            measurement to the raw ``category`` (often 'other'), which would
-            shadow that heuristic and collapse every series into one measurement."""
-            d = r.defaults or {}
-            dm, di, du = d.get('mqtt') or {}, d.get('influxdb') or {}, d.get('ui') or {}
-            return {
-                'mqtt': {'enabled': dm.get('enabled', True),
-                         'topic': dm.get('topic') or mqtt_topic_for(r.name) or ''},
-                'influxdb': {'enabled': di.get('enabled', True),
-                             'measurement': (di.get('measurement')
-                                             or measurement_for(r.name) or ''),
-                             'tags': di.get('tags') or {}},
-                'ui': {'show_on_dashboard': du.get('show_on_dashboard', True),
-                       'widget': du.get('widget', 'value')},
-            }
-
-        reg_list = [{
-            'address': r.address, 'name': r.name, 'label': r.label or r.name,
-            'unit': r.unit, 'data_type': r.data_type,
-            'poll_group': r.poll_group or 'normal', 'json_path': r.json_path,
-            'topic': getattr(r, 'topic', ''), 'scale': r.scale,
-            **({'offset': r.offset} if getattr(r, 'offset', 0) else {}),
-            **({'scale_from': r.scale_from} if getattr(r, 'scale_from', '') else {}),
-            'register_type': getattr(r, 'register_type', 'holding'),
-            **({'nan': r.nan} if getattr(r, 'nan', None) is not None else {}),
-            **({'monotonic': True} if getattr(r, 'monotonic', False) else {}),
-            **{k: getattr(r, k) for k in ('enum', 'bits', 'mask', 'shift')
-               if getattr(r, k, None) is not None},
-            **{k: getattr(r, k) for k in
-               ('device_class', 'state_class', 'entity_category', 'icon')
-               if getattr(r, k, '')},
-            **({'enabled_by_default': r.enabled_by_default}
-               if getattr(r, 'enabled_by_default', None) is not None else {}),
-            **({'suggested_display_precision': r.suggested_display_precision}
-               if getattr(r, 'suggested_display_precision', None) is not None else {}),
-            **_seed_output(r),
-        } for r in chosen]
-        tpg = {n: {'interval': g.get('interval', 5), 'description': g.get('description', '')}
-               for n, g in (tpl.poll_groups or {}).items()} or None
-        config.save_device_registers(dev_cfg.id, reg_list, poll_groups=tpg)
-        logger.info(f"device {dev_cfg.id}: auto-selected {len(reg_list)} template registers")
+        """Seed a new device with its template's registers — extracted to
+        device_seed.py so the boot path (plant units) uses the same logic."""
+        from .device_seed import autoselect_template_registers
+        autoselect_template_registers(config, template_registry, dev_cfg)
 
     def _ensure_device_bucket(dev_cfg):
         """Auto-create the device's InfluxDB bucket (off-thread) so its history/
@@ -2117,45 +2040,37 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 target.reload_registers()
         return {"status": "ok", "device": device_id, "poll_groups": clean}
 
-    @app.delete("/api/devices/{device_id}")
-    @_serialized_mutation
-    def delete_device(device_id: str):
-        """Delete a non-primary device (its selected-registers file is kept
-        on disk for safety)."""
-        idx, dev_cfg, client = _find_device(device_id)
-        if dev_cfg is None:
-            raise HTTPException(status_code=404, detail="device not found")
-        if dev_cfg.primary:
-            raise HTTPException(status_code=422, detail={"errors": [
-                "the primary device cannot be deleted"]})
-        # A virtual meter sourcing from this device would go permanently stale
-        # (fail-safe, but confusing) — make the dependency explicit instead.
-        # Covers both the instance-level source device AND composite templates
-        # with explicit `<device_id>.<register>` rows.
+    def _vmeter_users_of(device_id: str) -> set:
+        """Virtual-meter templates that source from a device — deleting the
+        device would leave them permanently stale. Covers the instance-level
+        source device AND composite templates with `<device_id>.<register>`
+        rows."""
         mgr = getattr(app.state, "vmeter_manager", None)
-        if mgr is not None:
-            users = set()
-            for i in mgr._load_cfg().get("instances", []):
-                tid = i.get("template")
-                if i.get("device") == device_id:
-                    users.add(tid)
-                    continue
-                try:
-                    from .virtual_meter import load_template as _lt
-                    t = _lt(str(mgr.templates_dir / f"{tid}.yaml"))
-                    pref = device_id + "."
-                    for r in t.registers:
-                        srcs = (r.source if isinstance(r.source, list) else [r.source])
-                        if r.source_kind in ("live", "sum") and any(
-                                isinstance(s, str) and s.startswith(pref) for s in srcs):
-                            users.add(tid)
-                            break
-                except Exception:  # noqa: BLE001 — a broken template must not block deletes
-                    pass
-            if users:
-                raise HTTPException(status_code=422, detail={"errors": [
-                    f"device is the source of virtual meter(s): {', '.join(sorted(users))} — "
-                    "delete or re-point them first"]})
+        users: set = set()
+        if mgr is None:
+            return users
+        for i in mgr._load_cfg().get("instances", []):
+            tid = i.get("template")
+            if i.get("device") == device_id:
+                users.add(tid)
+                continue
+            try:
+                from .virtual_meter import load_template as _lt
+                t = _lt(str(mgr.templates_dir / f"{tid}.yaml"))
+                pref = device_id + "."
+                for r in t.registers:
+                    srcs = (r.source if isinstance(r.source, list) else [r.source])
+                    if r.source_kind in ("live", "sum") and any(
+                            isinstance(s, str) and s.startswith(pref) for s in srcs):
+                        users.add(tid)
+                        break
+            except Exception:  # noqa: BLE001 — a broken template must not block deletes
+                pass
+        return users
+
+    def _teardown_device(device_id: str, dev_cfg, client) -> None:
+        """Stop a device's runtime side effects before it is removed: client,
+        REST pusher, dead-man leases, retained HA discovery."""
         if client:
             client.disconnect()
         rest_push_manager.apply(device_id, {'enabled': False}, lambda: {})  # stop pusher
@@ -2174,6 +2089,30 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                         "", retain=True)          # empty retained payload = delete
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"clearing discovery for {device_id} failed: {e}")
+
+    @app.delete("/api/devices/{device_id}")
+    @_serialized_mutation
+    def delete_device(device_id: str):
+        """Delete a non-primary device (its selected-registers file is kept
+        on disk for safety)."""
+        idx, dev_cfg, client = _find_device(device_id)
+        if dev_cfg is None:
+            raise HTTPException(status_code=404, detail="device not found")
+        if dev_cfg.primary:
+            raise HTTPException(status_code=422, detail={"errors": [
+                "the primary device cannot be deleted"]})
+        if dev_cfg.plant_id:
+            raise HTTPException(status_code=422, detail={"errors": [
+                f"device '{device_id}' is materialized from plant "
+                f"'{dev_cfg.plant_id}' — edit or delete the plant instead"]})
+        # A virtual meter sourcing from this device would go permanently stale
+        # (fail-safe, but confusing) — make the dependency explicit instead.
+        users = _vmeter_users_of(device_id)
+        if users:
+            raise HTTPException(status_code=422, detail={"errors": [
+                f"device is the source of virtual meter(s): {', '.join(sorted(users))} — "
+                "delete or re-point them first"]})
+        _teardown_device(device_id, dev_cfg, client)
         config.remove_raw_device(device_id)
         # re-resolve by id (idx may be stale after a concurrent mutation);
         # drops the pair AND its value store in one atomic step
@@ -2181,6 +2120,189 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         _sync_device_discovery()
         logger.info(f"device {device_id}: deleted")
         return {"status": "deleted"}
+
+    # ── plants: one template × N unit ids behind one endpoint ──────────────
+    # A plant materializes into N ordinary devices (own socket each — unit-
+    # switching on a shared socket corrupts some gateway buffers, and units
+    # must fail independently). The devices are managed THROUGH the plant:
+    # device CRUD refuses them; edit/delete the plant instead.
+
+    def _plant_entry(p: Dict) -> Dict:
+        pid = p.get('id')
+        units = []
+        for dev in config.plant_devices(pid):
+            _i, _cfg, client = registry.find(dev.id)
+            units.append({
+                'unit_id': dev.connection.unit_id,
+                'device_id': dev.id,
+                'name': dev.name,
+                'enabled': dev.enabled,
+                'running': client is not None,
+                'connected': bool(getattr(client, 'connected', False)),
+            })
+        return {'id': pid, 'name': p.get('name') or pid,
+                'template': p.get('template', ''),
+                'enabled': bool(p.get('enabled', True)),
+                'connection': dict(p.get('connection', {}) or {}),
+                'mqtt': dict(p.get('mqtt', {}) or {}),
+                'influxdb': dict(p.get('influxdb', {}) or {}),
+                'units': units,
+                'online_units': sum(1 for u in units if u['connected']),
+                'total_units': len(units)}
+
+    def _validate_plant_payload(payload: Dict, *, existing_id: str = None) -> Dict:
+        """Normalize + validate a raw plant dict. Raises HTTPException(422)
+        with a per-field error list."""
+        errors = []
+        pid = str(payload.get('id', existing_id or '')).strip().lower()
+        if not _DEVICE_ID_RE.match(pid):
+            errors.append("id: use a-z 0-9 - _ (2-64 chars, starts alphanumeric)")
+        if existing_id and pid != existing_id:
+            errors.append("id: cannot be changed after creation")
+        if not existing_id and (config.get_raw_plant(pid) is not None
+                                or registry.has(pid)):
+            errors.append(f"id: '{pid}' already exists")
+        conn = payload.get('connection', {}) or {}
+        protocol = str(conn.get('protocol', 'tcp')).lower()
+        if protocol not in ('tcp', 'rtu-tcp'):
+            # plain RTU shares one serial line across masters — the same
+            # one-master-per-line rule the device CRUD enforces; multi-drop
+            # RTU plants need the shared-bus arbiter (Tier 3) first.
+            errors.append("connection.protocol: must be 'tcp' or 'rtu-tcp'")
+        if not str(conn.get('host', '')).strip():
+            errors.append("connection.host: required")
+        try:
+            port = int(conn.get('port', 502))
+            if not (1 <= port <= 65535):
+                raise ValueError
+        except (TypeError, ValueError):
+            errors.append("connection.port: must be 1..65535")
+        template_id = str(payload.get('template', '')).strip()
+        if template_id and template_registry.get(template_id) is None:
+            errors.append(f"template: '{template_id}' not found")
+        probe = {'id': pid, 'units': payload.get('units')}
+        units = config._plant_units(probe)
+        if not units:
+            errors.append("units: at least one valid unit id (0..255) is required")
+        seen_uids, seen_ids = set(), set()
+        for u in units:
+            if u['unit_id'] in seen_uids:
+                errors.append(f"units: duplicate unit_id {u['unit_id']}")
+            seen_uids.add(u['unit_id'])
+            if not _DEVICE_ID_RE.match(u['id']):
+                errors.append(f"units: id '{u['id']}' is invalid")
+            if u['id'] in seen_ids:
+                errors.append(f"units: duplicate device id '{u['id']}'")
+            seen_ids.add(u['id'])
+            ex = config.get_device(u['id'])
+            if ex is not None and ex.plant_id != pid:
+                errors.append(f"units: id '{u['id']}' collides with an "
+                              f"existing device")
+        if errors:
+            raise HTTPException(status_code=422, detail={"errors": errors})
+        raw = {
+            'id': pid,
+            'name': str(payload.get('name', '') or pid),
+            'template': template_id,
+            'enabled': bool(payload.get('enabled', True)),
+            'connection': conn,
+            'units': payload.get('units'),
+        }
+        for opt in ('mqtt', 'influxdb'):
+            if payload.get(opt):
+                raw[opt] = dict(payload[opt])
+        return raw
+
+    def _stop_plant_devices(pid: str) -> None:
+        """Disconnect + deregister every materialized device of a plant."""
+        for dev in config.plant_devices(pid):
+            _i, _cfg, client = registry.find(dev.id)
+            _teardown_device(dev.id, dev, client)
+            registry.remove(dev.id)
+
+    def _start_plant_devices(made) -> List[Dict]:
+        """Seed + bucket + start + register each materialized device."""
+        out = []
+        for dev_cfg in made:
+            _autoselect_template_registers(dev_cfg)
+            _ensure_device_bucket(dev_cfg)
+            client = _start_device_client(dev_cfg)
+            registry.add(dev_cfg, client)
+            out.append(_device_entry(dev_cfg, client))
+        return out
+
+    @app.get("/api/plants")
+    def list_plants():
+        """All plants with their materialized units and live status."""
+        return {"plants": [_plant_entry(p) for p in config.plants]}
+
+    @app.get("/api/plants/{plant_id}")
+    def get_plant(plant_id: str):
+        p = config.get_raw_plant(plant_id)
+        if p is None:
+            raise HTTPException(status_code=404, detail="plant not found")
+        return _plant_entry(p)
+
+    @app.post("/api/plants")
+    @_serialized_mutation
+    def create_plant(payload: Dict = Body(...)):
+        """Create a plant: validate → persist → materialize N devices, seed
+        each from the template and hot-start their pollers (no restart)."""
+        raw = _validate_plant_payload(payload)
+        try:
+            made = config.upsert_raw_plant(raw)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+        devices_out = _start_plant_devices(made)
+        _sync_device_discovery()
+        logger.info(f"plant {raw['id']}: created with "
+                    f"{len(made)} unit(s) (template={raw['template'] or '—'})")
+        return {"status": "created", "plant": _plant_entry(raw),
+                "devices": devices_out}
+
+    @app.put("/api/plants/{plant_id}")
+    @_serialized_mutation
+    def update_plant(plant_id: str, payload: Dict = Body(...)):
+        """Update a plant: stop its current units, re-materialize from the new
+        definition and start the new set."""
+        if config.get_raw_plant(plant_id) is None:
+            raise HTTPException(status_code=404, detail="plant not found")
+        raw = _validate_plant_payload(payload, existing_id=plant_id)
+        _stop_plant_devices(plant_id)
+        try:
+            made = config.upsert_raw_plant(raw)
+        except ValueError as e:
+            # config restored the previous definition — restart its units so
+            # a failed edit doesn't leave the plant stopped
+            _start_plant_devices(config.plant_devices(plant_id))
+            raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+        devices_out = _start_plant_devices(made)
+        _sync_device_discovery()
+        logger.info(f"plant {plant_id}: updated ({len(made)} unit(s))")
+        return {"status": "updated", "plant": _plant_entry(raw),
+                "devices": devices_out}
+
+    @app.delete("/api/plants/{plant_id}")
+    @_serialized_mutation
+    def delete_plant(plant_id: str):
+        """Delete a plant and stop all its units (their register files are
+        kept on disk, so re-adding the plant restores the selection)."""
+        if config.get_raw_plant(plant_id) is None:
+            raise HTTPException(status_code=404, detail="plant not found")
+        used = {u for d in config.plant_devices(plant_id)
+                for u in _vmeter_users_of(d.id)}
+        if used:
+            raise HTTPException(status_code=422, detail={"errors": [
+                f"plant units feed virtual meter(s): {', '.join(sorted(used))} — "
+                "delete or re-point them first"]})
+        _stop_plant_devices(plant_id)
+        try:
+            removed = config.delete_plant(plant_id)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        _sync_device_discovery()
+        logger.info(f"plant {plant_id}: deleted ({len(removed)} unit(s))")
+        return {"status": "deleted", "removed_devices": removed}
 
     def _modbus_probe(conn: Dict, unit_id: int, timeout: float,
                       address: int = 0) -> Dict:

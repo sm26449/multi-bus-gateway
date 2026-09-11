@@ -319,6 +319,44 @@ devices:
 `rtu-tcp` speaks RTU framing over a TCP socket (a ser2net-style serial bridge);
 `rtu` opens a local serial port directly — see [rtu-serial.md](rtu-serial.md).
 
+### `plants:` — N units of the same device behind one endpoint
+
+A plant instantiates **one template** for **several unit IDs** on **one
+endpoint** — the classic case is several inverters behind a single
+datalogger/gateway (Fronius DataManager, Deye/Huawei loggers, an RS-485
+multi-drop bridge). Each unit is materialized as an ordinary device (visible
+in `/api/devices` and the UI) with its **own socket** — deliberate:
+unit-switching on a shared socket corrupts some gateway buffers, and units
+must fail independently. Materialized devices are managed **through the
+plant**: device create/edit/delete refuses their ids.
+
+```yaml
+plants:
+  - id: fronius                  # required; device ids default to <id>-u<unit>
+    name: Fronius PV
+    template: fronius_sunspec_inverter
+    enabled: true                # false = units stay listed but do not poll
+    connection:                  # shared by every unit (no unit_id here)
+      protocol: tcp              # tcp | rtu-tcp
+      host: 192.168.1.50
+      port: 502
+    units: [1, 2, 3, 4]          # bare ids, or {unit_id: 3, id: inv3, name: East roof}
+    mqtt:
+      topic_prefix: mbg/fronius/inverter/${unit_id}
+      ha_discovery: false
+    influxdb:
+      bucket: fronius_shadow
+      device_tag: inverter_${unit_id}
+```
+
+`${unit_id}`, `${plant_id}` and `${device_id}` substitute per unit in the
+topic prefix, bucket, device tag and name. Each unit's register selection is
+seeded from the template at boot (`devices/<id>/selected_registers.json`) and
+can then be tuned per unit like any device. API: `GET/POST /api/plants`,
+`GET/PUT/DELETE /api/plants/{id}` (unit availability is aggregated in the
+`GET` responses). Deleting a plant keeps the units' register files on disk,
+so re-adding it restores the selection.
+
 ### `alerts:` (opt-in)
 
 | Key | Default | Notes |
@@ -363,6 +401,7 @@ text decode) or (`scale` + `offset`) → `monotonic` filter → outputs.**
 | `register_type` | `holding` | `holding` (FC3), `input` (FC4), `coil` (FC1/FC5), `discrete` (FC2); aliases accepted (`fc4`, `ir`, `di`, …) |
 | `poll_group` | `normal` | which poll group reads it |
 | `scale` | `1.0` | **engineering = raw ÷ scale + offset** (SunSpec int+SF, transformer ratios) |
+| `scale_from` | `""` | **dynamic scale factor** (SunSpec `*_SF`): name of a sibling register whose raw value is a signed base-10 exponent — **engineering = raw × 10^SF**. Mutually exclusive with `scale`; no valid SF (missing, non-numeric, \|SF\| > 10) reads as *missing* rather than wrongly scaled; the poller prescans SF registers per batch and bridges gaps with the last good exponent |
 | `offset` | `0.0` | zero-point / unit shift, applied after scale |
 | `nan` | *(unset)* | not-available sentinel: `true` = the type's standard value (`0x8000`/`0xFFFF`/…), or a raw value, or a list; a match reads as *missing*, not data |
 | `monotonic` | `false` | cumulative counter (energy): a downward glitch is rejected so it never looks like a counter reset to consumers |

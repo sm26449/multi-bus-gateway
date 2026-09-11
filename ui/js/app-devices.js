@@ -62,6 +62,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const devices = await this._fetchDevices(true);
         this._renderRegDeviceSelectors();
         this._renderRestorableDevices();          // deleted-but-restorable list
+        this.renderPlantsList();                  // plants card (hidden when none)
         if (!devices.length) {
             el.innerHTML = `<span class="field-hint">${this.t('devices.none', 'No devices configured.')}</span>`;
             return;
@@ -87,9 +88,12 @@ Object.assign(JanitzaMonitor.prototype, {
                 `<button class="btn btn-ghost btn-sm" ${this._act('testDevice', [d.id], {el: true})} title="${this.t('devices.test', 'Test read')}"><i aria-hidden="true" class="bi bi-activity"></i></button>`,
             ];
             actions.push(`<button class="btn btn-ghost btn-sm" ${this._act('openDeviceDetail', [d.id])} title="${this.t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>`);
-            if (!d.primary) {
+            if (!d.primary && !d.plant_id) {
                 actions.push(`<button class="btn btn-ghost btn-sm" ${this._act('deleteDevice', [d.id])} title="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>`);
             }
+            const plantChip = d.plant_id
+                ? ` <span class="dev-chip" title="${this.t('devices.plantManaged', 'Managed through its plant — edit or delete the plant')}"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(d.plant_id)}</span>`
+                : '';
             // The row (outside its action buttons) opens the full-page detail;
             // data-guard keeps clicks inside the action-buttons cell from bubbling
             // into the row action, data-key-enter keeps Enter working on the div.
@@ -99,7 +103,7 @@ Object.assign(JanitzaMonitor.prototype, {
                       title="${this._esc(d.data_health || 'idle')}"></span>
                 <div class="device-row-main">
                     <div class="device-row-title">${this._esc(d.name || d.id)}
-                        <span class="dev-chip">${this._esc(d.id)}</span></div>
+                        <span class="dev-chip">${this._esc(d.id)}</span>${plantChip}</div>
                     <div class="device-row-sub">${proto} · unit ${d.unit_id}
                         · ${this._esc(d.template || '—')} · ${d.selected_registers ?? 0} ${this.t('devices.regsSelected', 'measurements')}</div>
                     <div class="device-row-routing">→ MQTT <code>${this._esc(d.mqtt_topic_prefix || '')}/…</code>

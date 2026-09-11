@@ -143,6 +143,19 @@ class GatewayApp:
         self.template_registry = TemplateRegistry(
             user_dir=self.config.config_path.parent / 'device_templates')
 
+        # Plant-materialized devices seed their register selection from the
+        # template at BOOT — the API's create path covers CRUD devices, but a
+        # plant can appear straight in config.yaml, and its units must poll
+        # from the first start (one template instantiated N times).
+        from multibus.device_seed import autoselect_template_registers
+        for device in self.config.devices:
+            if device.plant_id and device.enabled and device.template:
+                try:
+                    autoselect_template_registers(
+                        self.config, self.template_registry, device)
+                except Exception as e:  # noqa: BLE001 — seeding must not block boot
+                    logger.warning(f"device {device.id}: template seeding failed: {e}")
+
         for device in self.config.devices:
             if device.primary:
                 client = ModbusClient(

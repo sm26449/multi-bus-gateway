@@ -360,6 +360,9 @@
                                         <i aria-hidden="true" class="bi bi-search"></i> <span data-i18n="devices.discover">Discover devices</span></button>
                                     <button class="btn btn-ghost btn-sm" onclick="app.openBuilderDeploy()" data-i18n-title="tip.deployNode" title="Build firmware for a remote ESP32/ESP8266 RS485 reader and adopt it as a device">
                                         <i aria-hidden="true" class="bi bi-magic"></i> <span data-i18n="builder.deployNew">Deploy new device</span></button>
+                                    <button class="btn btn-ghost btn-sm" onclick="app.openPlantModal()" data-i18n-title="tip.addPlant" title="Add several units of the same device behind one endpoint (e.g. 4 inverters on one datalogger)">
+                                        <i aria-hidden="true" class="bi bi-diagram-3"></i> <span data-i18n="plants.add">Add Plant</span>
+                                    </button>
                                     <button class="btn btn-primary btn-sm" onclick="app.openDeviceWizard()">
                                         <i aria-hidden="true" class="bi bi-plus-lg"></i> <span data-i18n="devices.add">Add Device</span>
                                     </button>
@@ -367,6 +370,18 @@
                             </div>
                             <div class="settings-card-body">
                                 <div id="devicesList" class="devices-list"></div>
+                            </div>
+                        </div>
+
+                        <!-- Plants: one template × N unit ids behind one endpoint
+                             (hidden until at least one plant exists) -->
+                        <div class="settings-card devices-card" id="plantsCard" style="display:none;margin-top:16px;">
+                            <div class="settings-card-header">
+                                <h3><i aria-hidden="true" class="bi bi-diagram-3"></i> <span data-i18n="plants.title">Plants</span></h3>
+                            </div>
+                            <div class="settings-card-body">
+                                <p class="field-hint" style="margin:0 0 10px;" data-i18n="plants.hint">Several units of the same device behind one endpoint — each unit runs as its own device below, managed through the plant.</p>
+                                <div id="plantsList" class="devices-list"></div>
                             </div>
                         </div>
 
@@ -2122,6 +2137,24 @@
         </div>
     </div>
 
+    <!-- Add/Edit Plant -->
+    <div class="modal" id="plantModal">
+        <div class="modal-content modal-lg">
+            <div class="modal-header">
+                <h3><i aria-hidden="true" class="bi bi-diagram-3"></i> <span id="plantModalTitle" data-i18n="plants.titleAdd">Add Plant</span></h3>
+                <button class="modal-close" aria-label="Close" onclick="app.closeModal('plantModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="plantModalBody"></div>
+            </div>
+            <div class="modal-footer">
+                <span class="save-feedback" id="plantFeedback"></span>
+                <button class="btn btn-secondary btn-sm" onclick="app.closeModal('plantModal')"><span data-i18n="common.cancel">Cancel</span></button>
+                <button class="btn btn-primary btn-sm" onclick="app.savePlant()"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
+            </div>
+        </div>
+    </div>
+
     <!-- Energy fields picker -->
     <div class="modal" id="energyFieldsModal">
         <div class="modal-content">
@@ -2174,6 +2207,7 @@
     <script src="/static/js/app-powerquality.js?v=0"></script>
     <script src="/static/js/app-monitor.js?v=0"></script>
     <script src="/static/js/app-devices.js?v=0"></script>
+    <script src="/static/js/app-plants.js?v=0"></script>
     <script src="/static/js/app-calculated.js?v=0"></script>
     <script src="/static/js/app-wizard.js?v=0"></script>
     <script src="/static/js/app-settings.js?v=0"></script>

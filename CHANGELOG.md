@@ -1,5 +1,37 @@
 # Changelog
 
+## 3.40.0
+
+### 2026-09-11 — SunSpec dynamic scale factors + plants
+
+Two foundation features for SunSpec fleets (inverters behind a
+datalogger — Fronius today, Deye/Huawei tomorrow):
+
+**`scale_from` (dynamic scale factors).** A register can reference a
+sibling `*_SF` register whose raw value is a signed base-10 exponent:
+engineering = raw × 10^SF. The exponent is read live per batch (the SF
+conventionally sits at a higher address than its dependents, so the
+poller prescans it before decoding) and bridged across batches/cycles
+with the last good value. No valid SF → the value reads as MISSING —
+a wrongly-scaled reading is worse than no reading. `scale` and
+`scale_from` are mutually exclusive (template validation enforces it,
+including dangling referents). Verified against live hardware: a raw
+model-103 frame from each of 4 Fronius Symo units decodes identically
+to the dedicated SunSpec collector on every field (known delta:
+Fronius' out-of-spec power-factor scaling, handled at template level).
+
+**`plants:` (one template × N unit ids behind one endpoint).** A plant
+materializes N ordinary devices from one template + one connection +
+a list of unit ids — each with its OWN socket (unit-switching on a
+shared socket corrupts some gateway buffers, and units must fail
+independently). `${unit_id}`/`${plant_id}`/`${device_id}` substitute
+per unit in topic prefix, bucket, device tag and name. Units seed
+their register selection from the template at boot and are managed
+THROUGH the plant (device CRUD refuses them). New API:
+`GET/POST /api/plants`, `GET/PUT/DELETE /api/plants/{id}` with
+aggregated unit availability; new Plants card + Add Plant dialog in
+the Devices tab. Config reference documents both features.
+
 ## 3.39.1
 
 ### 2026-09-11 — virtual meters: idle-connection reaping (live-peer leak)

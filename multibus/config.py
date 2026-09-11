@@ -196,11 +196,14 @@ class DeviceConfig:
     http_output_enabled: bool = False        # serve this device's live values as JSON (GET /api/meters/<id>)
     rest_push: Dict[str, Any] = field(default_factory=dict)   # push values to a URL: {enabled,url,interval_s,headers,format,verify_tls,timeout}
     pq_recorder: Dict[str, Any] = field(default_factory=dict)  # Jasic PQ event recorder: {enabled,poll_s,archive_waveforms,base_url}
+    plant_id: str = ""    # non-empty → materialized from a `plants:` entry
+                          # (managed via the plant, not the device CRUD)
 
     def summary(self) -> Dict[str, Any]:
         return {
             'id': self.id, 'name': self.name, 'template': self.template,
             'enabled': self.enabled, 'primary': self.primary,
+            'plant_id': self.plant_id,
             'ha_discovery_enabled': self.ha_discovery_enabled,
             'mqtt_enabled': self.mqtt_enabled,
             'influxdb_enabled': self.influxdb_enabled,
@@ -472,6 +475,9 @@ class Config:
         self.all_registers: Dict = {}
         self.devices: List[DeviceConfig] = []
         self._raw_devices: List[Dict] = []
+        # Plants (one template + one endpoint + N unit ids → N materialized
+        # devices). Raw yaml-shaped list; expanded in _build_devices().
+        self._raw_plants: List[Dict] = []
         # HTTP/JSON output sink for the PRIMARY device (non-primary devices carry
         # their own flag in the raw `devices[]` list). Off by default — the
         # /api/meters/<id> endpoint is opt-in per device.
@@ -535,15 +541,39 @@ class Config:
             if did == PRIMARY_DEVICE_ID or any(x.id == did for x in devices):
                 logger.warning(f"devices[]: duplicate id {did!r} skipped")
                 continue
-            conn = d.get('connection', {}) or {}
-            mqtt_cfg = d.get('mqtt', {}) or {}
-            influx_cfg = d.get('influxdb', {}) or {}
-            http_out_cfg = d.get('http_output', {}) or {}
-            prefix = mqtt_cfg.get('topic_prefix', 'meters/${device_id}')
-            prefix = prefix.replace('${device_id}', did).replace('${id}', did)
-            try:
-              devices.append(DeviceConfig(
+            dev = self._device_from_raw(d)
+            if dev is not None:
+                devices.append(dev)
+        # Plants: one template + one endpoint + N unit ids → N materialized
+        # devices, each with its OWN socket. Deliberate: unit-switching on a
+        # shared socket corrupts some gateway buffers (Fronius DataManager),
+        # and independent sockets make units fail independently.
+        for pid, d in self._expand_plants():
+            did = str(d.get('id', '')).strip()
+            if did == PRIMARY_DEVICE_ID or any(x.id == did for x in devices):
+                logger.warning(f"plants[{pid}]: materialized id {did!r} "
+                               f"collides with an existing device — skipped")
+                continue
+            dev = self._device_from_raw(d, plant_id=pid)
+            if dev is not None:
+                devices.append(dev)
+        self.devices = devices
+
+    def _device_from_raw(self, d: Dict, plant_id: str = "") -> Optional[DeviceConfig]:
+        """Build ONE DeviceConfig from its raw yaml dict (a devices[] entry or
+        a plant-materialized dict). Returns None (with a warning) on invalid
+        values — a single malformed entry must not crash the whole boot."""
+        did = str(d.get('id', '')).strip()
+        conn = d.get('connection', {}) or {}
+        mqtt_cfg = d.get('mqtt', {}) or {}
+        influx_cfg = d.get('influxdb', {}) or {}
+        http_out_cfg = d.get('http_output', {}) or {}
+        prefix = mqtt_cfg.get('topic_prefix', 'meters/${device_id}')
+        prefix = prefix.replace('${device_id}', did).replace('${id}', did)
+        try:
+            return DeviceConfig(
                 id=did,
+                plant_id=plant_id,
                 name=d.get('name', did),
                 template=d.get('template', ''),
                 enabled=bool(d.get('enabled', True)),
@@ -584,13 +614,84 @@ class Config:
                 http_output_enabled=bool(http_out_cfg.get('enabled', False)),
                 rest_push=dict(d.get('rest_push', {}) or {}),
                 pq_recorder=dict(d.get('pq_recorder', {}) or {}),
-              ))
-            except (ValueError, TypeError) as e:
-                # A single malformed devices[] entry (e.g. port:"abc") must NOT
-                # crash the whole boot — including the primary's polling. Skip it,
-                # like the missing/duplicate-id skips above.
-                logger.warning(f"devices[]: skipping {did!r} — invalid config: {e}")
-        self.devices = devices
+            )
+        except (ValueError, TypeError) as e:
+            # A single malformed devices[] entry (e.g. port:"abc") must NOT
+            # crash the whole boot — including the primary's polling. Skip it,
+            # like the missing/duplicate-id skips above.
+            logger.warning(f"devices[]: skipping {did!r} — invalid config: {e}")
+            return None
+
+    @staticmethod
+    def _plant_units(p: Dict) -> List[Dict]:
+        """Normalize a plant's ``units`` list. Accepts bare unit ids
+        (``[1, 2, 3]``) or dicts (``{unit_id, id?, name?}``); returns
+        ``{unit_id, id, name}`` with the id defaulting to ``<plant>-u<unit>``.
+        Invalid entries are skipped with a warning."""
+        pid = str(p.get('id', '')).strip()
+        out: List[Dict] = []
+        for u in (p.get('units') or []):
+            raw_uid = u.get('unit_id') if isinstance(u, dict) else u
+            try:
+                uid = int(raw_uid)
+                if not (0 <= uid <= 255):
+                    raise ValueError
+            except (TypeError, ValueError):
+                logger.warning(f"plants[{pid}]: invalid unit {raw_uid!r} skipped")
+                continue
+            ov = u if isinstance(u, dict) else {}
+            out.append({'unit_id': uid,
+                        'id': str(ov.get('id') or f"{pid}-u{uid}").strip(),
+                        'name': str(ov.get('name') or '')})
+        return out
+
+    def _expand_plants(self) -> List[tuple]:
+        """Expand ``plants:`` into (plant_id, raw-device-dict) pairs, shaped
+        exactly like devices[] entries so both flow through _device_from_raw.
+        ``${unit_id}`` / ``${plant_id}`` / ``${device_id}`` substitute in the
+        MQTT topic prefix, InfluxDB bucket, device tag and name."""
+        out: List[tuple] = []
+        for p in self._raw_plants:
+            pid = str(p.get('id', '')).strip()
+            if not pid:
+                logger.warning("plants[]: entry without id skipped")
+                continue
+            # a disabled plant still materializes (units stay visible/managed);
+            # enabled=False propagates so no clients/pollers are started
+            conn = dict(p.get('connection', {}) or {})
+            mqtt_cfg = dict(p.get('mqtt', {}) or {})
+            influx_cfg = dict(p.get('influxdb', {}) or {})
+            seen_units: set = set()
+            for u in self._plant_units(p):
+                uid, did = u['unit_id'], u['id']
+                if uid in seen_units:
+                    logger.warning(f"plants[{pid}]: duplicate unit {uid} skipped")
+                    continue
+                seen_units.add(uid)
+
+                def sub(s: str) -> str:
+                    return (str(s).replace('${unit_id}', str(uid))
+                                  .replace('${plant_id}', pid)
+                                  .replace('${device_id}', did))
+
+                m = dict(mqtt_cfg)
+                if m.get('topic_prefix'):
+                    m['topic_prefix'] = sub(m['topic_prefix'])
+                i = dict(influx_cfg)
+                if i.get('bucket'):
+                    i['bucket'] = sub(i['bucket'])
+                if i.get('device_tag'):
+                    i['device_tag'] = sub(i['device_tag'])
+                out.append((pid, {
+                    'id': did,
+                    'name': u['name'] or f"{p.get('name') or pid} unit {uid}",
+                    'template': p.get('template', ''),
+                    'enabled': bool(p.get('enabled', True)),
+                    'connection': {**conn, 'unit_id': uid},
+                    'mqtt': m,
+                    'influxdb': i,
+                }))
+        return out
 
     def default_topic_prefix(self, device_id: str) -> str:
         """Resolve the default MQTT topic prefix for a NEW device from the
@@ -619,6 +720,10 @@ class Config:
         if did == PRIMARY_DEVICE_ID:
             raise ValueError(f"'{PRIMARY_DEVICE_ID}' is the primary device — "
                              "edit it via the Modbus settings")
+        _ex = self.get_device(did)
+        if _ex is not None and _ex.plant_id:
+            raise ValueError(f"device {did!r} is materialized from plant "
+                             f"{_ex.plant_id!r} — edit the plant instead")
         # Transactional: snapshot the raw list so a build/save failure restores
         # the PREVIOUS state exactly, instead of leaving the old entry deleted
         # (which a later unrelated save would then persist — the device would
@@ -750,6 +855,58 @@ class Config:
         if did in {d.id for d in self.devices} or did == PRIMARY_DEVICE_ID:
             raise ValueError("device is active — delete it first")
         return self._tombstones.forget(device_id)
+
+    # ── plants ─────────────────────────────────────────────────────────────
+
+    @property
+    def plants(self) -> List[Dict]:
+        """The raw ``plants:`` entries (yaml-shaped, copies)."""
+        return [dict(p) for p in self._raw_plants]
+
+    def get_raw_plant(self, plant_id: str) -> Optional[Dict]:
+        return next((dict(p) for p in self._raw_plants
+                     if p.get('id') == plant_id), None)
+
+    def plant_devices(self, plant_id: str) -> List[DeviceConfig]:
+        """The materialized DeviceConfigs of one plant, in units[] order."""
+        return [d for d in self.devices if d.plant_id == plant_id]
+
+    def upsert_raw_plant(self, raw: Dict) -> List[DeviceConfig]:
+        """Create or update a plant from its raw yaml-shaped dict, re-expand
+        the device list and persist. Returns the materialized DeviceConfigs.
+        Transactional — a build/save failure restores the previous state."""
+        pid = str(raw.get('id', '')).strip()
+        if not pid:
+            raise ValueError("plant id is required")
+        _snapshot = [dict(p) for p in self._raw_plants]
+        try:
+            self._raw_plants = ([p for p in self._raw_plants
+                                 if p.get('id') != pid] + [raw])
+            self._build_devices()
+            made = self.plant_devices(pid)
+            if not made:
+                raise ValueError(f"plant {pid!r} produced no devices — check "
+                                 "its units[] (valid unit ids 0..255, ids "
+                                 "must not collide with existing devices)")
+            self.save_yaml_config()
+            return made
+        except Exception:
+            self._raw_plants = _snapshot
+            self._build_devices()
+            raise
+
+    def delete_plant(self, plant_id: str) -> List[str]:
+        """Remove a plant; its materialized devices vanish on rebuild. Returns
+        the removed device ids (register files stay on disk for a re-add).
+        Raises ValueError when the plant does not exist."""
+        if self.get_raw_plant(plant_id) is None:
+            raise ValueError(f"plant {plant_id!r} not found")
+        removed = [d.id for d in self.plant_devices(plant_id)]
+        self._raw_plants = [p for p in self._raw_plants
+                            if p.get('id') != plant_id]
+        self._build_devices()
+        self.save_yaml_config()
+        return removed
 
     def save_device_registers(self, device_id: str, registers: List[Dict],
                               poll_groups: Optional[Dict] = None) -> None:
@@ -1112,6 +1269,9 @@ class Config:
             # Additional southbound devices (Tier 2) — materialized in
             # _build_devices() after env overrides.
             self._raw_devices = data.get('devices', []) or []
+
+            # Plants — expanded into materialized devices in _build_devices().
+            self._raw_plants = data.get('plants', []) or []
 
             # Optional alerting hooks (off unless enabled). Kept as a raw dict —
             # the AlertManager reads it. See multibus/alerts.py.
@@ -1660,6 +1820,11 @@ class Config:
         # migration; rollback-safe).
         if self._raw_devices:
             data['devices'] = self._raw_devices
+
+        # Plants persist as their raw entries — the materialized devices are
+        # NEVER written to devices[] (they are derived, like the primary).
+        if self._raw_plants:
+            data['plants'] = self._raw_plants
 
         # Preserve the optional alerts block across saves (device/config edits
         # rewrite this file; without this a save would silently drop alerting).
