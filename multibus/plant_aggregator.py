@@ -85,6 +85,11 @@ def compute_plant_aggregates(config, registry, plant_id: str,
         out[name] = round(agg, 3)
     out["units_online"] = online
     out["units_total"] = len(units)
+    # collector-era aggregate semantics: all fresh = online, none = offline,
+    # anything in between = partial (an empty plant has no meaningful status)
+    if units:
+        out["status"] = ("online" if online == len(units) else
+                         "offline" if online == 0 else "partial")
     return out
 
 
@@ -142,7 +147,7 @@ class PlantAggregator(threading.Thread):
         base = f"mbg/plants/{pid}"
         for name, val in agg.items():
             leaf = (mqtt_topic_for(name) or name) if name not in (
-                "units_online", "units_total") else name
+                "units_online", "units_total", "status") else name
             # publish_if_changed keeps the change-detection semantics every
             # other topic has (heartbeat republish included)
             mqtt.publish_if_changed(f"{base}/{leaf}", val)
@@ -159,6 +164,8 @@ class PlantAggregator(threading.Thread):
         bucket = (plant.get("influxdb") or {}).get("bucket") or None
         ts = time.time()
         for name, val in agg.items():
+            if not isinstance(val, (int, float)):
+                continue                     # status text is MQTT-only
             if name in ("units_online", "units_total"):
                 meas = "plant"
             else:

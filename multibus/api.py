@@ -812,6 +812,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                                          else dev_cfg.mqtt_topic_prefix)
                         mqtt_publisher.publish_device_availability(
                             _avail_prefix, bool(st.get('connected')))
+                        _seen_ts = st.get('last_success_ts')
+                        mqtt_publisher.publish_device_runtime(
+                            _avail_prefix, bool(st.get('connected')),
+                            datetime.fromtimestamp(_seen_ts).isoformat()
+                            if _seen_ts else None)
                     lat = st.get('last_latency_ms')
                     if alert_mgr.sig_latency and lat and lat > alert_mgr.latency_ms:
                         alert_mgr.fire('warn', 'lat:' + did, name,

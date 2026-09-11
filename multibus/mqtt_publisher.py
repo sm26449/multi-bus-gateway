@@ -197,6 +197,9 @@ class MQTTPublisher:
         # per-device availability (drives the HA connectivity binary_sensor);
         # publish only on change so a steady device doesn't churn the topic
         self._availability_last: Dict[str, str] = {}
+        # per-device runtime heartbeat (runtime/status + runtime/last_seen);
+        # same change-only discipline as availability
+        self._runtime_last: Dict[str, str] = {}
 
         # Reconnection thread
         self._stop_reconnect = threading.Event()
@@ -276,6 +279,7 @@ class MQTTPublisher:
             # state would otherwise show every device topic EMPTY until the
             # device next flips state — could be days
             self._availability_last.clear()
+            self._runtime_last.clear()
             # heartbeat clocks reset with the value cache — a surviving clock
             # would defer the first post-reconnect heartbeat by a full period
             with self.lock:
@@ -782,6 +786,27 @@ class MQTTPublisher:
         # next tick retries.
         if self._publish(topic, payload, retain=True):
             self._availability_last[topic] = payload
+
+    def publish_device_runtime(self, topic_prefix: str, online: bool,
+                               last_seen: Optional[str]) -> None:
+        """Publish a device's runtime heartbeat (retained): ``runtime/status``
+        ("online"/"offline") and ``runtime/last_seen`` (ISO timestamp of the
+        last successful read). Leaf names match the long-lived collector
+        convention so liveness consumers (flow dashboards, NR heartbeat
+        watchers) keep working through compat aliases. Change-only, same
+        confirm-after-publish discipline as availability."""
+        if not self.connected or not topic_prefix:
+            return
+        status_topic = f"{topic_prefix}/runtime/status"
+        status_payload = "online" if online else "offline"
+        if self._runtime_last.get(status_topic) != status_payload:
+            if self._publish(status_topic, status_payload, retain=True):
+                self._runtime_last[status_topic] = status_payload
+        if last_seen:
+            seen_topic = f"{topic_prefix}/runtime/last_seen"
+            if self._runtime_last.get(seen_topic) != last_seen:
+                if self._publish(seen_topic, last_seen, retain=True):
+                    self._runtime_last[seen_topic] = last_seen
 
     def set_command_write_handler(self, fn) -> None:
         """Install the gated executor for HA write commands. ``fn(device_id,

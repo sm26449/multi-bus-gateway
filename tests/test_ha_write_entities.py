@@ -325,3 +325,20 @@ def test_availability_cache_cleared_on_reconnect():
     pub._availability_last["meters/dev1/availability"] = "online"
     pub._on_connect(pub.client, None, None, 0)
     assert pub._availability_last == {}
+
+
+def test_device_runtime_heartbeat_published_and_change_only():
+    pub = _pub()
+    pub.publish_device_runtime("mbg/devices/d1", True, "2026-09-11T20:00:00")
+    assert pub._captured["mbg/devices/d1/runtime/status"] == "online"
+    assert pub._captured["mbg/devices/d1/runtime/last_seen"] == "2026-09-11T20:00:00"
+    pub._captured.clear()
+    # unchanged → silent; a new last_seen republishes only that leaf
+    pub.publish_device_runtime("mbg/devices/d1", True, "2026-09-11T20:00:00")
+    assert pub._captured == {}
+    pub.publish_device_runtime("mbg/devices/d1", True, "2026-09-11T20:00:15")
+    assert list(pub._captured) == ["mbg/devices/d1/runtime/last_seen"]
+    # offline flip publishes status even with no last_seen
+    pub._captured.clear()
+    pub.publish_device_runtime("mbg/devices/d1", False, None)
+    assert pub._captured["mbg/devices/d1/runtime/status"] == "offline"

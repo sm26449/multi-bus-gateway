@@ -82,9 +82,22 @@ def test_non_numeric_and_unknown_names_ignored():
         4: _entry("a_sf", -2),                         # no rule → skip
     }})
     agg = compute_plant_aggregates(cfg, reg, "p")
-    assert set(agg) == {"power_active_total", "units_online", "units_total"}
+    assert set(agg) == {"power_active_total", "units_online", "units_total",
+                        "status"}
 
 
 def test_empty_plant():
     agg = compute_plant_aggregates(_Cfg([]), _Reg({}), "p")
     assert agg == {"units_online": 0, "units_total": 0}
+
+
+def test_plant_status_online_partial_offline():
+    cfg = _Cfg(["u1", "u2"])
+    fresh = {1: _entry("power_active_total", 100)}
+    stale = {1: _entry("power_active_total", 100, ts=time.time() - 3600)}
+    assert compute_plant_aggregates(cfg, _Reg({"u1": fresh, "u2": dict(fresh)}),
+                                    "p")["status"] == "online"
+    assert compute_plant_aggregates(cfg, _Reg({"u1": fresh, "u2": stale}),
+                                    "p")["status"] == "partial"
+    assert compute_plant_aggregates(cfg, _Reg({"u1": stale, "u2": stale}),
+                                    "p")["status"] == "offline"
