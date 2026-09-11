@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.42.0
+
+### 2026-09-11 — Fronius plants speak canonical (same output as every meter)
+
+Operator call: no reinvented wheels — a plant's output must look exactly
+like the Janitza reference. The canonical dictionary is extended with the
+PV/inverter domain (dc/*, mppt/N/*, temperature/*, status/*,
+energy/active/generated, diagnostic/manufacturer+model) and the Fronius
+SunSpec templates (v2.0.0) now use canonical register names throughout:
+topics, InfluxDB measurements and field names derive from the dictionary,
+so meters/<unit>/power/active/total, measurement `power_active`, field
+`power_active_total` — identical shape to every other MBG device.
+
+The legacy SunSpec-collector tree (fronius/inverter/N/W …) is now what it
+always should have been: a COMPATIBILITY LAYER, expressed as
+`mqtt.compat_aliases` built from the emitted
+scripts/fronius_legacy_leaves.json (canonical topic → collector leaf,
+verified register-for-register in tests). During the shadow phase the
+aliases feed mbg/fronius/…; at cutover the same map re-targets
+fronius/… and no consumer changes.
+
+The canonical-naming lint now skips unrouted plumbing registers (SunSpec
+scale factors publish nowhere, so naming them canonically buys nothing).
+
 ## 3.41.0
 
 ### 2026-09-11 — writes foundation: capability first, guards opt-in (F3a)

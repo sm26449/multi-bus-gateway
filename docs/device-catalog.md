@@ -254,135 +254,135 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 
 ## Fronius SunSpec inverter (int+SF, via datalogger)
 
-**id** `fronius_sunspec_inverter` · **vendor** Fronius · **model** Symo / Primo / Eco (SunSpec 103) · **version** 1.0.0 · **registers** 61
+**id** `fronius_sunspec_inverter` · **vendor** Fronius · **model** Symo / Primo / Eco (SunSpec 103) · **version** 2.0.0 · **registers** 61
 
 - **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
 - **Source / provenance:** SunSpec Information Models (int+SF); register map verified live against a production Fronius fleet (raw-frame decode parity, 2026-09-11)
 
-> Fronius inverter read THROUGH its DataManager/datalogger over Modbus TCP, in the SunSpec int + scale-factor register mode (models 1/103/160: AC block, DC block, temperatures, status/events, per-string MPPT, identity). Use this when the datalogger's Modbus TCP slave is enabled and set to 'int+SF' (the Fronius default). For SEVERAL inverters behind one datalogger, add a `plants:` entry with this template and the unit IDs (1, 2, ...) — each unit becomes its own device. CAUTION: dataloggers serve only a few concurrent Modbus clients; if another system polls the same datalogger, keep poll intervals modest (10-15 s) or reduce the number of units read in parallel. Known vendor quirk: PF is published with the generic SunSpec decode (±100); Fronius units report PF raw ±10000 with an out-of-spec scale factor, so dedicated drivers show ±1.0.
+> Fronius inverter read THROUGH its DataManager/datalogger over Modbus TCP, in the SunSpec int + scale-factor register mode (models 1/103/160: AC block, DC block, temperatures, status/events, per-string MPPT, identity). Registers are CANONICAL: this device publishes the same topics/fields/measurements as every other MBG device (power/active/total, dc/power, mppt/1/power …); a legacy SunSpec-name tree (…/W, …/PhVphA) is available via mqtt.compat_aliases. Use this when the datalogger's Modbus TCP slave is enabled and set to 'int+SF' (the Fronius default). For SEVERAL inverters behind one datalogger, add a `plants:` entry with this template and the unit IDs (1, 2, ...) — each unit becomes its own device. CAUTION: dataloggers serve only a few concurrent Modbus clients; if another system polls the same datalogger, keep poll intervals modest (10-15 s) or reduce the number of units read in parallel. Known vendor quirk: PF is published with the generic SunSpec decode (±100); Fronius units report PF raw ±10000 with an out-of-spec scale factor, so dedicated drivers show ±1.0.
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
-| 40004 / 0x9C44 | `manufacturer` | Manufacturer | string:16 | 1 | — | static |
-| 40020 / 0x9C54 | `model` | Model | string:16 | 1 | — | static |
-| 40052 / 0x9C74 | `serial_number` | Serial Number | string:16 | 1 | — | static |
-| 40071 / 0x9C87 | `ac_current` | AC Current | uint16 | 1 | A | normal |
-| 40072 / 0x9C88 | `ac_current_a` | AC Current L1 | uint16 | 1 | A | normal |
-| 40073 / 0x9C89 | `ac_current_b` | AC Current L2 | uint16 | 1 | A | normal |
-| 40074 / 0x9C8A | `ac_current_c` | AC Current L3 | uint16 | 1 | A | normal |
+| 40004 / 0x9C44 | `manufacturer` | Device manufacturer | string:16 | 1 | — | static |
+| 40020 / 0x9C54 | `model` | Device model name | string:16 | 1 | — | static |
+| 40052 / 0x9C74 | `serial` | Meter serial / identification | string:16 | 1 | — | static |
+| 40071 / 0x9C87 | `current_total` | Total / sum current | uint16 | 1 | A | normal |
+| 40072 / 0x9C88 | `current_l1` | L1 current | uint16 | 1 | A | normal |
+| 40073 / 0x9C89 | `current_l2` | L2 current | uint16 | 1 | A | normal |
+| 40074 / 0x9C8A | `current_l3` | L3 current | uint16 | 1 | A | normal |
 | 40075 / 0x9C8B | `a_sf` | A Scale Factor | int16 | 1 | — | normal |
-| 40076 / 0x9C8C | `ac_voltage_ab` | Voltage L1-L2 | uint16 | 1 | V | normal |
-| 40077 / 0x9C8D | `ac_voltage_bc` | Voltage L2-L3 | uint16 | 1 | V | normal |
-| 40078 / 0x9C8E | `ac_voltage_ca` | Voltage L3-L1 | uint16 | 1 | V | normal |
-| 40079 / 0x9C8F | `ac_voltage_an` | Voltage L1-N | uint16 | 1 | V | normal |
-| 40080 / 0x9C90 | `ac_voltage_bn` | Voltage L2-N | uint16 | 1 | V | normal |
-| 40081 / 0x9C91 | `ac_voltage_cn` | Voltage L3-N | uint16 | 1 | V | normal |
+| 40076 / 0x9C8C | `voltage_l1_l2` | L1–L2 line voltage | uint16 | 1 | V | normal |
+| 40077 / 0x9C8D | `voltage_l2_l3` | L2–L3 line voltage | uint16 | 1 | V | normal |
+| 40078 / 0x9C8E | `voltage_l3_l1` | L3–L1 line voltage | uint16 | 1 | V | normal |
+| 40079 / 0x9C8F | `voltage_l1_n` | L1–N RMS voltage | uint16 | 1 | V | normal |
+| 40080 / 0x9C90 | `voltage_l2_n` | L2–N RMS voltage | uint16 | 1 | V | normal |
+| 40081 / 0x9C91 | `voltage_l3_n` | L3–N RMS voltage | uint16 | 1 | V | normal |
 | 40082 / 0x9C92 | `v_sf` | V Scale Factor | int16 | 1 | — | normal |
-| 40083 / 0x9C93 | `ac_power` | AC Power | int16 | 1 | W | normal |
+| 40083 / 0x9C93 | `power_active_total` | Total active power | int16 | 1 | W | normal |
 | 40084 / 0x9C94 | `w_sf` | W Scale Factor | int16 | 1 | — | normal |
-| 40085 / 0x9C95 | `ac_frequency` | AC Frequency | uint16 | 1 | Hz | normal |
+| 40085 / 0x9C95 | `frequency` | Grid frequency | uint16 | 1 | Hz | normal |
 | 40086 / 0x9C96 | `hz_sf` | HZ Scale Factor | int16 | 1 | — | normal |
-| 40087 / 0x9C97 | `apparent_power` | Apparent Power | int16 | 1 | VA | normal |
+| 40087 / 0x9C97 | `power_apparent_total` | Total apparent power | int16 | 1 | VA | normal |
 | 40088 / 0x9C98 | `va_sf` | VA Scale Factor | int16 | 1 | — | normal |
-| 40089 / 0x9C99 | `reactive_power` | Reactive Power | int16 | 1 | var | normal |
+| 40089 / 0x9C99 | `power_reactive_total` | Total reactive power | int16 | 1 | var | normal |
 | 40090 / 0x9C9A | `var_sf` | VAR Scale Factor | int16 | 1 | — | normal |
-| 40091 / 0x9C9B | `power_factor` | Power Factor | int16 | 1 | — | normal |
+| 40091 / 0x9C9B | `power_factor_total` | System power factor | int16 | 1 | — | normal |
 | 40092 / 0x9C9C | `pf_sf` | PF Scale Factor | int16 | 1 | — | normal |
-| 40093 / 0x9C9D | `lifetime_energy` | Lifetime Energy | uint32 | 1 | Wh | normal |
+| 40093 / 0x9C9D | `energy_active_generated` | Lifetime generated active energy | uint32 | 1 | Wh | normal |
 | 40095 / 0x9C9F | `wh_sf` | WH Scale Factor | int16 | 1 | — | normal |
-| 40096 / 0x9CA0 | `dc_current` | DC Current | uint16 | 1 | A | normal |
+| 40096 / 0x9CA0 | `current_dc` | DC bus current | uint16 | 1 | A | normal |
 | 40097 / 0x9CA1 | `dca_sf` | DCA Scale Factor | int16 | 1 | — | normal |
-| 40098 / 0x9CA2 | `dc_voltage` | DC Voltage | uint16 | 1 | V | normal |
+| 40098 / 0x9CA2 | `voltage_dc` | DC bus voltage | uint16 | 1 | V | normal |
 | 40099 / 0x9CA3 | `dcv_sf` | DCV Scale Factor | int16 | 1 | — | normal |
-| 40100 / 0x9CA4 | `dc_power` | DC Power | int16 | 1 | W | normal |
+| 40100 / 0x9CA4 | `power_dc` | DC bus power | int16 | 1 | W | normal |
 | 40101 / 0x9CA5 | `dcw_sf` | DCW Scale Factor | int16 | 1 | — | normal |
-| 40102 / 0x9CA6 | `temp_cabinet` | Cabinet Temperature | int16 | 1 | °C | normal |
-| 40103 / 0x9CA7 | `temp_heatsink` | Heatsink Temperature | int16 | 1 | °C | normal |
-| 40104 / 0x9CA8 | `temp_transformer` | Transformer Temperature | int16 | 1 | °C | normal |
-| 40105 / 0x9CA9 | `temp_other` | Other Temperature | int16 | 1 | °C | normal |
+| 40102 / 0x9CA6 | `temperature_cabinet` | Cabinet temperature | int16 | 1 | °C | normal |
+| 40103 / 0x9CA7 | `temperature_heatsink` | Heatsink temperature | int16 | 1 | °C | normal |
+| 40104 / 0x9CA8 | `temperature_transformer` | Transformer temperature | int16 | 1 | °C | normal |
+| 40105 / 0x9CA9 | `temperature_other` | Other/auxiliary temperature | int16 | 1 | °C | normal |
 | 40106 / 0x9CAA | `tmp_sf` | TMP Scale Factor | int16 | 1 | — | normal |
-| 40107 / 0x9CAB | `status_code` | Operating State | uint16 | 1 | — | normal |
-| 40108 / 0x9CAC | `status_vendor` | Vendor State | uint16 | 1 | — | normal |
-| 40109 / 0x9CAD | `evt1` | Event Flags 1 | uint32 | 1 | — | normal |
-| 40111 / 0x9CAF | `evt2` | Event Flags 2 | uint32 | 1 | — | normal |
-| 40113 / 0x9CB1 | `evt_vnd1` | Vendor Event Flags 1 | uint32 | 1 | — | normal |
-| 40115 / 0x9CB3 | `evt_vnd2` | Vendor Event Flags 2 | uint32 | 1 | — | normal |
-| 40117 / 0x9CB5 | `evt_vnd3` | Vendor Event Flags 3 | uint32 | 1 | — | normal |
-| 40119 / 0x9CB7 | `evt_vnd4` | Vendor Event Flags 4 | uint32 | 1 | — | normal |
+| 40107 / 0x9CAB | `operating_state` | Operating state code (e.g. SunSpec St) | uint16 | 1 | — | normal |
+| 40108 / 0x9CAC | `vendor_state` | Vendor-specific state code | uint16 | 1 | — | normal |
+| 40109 / 0x9CAD | `event_flags_1` | Standard event flags word 1 | uint32 | 1 | — | normal |
+| 40111 / 0x9CAF | `event_flags_2` | Standard event flags word 2 | uint32 | 1 | — | normal |
+| 40113 / 0x9CB1 | `vendor_event_flags_1` | Vendor event flags word 1 | uint32 | 1 | — | normal |
+| 40115 / 0x9CB3 | `vendor_event_flags_2` | Vendor event flags word 2 | uint32 | 1 | — | normal |
+| 40117 / 0x9CB5 | `vendor_event_flags_3` | Vendor event flags word 3 | uint32 | 1 | — | normal |
+| 40119 / 0x9CB7 | `vendor_event_flags_4` | Vendor event flags word 4 | uint32 | 1 | — | normal |
 | 40255 / 0x9D3F | `dca_mppt_sf` | DCA MPPT Scale Factor | int16 | 1 | — | normal |
 | 40256 / 0x9D40 | `dcv_mppt_sf` | DCV MPPT Scale Factor | int16 | 1 | — | normal |
 | 40257 / 0x9D41 | `dcw_mppt_sf` | DCW MPPT Scale Factor | int16 | 1 | — | normal |
 | 40258 / 0x9D42 | `dcwh_mppt_sf` | DCWH MPPT Scale Factor | int16 | 1 | — | normal |
-| 40261 / 0x9D45 | `mppt_num_modules` | MPPT Modules | uint16 | 1 | — | normal |
-| 40272 / 0x9D50 | `mppt1_dc_current` | MPPT String 1 DC Current | uint16 | 1 | A | normal |
-| 40273 / 0x9D51 | `mppt1_dc_voltage` | MPPT String 1 DC Voltage | uint16 | 1 | V | normal |
-| 40274 / 0x9D52 | `mppt1_dc_power` | MPPT String 1 DC Power | uint16 | 1 | W | normal |
-| 40275 / 0x9D53 | `mppt1_dc_energy` | MPPT String 1 DC Energy | uint32 | 1 | Wh | normal |
-| 40279 / 0x9D57 | `mppt1_temperature` | MPPT String 1 Temperature | int16 | 1 | °C | normal |
-| 40292 / 0x9D64 | `mppt2_dc_current` | MPPT String 2 DC Current | uint16 | 1 | A | normal |
-| 40293 / 0x9D65 | `mppt2_dc_voltage` | MPPT String 2 DC Voltage | uint16 | 1 | V | normal |
-| 40294 / 0x9D66 | `mppt2_dc_power` | MPPT String 2 DC Power | uint16 | 1 | W | normal |
-| 40295 / 0x9D67 | `mppt2_dc_energy` | MPPT String 2 DC Energy | uint32 | 1 | Wh | normal |
-| 40299 / 0x9D6B | `mppt2_temperature` | MPPT String 2 Temperature | int16 | 1 | °C | normal |
+| 40261 / 0x9D45 | `mppt_modules` | Number of MPPT modules/strings | uint16 | 1 | — | normal |
+| 40272 / 0x9D50 | `current_dc_mppt1` | MPPT string 1 DC current | uint16 | 1 | A | normal |
+| 40273 / 0x9D51 | `voltage_dc_mppt1` | MPPT string 1 DC voltage | uint16 | 1 | V | normal |
+| 40274 / 0x9D52 | `power_dc_mppt1` | MPPT string 1 DC power | uint16 | 1 | W | normal |
+| 40275 / 0x9D53 | `energy_dc_mppt1` | MPPT string 1 lifetime DC energy | uint32 | 1 | Wh | normal |
+| 40279 / 0x9D57 | `temperature_mppt1` | MPPT string 1 temperature | int16 | 1 | °C | normal |
+| 40292 / 0x9D64 | `current_dc_mppt2` | MPPT string 2 DC current | uint16 | 1 | A | normal |
+| 40293 / 0x9D65 | `voltage_dc_mppt2` | MPPT string 2 DC voltage | uint16 | 1 | V | normal |
+| 40294 / 0x9D66 | `power_dc_mppt2` | MPPT string 2 DC power | uint16 | 1 | W | normal |
+| 40295 / 0x9D67 | `energy_dc_mppt2` | MPPT string 2 lifetime DC energy | uint32 | 1 | Wh | normal |
+| 40299 / 0x9D6B | `temperature_mppt2` | MPPT string 2 temperature | int16 | 1 | °C | normal |
 
 ## Fronius SunSpec meter (int+SF, via datalogger)
 
-**id** `fronius_sunspec_meter` · **vendor** Fronius · **model** Smart Meter 63A/50kA (SunSpec 203) · **version** 1.0.0 · **registers** 48
+**id** `fronius_sunspec_meter` · **vendor** Fronius · **model** Smart Meter 63A/50kA (SunSpec 203) · **version** 2.0.0 · **registers** 48
 
 - **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
 - **Source / provenance:** SunSpec Information Models (int+SF); register map verified live against a production Fronius fleet (raw-frame decode parity, 2026-09-11)
 
-> Fronius Smart Meter read THROUGH the DataManager/datalogger over Modbus TCP (SunSpec model 203, int + scale factor; full 3-phase set + per-phase import/export energies). The meter appears on the datalogger at unit ID 240 (default; 241/242 for additional meters). Use this when the meter hangs off a Fronius datalogger — for a Smart Meter wired DIRECTLY to your own RS-485 (RTU or an RTU-TCP bridge), use the separate 'Fronius Smart Meter 65A-3 (RTU)' template instead: same hardware, completely different register map. PF quirk as on the inverter template (generic ±100).
+> Fronius Smart Meter read THROUGH the DataManager/datalogger over Modbus TCP (SunSpec model 203, int + scale factor; full 3-phase set + per-phase import/export energies). Registers are CANONICAL (voltage/l1_n, power/active/total, energy/active/import …) — same output shape as every other MBG meter; the legacy SunSpec-name tree is available via mqtt.compat_aliases. The meter appears on the datalogger at unit ID 240 (default; 241/242 for additional meters). Use this when the meter hangs off a Fronius datalogger — for a Smart Meter wired DIRECTLY to your own RS-485 (RTU or an RTU-TCP bridge), use the separate 'Fronius Smart Meter 65A-3 (RTU)' template instead: same hardware, completely different register map. PF quirk as on the inverter template (generic ±100).
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
-| 40004 / 0x9C44 | `manufacturer` | Manufacturer | string:16 | 1 | — | static |
-| 40020 / 0x9C54 | `model` | Model | string:16 | 1 | — | static |
-| 40052 / 0x9C74 | `serial_number` | Serial Number | string:16 | 1 | — | static |
-| 40071 / 0x9C87 | `current_total` | Current Total | int16 | 1 | A | normal |
-| 40072 / 0x9C88 | `current_a` | Current L1 | int16 | 1 | A | normal |
-| 40073 / 0x9C89 | `current_b` | Current L2 | int16 | 1 | A | normal |
-| 40074 / 0x9C8A | `current_c` | Current L3 | int16 | 1 | A | normal |
+| 40004 / 0x9C44 | `manufacturer` | Device manufacturer | string:16 | 1 | — | static |
+| 40020 / 0x9C54 | `model` | Device model name | string:16 | 1 | — | static |
+| 40052 / 0x9C74 | `serial` | Meter serial / identification | string:16 | 1 | — | static |
+| 40071 / 0x9C87 | `current_total` | Total / sum current | int16 | 1 | A | normal |
+| 40072 / 0x9C88 | `current_l1` | L1 current | int16 | 1 | A | normal |
+| 40073 / 0x9C89 | `current_l2` | L2 current | int16 | 1 | A | normal |
+| 40074 / 0x9C8A | `current_l3` | L3 current | int16 | 1 | A | normal |
 | 40075 / 0x9C8B | `a_sf` | A Scale Factor | int16 | 1 | — | normal |
-| 40076 / 0x9C8C | `voltage_ln_avg` | Voltage L-N Average | int16 | 1 | V | normal |
-| 40077 / 0x9C8D | `voltage_an` | Voltage L1-N | int16 | 1 | V | normal |
-| 40078 / 0x9C8E | `voltage_bn` | Voltage L2-N | int16 | 1 | V | normal |
-| 40079 / 0x9C8F | `voltage_cn` | Voltage L3-N | int16 | 1 | V | normal |
-| 40080 / 0x9C90 | `voltage_ll_avg` | Voltage L-L Average | int16 | 1 | V | normal |
-| 40081 / 0x9C91 | `voltage_ab` | Voltage L1-L2 | int16 | 1 | V | normal |
-| 40082 / 0x9C92 | `voltage_bc` | Voltage L2-L3 | int16 | 1 | V | normal |
-| 40083 / 0x9C93 | `voltage_ca` | Voltage L3-L1 | int16 | 1 | V | normal |
+| 40076 / 0x9C8C | `voltage_ln_avg` | Average phase-to-neutral voltage | int16 | 1 | V | normal |
+| 40077 / 0x9C8D | `voltage_l1_n` | L1–N RMS voltage | int16 | 1 | V | normal |
+| 40078 / 0x9C8E | `voltage_l2_n` | L2–N RMS voltage | int16 | 1 | V | normal |
+| 40079 / 0x9C8F | `voltage_l3_n` | L3–N RMS voltage | int16 | 1 | V | normal |
+| 40080 / 0x9C90 | `voltage_ll_avg` | Average line-to-line voltage | int16 | 1 | V | normal |
+| 40081 / 0x9C91 | `voltage_l1_l2` | L1–L2 line voltage | int16 | 1 | V | normal |
+| 40082 / 0x9C92 | `voltage_l2_l3` | L2–L3 line voltage | int16 | 1 | V | normal |
+| 40083 / 0x9C93 | `voltage_l3_l1` | L3–L1 line voltage | int16 | 1 | V | normal |
 | 40084 / 0x9C94 | `v_sf` | V Scale Factor | int16 | 1 | — | normal |
-| 40085 / 0x9C95 | `frequency` | Frequency | int16 | 1 | Hz | normal |
+| 40085 / 0x9C95 | `frequency` | Grid frequency | int16 | 1 | Hz | normal |
 | 40086 / 0x9C96 | `hz_sf` | HZ Scale Factor | int16 | 1 | — | normal |
-| 40087 / 0x9C97 | `power_total` | Active Power Total | int16 | 1 | W | normal |
-| 40088 / 0x9C98 | `power_a` | Active Power L1 | int16 | 1 | W | normal |
-| 40089 / 0x9C99 | `power_b` | Active Power L2 | int16 | 1 | W | normal |
-| 40090 / 0x9C9A | `power_c` | Active Power L3 | int16 | 1 | W | normal |
+| 40087 / 0x9C97 | `power_active_total` | Total active power | int16 | 1 | W | normal |
+| 40088 / 0x9C98 | `power_active_l1` | L1 active power | int16 | 1 | W | normal |
+| 40089 / 0x9C99 | `power_active_l2` | L2 active power | int16 | 1 | W | normal |
+| 40090 / 0x9C9A | `power_active_l3` | L3 active power | int16 | 1 | W | normal |
 | 40091 / 0x9C9B | `w_sf` | W Scale Factor | int16 | 1 | — | normal |
-| 40092 / 0x9C9C | `va_total` | Apparent Power Total | int16 | 1 | VA | normal |
-| 40093 / 0x9C9D | `va_a` | Apparent Power L1 | int16 | 1 | VA | normal |
-| 40094 / 0x9C9E | `va_b` | Apparent Power L2 | int16 | 1 | VA | normal |
-| 40095 / 0x9C9F | `va_c` | Apparent Power L3 | int16 | 1 | VA | normal |
+| 40092 / 0x9C9C | `power_apparent_total` | Total apparent power | int16 | 1 | VA | normal |
+| 40093 / 0x9C9D | `power_apparent_l1` | L1 apparent power | int16 | 1 | VA | normal |
+| 40094 / 0x9C9E | `power_apparent_l2` | L2 apparent power | int16 | 1 | VA | normal |
+| 40095 / 0x9C9F | `power_apparent_l3` | L3 apparent power | int16 | 1 | VA | normal |
 | 40096 / 0x9CA0 | `va_sf` | VA Scale Factor | int16 | 1 | — | normal |
-| 40097 / 0x9CA1 | `var_total` | Reactive Power Total | int16 | 1 | var | normal |
-| 40098 / 0x9CA2 | `var_a` | Reactive Power L1 | int16 | 1 | var | normal |
-| 40099 / 0x9CA3 | `var_b` | Reactive Power L2 | int16 | 1 | var | normal |
-| 40100 / 0x9CA4 | `var_c` | Reactive Power L3 | int16 | 1 | var | normal |
+| 40097 / 0x9CA1 | `power_reactive_total` | Total reactive power | int16 | 1 | var | normal |
+| 40098 / 0x9CA2 | `power_reactive_l1` | L1 reactive power | int16 | 1 | var | normal |
+| 40099 / 0x9CA3 | `power_reactive_l2` | L2 reactive power | int16 | 1 | var | normal |
+| 40100 / 0x9CA4 | `power_reactive_l3` | L3 reactive power | int16 | 1 | var | normal |
 | 40101 / 0x9CA5 | `var_sf` | VAR Scale Factor | int16 | 1 | — | normal |
-| 40102 / 0x9CA6 | `pf_avg` | Power Factor | int16 | 1 | — | normal |
-| 40103 / 0x9CA7 | `pf_a` | Power Factor L1 | int16 | 1 | — | normal |
-| 40104 / 0x9CA8 | `pf_b` | Power Factor L2 | int16 | 1 | — | normal |
-| 40105 / 0x9CA9 | `pf_c` | Power Factor L3 | int16 | 1 | — | normal |
+| 40102 / 0x9CA6 | `power_factor_total` | System power factor | int16 | 1 | — | normal |
+| 40103 / 0x9CA7 | `power_factor_l1` | L1 power factor | int16 | 1 | — | normal |
+| 40104 / 0x9CA8 | `power_factor_l2` | L2 power factor | int16 | 1 | — | normal |
+| 40105 / 0x9CA9 | `power_factor_l3` | L3 power factor | int16 | 1 | — | normal |
 | 40106 / 0x9CAA | `pf_sf` | PF Scale Factor | int16 | 1 | — | normal |
-| 40107 / 0x9CAB | `energy_exported` | Energy Exported | uint32 | 1 | Wh | normal |
-| 40109 / 0x9CAD | `energy_exported_a` | Energy Exported L1 | uint32 | 1 | Wh | normal |
-| 40111 / 0x9CAF | `energy_exported_b` | Energy Exported L2 | uint32 | 1 | Wh | normal |
-| 40113 / 0x9CB1 | `energy_exported_c` | Energy Exported L3 | uint32 | 1 | Wh | normal |
-| 40115 / 0x9CB3 | `energy_imported` | Energy Imported | uint32 | 1 | Wh | normal |
-| 40117 / 0x9CB5 | `energy_imported_a` | Energy Imported L1 | uint32 | 1 | Wh | normal |
-| 40119 / 0x9CB7 | `energy_imported_b` | Energy Imported L2 | uint32 | 1 | Wh | normal |
-| 40121 / 0x9CB9 | `energy_imported_c` | Energy Imported L3 | uint32 | 1 | Wh | normal |
+| 40107 / 0x9CAB | `energy_active_export` | Total exported active energy | uint32 | 1 | Wh | normal |
+| 40109 / 0x9CAD | `energy_active_export_l1` | L1 exported active energy | uint32 | 1 | Wh | normal |
+| 40111 / 0x9CAF | `energy_active_export_l2` | L2 exported active energy | uint32 | 1 | Wh | normal |
+| 40113 / 0x9CB1 | `energy_active_export_l3` | L3 exported active energy | uint32 | 1 | Wh | normal |
+| 40115 / 0x9CB3 | `energy_active_import` | Total imported active energy | uint32 | 1 | Wh | normal |
+| 40117 / 0x9CB5 | `energy_active_import_l1` | L1 imported active energy | uint32 | 1 | Wh | normal |
+| 40119 / 0x9CB7 | `energy_active_import_l2` | L2 imported active energy | uint32 | 1 | Wh | normal |
+| 40121 / 0x9CB9 | `energy_active_import_l3` | L3 imported active energy | uint32 | 1 | Wh | normal |
 | 40123 / 0x9CBB | `wh_sf` | WH Scale Factor | int16 | 1 | — | normal |
 
 ## Generic MQTT (JSON)

@@ -5,8 +5,8 @@
     "name": "Fronius SunSpec inverter (int+SF, via datalogger)",
     "vendor": "Fronius",
     "model": "Symo / Primo / Eco (SunSpec 103)",
-    "version": "1.0.0",
-    "description": "Fronius inverter read THROUGH its DataManager/datalogger over Modbus TCP, in the SunSpec int + scale-factor register mode (models 1/103/160: AC block, DC block, temperatures, status/events, per-string MPPT, identity). Use this when the datalogger's Modbus TCP slave is enabled and set to 'int+SF' (the Fronius default). For SEVERAL inverters behind one datalogger, add a `plants:` entry with this template and the unit IDs (1, 2, ...) — each unit becomes its own device. CAUTION: dataloggers serve only a few concurrent Modbus clients; if another system polls the same datalogger, keep poll intervals modest (10-15 s) or reduce the number of units read in parallel. Known vendor quirk: PF is published with the generic SunSpec decode (±100); Fronius units report PF raw ±10000 with an out-of-spec scale factor, so dedicated drivers show ±1.0.",
+    "version": "2.0.0",
+    "description": "Fronius inverter read THROUGH its DataManager/datalogger over Modbus TCP, in the SunSpec int + scale-factor register mode (models 1/103/160: AC block, DC block, temperatures, status/events, per-string MPPT, identity). Registers are CANONICAL: this device publishes the same topics/fields/measurements as every other MBG device (power/active/total, dc/power, mppt/1/power …); a legacy SunSpec-name tree (…/W, …/PhVphA) is available via mqtt.compat_aliases. Use this when the datalogger's Modbus TCP slave is enabled and set to 'int+SF' (the Fronius default). For SEVERAL inverters behind one datalogger, add a `plants:` entry with this template and the unit IDs (1, 2, ...) — each unit becomes its own device. CAUTION: dataloggers serve only a few concurrent Modbus clients; if another system polls the same datalogger, keep poll intervals modest (10-15 s) or reduce the number of units read in parallel. Known vendor quirk: PF is published with the generic SunSpec decode (±100); Fronius units report PF raw ±10000 with an out-of-spec scale factor, so dedicated drivers show ±1.0.",
     "source_document": "SunSpec Information Models (int+SF); register map verified live against a production Fronius fleet (raw-frame decode parity, 2026-09-11)",
     "protocol": {
       "byte_order": "big",
@@ -59,8 +59,8 @@
     "registers": [
       {
         "address": 40071,
-        "name": "ac_current",
-        "label": "AC Current",
+        "name": "current_total",
+        "label": "Total / sum current",
         "unit": "A",
         "data_type": "uint16",
         "register_type": "holding",
@@ -71,11 +71,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "A"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -86,8 +86,8 @@
       },
       {
         "address": 40072,
-        "name": "ac_current_a",
-        "label": "AC Current L1",
+        "name": "current_l1",
+        "label": "L1 current",
         "unit": "A",
         "data_type": "uint16",
         "register_type": "holding",
@@ -98,11 +98,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "AphA"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -113,8 +113,8 @@
       },
       {
         "address": 40073,
-        "name": "ac_current_b",
-        "label": "AC Current L2",
+        "name": "current_l2",
+        "label": "L2 current",
         "unit": "A",
         "data_type": "uint16",
         "register_type": "holding",
@@ -125,11 +125,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "AphB"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -140,8 +140,8 @@
       },
       {
         "address": 40074,
-        "name": "ac_current_c",
-        "label": "AC Current L3",
+        "name": "current_l3",
+        "label": "L3 current",
         "unit": "A",
         "data_type": "uint16",
         "register_type": "holding",
@@ -152,11 +152,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "AphC"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -193,8 +193,8 @@
       },
       {
         "address": 40076,
-        "name": "ac_voltage_ab",
-        "label": "Voltage L1-L2",
+        "name": "voltage_l1_l2",
+        "label": "L1–L2 line voltage",
         "unit": "V",
         "data_type": "uint16",
         "register_type": "holding",
@@ -205,11 +205,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "PPVphAB"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -220,8 +220,8 @@
       },
       {
         "address": 40077,
-        "name": "ac_voltage_bc",
-        "label": "Voltage L2-L3",
+        "name": "voltage_l2_l3",
+        "label": "L2–L3 line voltage",
         "unit": "V",
         "data_type": "uint16",
         "register_type": "holding",
@@ -232,11 +232,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "PPVphBC"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -247,8 +247,8 @@
       },
       {
         "address": 40078,
-        "name": "ac_voltage_ca",
-        "label": "Voltage L3-L1",
+        "name": "voltage_l3_l1",
+        "label": "L3–L1 line voltage",
         "unit": "V",
         "data_type": "uint16",
         "register_type": "holding",
@@ -259,11 +259,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "PPVphCA"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -274,8 +274,8 @@
       },
       {
         "address": 40079,
-        "name": "ac_voltage_an",
-        "label": "Voltage L1-N",
+        "name": "voltage_l1_n",
+        "label": "L1–N RMS voltage",
         "unit": "V",
         "data_type": "uint16",
         "register_type": "holding",
@@ -286,11 +286,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "PhVphA"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -301,8 +301,8 @@
       },
       {
         "address": 40080,
-        "name": "ac_voltage_bn",
-        "label": "Voltage L2-N",
+        "name": "voltage_l2_n",
+        "label": "L2–N RMS voltage",
         "unit": "V",
         "data_type": "uint16",
         "register_type": "holding",
@@ -313,11 +313,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "PhVphB"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -328,8 +328,8 @@
       },
       {
         "address": 40081,
-        "name": "ac_voltage_cn",
-        "label": "Voltage L3-N",
+        "name": "voltage_l3_n",
+        "label": "L3–N RMS voltage",
         "unit": "V",
         "data_type": "uint16",
         "register_type": "holding",
@@ -340,11 +340,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "PhVphC"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -381,8 +381,8 @@
       },
       {
         "address": 40083,
-        "name": "ac_power",
-        "label": "AC Power",
+        "name": "power_active_total",
+        "label": "Total active power",
         "unit": "W",
         "data_type": "int16",
         "register_type": "holding",
@@ -393,11 +393,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "W"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -434,8 +434,8 @@
       },
       {
         "address": 40085,
-        "name": "ac_frequency",
-        "label": "AC Frequency",
+        "name": "frequency",
+        "label": "Grid frequency",
         "unit": "Hz",
         "data_type": "uint16",
         "register_type": "holding",
@@ -446,11 +446,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "Hz"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -487,8 +487,8 @@
       },
       {
         "address": 40087,
-        "name": "apparent_power",
-        "label": "Apparent Power",
+        "name": "power_apparent_total",
+        "label": "Total apparent power",
         "unit": "VA",
         "data_type": "int16",
         "register_type": "holding",
@@ -499,11 +499,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "VA"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -540,8 +540,8 @@
       },
       {
         "address": 40089,
-        "name": "reactive_power",
-        "label": "Reactive Power",
+        "name": "power_reactive_total",
+        "label": "Total reactive power",
         "unit": "var",
         "data_type": "int16",
         "register_type": "holding",
@@ -552,11 +552,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "VAr"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -593,8 +593,8 @@
       },
       {
         "address": 40091,
-        "name": "power_factor",
-        "label": "Power Factor",
+        "name": "power_factor_total",
+        "label": "System power factor",
         "unit": "",
         "data_type": "int16",
         "register_type": "holding",
@@ -605,11 +605,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "PF"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -646,8 +646,8 @@
       },
       {
         "address": 40093,
-        "name": "lifetime_energy",
-        "label": "Lifetime Energy",
+        "name": "energy_active_generated",
+        "label": "Lifetime generated active energy",
         "unit": "Wh",
         "data_type": "uint32",
         "register_type": "holding",
@@ -659,11 +659,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "WH"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -700,8 +700,8 @@
       },
       {
         "address": 40096,
-        "name": "dc_current",
-        "label": "DC Current",
+        "name": "current_dc",
+        "label": "DC bus current",
         "unit": "A",
         "data_type": "uint16",
         "register_type": "holding",
@@ -712,11 +712,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "DCA"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -753,8 +753,8 @@
       },
       {
         "address": 40098,
-        "name": "dc_voltage",
-        "label": "DC Voltage",
+        "name": "voltage_dc",
+        "label": "DC bus voltage",
         "unit": "V",
         "data_type": "uint16",
         "register_type": "holding",
@@ -765,11 +765,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "DCV"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -806,8 +806,8 @@
       },
       {
         "address": 40100,
-        "name": "dc_power",
-        "label": "DC Power",
+        "name": "power_dc",
+        "label": "DC bus power",
         "unit": "W",
         "data_type": "int16",
         "register_type": "holding",
@@ -818,11 +818,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "DCW"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -859,8 +859,8 @@
       },
       {
         "address": 40102,
-        "name": "temp_cabinet",
-        "label": "Cabinet Temperature",
+        "name": "temperature_cabinet",
+        "label": "Cabinet temperature",
         "unit": "°C",
         "data_type": "int16",
         "register_type": "holding",
@@ -871,11 +871,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "TmpCab"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -886,8 +886,8 @@
       },
       {
         "address": 40103,
-        "name": "temp_heatsink",
-        "label": "Heatsink Temperature",
+        "name": "temperature_heatsink",
+        "label": "Heatsink temperature",
         "unit": "°C",
         "data_type": "int16",
         "register_type": "holding",
@@ -898,11 +898,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "TmpSnk"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -913,8 +913,8 @@
       },
       {
         "address": 40104,
-        "name": "temp_transformer",
-        "label": "Transformer Temperature",
+        "name": "temperature_transformer",
+        "label": "Transformer temperature",
         "unit": "°C",
         "data_type": "int16",
         "register_type": "holding",
@@ -925,11 +925,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "TmpTrns"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -940,8 +940,8 @@
       },
       {
         "address": 40105,
-        "name": "temp_other",
-        "label": "Other Temperature",
+        "name": "temperature_other",
+        "label": "Other/auxiliary temperature",
         "unit": "°C",
         "data_type": "int16",
         "register_type": "holding",
@@ -952,11 +952,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "TmpOt"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -993,8 +993,8 @@
       },
       {
         "address": 40107,
-        "name": "status_code",
-        "label": "Operating State",
+        "name": "operating_state",
+        "label": "Operating state code (e.g. SunSpec St)",
         "unit": "",
         "data_type": "uint16",
         "register_type": "holding",
@@ -1003,11 +1003,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "St"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1018,8 +1018,8 @@
       },
       {
         "address": 40108,
-        "name": "status_vendor",
-        "label": "Vendor State",
+        "name": "vendor_state",
+        "label": "Vendor-specific state code",
         "unit": "",
         "data_type": "uint16",
         "register_type": "holding",
@@ -1028,11 +1028,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "StVnd"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1043,8 +1043,8 @@
       },
       {
         "address": 40109,
-        "name": "evt1",
-        "label": "Event Flags 1",
+        "name": "event_flags_1",
+        "label": "Standard event flags word 1",
         "unit": "",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1053,11 +1053,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "evt1"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1068,8 +1068,8 @@
       },
       {
         "address": 40111,
-        "name": "evt2",
-        "label": "Event Flags 2",
+        "name": "event_flags_2",
+        "label": "Standard event flags word 2",
         "unit": "",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1078,11 +1078,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "evt2"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1093,8 +1093,8 @@
       },
       {
         "address": 40113,
-        "name": "evt_vnd1",
-        "label": "Vendor Event Flags 1",
+        "name": "vendor_event_flags_1",
+        "label": "Vendor event flags word 1",
         "unit": "",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1103,11 +1103,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "evt_vnd1"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1118,8 +1118,8 @@
       },
       {
         "address": 40115,
-        "name": "evt_vnd2",
-        "label": "Vendor Event Flags 2",
+        "name": "vendor_event_flags_2",
+        "label": "Vendor event flags word 2",
         "unit": "",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1128,11 +1128,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "evt_vnd2"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1143,8 +1143,8 @@
       },
       {
         "address": 40117,
-        "name": "evt_vnd3",
-        "label": "Vendor Event Flags 3",
+        "name": "vendor_event_flags_3",
+        "label": "Vendor event flags word 3",
         "unit": "",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1153,11 +1153,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "evt_vnd3"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1168,8 +1168,8 @@
       },
       {
         "address": 40119,
-        "name": "evt_vnd4",
-        "label": "Vendor Event Flags 4",
+        "name": "vendor_event_flags_4",
+        "label": "Vendor event flags word 4",
         "unit": "",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1178,11 +1178,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "evt_vnd4"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1297,8 +1297,8 @@
       },
       {
         "address": 40261,
-        "name": "mppt_num_modules",
-        "label": "MPPT Modules",
+        "name": "mppt_modules",
+        "label": "Number of MPPT modules/strings",
         "unit": "",
         "data_type": "uint16",
         "register_type": "holding",
@@ -1307,11 +1307,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "mppt/num_modules"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1322,8 +1322,8 @@
       },
       {
         "address": 40272,
-        "name": "mppt1_dc_current",
-        "label": "MPPT String 1 DC Current",
+        "name": "current_dc_mppt1",
+        "label": "MPPT string 1 DC current",
         "unit": "A",
         "data_type": "uint16",
         "register_type": "holding",
@@ -1334,11 +1334,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "mppt/string1/DCA"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1349,8 +1349,8 @@
       },
       {
         "address": 40273,
-        "name": "mppt1_dc_voltage",
-        "label": "MPPT String 1 DC Voltage",
+        "name": "voltage_dc_mppt1",
+        "label": "MPPT string 1 DC voltage",
         "unit": "V",
         "data_type": "uint16",
         "register_type": "holding",
@@ -1361,11 +1361,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "mppt/string1/DCV"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1376,8 +1376,8 @@
       },
       {
         "address": 40274,
-        "name": "mppt1_dc_power",
-        "label": "MPPT String 1 DC Power",
+        "name": "power_dc_mppt1",
+        "label": "MPPT string 1 DC power",
         "unit": "W",
         "data_type": "uint16",
         "register_type": "holding",
@@ -1388,11 +1388,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "mppt/string1/DCW"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1403,8 +1403,8 @@
       },
       {
         "address": 40275,
-        "name": "mppt1_dc_energy",
-        "label": "MPPT String 1 DC Energy",
+        "name": "energy_dc_mppt1",
+        "label": "MPPT string 1 lifetime DC energy",
         "unit": "Wh",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1416,11 +1416,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "mppt/string1/DCWH"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1431,8 +1431,8 @@
       },
       {
         "address": 40279,
-        "name": "mppt1_temperature",
-        "label": "MPPT String 1 Temperature",
+        "name": "temperature_mppt1",
+        "label": "MPPT string 1 temperature",
         "unit": "°C",
         "data_type": "int16",
         "register_type": "holding",
@@ -1442,11 +1442,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "mppt/string1/Tmp"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1457,8 +1457,8 @@
       },
       {
         "address": 40292,
-        "name": "mppt2_dc_current",
-        "label": "MPPT String 2 DC Current",
+        "name": "current_dc_mppt2",
+        "label": "MPPT string 2 DC current",
         "unit": "A",
         "data_type": "uint16",
         "register_type": "holding",
@@ -1469,11 +1469,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "mppt/string2/DCA"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1484,8 +1484,8 @@
       },
       {
         "address": 40293,
-        "name": "mppt2_dc_voltage",
-        "label": "MPPT String 2 DC Voltage",
+        "name": "voltage_dc_mppt2",
+        "label": "MPPT string 2 DC voltage",
         "unit": "V",
         "data_type": "uint16",
         "register_type": "holding",
@@ -1496,11 +1496,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "mppt/string2/DCV"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1511,8 +1511,8 @@
       },
       {
         "address": 40294,
-        "name": "mppt2_dc_power",
-        "label": "MPPT String 2 DC Power",
+        "name": "power_dc_mppt2",
+        "label": "MPPT string 2 DC power",
         "unit": "W",
         "data_type": "uint16",
         "register_type": "holding",
@@ -1523,11 +1523,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "mppt/string2/DCW"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1538,8 +1538,8 @@
       },
       {
         "address": 40295,
-        "name": "mppt2_dc_energy",
-        "label": "MPPT String 2 DC Energy",
+        "name": "energy_dc_mppt2",
+        "label": "MPPT string 2 lifetime DC energy",
         "unit": "Wh",
         "data_type": "uint32",
         "register_type": "holding",
@@ -1551,11 +1551,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "mppt/string2/DCWH"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1566,8 +1566,8 @@
       },
       {
         "address": 40299,
-        "name": "mppt2_temperature",
-        "label": "MPPT String 2 Temperature",
+        "name": "temperature_mppt2",
+        "label": "MPPT string 2 temperature",
         "unit": "°C",
         "data_type": "int16",
         "register_type": "holding",
@@ -1577,11 +1577,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "mppt/string2/Tmp"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1593,7 +1593,7 @@
       {
         "address": 40004,
         "name": "manufacturer",
-        "label": "Manufacturer",
+        "label": "Device manufacturer",
         "unit": "",
         "data_type": "string:16",
         "register_type": "holding",
@@ -1602,11 +1602,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "manufacturer"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1618,7 +1618,7 @@
       {
         "address": 40020,
         "name": "model",
-        "label": "Model",
+        "label": "Device model name",
         "unit": "",
         "data_type": "string:16",
         "register_type": "holding",
@@ -1627,11 +1627,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "model"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1642,8 +1642,8 @@
       },
       {
         "address": 40052,
-        "name": "serial_number",
-        "label": "Serial Number",
+        "name": "serial",
+        "label": "Meter serial / identification",
         "unit": "",
         "data_type": "string:16",
         "register_type": "holding",
@@ -1652,11 +1652,11 @@
         "defaults": {
           "mqtt": {
             "enabled": true,
-            "topic": "serial_number"
+            "topic": ""
           },
           "influxdb": {
             "enabled": true,
-            "measurement": "fronius_inverter",
+            "measurement": "",
             "tags": {}
           },
           "ui": {
@@ -1666,6 +1666,6 @@
         }
       }
     ],
-    "canonical": false
+    "canonical": true
   }
 }

@@ -1,47 +1,54 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
 # Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
-"""Fronius SunSpec templates (F0.4) — programmatic diff against the reference
-collector's register map.
+"""Fronius SunSpec templates — programmatic diff against the reference
+collector's register map, in the CANONICAL naming (2026-09-11 rework).
 
-The expected addresses below are derived INDEPENDENTLY from the collector's
-parser offsets (fronius-modbus-mqtt/fronius/register_parser.py — model 103
-block read at documented 40072, model 203 at 40072, model 160 at 40254) so a
-template typo cannot hide: PDU = documented − 1 + offset. The same map passed
-live raw-frame decode parity against all 4 site units on 2026-09-11.
+Two invariants are pinned:
+1. ADDRESSES: derived INDEPENDENTLY from the collector's parser offsets
+   (fronius-modbus-mqtt/fronius/register_parser.py — model 103 block read at
+   documented 40072, model 203 at 40072, model 160 at 40254): PDU =
+   documented − 1 + offset. The same map passed live raw-frame decode parity
+   against all 4 site units on 2026-09-11.
+2. NAMING: every routed register carries a CANONICAL name (same topics/
+   fields/measurements as the Janitza reference), and the legacy collector
+   leaf for each one lives in scripts/fronius_legacy_leaves.json — the map
+   that builds the mqtt.compat_aliases layer for the migration.
 """
 import json
 
+from multibus.canonical_fields import is_canonical, mqtt_topic_for
 from multibus.device_template import parse_template, validate_template
 
 INV = "multibus/device_templates/fronius_sunspec_inverter.json"
 MET = "multibus/device_templates/fronius_sunspec_meter.json"
+LEAVES = "scripts/fronius_legacy_leaves.json"
 
 # collector offsets relative to documented 40072 (PDU base 40071)
 INV_BASE = 40071
 INV_OFFSETS = {
-    "ac_current": (0, "uint16"), "ac_current_a": (1, "uint16"),
-    "ac_current_b": (2, "uint16"), "ac_current_c": (3, "uint16"),
+    "current_total": (0, "uint16"), "current_l1": (1, "uint16"),
+    "current_l2": (2, "uint16"), "current_l3": (3, "uint16"),
     "a_sf": (4, "int16"),
-    "ac_voltage_ab": (5, "uint16"), "ac_voltage_bc": (6, "uint16"),
-    "ac_voltage_ca": (7, "uint16"), "ac_voltage_an": (8, "uint16"),
-    "ac_voltage_bn": (9, "uint16"), "ac_voltage_cn": (10, "uint16"),
+    "voltage_l1_l2": (5, "uint16"), "voltage_l2_l3": (6, "uint16"),
+    "voltage_l3_l1": (7, "uint16"), "voltage_l1_n": (8, "uint16"),
+    "voltage_l2_n": (9, "uint16"), "voltage_l3_n": (10, "uint16"),
     "v_sf": (11, "int16"),
-    "ac_power": (12, "int16"), "w_sf": (13, "int16"),
-    "ac_frequency": (14, "uint16"), "hz_sf": (15, "int16"),
-    "apparent_power": (16, "int16"), "va_sf": (17, "int16"),
-    "reactive_power": (18, "int16"), "var_sf": (19, "int16"),
-    "power_factor": (20, "int16"), "pf_sf": (21, "int16"),
-    "lifetime_energy": (22, "uint32"), "wh_sf": (24, "int16"),
-    "dc_current": (25, "uint16"), "dca_sf": (26, "int16"),
-    "dc_voltage": (27, "uint16"), "dcv_sf": (28, "int16"),
-    "dc_power": (29, "int16"), "dcw_sf": (30, "int16"),
-    "temp_cabinet": (31, "int16"), "temp_heatsink": (32, "int16"),
-    "temp_transformer": (33, "int16"), "temp_other": (34, "int16"),
+    "power_active_total": (12, "int16"), "w_sf": (13, "int16"),
+    "frequency": (14, "uint16"), "hz_sf": (15, "int16"),
+    "power_apparent_total": (16, "int16"), "va_sf": (17, "int16"),
+    "power_reactive_total": (18, "int16"), "var_sf": (19, "int16"),
+    "power_factor_total": (20, "int16"), "pf_sf": (21, "int16"),
+    "energy_active_generated": (22, "uint32"), "wh_sf": (24, "int16"),
+    "current_dc": (25, "uint16"), "dca_sf": (26, "int16"),
+    "voltage_dc": (27, "uint16"), "dcv_sf": (28, "int16"),
+    "power_dc": (29, "int16"), "dcw_sf": (30, "int16"),
+    "temperature_cabinet": (31, "int16"), "temperature_heatsink": (32, "int16"),
+    "temperature_transformer": (33, "int16"), "temperature_other": (34, "int16"),
     "tmp_sf": (35, "int16"),
-    "status_code": (36, "uint16"), "status_vendor": (37, "uint16"),
-    "evt1": (38, "uint32"), "evt2": (40, "uint32"),
-    "evt_vnd1": (42, "uint32"), "evt_vnd2": (44, "uint32"),
-    "evt_vnd3": (46, "uint32"), "evt_vnd4": (48, "uint32"),
+    "operating_state": (36, "uint16"), "vendor_state": (37, "uint16"),
+    "event_flags_1": (38, "uint32"), "event_flags_2": (40, "uint32"),
+    "vendor_event_flags_1": (42, "uint32"), "vendor_event_flags_2": (44, "uint32"),
+    "vendor_event_flags_3": (46, "uint32"), "vendor_event_flags_4": (48, "uint32"),
 }
 
 # model 160 read at documented 40254 (PDU base 40253); module 1 block at
@@ -51,73 +58,69 @@ MPPT_BASE = 40253
 MPPT_OFFSETS = {
     "dca_mppt_sf": (2, "int16"), "dcv_mppt_sf": (3, "int16"),
     "dcw_mppt_sf": (4, "int16"), "dcwh_mppt_sf": (5, "int16"),
-    "mppt_num_modules": (8, "uint16"),
-    "mppt1_dc_current": (10 + 9, "uint16"), "mppt1_dc_voltage": (10 + 10, "uint16"),
-    "mppt1_dc_power": (10 + 11, "uint16"), "mppt1_dc_energy": (10 + 12, "uint32"),
-    "mppt1_temperature": (10 + 16, "int16"),
-    "mppt2_dc_current": (30 + 9, "uint16"), "mppt2_dc_voltage": (30 + 10, "uint16"),
-    "mppt2_dc_power": (30 + 11, "uint16"), "mppt2_dc_energy": (30 + 12, "uint32"),
-    "mppt2_temperature": (30 + 16, "int16"),
+    "mppt_modules": (8, "uint16"),
+    "current_dc_mppt1": (10 + 9, "uint16"), "voltage_dc_mppt1": (10 + 10, "uint16"),
+    "power_dc_mppt1": (10 + 11, "uint16"), "energy_dc_mppt1": (10 + 12, "uint32"),
+    "temperature_mppt1": (10 + 16, "int16"),
+    "current_dc_mppt2": (30 + 9, "uint16"), "voltage_dc_mppt2": (30 + 10, "uint16"),
+    "power_dc_mppt2": (30 + 11, "uint16"), "energy_dc_mppt2": (30 + 12, "uint32"),
+    "temperature_mppt2": (30 + 16, "int16"),
 }
 
 MET_BASE = 40071
 MET_OFFSETS = {
-    "current_total": (0, "int16"), "current_a": (1, "int16"),
-    "current_b": (2, "int16"), "current_c": (3, "int16"),
+    "current_total": (0, "int16"), "current_l1": (1, "int16"),
+    "current_l2": (2, "int16"), "current_l3": (3, "int16"),
     "a_sf": (4, "int16"),
-    "voltage_ln_avg": (5, "int16"), "voltage_an": (6, "int16"),
-    "voltage_bn": (7, "int16"), "voltage_cn": (8, "int16"),
-    "voltage_ll_avg": (9, "int16"), "voltage_ab": (10, "int16"),
-    "voltage_bc": (11, "int16"), "voltage_ca": (12, "int16"),
+    "voltage_ln_avg": (5, "int16"), "voltage_l1_n": (6, "int16"),
+    "voltage_l2_n": (7, "int16"), "voltage_l3_n": (8, "int16"),
+    "voltage_ll_avg": (9, "int16"), "voltage_l1_l2": (10, "int16"),
+    "voltage_l2_l3": (11, "int16"), "voltage_l3_l1": (12, "int16"),
     "v_sf": (13, "int16"),
     "frequency": (14, "int16"), "hz_sf": (15, "int16"),
-    "power_total": (16, "int16"), "power_a": (17, "int16"),
-    "power_b": (18, "int16"), "power_c": (19, "int16"),
+    "power_active_total": (16, "int16"), "power_active_l1": (17, "int16"),
+    "power_active_l2": (18, "int16"), "power_active_l3": (19, "int16"),
     "w_sf": (20, "int16"),
-    "va_total": (21, "int16"), "va_a": (22, "int16"),
-    "va_b": (23, "int16"), "va_c": (24, "int16"),
+    "power_apparent_total": (21, "int16"), "power_apparent_l1": (22, "int16"),
+    "power_apparent_l2": (23, "int16"), "power_apparent_l3": (24, "int16"),
     "va_sf": (25, "int16"),
-    "var_total": (26, "int16"), "var_a": (27, "int16"),
-    "var_b": (28, "int16"), "var_c": (29, "int16"),
+    "power_reactive_total": (26, "int16"), "power_reactive_l1": (27, "int16"),
+    "power_reactive_l2": (28, "int16"), "power_reactive_l3": (29, "int16"),
     "var_sf": (30, "int16"),
-    "pf_avg": (31, "int16"), "pf_a": (32, "int16"),
-    "pf_b": (33, "int16"), "pf_c": (34, "int16"),
+    "power_factor_total": (31, "int16"), "power_factor_l1": (32, "int16"),
+    "power_factor_l2": (33, "int16"), "power_factor_l3": (34, "int16"),
     "pf_sf": (35, "int16"),
-    "energy_exported": (36, "uint32"), "energy_exported_a": (38, "uint32"),
-    "energy_exported_b": (40, "uint32"), "energy_exported_c": (42, "uint32"),
-    "energy_imported": (44, "uint32"), "energy_imported_a": (46, "uint32"),
-    "energy_imported_b": (48, "uint32"), "energy_imported_c": (50, "uint32"),
+    "energy_active_export": (36, "uint32"), "energy_active_export_l1": (38, "uint32"),
+    "energy_active_export_l2": (40, "uint32"), "energy_active_export_l3": (42, "uint32"),
+    "energy_active_import": (44, "uint32"), "energy_active_import_l1": (46, "uint32"),
+    "energy_active_import_l2": (48, "uint32"), "energy_active_import_l3": (50, "uint32"),
     "wh_sf": (52, "int16"),
 }
 
-# the collector's MQTT point names (INVERTER_FIELD_MAP / METER_FIELD_MAP) —
-# the shadow-parity harness compares topic-for-topic against these
-INV_TOPICS = {
-    "ac_current": "A", "ac_current_a": "AphA", "ac_current_b": "AphB",
-    "ac_current_c": "AphC", "ac_voltage_ab": "PPVphAB",
-    "ac_voltage_bc": "PPVphBC", "ac_voltage_ca": "PPVphCA",
-    "ac_voltage_an": "PhVphA", "ac_voltage_bn": "PhVphB",
-    "ac_voltage_cn": "PhVphC", "ac_power": "W", "ac_frequency": "Hz",
-    "apparent_power": "VA", "reactive_power": "VAr", "power_factor": "PF",
-    "lifetime_energy": "WH", "dc_current": "DCA", "dc_voltage": "DCV",
-    "dc_power": "DCW", "temp_cabinet": "TmpCab", "temp_heatsink": "TmpSnk",
-    "temp_transformer": "TmpTrns", "temp_other": "TmpOt",
-    "status_code": "St", "status_vendor": "StVnd",
+# the retired collector's MQTT point names — the compat-alias layer must map
+# every canonical topic onto exactly these (the parity harness and the F2
+# cutover both speak this tree)
+INV_LEGACY = {
+    "current_total": "A", "current_l1": "AphA", "current_l2": "AphB",
+    "current_l3": "AphC", "voltage_l1_l2": "PPVphAB", "voltage_l2_l3": "PPVphBC",
+    "voltage_l3_l1": "PPVphCA", "voltage_l1_n": "PhVphA", "voltage_l2_n": "PhVphB",
+    "voltage_l3_n": "PhVphC", "power_active_total": "W", "frequency": "Hz",
+    "power_apparent_total": "VA", "power_reactive_total": "VAr",
+    "power_factor_total": "PF", "energy_active_generated": "WH",
+    "current_dc": "DCA", "voltage_dc": "DCV", "power_dc": "DCW",
+    "temperature_cabinet": "TmpCab", "temperature_heatsink": "TmpSnk",
+    "temperature_transformer": "TmpTrns", "temperature_other": "TmpOt",
+    "operating_state": "St", "vendor_state": "StVnd",
+    "power_dc_mppt1": "mppt/string1/DCW", "power_dc_mppt2": "mppt/string2/DCW",
+    "mppt_modules": "mppt/num_modules",
 }
-MET_TOPICS = {
-    "current_total": "A", "current_a": "AphA", "current_b": "AphB",
-    "current_c": "AphC", "voltage_ln_avg": "PhV", "voltage_an": "PhVphA",
-    "voltage_bn": "PhVphB", "voltage_cn": "PhVphC", "voltage_ll_avg": "PPV",
-    "voltage_ab": "PPVphAB", "voltage_bc": "PPVphBC", "voltage_ca": "PPVphCA",
-    "frequency": "Hz", "power_total": "W", "power_a": "WphA",
-    "power_b": "WphB", "power_c": "WphC", "va_total": "VA", "va_a": "VAphA",
-    "va_b": "VAphB", "va_c": "VAphC", "var_total": "VAR", "var_a": "VARphA",
-    "var_b": "VARphB", "var_c": "VARphC", "pf_avg": "PF", "pf_a": "PFphA",
-    "pf_b": "PFphB", "pf_c": "PFphC", "energy_exported": "TotWhExp",
-    "energy_exported_a": "TotWhExpPhA", "energy_exported_b": "TotWhExpPhB",
-    "energy_exported_c": "TotWhExpPhC", "energy_imported": "TotWhImp",
-    "energy_imported_a": "TotWhImpPhA", "energy_imported_b": "TotWhImpPhB",
-    "energy_imported_c": "TotWhImpPhC",
+MET_LEGACY = {
+    "current_total": "A", "voltage_ln_avg": "PhV", "voltage_l1_n": "PhVphA",
+    "voltage_ll_avg": "PPV", "frequency": "Hz", "power_active_total": "W",
+    "power_active_l1": "WphA", "power_apparent_total": "VA",
+    "power_reactive_total": "VAR", "power_factor_total": "PF",
+    "energy_active_export": "TotWhExp", "energy_active_export_l1": "TotWhExpPhA",
+    "energy_active_import": "TotWhImp", "energy_active_import_l3": "TotWhImpPhC",
 }
 
 
@@ -141,7 +144,7 @@ def test_templates_validate_and_parse():
 
 def test_inverter_addresses_match_collector_offsets():
     _t, regs = _by_name(INV)
-    for name, (off, dtype) in {**INV_OFFSETS}.items():
+    for name, (off, dtype) in INV_OFFSETS.items():
         r = regs[name]
         assert r.address == INV_BASE + off, f"{name}: {r.address} != {INV_BASE + off}"
         assert r.data_type == dtype, name
@@ -162,43 +165,64 @@ def test_meter_addresses_match_collector_offsets():
 def test_scale_from_wiring_matches_collector_sf_assignment():
     _t, regs = _by_name(INV)
     expect = {
-        "a_sf": ["ac_current", "ac_current_a", "ac_current_b", "ac_current_c"],
-        "v_sf": ["ac_voltage_ab", "ac_voltage_bc", "ac_voltage_ca",
-                 "ac_voltage_an", "ac_voltage_bn", "ac_voltage_cn"],
-        "w_sf": ["ac_power"], "hz_sf": ["ac_frequency"],
-        "va_sf": ["apparent_power"], "var_sf": ["reactive_power"],
-        "pf_sf": ["power_factor"], "wh_sf": ["lifetime_energy"],
-        "dca_sf": ["dc_current"], "dcv_sf": ["dc_voltage"],
-        "dcw_sf": ["dc_power"],
-        "tmp_sf": ["temp_cabinet", "temp_heatsink", "temp_transformer",
-                   "temp_other"],
-        "dca_mppt_sf": ["mppt1_dc_current", "mppt2_dc_current"],
-        "dcv_mppt_sf": ["mppt1_dc_voltage", "mppt2_dc_voltage"],
-        "dcw_mppt_sf": ["mppt1_dc_power", "mppt2_dc_power"],
-        "dcwh_mppt_sf": ["mppt1_dc_energy", "mppt2_dc_energy"],
+        "a_sf": ["current_total", "current_l1", "current_l2", "current_l3"],
+        "v_sf": ["voltage_l1_l2", "voltage_l2_l3", "voltage_l3_l1",
+                 "voltage_l1_n", "voltage_l2_n", "voltage_l3_n"],
+        "w_sf": ["power_active_total"], "hz_sf": ["frequency"],
+        "va_sf": ["power_apparent_total"], "var_sf": ["power_reactive_total"],
+        "pf_sf": ["power_factor_total"], "wh_sf": ["energy_active_generated"],
+        "dca_sf": ["current_dc"], "dcv_sf": ["voltage_dc"],
+        "dcw_sf": ["power_dc"],
+        "tmp_sf": ["temperature_cabinet", "temperature_heatsink",
+                   "temperature_transformer", "temperature_other"],
+        "dca_mppt_sf": ["current_dc_mppt1", "current_dc_mppt2"],
+        "dcv_mppt_sf": ["voltage_dc_mppt1", "voltage_dc_mppt2"],
+        "dcw_mppt_sf": ["power_dc_mppt1", "power_dc_mppt2"],
+        "dcwh_mppt_sf": ["energy_dc_mppt1", "energy_dc_mppt2"],
     }
     for sf, dependents in expect.items():
         for name in dependents:
             assert regs[name].scale_from == sf, name
     # raw registers stay raw
-    for name in ("status_code", "status_vendor", "evt1", "evt_vnd4",
-                 "mppt_num_modules", "mppt1_temperature"):
+    for name in ("operating_state", "vendor_state", "event_flags_1",
+                 "vendor_event_flags_4", "mppt_modules", "temperature_mppt1"):
         assert regs[name].scale_from == "", name
 
 
-def test_mqtt_topic_defaults_match_collector_point_names():
-    for path, topics in ((INV, INV_TOPICS), (MET, MET_TOPICS)):
+def test_every_routed_register_is_canonical():
+    """The whole point of the rework: a Fronius plant speaks EXACTLY the same
+    naming as the Janitza reference — canonical names, dictionary-derived
+    topics and measurements. Only unrouted SF plumbing may deviate."""
+    for path in (INV, MET):
         _t, regs = _by_name(path)
-        for name, topic in topics.items():
-            d = regs[name].defaults or {}
-            assert (d.get("mqtt") or {}).get("topic") == topic, (path, name)
-        # SF registers are selected (same-batch prescan) but never routed
-        sf_names = [n for n in regs if n.endswith("_sf")]
-        assert sf_names
-        for n in sf_names:
-            d = regs[n].defaults or {}
-            assert (d.get("mqtt") or {}).get("enabled") is False, n
-            assert (d.get("influxdb") or {}).get("enabled") is False, n
+        for r in regs.values():
+            d = r.defaults or {}
+            routed = ((d.get("mqtt") or {}).get("enabled", True)
+                      or (d.get("influxdb") or {}).get("enabled", True))
+            if routed:
+                assert is_canonical(r.name), (path, r.name)
+                # topic/measurement DERIVE from the dictionary (empty defaults)
+                assert not (d.get("mqtt") or {}).get("topic"), r.name
+                assert not (d.get("influxdb") or {}).get("measurement"), r.name
+            else:
+                assert r.name.endswith("_sf"), (path, r.name)
+
+
+def test_legacy_leaf_map_covers_the_collector_tree():
+    leaves = _load(LEAVES)
+    for path, tid, legacy in ((INV, "fronius_sunspec_inverter", INV_LEGACY),
+                              (MET, "fronius_sunspec_meter", MET_LEGACY)):
+        m = leaves[tid]
+        _t, regs = _by_name(path)
+        # every routed register has an alias leaf (nothing silently dropped
+        # from the legacy tree)
+        for r in regs.values():
+            d = r.defaults or {}
+            if (d.get("mqtt") or {}).get("enabled", True):
+                assert (mqtt_topic_for(r.name) or r.name) in m, (tid, r.name)
+        # spot-pin the collector's exact point names
+        for name, leaf in legacy.items():
+            assert m[mqtt_topic_for(name)] == leaf, (tid, name)
 
 
 def test_batch_spans_fit_the_datamanager_read_cap():
@@ -226,8 +250,8 @@ def test_batch_spans_fit_the_datamanager_read_cap():
 
 
 def test_energy_counters_are_monotonic():
-    for path, names in ((INV, ["lifetime_energy"]),
-                        (MET, ["energy_exported", "energy_imported"])):
+    for path, names in ((INV, ["energy_active_generated"]),
+                        (MET, ["energy_active_export", "energy_active_import"])):
         _t, regs = _by_name(path)
         for n in names:
             assert regs[n].monotonic is True, (path, n)
@@ -237,7 +261,7 @@ def test_identity_block_present_and_static():
     for path in (INV, MET):
         _t, regs = _by_name(path)
         for name, doc in (("manufacturer", 40005), ("model", 40021),
-                          ("serial_number", 40053)):
+                          ("serial", 40053)):
             r = regs[name]
             assert r.address == doc - 1
             assert r.data_type == "string:16"

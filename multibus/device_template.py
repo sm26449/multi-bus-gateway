@@ -473,7 +473,16 @@ class TemplateRegistry:
                         from collections import Counter
                         from .canonical_fields import non_canonical, suggest
                         warns = []
-                        nc = non_canonical([r.name for r in t.registers])
+
+                        def _routed(r):
+                            # plumbing registers (e.g. SunSpec scale factors)
+                            # whose defaults disable BOTH sinks never become a
+                            # topic or a field — naming them canonically buys
+                            # nothing, so the lint skips them
+                            d = r.defaults or {}
+                            return ((d.get('mqtt') or {}).get('enabled', True)
+                                    or (d.get('influxdb') or {}).get('enabled', True))
+                        nc = non_canonical([r.name for r in t.registers if _routed(r)])
                         if nc:
                             hints = ", ".join(
                                 f"{n}→{suggest(n)}" if suggest(n) else n for n in nc[:8])
