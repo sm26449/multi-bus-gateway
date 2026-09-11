@@ -21,6 +21,21 @@
   editable in place. Plant dialog gains MQTT/InfluxDB/HA-discovery
   toggles.
 
+### 2026-09-11 (evening) — device runtime heartbeat, plant status, migration plan
+
+- **Device runtime heartbeat**: every device publishes retained
+  `runtime/status` (`online`/`offline`) and `runtime/last_seen` (ISO
+  timestamp of the last successful read) next to `availability`, change-only
+  — the long-lived collector leaf names, so liveness watchers keep working
+  on the new namespace.
+- **Plant status**: `mbg/plants/<id>/status` = `online` (all units fresh) /
+  `partial` / `offline`, MQTT-only (text never reaches InfluxDB).
+- **Migration plan recorded**: [`docs/fronius-migration-plan.md`](docs/fronius-migration-plan.md)
+  — verified state, findings (liveness verdict, non-monotonic plant energy,
+  PF units, missing collector leaves, UI parity gaps) and the phased plan
+  for running MBG in parallel with the legacy Fronius collector on its own
+  `mbg/devices/*` + `mbg/plants/*` namespace (no compat aliases).
+
 ## 3.43.0
 
 ### 2026-09-11 — MQTT namespace + plant-grouped devices page

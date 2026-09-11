@@ -348,6 +348,8 @@ plants:
     influxdb:
       bucket: fronius_shadow
       device_tag: inverter_${unit_id}
+    aggregates: true             # false = no plant-level output (see below)
+    write_locked: false          # applies to every unit (one endpoint, one lock)
 ```
 
 `${unit_id}`, `${plant_id}` and `${device_id}` substitute per unit in the
@@ -357,6 +359,22 @@ can then be tuned per unit like any device. API: `GET/POST /api/plants`,
 `GET/PUT/DELETE /api/plants/{id}` (unit availability is aggregated in the
 `GET` responses). Deleting a plant keeps the units' register files on disk,
 so re-adding it restores the selection.
+
+**Plant-level output** (`aggregates: true`, the default): every 10 s the
+plant publishes its units' combined values on `mbg/plants/<id>/<canonical
+topic>` — sums for powers/currents/energies, averages for voltages/
+frequency/power factor/temperatures — plus `units_online`, `units_total`
+and `status` (`online` = all units fresh, `partial`, `offline`). The same
+values go to InfluxDB under the canonical measurements, tagged
+`device=<plant id>, aggregate=plant`. A unit contributes only values
+younger than 4× its poll interval (60 s minimum). Known limitations and
+the planned fixes (counter semantics, PF, bucket substitution) are tracked
+in [fronius-migration-plan.md](fronius-migration-plan.md).
+
+**Device liveness leaves** (every device, plant units included): retained
+`availability` (`online`/`offline`), `runtime/status` (same verdict) and
+`runtime/last_seen` (ISO timestamp of the last successful read), published
+on change next to the device's data topics.
 
 ### `alerts:` (opt-in)
 

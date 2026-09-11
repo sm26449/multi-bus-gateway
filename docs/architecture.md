@@ -246,6 +246,24 @@ group, next to the real registers:
   division-by-zero → skip, a missing input skips the round (no partial
   publishes), and an engine error can never kill a poller.
 
+### Plants and the PlantAggregator (`plant_aggregator.py`)
+
+A `plants:` entry is one template + one endpoint + N unit ids, expanded by
+`Config._expand_plants()` into N ordinary devices (own socket each, managed
+through the plant). On top of the units, `PlantAggregator` — a daemon
+thread started with the app — combines each plant's live stores every 10 s
+by canonical-name rule (sum for powers/currents/energies, average for
+voltages/frequency/PF/temperatures, skip for identity/status words) and
+publishes the result as a first-class entity: `mbg/plants/<id>/<canonical
+topic>` on MQTT (plus `units_online`, `units_total`, `status`) and the same
+canonical measurements in InfluxDB tagged `device=<plant id>,
+aggregate=plant`. `compute_plant_aggregates()` is pure and shared with
+`GET /api/plants`. The namespace convention is deliberate: device values
+live under `mbg/devices/<id>/…`, plant values under `mbg/plants/<id>/…`,
+so a consumer always knows which entity published a topic. The roadmap
+for making the aggregate counter-safe and giving plants a full UI is in
+[fronius-migration-plan.md](fronius-migration-plan.md).
+
 ### Value flow conventions
 
 - **Timestamps** are the *read* time, not the publish/flush time.
