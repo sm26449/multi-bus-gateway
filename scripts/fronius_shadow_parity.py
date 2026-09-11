@@ -34,7 +34,7 @@ import sys
 import time
 from collections import defaultdict
 
-PAIR_MAX_AGE = 45.0          # seconds between the two sides' samples
+PAIR_MAX_AGE = 30.0          # seconds between the two sides' samples
 SUMMARY_EVERY = 3600         # hourly
 
 # (live prefix, shadow prefix) pairs under comparison. Pairs whose shadow
@@ -65,7 +65,10 @@ FLOORS = [
     (("Hz",), 0.15),
     (("Tmp", "mppt/string"), 800.0),               # strings carry power/temp mix
 ]
-REL = 0.10                                          # 10% relative, whichever larger
+# The comparator hunts DECODE faults (a slipped scale factor is 10×), not
+# cloud-edge transients: two samples up to PAIR_MAX_AGE apart legitimately
+# differ by >10% on a partly-cloudy day.
+REL = 0.15                                          # 15% relative, whichever larger
 
 
 def leaf_class(leaf: str):
