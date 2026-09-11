@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.39.1
+
+### 2026-09-11 — virtual meters: idle-connection reaping (live-peer leak)
+
+Production finding after 15 days of uptime: the fronius_ts vmeter had
+accumulated 4 connections from the SAME live host (the Venus/Ekrano
+network scan opens sockets to :502 and never closes them — one more after
+every host-side incident, ages up to 212 h). TCP keepalive can't help: it
+only catches DEAD peers, and a live kernel answers probes forever for a
+socket its application abandoned.
+
+New application-level reaper on the existing 10 s supervisor sweep: reads
+`TCP_INFO.tcpi_last_data_recv` per client socket (kernel-side idle time —
+no request attribution needed) and closes connections silent for
+`transport.idle_timeout_s` (default 300; 0 disables; Linux-only, other
+platforms keep keepalive alone). Active consumers poll every 1-2 s and
+never approach the threshold. Close is marshalled onto the server's own
+event loop; every reap is a stats event (`idle_reap`).
+
 ## 3.39.0
 
 ### 2026-08-28 — dedicated PQ history bucket (long retention)

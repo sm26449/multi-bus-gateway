@@ -74,3 +74,56 @@ def test_em24_conformance():
         assert abs(got['energy_export_kWh'] - 27913.246) < 0.2   # Wh->kWh*10 scale
     finally:
         vm.stop()
+
+
+# ── idle-connection reaping (2026-09-11) ────────────────────────────────────
+
+def test_idle_ms_from_tcp_info_parses_offset_52():
+    from multibus.virtual_meter import VirtualMeter
+    buf = bytearray(104)
+    buf[52:56] = (123456).to_bytes(4, "little")
+    assert VirtualMeter._idle_ms_from_tcp_info(bytes(buf)) == 123456
+    # short buffer (exotic kernel) → None, never a crash
+    assert VirtualMeter._idle_ms_from_tcp_info(b"\x00" * 40) is None
+
+
+def test_reap_idle_uses_transport_timeout_and_disable(monkeypatch):
+    """timeout resolution: transport override wins; 0 disables; the reaper
+    closes only sockets past the threshold (via the server loop)."""
+    from unittest.mock import MagicMock
+    import socket as _socket
+    from multibus.virtual_meter import VirtualMeter
+
+    vm = VirtualMeter.__new__(VirtualMeter)
+    vm.t = MagicMock()
+    vm.stats = MagicMock()
+    closed = []
+
+    def make_handler(idle_ms):
+        h = MagicMock()
+        sock = MagicMock()
+        buf = bytearray(104)
+        buf[52:56] = int(idle_ms).to_bytes(4, "little")
+        sock.getsockopt.return_value = bytes(buf)
+        h.transport.get_extra_info.side_effect = (
+            lambda k: sock if k == "socket" else ("1.2.3.4", 55))
+        h.transport.close = lambda: closed.append(idle_ms)
+        return h
+
+    vm._server = MagicMock()
+    vm._server.active_connections = {1: make_handler(10_000),      # active
+                                     2: make_handler(400_000)}     # idle 400s
+    loop = MagicMock()
+    loop.call_soon_threadsafe.side_effect = lambda fn: fn()
+    vm._server_loop = loop
+
+    if not hasattr(_socket, "TCP_INFO"):        # non-Linux CI — nothing to test
+        return
+    vm.t.transport = {"idle_timeout_s": 300}
+    vm._reap_idle_connections()
+    assert closed == [400_000]                  # only the idle one
+
+    closed.clear()
+    vm.t.transport = {"idle_timeout_s": 0}      # disabled
+    vm._reap_idle_connections()
+    assert closed == []

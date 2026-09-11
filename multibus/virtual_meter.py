@@ -823,6 +823,69 @@ class VirtualMeter:
         + ([(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)] if hasattr(socket, "TCP_KEEPCNT") else [])
     )
 
+    # struct tcp_info: 8 one-byte fields, then u32s — tcpi_last_data_recv is
+    # the 12th u32 (offset 52). The struct is append-only in the Linux ABI, so
+    # the offset is stable; value = milliseconds since the peer last sent DATA
+    # on this socket (a silent connection grows it from the handshake on).
+    _TCPI_LAST_DATA_RECV_OFF = 52
+    IDLE_TIMEOUT_DEFAULT_S = 300
+
+    @staticmethod
+    def _idle_ms_from_tcp_info(info: bytes) -> Optional[int]:
+        """Extract tcpi_last_data_recv (ms) from a raw TCP_INFO buffer."""
+        off = VirtualMeter._TCPI_LAST_DATA_RECV_OFF
+        if len(info) < off + 4:
+            return None
+        return int.from_bytes(info[off:off + 4], "little")
+
+    def _reap_idle_connections(self) -> None:
+        """Close client connections that sent no request for idle_timeout_s.
+
+        Companion to keepalive, which only catches DEAD peers: a LIVE host
+        whose application abandoned the socket answers kernel probes forever.
+        Observed in production (2026-09-11): the Venus/Ekrano network scan
+        opens connections to the :502 vmeter and never closes them — 4
+        accumulated over 9 days, one per host-side incident. TCP_INFO's
+        tcpi_last_data_recv gives per-socket idle time kernel-side, so no
+        request attribution is needed. Active consumers poll every 1-2 s and
+        never approach the threshold. transport.idle_timeout_s per vmeter
+        (default 300; 0 disables). Close is marshalled onto the server's own
+        event loop (this runs on the supervisor thread)."""
+        if not hasattr(socket, "TCP_INFO"):
+            return                          # non-Linux — keepalive still applies
+        try:
+            timeout_s = float(self.t.transport.get(
+                "idle_timeout_s", self.IDLE_TIMEOUT_DEFAULT_S) or 0)
+        except (TypeError, ValueError):
+            timeout_s = self.IDLE_TIMEOUT_DEFAULT_S
+        srv, loop = self._server, self._server_loop
+        if timeout_s <= 0 or not srv or not loop:
+            return
+        try:
+            for handler in list(getattr(srv, "active_connections", {}).values()):
+                tr = getattr(handler, "transport", None)
+                sock = tr.get_extra_info("socket") if tr is not None else None
+                if sock is None:
+                    continue
+                try:
+                    info = sock.getsockopt(socket.IPPROTO_TCP, socket.TCP_INFO, 104)
+                except OSError:
+                    continue                # closing under us — kernel wins
+                idle_ms = self._idle_ms_from_tcp_info(info)
+                if idle_ms is None or idle_ms < timeout_s * 1000:
+                    continue
+                peer = tr.get_extra_info("peername")
+                self.stats.record_event(
+                    "info", "idle_reap",
+                    f"closed idle connection {peer} "
+                    f"(no request for {idle_ms / 1000:.0f}s)")
+                logger.info("virtual meter %s: reaping idle connection %s "
+                            "(no request for %.0fs)", self.t.id, peer,
+                            idle_ms / 1000)
+                loop.call_soon_threadsafe(tr.close)
+        except Exception:  # noqa: BLE001 — reaping is best-effort hygiene
+            pass
+
     def _apply_keepalive(self) -> None:
         """Enable TCP keepalive on every accepted client socket. A Modbus server
         never sends unsolicited data, so a consumer that vanishes without FIN/RST
@@ -980,6 +1043,7 @@ class VirtualMeter:
                         tick += 1
                         if tick % 10 == 0:
                             self._apply_keepalive()   # dead-peer reaping (same cadence)
+                            self._reap_idle_connections()  # live-peer idle sockets
                             if self._serving_ok(port):
                                 probe_fails = 0
                             else:

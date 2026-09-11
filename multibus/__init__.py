@@ -16,7 +16,7 @@
 #
 """Multi-Bus Gateway package."""
 
-__version__ = "3.39.0"
+__version__ = "3.39.1"
 __author__ = "sm26449"
 
 from .config import Config
