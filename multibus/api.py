@@ -518,7 +518,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             # this short-circuit bypasses the header middleware — apply the
             # security headers directly (this IS the login page)
             return _apply_security_headers(
-                HTMLResponse(_render_index_html(canonical_url=config.ui.canonical_url)),
+                HTMLResponse(_render_index_html(canonical_url=config.ui.canonical_url),
+                             headers={"Cache-Control": "no-cache"}),
                 request.url.scheme)
         # identity lands on request.state BEFORE any deny, so the audit trail
         # records WHO was refused, not an anonymous dash
@@ -724,8 +725,14 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     @app.get("/")
     async def root():
-        """Serve main UI (with mtime-derived asset cache-bust tokens)."""
-        return HTMLResponse(_render_index_html(canonical_url=config.ui.canonical_url))
+        """Serve main UI (with mtime-derived asset cache-bust tokens).
+
+        Cache-Control: no-cache is essential: without it browsers cache the
+        SHELL heuristically, so after a deploy an operator keeps loading the
+        OLD index (old script tags) and reports the old UI — the asset ?v=
+        tokens can only bust caches if the shell itself is revalidated."""
+        return HTMLResponse(_render_index_html(canonical_url=config.ui.canonical_url),
+                            headers={"Cache-Control": "no-cache"})
 
     # /api/status(+resources) → routes/status_routes.py
 

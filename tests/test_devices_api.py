@@ -980,3 +980,15 @@ devices:
     saved2 = _json.loads((tmp_path / "devices" / "em24" /
                           "selected_registers.json").read_text())["registers"][0]
     assert saved2.get("monotonic") is True and saved2.get("nan") is True
+
+
+@needs_tc
+def test_index_shell_is_never_browser_cached(tmp_path):
+    """The SPA shell must carry Cache-Control: no-cache — without it browsers
+    heuristically cache '/' and after a deploy the operator keeps loading the
+    OLD index (old script tags), reporting the old UI. The ?v= asset tokens
+    only work if the shell itself revalidates."""
+    _cfg, client = make_app(tmp_path)
+    r = client.get("/")
+    assert r.status_code == 200
+    assert r.headers.get("cache-control") == "no-cache"
