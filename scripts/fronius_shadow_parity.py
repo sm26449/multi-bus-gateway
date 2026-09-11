@@ -37,9 +37,13 @@ from collections import defaultdict
 PAIR_MAX_AGE = 45.0          # seconds between the two sides' samples
 SUMMARY_EVERY = 3600         # hourly
 
-# (live prefix, shadow prefix) pairs under comparison
+# (live prefix, shadow prefix) pairs under comparison. Pairs whose shadow
+# unit is not (yet) enabled simply produce no samples — safe to pre-list.
 PAIRS = [
     ("fronius/inverter/1/", "mbg/fronius/inverter/1/"),
+    ("fronius/inverter/2/", "mbg/fronius/inverter/2/"),
+    ("fronius/inverter/3/", "mbg/fronius/inverter/3/"),
+    ("fronius/inverter/4/", "mbg/fronius/inverter/4/"),
     ("fronius/meter/240/", "mbg/fronius/meter/240/"),
 ]
 
