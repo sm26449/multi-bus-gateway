@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased
+
+### 2026-09-12 — design note P7: Solar API alongside Modbus
+
+`docs/fronius-migration-plan.md` gains phase P7. No code yet; the note records
+the measurements that make the case, so the decision is not re-litigated from
+memory.
+
+The Modbus path on this DataManager is saturated and not only by us. Measured
+today on the same box in the same afternoon: four inverters at 20 s delivered
+17.3 transactions a minute with zero errors and zero overruns, while 10 s
+delivered 15.7-17.1 with 14-16 % errors. Past roughly 26 a minute it does not
+slow down gracefully, it collapses — we asked for more and got less. The old
+meter collector meanwhile holds three sockets open permanently and the old
+inverter collector reopens its socket every five seconds, on a device that runs
+out of client slots near ten.
+
+The same DataManager's HTTP interface answers in a median of **54 ms** (25
+consecutive calls, worst 197 ms) and returns **all four inverters in one
+request**, against 1945-2376 ms for a single Modbus read at that moment. Those
+25 calls ran on top of live Modbus polling with zero overruns, zero errors and
+unchanged Modbus latency: the web server answers from the cache the DataManager
+fills off its own RS-485 side. Sampling PAC once a second for 46 s caught 18
+distinct values, so that cache refreshes about every 2.6 s.
+
+So: HTTP every 5-10 s for power, energy, frequency, per-phase voltage and
+current, and status; Modbus every 20-30 s for what only it has — power factor,
+reactive and apparent power, the event flags, and the MPPT strings. Fresher data
+than today on what matters, with less Modbus than the configuration that has
+been collapsing.
+
+The note also records what is already built (`fronius-solar` on `protocol: http`
+with a JSON-path template), the one genuinely new piece (an endpoint-level HTTP
+source that fans one response out to N units), and the risks — chiefly that a
+frozen cache looks identical to a healthy one over HTTP, so a staleness detector
+is required.
+
 ## 3.55.0
 
 ### 2026-09-12 — a master device needs room to breathe
