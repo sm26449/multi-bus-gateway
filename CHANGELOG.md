@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.52.2
+
+### 2026-09-12 — parity-harness fixes found by running it
+
+- **Two independent clocks are not compared.** Both systems publish
+  `runtime/last_seen` and each stamps its own poll: comparing them produced a
+  mismatch on every publish — 44 of 48 in the first live run — drowning the
+  real signal. Seeing the leaf on both sides is still recorded in the ledger.
+- **The power-factor sign flips at unity.** The raw register alternates between
+  +10000 and −10000 while the inverter sits at 1.00, and both systems were
+  observed doing it independently. A sign flip at |PF| ≈ 1 is the device
+  talking. The tolerance band is closed at BOTH ends, because `|x| >= 0.99`
+  alone would have waved through 1.0 against 100.0 — the ±100 scaling fault
+  this comparison exists to catch.
+- `corruption_reason` joined the accounted-for list: it only reaches the wire
+  when the collector's reconciliation fires, so it was missing from the
+  captured inventory and surfaced as UNACCOUNTED on the first live run.
+
+After the fixes, a 130-second live sample read 99.62 % agreement across 65
+compared leaves, zero unaccounted, with the five remaining mismatches all being
+the gateway's own restart transient.
+
 ## 3.52.1
 
 ### 2026-09-12 — migration fix: a template that curates nothing prunes nothing
