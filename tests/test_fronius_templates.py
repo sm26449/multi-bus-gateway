@@ -197,15 +197,21 @@ def test_every_routed_register_is_canonical():
         _t, regs = _by_name(path)
         for r in regs.values():
             d = r.defaults or {}
-            routed = ((d.get("mqtt") or {}).get("enabled", True)
-                      or (d.get("influxdb") or {}).get("enabled", True))
+            # a register with NO defaults is not in the curated set, so nothing
+            # routes it anywhere — it is documentation of a point the model
+            # has, for hardware that implements it
+            routed = bool(d) and ((d.get("mqtt") or {}).get("enabled", True)
+                                  or (d.get("influxdb") or {}).get("enabled", True))
             if routed:
                 assert is_canonical(r.name), (path, r.name)
                 # topic/measurement DERIVE from the dictionary (empty defaults)
                 assert not (d.get("mqtt") or {}).get("topic"), r.name
                 assert not (d.get("influxdb") or {}).get("measurement"), r.name
             else:
-                assert r.name.endswith("_sf"), (path, r.name)
+                # unrouted is either SF plumbing, or a real point this hardware
+                # does not implement — kept in the map, out of the curated set.
+                # Naming discipline still applies to the latter.
+                assert r.name.endswith("_sf") or is_canonical(r.name), (path, r.name)
 
 
 def test_legacy_leaf_map_covers_the_collector_tree():
@@ -218,7 +224,7 @@ def test_legacy_leaf_map_covers_the_collector_tree():
         # from the legacy tree)
         for r in regs.values():
             d = r.defaults or {}
-            if (d.get("mqtt") or {}).get("enabled", True):
+            if d and (d.get("mqtt") or {}).get("enabled", True):
                 assert (mqtt_topic_for(r.name) or r.name) in m, (tid, r.name)
         # spot-pin the collector's exact point names
         for name, leaf in legacy.items():
@@ -332,3 +338,71 @@ def test_alarm_and_active_cover_the_vendor_code_sets():
                for n, tree in calcs.items()}
         assert got["status_alarm"] == (1 if code in alarm else 0), code
         assert got["status_active"] == (1 if code in active else 0), code
+
+
+# ── the map is what the hardware actually answers ───────────────────────────
+
+# Verified against a production Symo Advanced 20.0-3-M on 2026-09-12: every one
+# of these answers with the SunSpec not-implemented sentinel, always.
+UNIMPLEMENTED = {
+    "current_dc", "dca_sf", "voltage_dc", "dcv_sf",
+    "temperature_cabinet", "temperature_heatsink", "temperature_transformer",
+    "temperature_other", "tmp_sf", "temperature_mppt1", "temperature_mppt2",
+}
+
+
+def test_points_this_hardware_never_answers_are_not_curated():
+    """They stay in the map — a Primo or a GEN24 may well implement them — but
+    nobody polls a hole by default."""
+    t = _tpl(INV)
+    by_name = {r.name: r for r in t.registers}
+    for n in UNIMPLEMENTED:
+        assert n in by_name, f"{n} should stay documented in the map"
+        assert not by_name[n].defaults, f"{n} must not be in the curated set"
+    # and the points that DO answer are still curated
+    for n in ("power_dc", "dcw_sf", "power_active_total", "energy_active_generated",
+              "voltage_l1_n", "current_l1", "power_dc_mppt1"):
+        assert by_name[n].defaults, n
+
+
+def test_the_mppt_block_polls_on_its_own_cadence():
+    """It sits 135 registers past the AC block, so it can never share a read
+    with it (Modbus caps one read at 125). Leaving it in the fast group made
+    every AC sweep cost two transactions — and transactions, not registers, are
+    what a slow master charges for."""
+    t = _tpl(INV)
+    groups = {g: t.poll_groups[g]["interval"] for g in t.poll_groups}
+    assert groups == {"normal": 5, "slow": 30, "static": 3600}
+    for r in t.registers:
+        if not r.defaults:
+            continue
+        if r.category == "mppt" or r.name.endswith("_mppt_sf"):
+            assert r.poll_group == "slow", r.name
+        elif r.category == "identity":
+            assert r.poll_group == "static", r.name
+        else:
+            assert r.poll_group == "normal", r.name
+
+
+def test_every_curated_group_costs_exactly_one_transaction():
+    """The whole point of the tiering: one fast read and one slow read per
+    inverter, never more."""
+    from multibus.config import ModbusConfig, SelectedRegister
+    from multibus.modbus_client import ModbusConnection, RegisterPoller
+    from multibus.register_parser import RegisterParser
+
+    t = _tpl(INV)
+    conn = ModbusConnection(ModbusConfig(host="192.0.2.5", max_gap=20))
+    by = {}
+    for r in t.registers:
+        if r.defaults:
+            by.setdefault(r.poll_group or "normal", []).append(r)
+    assert set(by) == {"normal", "slow", "static"}
+    for g, rs in by.items():
+        sel = [SelectedRegister(address=r.address, name=r.name, label=r.label,
+                                unit=r.unit, data_type=r.data_type, poll_group=g,
+                                scale=r.scale, scale_from=r.scale_from, nan=r.nan,
+                                register_type=r.register_type) for r in rs]
+        p = RegisterPoller(g, t.poll_groups[g]["interval"], sel, conn,
+                           RegisterParser("big"), lambda *a: None, "x")
+        assert len(p._read_groups) == 1, (g, p._read_groups)

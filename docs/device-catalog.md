@@ -254,12 +254,12 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 
 ## Fronius SunSpec inverter (int+SF, via datalogger)
 
-**id** `fronius_sunspec_inverter` · **vendor** Fronius · **model** Symo / Primo / Eco (SunSpec 103) · **version** 2.1.0 · **registers** 61
+**id** `fronius_sunspec_inverter` · **vendor** Fronius · **model** Symo / Primo / Eco (SunSpec 103) · **version** 2.2.0 · **registers** 61
 
 - **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
 - **Source / provenance:** SunSpec Information Models (int+SF); register map verified live against a production Fronius fleet (raw-frame decode parity, 2026-09-11)
 
-> Fronius inverter read THROUGH its DataManager/datalogger over Modbus TCP, in the SunSpec int + scale-factor register mode (models 1/103/160: AC block, DC block, temperatures, status/events, per-string MPPT, identity). Registers are CANONICAL: this device publishes the same topics/fields/measurements as every other MBG device (power/active/total, dc/power, mppt/1/power …); a legacy SunSpec-name tree (…/W, …/PhVphA) is available via mqtt.compat_aliases. Use this when the datalogger's Modbus TCP slave is enabled and set to 'int+SF' (the Fronius default). For SEVERAL inverters behind one datalogger, add a `plants:` entry with this template and the unit IDs (1, 2, ...) — each unit becomes its own device. CAUTION: dataloggers serve only a few concurrent Modbus clients; if another system polls the same datalogger, keep poll intervals modest (10-15 s) or reduce the number of units read in parallel. Power factor is normalized to the ±1 fraction every other gateway device publishes (SunSpec reports it as a percentage, so the map carries scale: 100 on top of the dynamic scale factor). The operating state is also shipped decoded: status/text (vendor wording), status/alarm and status/active are derived measurements the template brings with it, so every unit of a plant speaks the same status without anyone retyping a formula.
+> Fronius inverter read THROUGH its DataManager/datalogger over Modbus TCP, in the SunSpec int + scale-factor register mode (models 1/103/160: AC block, DC block, temperatures, status/events, per-string MPPT, identity). Registers are CANONICAL: this device publishes the same topics/fields/measurements as every other MBG device (power/active/total, dc/power, mppt/1/power …); a legacy SunSpec-name tree (…/W, …/PhVphA) is available via mqtt.compat_aliases. Use this when the datalogger's Modbus TCP slave is enabled and set to 'int+SF' (the Fronius default). For SEVERAL inverters behind one datalogger, add a `plants:` entry with this template and the unit IDs (1, 2, ...) — each unit becomes its own device. CAUTION: dataloggers serve only a few concurrent Modbus clients; if another system polls the same datalogger, keep poll intervals modest (10-15 s) or reduce the number of units read in parallel. Power factor is normalized to the ±1 fraction every other gateway device publishes (SunSpec reports it as a percentage, so the map carries scale: 100 on top of the dynamic scale factor). The operating state is also shipped decoded: status/text (vendor wording), status/alarm and status/active are derived measurements the template brings with it, so every unit of a plant speaks the same status without anyone retyping a formula. Register selection is what this hardware actually answers: the model-103 DC current/voltage and every temperature point (cabinet, heatsink, transformer, other, and both MPPT probes) read the SunSpec not-implemented sentinel on a Symo and are left out of the curated set — they stay in the map, selectable, for models that do implement them. The MPPT block sits 135 registers past the AC block, so it can never share a read with it; it polls on its own slower cadence instead of making every AC sweep cost two transactions.
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
@@ -309,20 +309,20 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 40115 / 0x9CB3 | `vendor_event_flags_2` | Vendor event flags word 2 | uint32 | 1 | — | normal |
 | 40117 / 0x9CB5 | `vendor_event_flags_3` | Vendor event flags word 3 | uint32 | 1 | — | normal |
 | 40119 / 0x9CB7 | `vendor_event_flags_4` | Vendor event flags word 4 | uint32 | 1 | — | normal |
-| 40255 / 0x9D3F | `dca_mppt_sf` | DCA MPPT Scale Factor | int16 | 1 | — | normal |
-| 40256 / 0x9D40 | `dcv_mppt_sf` | DCV MPPT Scale Factor | int16 | 1 | — | normal |
-| 40257 / 0x9D41 | `dcw_mppt_sf` | DCW MPPT Scale Factor | int16 | 1 | — | normal |
-| 40258 / 0x9D42 | `dcwh_mppt_sf` | DCWH MPPT Scale Factor | int16 | 1 | — | normal |
-| 40261 / 0x9D45 | `mppt_modules` | Number of MPPT modules/strings | uint16 | 1 | — | normal |
-| 40272 / 0x9D50 | `current_dc_mppt1` | MPPT string 1 DC current | uint16 | 1 | A | normal |
-| 40273 / 0x9D51 | `voltage_dc_mppt1` | MPPT string 1 DC voltage | uint16 | 1 | V | normal |
-| 40274 / 0x9D52 | `power_dc_mppt1` | MPPT string 1 DC power | uint16 | 1 | W | normal |
-| 40275 / 0x9D53 | `energy_dc_mppt1` | MPPT string 1 lifetime DC energy | uint32 | 1 | Wh | normal |
+| 40255 / 0x9D3F | `dca_mppt_sf` | DCA MPPT Scale Factor | int16 | 1 | — | slow |
+| 40256 / 0x9D40 | `dcv_mppt_sf` | DCV MPPT Scale Factor | int16 | 1 | — | slow |
+| 40257 / 0x9D41 | `dcw_mppt_sf` | DCW MPPT Scale Factor | int16 | 1 | — | slow |
+| 40258 / 0x9D42 | `dcwh_mppt_sf` | DCWH MPPT Scale Factor | int16 | 1 | — | slow |
+| 40261 / 0x9D45 | `mppt_modules` | Number of MPPT modules/strings | uint16 | 1 | — | slow |
+| 40272 / 0x9D50 | `current_dc_mppt1` | MPPT string 1 DC current | uint16 | 1 | A | slow |
+| 40273 / 0x9D51 | `voltage_dc_mppt1` | MPPT string 1 DC voltage | uint16 | 1 | V | slow |
+| 40274 / 0x9D52 | `power_dc_mppt1` | MPPT string 1 DC power | uint16 | 1 | W | slow |
+| 40275 / 0x9D53 | `energy_dc_mppt1` | MPPT string 1 lifetime DC energy | uint32 | 1 | Wh | slow |
 | 40279 / 0x9D57 | `temperature_mppt1` | MPPT string 1 temperature | int16 | 1 | °C | normal |
-| 40292 / 0x9D64 | `current_dc_mppt2` | MPPT string 2 DC current | uint16 | 1 | A | normal |
-| 40293 / 0x9D65 | `voltage_dc_mppt2` | MPPT string 2 DC voltage | uint16 | 1 | V | normal |
-| 40294 / 0x9D66 | `power_dc_mppt2` | MPPT string 2 DC power | uint16 | 1 | W | normal |
-| 40295 / 0x9D67 | `energy_dc_mppt2` | MPPT string 2 lifetime DC energy | uint32 | 1 | Wh | normal |
+| 40292 / 0x9D64 | `current_dc_mppt2` | MPPT string 2 DC current | uint16 | 1 | A | slow |
+| 40293 / 0x9D65 | `voltage_dc_mppt2` | MPPT string 2 DC voltage | uint16 | 1 | V | slow |
+| 40294 / 0x9D66 | `power_dc_mppt2` | MPPT string 2 DC power | uint16 | 1 | W | slow |
+| 40295 / 0x9D67 | `energy_dc_mppt2` | MPPT string 2 lifetime DC energy | uint32 | 1 | Wh | slow |
 | 40299 / 0x9D6B | `temperature_mppt2` | MPPT string 2 temperature | int16 | 1 | °C | normal |
 
 **Derived measurements** — computed from the registers above and seeded into every device made from this template, so each unit publishes them identically.

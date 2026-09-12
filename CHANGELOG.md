@@ -1,5 +1,37 @@
 # Changelog
 
+## 3.50.0
+
+### 2026-09-12 — the Fronius map is what the hardware actually answers
+
+Read straight off a production Symo Advanced 20.0-3-M. Eleven points answer the
+SunSpec not-implemented sentinel, always: the model-103 DC current and voltage,
+every temperature (cabinet, heatsink, transformer, other) and both MPPT probes,
+with their three scale factors. The gateway polled them and published nothing —
+which is exactly why the temperatures never showed up.
+
+- **They leave the curated set, not the map.** A Primo or a GEN24 may well
+  implement them, so they stay documented and selectable; they are simply not
+  seeded, so nobody polls a hole by default. The AC read is unchanged at 50
+  registers (the dead points sit *inside* a contiguous block, and registers are
+  free — transactions are not).
+- **The MPPT block polls on its own cadence.** It sits 135 registers past the
+  AC block, so it can never share a read with it (Modbus caps one read at 125):
+  leaving it in the fast group made every AC sweep cost two transactions. The
+  template now declares `normal` 5 s (AC: currents, voltages, power, energy,
+  status), `slow` 30 s (MPPT strings) and `static` 3600 s — one fast read and
+  one slow read per inverter, never more.
+- Measured on the datalogger, this is what the tiering is worth: a read costs
+  the same whether it asks for 2 registers or 95 (p50 2.5 s vs 1.2 s — the
+  small one was, if anything, slower). Splitting the AC block into tiers would
+  have cost a transaction and bought nothing; moving the block that could never
+  merge anyway costs nothing and buys the cadence.
+- `scripts/migrate_p3_fronius_pf_status.py` carries it into devices seeded
+  earlier: it reports the uncurated registers by default and removes them with
+  `--prune-uncurated` (61 registers to 50 on the live units). Removing a
+  register is the operator's call; a migration must not quietly shrink what a
+  device measures.
+
 ## 3.49.0
 
 ### 2026-09-12 — one master, one socket

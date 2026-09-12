@@ -5,8 +5,8 @@
     "name": "Fronius SunSpec inverter (int+SF, via datalogger)",
     "vendor": "Fronius",
     "model": "Symo / Primo / Eco (SunSpec 103)",
-    "version": "2.1.0",
-    "description": "Fronius inverter read THROUGH its DataManager/datalogger over Modbus TCP, in the SunSpec int + scale-factor register mode (models 1/103/160: AC block, DC block, temperatures, status/events, per-string MPPT, identity). Registers are CANONICAL: this device publishes the same topics/fields/measurements as every other MBG device (power/active/total, dc/power, mppt/1/power …); a legacy SunSpec-name tree (…/W, …/PhVphA) is available via mqtt.compat_aliases. Use this when the datalogger's Modbus TCP slave is enabled and set to 'int+SF' (the Fronius default). For SEVERAL inverters behind one datalogger, add a `plants:` entry with this template and the unit IDs (1, 2, ...) — each unit becomes its own device. CAUTION: dataloggers serve only a few concurrent Modbus clients; if another system polls the same datalogger, keep poll intervals modest (10-15 s) or reduce the number of units read in parallel. Power factor is normalized to the ±1 fraction every other gateway device publishes (SunSpec reports it as a percentage, so the map carries scale: 100 on top of the dynamic scale factor). The operating state is also shipped decoded: status/text (vendor wording), status/alarm and status/active are derived measurements the template brings with it, so every unit of a plant speaks the same status without anyone retyping a formula.",
+    "version": "2.2.0",
+    "description": "Fronius inverter read THROUGH its DataManager/datalogger over Modbus TCP, in the SunSpec int + scale-factor register mode (models 1/103/160: AC block, DC block, temperatures, status/events, per-string MPPT, identity). Registers are CANONICAL: this device publishes the same topics/fields/measurements as every other MBG device (power/active/total, dc/power, mppt/1/power …); a legacy SunSpec-name tree (…/W, …/PhVphA) is available via mqtt.compat_aliases. Use this when the datalogger's Modbus TCP slave is enabled and set to 'int+SF' (the Fronius default). For SEVERAL inverters behind one datalogger, add a `plants:` entry with this template and the unit IDs (1, 2, ...) — each unit becomes its own device. CAUTION: dataloggers serve only a few concurrent Modbus clients; if another system polls the same datalogger, keep poll intervals modest (10-15 s) or reduce the number of units read in parallel. Power factor is normalized to the ±1 fraction every other gateway device publishes (SunSpec reports it as a percentage, so the map carries scale: 100 on top of the dynamic scale factor). The operating state is also shipped decoded: status/text (vendor wording), status/alarm and status/active are derived measurements the template brings with it, so every unit of a plant speaks the same status without anyone retyping a formula. Register selection is what this hardware actually answers: the model-103 DC current/voltage and every temperature point (cabinet, heatsink, transformer, other, and both MPPT probes) read the SunSpec not-implemented sentinel on a Symo and are left out of the curated set — they stay in the map, selectable, for models that do implement them. The MPPT block sits 135 registers past the AC block, so it can never share a read with it; it polls on its own slower cadence instead of making every AC sweep cost two transactions.",
     "source_document": "SunSpec Information Models (int+SF); register map verified live against a production Fronius fleet (raw-frame decode parity, 2026-09-11)",
     "protocol": {
       "byte_order": "big",
@@ -15,7 +15,11 @@
     "poll_groups": {
       "normal": {
         "interval": 5,
-        "description": "Measurements + MPPT"
+        "description": "AC block: currents, voltages, power, energy, status"
+      },
+      "slow": {
+        "interval": 30,
+        "description": "MPPT strings (a second read, 135 registers away)"
       },
       "static": {
         "interval": 3600,
@@ -709,22 +713,7 @@
         "category": "dc",
         "poll_group": "normal",
         "scale_from": "dca_sf",
-        "nan": true,
-        "defaults": {
-          "mqtt": {
-            "enabled": true,
-            "topic": ""
-          },
-          "influxdb": {
-            "enabled": true,
-            "measurement": "",
-            "tags": {}
-          },
-          "ui": {
-            "show_on_dashboard": false,
-            "widget": "value"
-          }
-        }
+        "nan": true
       },
       {
         "address": 40097,
@@ -735,22 +724,7 @@
         "register_type": "holding",
         "category": "sf",
         "poll_group": "normal",
-        "nan": true,
-        "defaults": {
-          "mqtt": {
-            "enabled": false,
-            "topic": ""
-          },
-          "influxdb": {
-            "enabled": false,
-            "measurement": "",
-            "tags": {}
-          },
-          "ui": {
-            "show_on_dashboard": false,
-            "widget": "value"
-          }
-        }
+        "nan": true
       },
       {
         "address": 40098,
@@ -762,22 +736,7 @@
         "category": "dc",
         "poll_group": "normal",
         "scale_from": "dcv_sf",
-        "nan": true,
-        "defaults": {
-          "mqtt": {
-            "enabled": true,
-            "topic": ""
-          },
-          "influxdb": {
-            "enabled": true,
-            "measurement": "",
-            "tags": {}
-          },
-          "ui": {
-            "show_on_dashboard": false,
-            "widget": "value"
-          }
-        }
+        "nan": true
       },
       {
         "address": 40099,
@@ -788,22 +747,7 @@
         "register_type": "holding",
         "category": "sf",
         "poll_group": "normal",
-        "nan": true,
-        "defaults": {
-          "mqtt": {
-            "enabled": false,
-            "topic": ""
-          },
-          "influxdb": {
-            "enabled": false,
-            "measurement": "",
-            "tags": {}
-          },
-          "ui": {
-            "show_on_dashboard": false,
-            "widget": "value"
-          }
-        }
+        "nan": true
       },
       {
         "address": 40100,
@@ -868,22 +812,7 @@
         "category": "temperature",
         "poll_group": "normal",
         "scale_from": "tmp_sf",
-        "nan": true,
-        "defaults": {
-          "mqtt": {
-            "enabled": true,
-            "topic": ""
-          },
-          "influxdb": {
-            "enabled": true,
-            "measurement": "",
-            "tags": {}
-          },
-          "ui": {
-            "show_on_dashboard": false,
-            "widget": "value"
-          }
-        }
+        "nan": true
       },
       {
         "address": 40103,
@@ -895,22 +824,7 @@
         "category": "temperature",
         "poll_group": "normal",
         "scale_from": "tmp_sf",
-        "nan": true,
-        "defaults": {
-          "mqtt": {
-            "enabled": true,
-            "topic": ""
-          },
-          "influxdb": {
-            "enabled": true,
-            "measurement": "",
-            "tags": {}
-          },
-          "ui": {
-            "show_on_dashboard": false,
-            "widget": "value"
-          }
-        }
+        "nan": true
       },
       {
         "address": 40104,
@@ -922,22 +836,7 @@
         "category": "temperature",
         "poll_group": "normal",
         "scale_from": "tmp_sf",
-        "nan": true,
-        "defaults": {
-          "mqtt": {
-            "enabled": true,
-            "topic": ""
-          },
-          "influxdb": {
-            "enabled": true,
-            "measurement": "",
-            "tags": {}
-          },
-          "ui": {
-            "show_on_dashboard": false,
-            "widget": "value"
-          }
-        }
+        "nan": true
       },
       {
         "address": 40105,
@@ -949,22 +848,7 @@
         "category": "temperature",
         "poll_group": "normal",
         "scale_from": "tmp_sf",
-        "nan": true,
-        "defaults": {
-          "mqtt": {
-            "enabled": true,
-            "topic": ""
-          },
-          "influxdb": {
-            "enabled": true,
-            "measurement": "",
-            "tags": {}
-          },
-          "ui": {
-            "show_on_dashboard": false,
-            "widget": "value"
-          }
-        }
+        "nan": true
       },
       {
         "address": 40106,
@@ -975,22 +859,7 @@
         "register_type": "holding",
         "category": "sf",
         "poll_group": "normal",
-        "nan": true,
-        "defaults": {
-          "mqtt": {
-            "enabled": false,
-            "topic": ""
-          },
-          "influxdb": {
-            "enabled": false,
-            "measurement": "",
-            "tags": {}
-          },
-          "ui": {
-            "show_on_dashboard": false,
-            "widget": "value"
-          }
-        }
+        "nan": true
       },
       {
         "address": 40107,
@@ -1200,7 +1069,7 @@
         "data_type": "int16",
         "register_type": "holding",
         "category": "sf",
-        "poll_group": "normal",
+        "poll_group": "slow",
         "nan": true,
         "defaults": {
           "mqtt": {
@@ -1226,7 +1095,7 @@
         "data_type": "int16",
         "register_type": "holding",
         "category": "sf",
-        "poll_group": "normal",
+        "poll_group": "slow",
         "nan": true,
         "defaults": {
           "mqtt": {
@@ -1252,7 +1121,7 @@
         "data_type": "int16",
         "register_type": "holding",
         "category": "sf",
-        "poll_group": "normal",
+        "poll_group": "slow",
         "nan": true,
         "defaults": {
           "mqtt": {
@@ -1278,7 +1147,7 @@
         "data_type": "int16",
         "register_type": "holding",
         "category": "sf",
-        "poll_group": "normal",
+        "poll_group": "slow",
         "nan": true,
         "defaults": {
           "mqtt": {
@@ -1304,7 +1173,7 @@
         "data_type": "uint16",
         "register_type": "holding",
         "category": "mppt",
-        "poll_group": "normal",
+        "poll_group": "slow",
         "defaults": {
           "mqtt": {
             "enabled": true,
@@ -1329,7 +1198,7 @@
         "data_type": "uint16",
         "register_type": "holding",
         "category": "mppt",
-        "poll_group": "normal",
+        "poll_group": "slow",
         "scale_from": "dca_mppt_sf",
         "nan": true,
         "defaults": {
@@ -1356,7 +1225,7 @@
         "data_type": "uint16",
         "register_type": "holding",
         "category": "mppt",
-        "poll_group": "normal",
+        "poll_group": "slow",
         "scale_from": "dcv_mppt_sf",
         "nan": true,
         "defaults": {
@@ -1383,7 +1252,7 @@
         "data_type": "uint16",
         "register_type": "holding",
         "category": "mppt",
-        "poll_group": "normal",
+        "poll_group": "slow",
         "scale_from": "dcw_mppt_sf",
         "nan": true,
         "defaults": {
@@ -1410,7 +1279,7 @@
         "data_type": "uint32",
         "register_type": "holding",
         "category": "mppt",
-        "poll_group": "normal",
+        "poll_group": "slow",
         "scale_from": "dcwh_mppt_sf",
         "nan": true,
         "monotonic": true,
@@ -1439,22 +1308,7 @@
         "register_type": "holding",
         "category": "mppt",
         "poll_group": "normal",
-        "nan": true,
-        "defaults": {
-          "mqtt": {
-            "enabled": true,
-            "topic": ""
-          },
-          "influxdb": {
-            "enabled": true,
-            "measurement": "",
-            "tags": {}
-          },
-          "ui": {
-            "show_on_dashboard": false,
-            "widget": "value"
-          }
-        }
+        "nan": true
       },
       {
         "address": 40292,
@@ -1464,7 +1318,7 @@
         "data_type": "uint16",
         "register_type": "holding",
         "category": "mppt",
-        "poll_group": "normal",
+        "poll_group": "slow",
         "scale_from": "dca_mppt_sf",
         "nan": true,
         "defaults": {
@@ -1491,7 +1345,7 @@
         "data_type": "uint16",
         "register_type": "holding",
         "category": "mppt",
-        "poll_group": "normal",
+        "poll_group": "slow",
         "scale_from": "dcv_mppt_sf",
         "nan": true,
         "defaults": {
@@ -1518,7 +1372,7 @@
         "data_type": "uint16",
         "register_type": "holding",
         "category": "mppt",
-        "poll_group": "normal",
+        "poll_group": "slow",
         "scale_from": "dcw_mppt_sf",
         "nan": true,
         "defaults": {
@@ -1545,7 +1399,7 @@
         "data_type": "uint32",
         "register_type": "holding",
         "category": "mppt",
-        "poll_group": "normal",
+        "poll_group": "slow",
         "scale_from": "dcwh_mppt_sf",
         "nan": true,
         "monotonic": true,
@@ -1574,22 +1428,7 @@
         "register_type": "holding",
         "category": "mppt",
         "poll_group": "normal",
-        "nan": true,
-        "defaults": {
-          "mqtt": {
-            "enabled": true,
-            "topic": ""
-          },
-          "influxdb": {
-            "enabled": true,
-            "measurement": "",
-            "tags": {}
-          },
-          "ui": {
-            "show_on_dashboard": false,
-            "widget": "value"
-          }
-        }
+        "nan": true
       },
       {
         "address": 40004,
