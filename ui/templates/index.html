@@ -360,8 +360,8 @@
                                         <i aria-hidden="true" class="bi bi-search"></i> <span data-i18n="devices.discover">Discover devices</span></button>
                                     <button class="btn btn-ghost btn-sm" onclick="app.openBuilderDeploy()" data-i18n-title="tip.deployNode" title="Build firmware for a remote ESP32/ESP8266 RS485 reader and adopt it as a device">
                                         <i aria-hidden="true" class="bi bi-magic"></i> <span data-i18n="builder.deployNew">Deploy new device</span></button>
-                                    <button class="btn btn-ghost btn-sm" onclick="app.openEndpointModal()" data-i18n-title="tip.addEndpoint" title="Add several units of the same device behind one endpoint (e.g. 4 inverters on one datalogger)">
-                                        <i aria-hidden="true" class="bi bi-diagram-3"></i> <span data-i18n="endpoints.add">Add Endpoint</span>
+                                    <button class="btn btn-ghost btn-sm" onclick="app.openPlantWizard()" data-i18n-title="tip.addEndpoint" title="Add a whole installation: one master device fronting several units — inverters, the meter at its grid connection, a battery. Each kind is a group, totalled on its own.">
+                                        <i aria-hidden="true" class="bi bi-diagram-3"></i> <span data-i18n="endpoints.add">Add Installation</span>
                                     </button>
                                     <button class="btn btn-primary btn-sm" onclick="app.openDeviceWizard()">
                                         <i aria-hidden="true" class="bi bi-plus-lg"></i> <span data-i18n="devices.add">Add Device</span>
@@ -2101,6 +2101,31 @@
     </div>
 
     <!-- Add/Edit Device wizard (Tier 2) -->
+    <div class="modal" id="plantWizardModal">
+        <div class="modal-content modal-lg">
+            <div class="modal-header">
+                <h3><i aria-hidden="true" class="bi bi-diagram-3"></i> <span id="plantWizTitle" data-i18n="plant.wizard.title">Add Installation</span></h3>
+                <button class="modal-close" aria-label="Close" onclick="app.closeModal('plantWizardModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="wizard-steps" id="plantWizSteps" aria-label="Wizard progress">
+                    <div class="wizard-step active" data-step="1"><span class="wizard-step-num">1</span><span data-i18n="plant.wizard.step1">Installation</span></div>
+                    <div class="wizard-step" data-step="2"><span class="wizard-step-num">2</span><span data-i18n="plant.wizard.step2">What it holds</span></div>
+                    <div class="wizard-step" data-step="3"><span class="wizard-step-num">3</span><span data-i18n="plant.wizard.step3">How it is read</span></div>
+                    <div class="wizard-step" data-step="4"><span class="wizard-step-num">4</span><span data-i18n="plant.wizard.step4">Review</span></div>
+                </div>
+                <div id="plantWizBody"></div>
+            </div>
+            <div class="modal-footer">
+                <span class="save-feedback" id="plantWizFeedback"></span>
+                <button class="btn btn-secondary btn-sm" id="plantWizBack" onclick="app.plantWizardBack()">
+                    <i aria-hidden="true" class="bi bi-arrow-left"></i> <span data-i18n="common.back">Back</span></button>
+                <button class="btn btn-primary btn-sm" id="plantWizNext" onclick="app.plantWizardNext()">
+                    <span id="plantWizNextLabel" data-i18n="common.next">Next</span> <i aria-hidden="true" class="bi bi-arrow-right"></i></button>
+            </div>
+        </div>
+    </div>
+
     <div class="modal" id="deviceWizardModal">
         <div class="modal-content modal-lg">
             <div class="modal-header">
@@ -2196,6 +2221,7 @@
     <script src="/static/js/app-monitor.js?v=0"></script>
     <script src="/static/js/app-devices.js?v=0"></script>
     <script src="/static/js/app-endpoints.js?v=0"></script>
+    <script src="/static/js/app-plant-wizard.js?v=0"></script>
     <script src="/static/js/app-calculated.js?v=0"></script>
     <script src="/static/js/app-wizard.js?v=0"></script>
     <script src="/static/js/app-settings.js?v=0"></script>

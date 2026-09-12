@@ -1068,7 +1068,7 @@
   "err.generic": "Request failed.",
   "devices.restorableLoadFail": "Could not load restorable devices.",
   "endpoints.title": "Endpoints",
-  "endpoints.add": "Add Endpoint",
+  "endpoints.add": "Add Installation",
   "endpoints.hint": "Several units of the same device behind one endpoint — each unit runs as its own device below, managed through the endpoint.",
   "endpoints.intro": "One template + one endpoint + several unit IDs. Each unit becomes its own device (own socket, independent failure) named <endpoint>-u<unit>.",
   "endpoints.titleAdd": "Add Endpoint",
@@ -1153,5 +1153,11 @@
   "endpoints.testNone": "No units to probe.",
   "endpoints.saveFail": "Save failed",
   "endpoints.haDiscovery": "Home Assistant discovery",
-  "endpoints.test": "Test units"
+  "endpoints.test": "Test units",
+  "plant.wizard.title": "Add Installation",
+  "plant.wizard.step1": "Installation",
+  "plant.wizard.step2": "What it holds",
+  "plant.wizard.step3": "How it is read",
+  "plant.wizard.step4": "Review",
+  "plant.wizard.create": "Create installation"
 }

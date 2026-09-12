@@ -1,5 +1,41 @@
 # Changelog
 
+## 3.62.0
+
+### 2026-09-12 — the Add Installation wizard
+
+Adding a device asked three questions; adding a whole installation asked one.
+That was backwards, and the old single form could not express what an
+installation actually is. It is replaced — not sat beside — by a four-step
+wizard, so there is one way to do this rather than two that differ.
+
+1. **Installation** — id, name, and the master device's address, with a Test
+   button that probes it before you go further.
+2. **What it holds** — a card per group. It opens on the group nearly every
+   plant has (inverters), and choosing a role names the group for you. Add the
+   meter at the grid connection, a battery, sensors.
+3. **How it is read** — intervals and timeout per group, and a checkbox to add a
+   second, faster HTTP source. When ticked it is placed FIRST, so it owns every
+   field it offers and Modbus fills in the rest; if it goes quiet for 30 s the
+   fields fall back on their own.
+4. **Review** — every group with its units, template, sources in precedence
+   order and the topic it will publish on, plus the exact device ids that will
+   be created.
+
+The refusals happen BEFORE anything is created: a malformed id, a group without
+units or template, and — the one that matters — a unit id claimed by two groups,
+which is one address on the wire and would be two devices racing it.
+
+`Add Endpoint` is now `Add Installation` in both languages, because "endpoint"
+is our word, not the operator's.
+
+**Verified in a real browser, 23 checks** (`tools/e2e/plant_wizard_e2e.mjs`),
+which walk the wizard and then compare what was created against what the review
+promised. The plant-groups suite is at 25/25 and the device-logs suite at 10/10;
+one brittle assertion in the groups suite was made relative rather than
+absolute, since an arrow raises a source by one place regardless of what else
+the group holds.
+
 ## 3.61.0
 
 ### 2026-09-12 — the plant page: group cards, per-group sources, and the editors

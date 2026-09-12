@@ -1068,7 +1068,7 @@
   "err.generic": "Cererea a eșuat.",
   "devices.restorableLoadFail": "Nu s-au putut încărca device-urile restaurabile.",
   "endpoints.title": "Centrale (endpoints)",
-  "endpoints.add": "Adaugă centrală",
+  "endpoints.add": "Adaugă instalație",
   "endpoints.hint": "Mai multe unități ale aceluiași dispozitiv în spatele unui singur endpoint — fiecare unitate rulează ca dispozitiv propriu mai jos, gestionat prin centrală.",
   "endpoints.intro": "Un template + un endpoint + mai multe ID-uri de unitate. Fiecare unitate devine propriul dispozitiv (socket propriu, defecțiuni independente) numit <endpoint>-u<unit>.",
   "endpoints.titleAdd": "Adaugă centrală",
@@ -1153,5 +1153,11 @@
   "endpoints.testNone": "Nicio unitate de testat.",
   "endpoints.saveFail": "Salvarea a eșuat",
   "endpoints.haDiscovery": "Descoperire Home Assistant",
-  "endpoints.test": "Testează unitățile"
+  "endpoints.test": "Testează unitățile",
+  "plant.wizard.title": "Adaugă instalație",
+  "plant.wizard.step1": "Instalația",
+  "plant.wizard.step2": "Ce conține",
+  "plant.wizard.step3": "Cum se citește",
+  "plant.wizard.step4": "Verificare",
+  "plant.wizard.create": "Creează instalația"
 }

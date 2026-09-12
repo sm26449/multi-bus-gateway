@@ -70,3 +70,18 @@ REFUSES so the offline paths are the ones under test.
 MBG_URL=http://localhost:18085 ENDPOINT=sunfield \
   CHROMIUM_PATH=<chrome> node plant_groups_e2e.mjs
 ```
+
+## Add Installation wizard
+
+`plant_wizard_e2e.mjs` drives the four-step wizard exactly as an operator would
+and then checks that what was CREATED matches what the review step promised —
+device ids, sources in precedence order, and the topic each group publishes on.
+
+It also pins the refusals that must happen before anything is created: a bad
+plant id, a group with no units, and one unit id claimed by two groups.
+
+```bash
+MBG_URL=http://localhost:18086 CHROMIUM_PATH=<chrome> node plant_wizard_e2e.mjs
+```
+
+Config it expects: auth off and NO endpoints yet. The host never has to answer.

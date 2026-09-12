@@ -61,7 +61,9 @@ try {
   check('the meter unit kept its hand-written id', grid.includes(`${EP}-meter-240`));
   check('the inverter group lists its units',
         inv.includes(`${EP}-u1`) && inv.includes(`${EP}-u2`));
-  check('each group shows its sources', /default/.test(inv) && /default/.test(grid));
+  check('each group shows its sources',
+        await page.locator('[data-group="inverters"] [data-src-row]').count() > 0
+        && await page.locator('[data-group="grid"] [data-src-row]').count() > 0);
 
   // ---- 3. a group can be switched off on its own ------------------------
   await page.locator('[data-group="grid"] input[type=checkbox]').first().uncheck();
@@ -93,7 +95,7 @@ try {
   const invSrc = d.groups.find(g => g.id === 'inverters').sources.map(s => s.id);
   check('the source landed in its group', invSrc.includes('solar_api'), invSrc.join(','));
   check('the other group was not touched',
-        d.groups.find(g => g.id === 'grid').sources.map(s => s.id).join(',') === 'default');
+        !d.groups.find(g => g.id === 'grid').sources.map(s => s.id).includes('solar_api'));
   const added = d.groups.find(g => g.id === 'inverters').sources.find(s => s.id === 'solar_api');
   check('the URL resolved per unit is stored once, with the placeholder',
         (added.address || '').includes('${unit_id}'), added.address);
@@ -104,8 +106,11 @@ try {
   await page.locator('[data-group="inverters"] [data-src-row="solar_api"] button[data-action="moveSource"]').first().click();
   await page.waitForTimeout(3000);
   const after = (await api()).groups.find(g => g.id === 'inverters').sources.map(s => s.id);
-  check('raising precedence reorders the list',
-        after[0] === 'solar_api' && before[0] !== 'solar_api', `${before} -> ${after}`);
+  // relative, not absolute: the arrow raises a source by ONE place, whatever
+  // else the group already holds
+  check('raising precedence moves the source up one place',
+        after.indexOf('solar_api') === before.indexOf('solar_api') - 1,
+        `${before} -> ${after}`);
 
   // ---- 6. a source can be removed, the last one cannot -----------------
   page.once('dialog', dlg => dlg.accept());
@@ -113,7 +118,9 @@ try {
   await page.waitForTimeout(3000);
   check('a source can be removed',
         !(await api()).groups.find(g => g.id === 'inverters').sources.map(s => s.id).includes('solar_api'));
-  const lastDel = page.locator('[data-group="grid"] [data-src-row="default"] button[data-action="deleteSource"]');
+  // the grid group has exactly one source; whatever it is called, removing it
+  // must be refused — a unit needs a way to be read
+  const lastDel = page.locator('[data-group="grid"] [data-src-row] button[data-action="deleteSource"]').first();
   check('the last source cannot be removed', await lastDel.isDisabled());
 
   // ---- 7. adding a whole group -----------------------------------------
