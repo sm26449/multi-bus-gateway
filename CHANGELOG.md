@@ -1,5 +1,41 @@
 # Changelog
 
+## 3.48.0
+
+### 2026-09-12 — fresher data: the gateway queues instead of racing
+
+Measured on the production Fronius DataManager serving five units. A
+50-register read costs **~0.4 s** when the gateway is its only caller. With
+five of the gateway's own pollers racing each other it costs **~3 s**, the
+aggregate rate falls **below one read per second**, and fresh connections
+start timing out — the device serializes internally and serves a handful of
+clients, so concurrency there buys nothing and costs everything.
+
+- **Endpoint arbiter**: a FIFO turnstile per `host:port`. Every device that
+  shares a gateway — a plant's units, two devices behind one bridge — takes its
+  turn instead of elbowing in. FIFO on purpose: a plain lock hands the turn to
+  whoever the OS wakes, and under steady contention one poller can wait a very
+  long time. On by default (`serialize_endpoint`); it costs nothing when a
+  device has the endpoint to itself. A missed turn skips the cycle and is
+  **never** counted against the link — a busy gateway must not masquerade as a
+  dead one — with one `bus_busy` event per episode.
+- **Polling is fixed-rate, not fixed-delay.** The wait is `interval − sweep`,
+  so a 5 s interval means a reading every 5 s rather than every 5 s plus
+  however long the bus took. The slower the endpoint, the further the old
+  behaviour drifted from the freshness the config promised. A group that cannot
+  keep up still gets a breather (10 % of its interval), counts `overruns`, and
+  says so once per episode.
+- **`/api/status` reports what a sweep costs**: per poll group, `cycle_s` and
+  the number of batch reads next to the interval — the two numbers an interval
+  is actually chosen from.
+- `scripts/bench_endpoint_arbiter.py` reproduces the whole thing against a
+  simulated slow gateway, no hardware needed. Five units, 3 s interval, 30 s:
+
+  | | reads/s | cadence | sweep |
+  |---|---|---|---|
+  | arbiter off | 0.83 | 8.0 s | 7.7 s |
+  | arbiter on | 1.67 | 3.0 s (as configured) | 1.2 s |
+
 ## 3.47.0
 
 ### 2026-09-12 — a plant is an entity, not a grouping

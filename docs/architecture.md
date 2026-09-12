@@ -342,7 +342,7 @@ sequenceDiagram
     participant VM as Virtual meter server
     participant WS as WebSocket clients
 
-    PG->>DEV: batch read (registers merged up to max_gap,<br/>split around illegal_registers)
+    PG->>DEV: take the endpoint's turn, then batch read<br/>(merged up to max_gap, split around illegal_registers)
     DEV-->>PG: raw words (retries on timeout/exception,<br/>each attempt visible in the bus trace)
     PG->>PG: decode (data type × word order),<br/>NaN sentinels · enum/bits · scale/offset ·<br/>monotonic guard · all-zero gate
     PG->>ST: update {address: {value, name, unit, timestamp}}

@@ -139,6 +139,16 @@ section. (Serial/RTU and other transports are available on additional
 | `startup_jitter_s` | `0.0` (off) | each poll group waits a random delay in `[0, min(interval, startup_jitter_s)]` before its *first* read, so groups don't hammer a shared transport in lock-step at boot. (Legacy location `polling.startup_jitter_s` is still read as a fallback.) |
 | `illegal_registers` | `[]` | addresses this slave answers with ILLEGAL DATA ADDRESS; a merged read is never bridged across one, and a selected register sitting on one is skipped. Decimal or `0x` hex; bad entries are dropped, not fatal. |
 | `drop_all_zero` | `false` (opt-in) | data-readiness gate for sleepy devices: a poll group whose numeric values are ALL exactly zero (≥2 of them) is dropped and the cache keeps last-good values |
+| `serialize_endpoint` | `true` | queue this device's Modbus transactions behind every other device that shares the same `host:port`. Cheap gateways (a Fronius DataManager, most RS-485-over-TCP bridges) serialize internally and serve a handful of clients: several devices polling one of them at once go **slower**, not faster. Costs nothing when a device has the endpoint to itself; set `false` to restore free-for-all access |
+| `endpoint_wait_s` | `10.0` | how long a read may wait for its turn on a shared endpoint before skipping the cycle. A missed turn is **not** a device failure: nothing is counted against the link, and a single `bus_busy` event per episode says the gateway is the bottleneck |
+
+**Poll intervals are a cadence, not a pause.** A poll group waits
+`interval − (time the sweep took)`, so a 5 s interval means a reading every
+5 s rather than every 5 s + however long the bus needed. A group that cannot
+keep up still gets a breather (10 % of its interval), counts `overruns`, and
+says so once per episode. `/api/status` reports each group's `cycle_s` (what
+one sweep actually costs) and `reads` (how many batch reads it takes) next to
+its interval — the two numbers an interval is chosen from.
 
 ### `mqtt:`
 
