@@ -543,6 +543,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # FastAPI's threadpool); reads are lock-free snapshots, as before.
     from .device_registry import (DeviceRegistry, client_health,
                                   client_is_live)
+    from .modbus_client import endpoint_bus_stats
     registry = DeviceRegistry(config.primary_device.id, current_values)
     for dev_cfg, _client in (devices or []):
         registry.register(dev_cfg, _client)
@@ -2247,6 +2248,37 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # must fail independently). The devices are managed THROUGH the endpoint:
     # device CRUD refuses them; edit/delete the endpoint instead.
 
+    def _endpoint_bus(p: Dict, units: List[Dict]) -> Dict:
+        """What this access point costs, measured on the live wire.
+
+        Every interval an operator can ask for is bounded by one number: how
+        long a transaction actually takes here, times how many the sweep needs,
+        divided by the lanes serving it. That number is a property of the master
+        device and nobody can look it up — so it is measured, and reported next
+        to the interval it constrains. ``floor_s`` is the fastest honest cadence
+        at the current shape; an interval below it is a promise the wire cannot
+        keep.
+        """
+        conn = p.get('connection', {}) or {}
+        host, port = conn.get('host', ''), int(conn.get('port', 502) or 502)
+        if not host:
+            return {}
+        try:
+            st = endpoint_bus_stats(host, port)
+        except Exception:  # noqa: BLE001 — telemetry must never break the list
+            return {}
+        st['max_connections'] = max(1, int(conn.get('max_connections', 1) or 1))
+        # Transactions per sweep: every unit's batches, as the pollers report
+        # them. Missing means nothing has swept yet, and no floor is claimed.
+        reads = [u.get('reads_per_cycle') for u in units if u.get('reads_per_cycle')]
+        st['reads_per_sweep'] = sum(reads) if reads else None
+        if st.get('tx_p95_s') and st['reads_per_sweep']:
+            st['floor_s'] = round(
+                st['tx_p95_s'] * st['reads_per_sweep'] / st['lanes'], 1)
+        else:
+            st['floor_s'] = None
+        return st
+
     def _endpoint_entry(p: Dict) -> Dict:
         pid = p.get('id')
         units = []
@@ -2259,6 +2291,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 except Exception:  # noqa: BLE001 — a stats blip must not 500 the list
                     st = {}
             _seen = st.get('last_success_ts')
+            _groups = st.get('poll_groups_detail') or []
             units.append({
                 'unit_id': dev.connection.unit_id,
                 'device_id': dev.id,
@@ -2274,6 +2307,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'staleness_age_s': st.get('staleness_age_s'),
                 'poll_rate': st.get('poll_rate'),
                 'failed_reads': st.get('failed_reads'),
+                # what this unit asks of the wire each sweep, and what its
+                # slowest group actually took — the two halves of the budget
+                'reads_per_cycle': sum(int(g.get('reads') or 0) for g in _groups),
+                'cycle_s': (max((g.get('cycle_s') or 0) for g in _groups)
+                            if _groups else None),
+                'overruns': sum(int(g.get('overruns') or 0) for g in _groups),
             })
         from .canonical_fields import field_meta
         from .endpoint_aggregator import compute_endpoint_aggregates
@@ -2281,6 +2320,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             agg = compute_endpoint_aggregates(config, registry, pid)
         except Exception:  # noqa: BLE001 — aggregates must never break the list
             agg = {}
+        bus = _endpoint_bus(p, units)
         return {'id': pid, 'name': p.get('name') or pid,
                 'template': p.get('template', ''),
                 'enabled': bool(p.get('enabled', True)),
@@ -2299,6 +2339,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'write_locked': bool(p.get('write_locked', False)),
                 'http_output_enabled': bool((p.get('http_output') or {}).get('enabled')),
                 'rest_push': dict(p.get('rest_push', {}) or {}),
+                'bus': bus,
                 'status': agg.get('status', 'offline' if units else ''),
                 'online_units': sum(1 for u in units if u['connected']),
                 'total_units': len(units)}
@@ -2352,6 +2393,19 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 raise ValueError
         except (TypeError, ValueError):
             errors.append("connection.port: must be 1..65535")
+        if conn.get('max_connections') is not None:
+            # Sockets to a master device are a scarce, shared resource — the
+            # datalogger this replaces serves ten and starts refusing near five.
+            # A typo asking for thirty would take the access point down for
+            # everything else on it, including our own other units.
+            try:
+                lanes = int(conn['max_connections'])
+                if not (1 <= lanes <= 8):
+                    raise ValueError
+                conn['max_connections'] = lanes
+            except (TypeError, ValueError):
+                errors.append("connection.max_connections: must be 1..8 "
+                              "(measure it: scripts/calibrate_endpoint.py)")
         template_id = str(payload.get('template', '')).strip()
         if template_id and template_registry.get(template_id) is None:
             errors.append(f"template: '{template_id}' not found")

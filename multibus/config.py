@@ -161,6 +161,16 @@ class ModbusConfig:
     # health and reachability are unaffected: units share a wire, not an
     # identity. Set false to go back to a socket per unit.
     share_transport: bool = True
+    # How many sockets that access point is worth. One is the safe answer and
+    # the default: a master that serializes internally (a Fronius DataManager —
+    # measured ~0.4 s per read alone, ~3 s with five callers racing) gains
+    # nothing from a second, and loses its remaining client slots. A master with
+    # per-unit engines behind it — an RS-485 bridge with several lines, a PLC
+    # front end — overlaps happily, and there two or three lanes cut the sweep
+    # proportionally. Units are distributed sticky across the lanes by unit id,
+    # so a unit always rides the same socket. Which number yours wants is a
+    # measurement, not a guess: scripts/calibrate_endpoint.py makes it.
+    max_connections: int = 1
     # How long a read may wait for its turn before giving up on the cycle. A
     # missed turn is not a device failure: the value is simply skipped, exactly
     # as if that cycle had not come round yet.
@@ -628,6 +638,7 @@ class Config:
                     drop_all_zero=bool(conn.get('drop_all_zero', False)),
                     serialize_endpoint=bool(conn.get('serialize_endpoint', True)),
                     share_transport=bool(conn.get('share_transport', True)),
+                    max_connections=max(1, int(conn.get('max_connections', 1) or 1)),
                     endpoint_wait_s=float(conn.get('endpoint_wait_s', 10.0)),
                     protocol=str(conn.get('protocol', 'tcp')).lower(),
                     serial_port=conn.get('serial_port', ''),
@@ -1252,6 +1263,7 @@ class Config:
                     drop_all_zero=bool(m.get('drop_all_zero', False)),
                     serialize_endpoint=bool(m.get('serialize_endpoint', True)),
                     share_transport=bool(m.get('share_transport', True)),
+                    max_connections=max(1, int(m.get('max_connections', 1) or 1)),
                     endpoint_wait_s=float(m.get('endpoint_wait_s', 10.0)),
                 )
 

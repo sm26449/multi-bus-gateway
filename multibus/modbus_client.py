@@ -55,6 +55,11 @@ class _EndpointArbiter:
         self._busy = False
         self.turns = 0
         self.timeouts = 0
+        # What a turn actually COSTS on this access point. Every interval
+        # decision downstream is a division by this number, so it is measured,
+        # never assumed — a DataManager answers in ~0.4 s alone and ~3 s with
+        # company, and no configuration file can know which you have.
+        self.samples = deque(maxlen=200)
 
     def acquire(self, budget_s: float) -> None:
         """Wait for this caller's turn, or raise TimeoutError."""
@@ -77,10 +82,20 @@ class _EndpointArbiter:
             self._busy = True
             self.turns += 1
 
-    def release(self) -> None:
+    def release(self, held_s: float = None) -> None:
         with self._cv:
             self._busy = False
+            if held_s is not None:
+                self.samples.append(held_s)
             self._cv.notify_all()
+
+    def cost(self):
+        """(p50, p95, n) seconds per transaction on this lane, or (None, None, 0)
+        before anything has been measured."""
+        xs = sorted(self.samples)
+        if not xs:
+            return None, None, 0
+        return (xs[len(xs) // 2], xs[min(len(xs) - 1, int(len(xs) * 0.95))], len(xs))
 
     @contextlib.contextmanager
     def turn(self, budget_s: float):
@@ -124,13 +139,28 @@ _TRANSPORTS: Dict[str, _EndpointTransport] = {}
 _TRANSPORTS_LOCK = threading.Lock()
 
 
-def transport_for(host: str, port: int, shared: bool) -> _EndpointTransport:
-    """The socket holder for one access point. ``shared`` False (or no host —
-    a directly-attached serial line) hands back a private one, so a device that
-    owns its transport behaves exactly as it always has."""
+def lane_key(host: str, port: int, lane: int) -> str:
+    return f"{host}:{port}#{lane}"
+
+
+def transport_for(host: str, port: int, shared: bool, lane: int = 0) -> _EndpointTransport:
+    """The socket holder for one LANE of an access point.
+
+    An access point may be served by several sockets, and each unit sticks to
+    one of them: "two connections, two or three units on each" is a real and
+    sometimes faster shape. How many lanes help is a property of the MASTER, not
+    of us — one that serializes internally (a Fronius DataManager: measured
+    ~0.4 s per read alone, ~3 s with five callers racing) wants exactly one,
+    while a gateway with per-unit engines can overlap. So the number is
+    configuration, the default is the safe 1, and
+    ``scripts/calibrate_endpoint.py`` measures which yours is.
+
+    ``shared`` False (or no host — a directly-attached serial line) hands back a
+    private lane, so a device that owns its transport behaves as it always has.
+    """
     if not shared or not host:
         return _EndpointTransport()
-    key = f"{host}:{port}"
+    key = lane_key(host, port, lane)
     with _TRANSPORTS_LOCK:
         tp = _TRANSPORTS.get(key)
         if tp is None:
@@ -157,10 +187,33 @@ _ARBITERS: Dict[str, _EndpointArbiter] = {}
 _ARBITERS_LOCK = threading.Lock()
 
 
-def endpoint_arbiter(host: str, port: int) -> _EndpointArbiter:
-    """The shared turnstile for one host:port — the same object for every
-    connection that talks to it, whichever device or endpoint owns them."""
-    key = f"{host}:{port}"
+def endpoint_bus_stats(host: str, port: int) -> Dict[str, Any]:
+    """What this access point costs us, measured: lanes in use, seconds per
+    transaction, turns taken and turns missed. The number every poll interval
+    is ultimately divided by."""
+    prefix = f"{host}:{port}#"
+    with _ARBITERS_LOCK:
+        lanes = {k: a for k, a in _ARBITERS.items() if k.startswith(prefix)}
+    p50s, p95s, turns, timeouts, n = [], [], 0, 0, 0
+    for a in lanes.values():
+        p50, p95, cnt = a.cost()
+        turns += a.turns
+        timeouts += a.timeouts
+        if cnt:
+            p50s.append(p50); p95s.append(p95); n += cnt
+    return {
+        "lanes": len(lanes) or 1,
+        "tx_p50_s": round(sum(p50s) / len(p50s), 3) if p50s else None,
+        "tx_p95_s": round(max(p95s), 3) if p95s else None,
+        "samples": n, "turns": turns, "missed_turns": timeouts,
+    }
+
+
+def endpoint_arbiter(host: str, port: int, lane: int = 0) -> _EndpointArbiter:
+    """The turnstile for one LANE — the same object for every connection that
+    shares that socket, whichever device or endpoint owns them. Transactions on
+    DIFFERENT lanes overlap; that overlap is the concurrency."""
+    key = lane_key(host, port, lane)
     with _ARBITERS_LOCK:
         arb = _ARBITERS.get(key)
         if arb is None:
@@ -258,9 +311,14 @@ class ModbusConnection:
         # The socket lives on the ACCESS POINT, not on the unit: several units
         # behind one master share it (and the lock that serializes it), while
         # every counter below stays this unit's own.
-        self._tp = transport_for(config.host, config.port,
-                                 bool(getattr(config, 'share_transport', True))
-                                 and str(getattr(config, 'protocol', 'tcp')).lower() != 'rtu')
+        _shared = (bool(getattr(config, 'share_transport', True))
+                   and str(getattr(config, 'protocol', 'tcp')).lower() != 'rtu')
+        # Which socket this unit rides on. Sticky by unit id, so a unit always
+        # uses the same lane (its reconnects never disturb a sibling on another)
+        # and the units spread evenly when there is more than one.
+        _lanes = max(1, int(getattr(config, 'max_connections', 1) or 1))
+        self.lane = (int(getattr(config, 'unit_id', 0) or 0) % _lanes) if _shared else 0
+        self._tp = transport_for(config.host, config.port, _shared, self.lane)
         self.lock = self._tp.lock
         self.successful_reads = 0
         self.failed_reads = 0
@@ -281,7 +339,7 @@ class ModbusConnection:
         # Shared-endpoint arbiter: several devices (an endpoint's units) behind one
         # gateway must not race each other on it. None = this connection has
         # the endpoint to itself, and the gate below costs nothing.
-        self._arbiter = (endpoint_arbiter(config.host, config.port)
+        self._arbiter = (endpoint_arbiter(config.host, config.port, self.lane)
                          if getattr(config, 'serialize_endpoint', False)
                          and config.host else None)
         self._bus_busy_logged = False
@@ -326,10 +384,11 @@ class ModbusConnection:
             self._note_bus_busy()
             yield False
             return
+        _t0 = time.perf_counter()
         try:
             yield True
         finally:
-            self._arbiter.release()
+            self._arbiter.release(time.perf_counter() - _t0)
 
     def _note_bus_busy(self) -> None:
         """One event per episode of endpoint congestion — the operator needs to

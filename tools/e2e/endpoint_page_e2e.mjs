@@ -16,7 +16,10 @@
  * The config it expects: auth off, and one endpoint on a TEST-NET host (so every
  * unit stays unreachable and the offline/degraded paths are the ones under
  * test) with three units, the third carrying an explicit id `<endpoint>-east` and
- * the name "East roof".
+ * the name "East roof". The endpoint declares `max_connections: 2` and an
+ * `mqtt.topic_prefix` of `mbg/devices/${device_id}`. Point it at a host that
+ * REFUSES rather than blackholes (127.0.0.1:9), or the per-unit probe outruns
+ * the script's wait.
  */
 import { chromium } from 'playwright';
 
@@ -61,6 +64,17 @@ try {
   // ---- 3. the aggregate grid says why it is empty ------------------------
   check('no totals yet, and it says why',
         (await page.locator('#plAggGrid').innerText()).toLowerCase().includes('nothing is fresh'));
+
+  // ---- 3b. what the wire costs, measured ----------------------------------
+  const busLine = await page.locator('#plBus').innerText();
+  check('the access point states what it costs',
+        /no transactions measured yet|per read/i.test(busLine), busLine.slice(0, 70));
+  const busApi = (await (await fetch(API)).json()).bus;
+  check('two configured connections are two real ones',
+        busApi.max_connections === 2 && busApi.lanes === 2,
+        JSON.stringify(busApi));
+  check('nothing polled, so no floor is claimed',
+        busApi.tx_p50_s === null && busApi.floor_s === null);
 
   // ---- 4. the unit table -------------------------------------------------
   const rows = page.locator('#plUnitsBody tr');

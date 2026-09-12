@@ -65,10 +65,51 @@ Object.assign(JanitzaMonitor.prototype, {
         set('#plStatusWord', this._esc(this._endpointStatusWord(p)));
         set('#plCensus', `${p.online_units}/${p.total_units} ${this.t('endpoints.online', 'online')}`);
         set('#plAggGrid', this._endpointAggGridHtml(p));
+        set('#plBus', this._endpointBusHtml(p));
         // never redraw the unit rows while one of them is being renamed
         if (!view.querySelector('#plUnitsBody [data-renaming]')) {
             set('#plUnitsBody', this._endpointUnitRowsHtml(p));
         }
+    },
+
+    // What this access point costs, measured on its own wire.
+    //
+    // Every interval an operator can ask for is bounded by one number nobody
+    // can look up: how long a transaction actually takes on THIS master, times
+    // how many the sweep needs, divided by the sockets serving it. So it is
+    // measured and shown next to the interval it constrains — an interval under
+    // the floor is a promise the wire cannot keep, and the page says so instead
+    // of leaving the operator to infer it from overruns.
+    _endpointBusHtml(p) {
+        const b = p.bus || {};
+        const t = (k, d) => this.t(k, d);
+        if (!b.samples) {
+            return `<span style="color:var(--text-secondary);">${t('endpoints.bus.quiet',
+                'No transactions measured yet on this access point.')}</span>`;
+        }
+        const lanes = b.lanes || 1, want = b.max_connections || 1;
+        const bits = [
+            `<span class="dev-chip" title="${t('endpoints.bus.lanesHint',
+                'Sockets open to this master. More is not always faster: one that serializes internally gains nothing and loses client slots. Measure it with scripts/calibrate_endpoint.py.')}">${lanes} ${lanes === 1
+                ? t('endpoints.bus.lane', 'connection') : t('endpoints.bus.lanes', 'connections')}</span>`,
+            `<span class="dev-chip">${t('endpoints.bus.tx', 'per read')} ${b.tx_p50_s.toFixed(2)}s <span style="color:var(--text-secondary);">p95 ${b.tx_p95_s.toFixed(2)}s</span></span>`,
+        ];
+        if (b.reads_per_sweep) {
+            bits.push(`<span class="dev-chip">${b.reads_per_sweep} ${t('endpoints.bus.reads', 'reads/sweep')}</span>`);
+        }
+        if (b.floor_s) {
+            bits.push(`<span class="dev-chip" title="${t('endpoints.bus.floorHint',
+                'The fastest honest cadence at this shape: p95 per read, times the reads a sweep needs, across the connections serving them.')}">${t('endpoints.bus.floor', 'floor')} ~${b.floor_s}s</span>`);
+        }
+        if (b.missed_turns) {
+            bits.push(`<span class="sink-pill warn" title="${t('endpoints.bus.missedHint',
+                'Reads that gave up waiting for their turn. The cycle was skipped, not failed — but the interval is asking for more than this wire gives.')}">${b.missed_turns} ${t('endpoints.bus.missed', 'missed turns')}</span>`);
+        }
+        if (want > lanes) {
+            bits.push(`<span class="sink-pill warn">${t('endpoints.bus.pending',
+                'configured for')} ${want}</span>`);
+        }
+        return bits.join(' ');
     },
 
     _endpointStatusColor(p) {
@@ -172,6 +213,8 @@ Object.assign(JanitzaMonitor.prototype, {
                     <span class="dev-chip" id="plCensus">${p.online_units}/${p.total_units} ${t('endpoints.online', 'online')}</span>
                     ${p.write_locked ? `<span class="sink-pill warn">${t('devices.writeLock.locked', 'locked')}</span>` : ''}
                 </div>
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px;font-size:12px;"
+                     id="plBus">${this._endpointBusHtml(p)}</div>
                 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px 24px;">
                     ${fact(t('endpoints.endpoint', 'Endpoint'), `${proto}<br><span style="font-weight:400;font-size:12px;color:var(--text-secondary);">${this._esc(conn.host || '')}:${conn.port || 502}</span>`)}
                     ${fact(t('devices.overview.template', 'Template'), this._esc(p.template || '—'))}
@@ -359,6 +402,11 @@ Object.assign(JanitzaMonitor.prototype, {
             : (this._endpoints || []).find(x => x.id === editId)) : null;
         this._endpointEditId = editId;
         const conn = p?.connection || {};
+        // Remember the WHOLE connection block. The form edits four of its keys;
+        // a save that rebuilt the block from the form alone would quietly erase
+        // every other one an operator put in config.yaml (timeouts, retry
+        // budgets, illegal-register lists) on the first unrelated edit.
+        this._endpointEditConn = { ...conn };
         const units = (p?.units || []).map(u => u.unit_id).join(', ');
         const lock = editId ? 'disabled' : '';
         const tplOptions = ['<option value="">—</option>'].concat(templates.map(t =>
@@ -384,6 +432,10 @@ Object.assign(JanitzaMonitor.prototype, {
                     <input id="plHost" class="input" value="${this._esc(conn.host || '')}" placeholder="192.168.1.50"></div>
                 <div class="form-group"><label class="form-label" for="plPort">${this.t('endpoints.port', 'Port')}</label>
                     <input id="plPort" class="input" type="number" value="${conn.port || 502}"></div>
+                <div class="form-group"><label class="form-label" for="plLanes">${this.t('endpoints.lanes', 'Connections')}</label>
+                    <input id="plLanes" class="input" type="number" min="1" max="8" value="${conn.max_connections || 1}">
+                    <div class="field-hint">${this.t('endpoints.lanesHint',
+                        'Sockets to this master, with the units shared out between them. One is right for a master that serializes internally — most dataloggers — and more is right only where a measurement says so: scripts/calibrate_endpoint.py.')}</div></div>
             </div>
             <div class="form-row">
                 <div class="form-group flex-2"><label class="form-label" for="plUnits">${this.t('endpoints.unitsLabel', 'Unit IDs')}</label>
@@ -455,9 +507,12 @@ Object.assign(JanitzaMonitor.prototype, {
             name: document.getElementById('plName').value.trim(),
             enabled: document.getElementById('plEnabled').checked,
             connection: {
+                ...(this._endpointEditConn || {}),
                 protocol: document.getElementById('plProto').value,
                 host: document.getElementById('plHost').value.trim(),
                 port: parseInt(document.getElementById('plPort').value, 10) || 502,
+                max_connections: Math.min(8, Math.max(1,
+                    parseInt(document.getElementById('plLanes')?.value, 10) || 1)),
             },
             units,
             aggregates: !!document.getElementById('plAggregates')?.checked,

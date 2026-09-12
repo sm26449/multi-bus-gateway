@@ -1,5 +1,54 @@
 # Changelog
 
+## 3.53.0
+
+### 2026-09-12 — how many sockets an access point is worth is measured, not assumed
+
+A master device fronts its units on one `host:port`, and how it behaves when
+several transactions arrive at once is a property of that master which nobody
+can look up. Some serialize everything internally: a production Fronius
+DataManager costs ~0.4 s per read when we are its only caller and ~3 s with
+five racing, and starts refusing connections near ten — there a second socket
+buys nothing and spends a client slot. Others run an engine per line, and two
+or three sockets cut the sweep almost proportionally. Until now the gateway
+assumed the first shape for everyone.
+
+- **`connection.max_connections`** (default `1`, range 1..8) gives an access
+  point K sockets. Units are distributed sticky by unit id, so a unit always
+  rides the same one and its reconnects never disturb a sibling. Transactions
+  overlap **across** connections and still queue **within** each, so the
+  turnstile that keeps a serializing master orderly is not given up to get
+  concurrency. The default changes nothing for anyone.
+- **`scripts/calibrate_endpoint.py`** answers the question against the real
+  device: it probes concurrency 1..N with the real register block, reports
+  reads/s, transaction p50/p95 and sweep time per level, and recommends the
+  FEWEST connections that get within 10 % of the best sweep — refusing to
+  recommend a level that started erroring or being refused. Read-only, writes
+  nothing to the device or the config.
+- **The endpoint page now shows what its wire costs**: connections in use,
+  seconds per transaction (p50 and p95), reads per sweep, and the resulting
+  floor — the fastest honest cadence at that shape. An interval below the floor
+  is a promise the wire cannot keep, and the page says so instead of leaving
+  the operator to infer it from overruns. Missed turns appear next to it.
+Measured against two simulated masters with identical wire protocols and
+opposite concurrency behaviour (four units, 50 registers, 0.35 s interval,
+12 s runs — `scripts/calibrate_endpoint.py` recommends 1 and 4 respectively):
+
+| `max_connections` | serializing master | parallel master |
+|---|---|---|
+| 1 | 40 sweeps, cadence p50 1.21 s | 40 sweeps, cadence p50 1.21 s |
+| 2 | 40 sweeps, cadence p50 1.20 s | 80 sweeps, cadence p50 0.60 s |
+| 4 | 40 sweeps, cadence p50 1.20 s | 137 sweeps, cadence p50 0.35 s |
+
+Where concurrency helps it is worth 3.4x the data and the cadence you actually
+configured; where it does not, the knob is inert. That is the property worth
+having: it cannot make a serializing datalogger worse.
+
+- **Fixed: editing an endpoint erased the rest of its connection block.** The
+  modal rebuilt `connection` from the three fields it shows, so timeouts, retry
+  budgets and illegal-register lists written in `config.yaml` disappeared on the
+  first unrelated edit. The whole block is now carried through.
+
 ## 3.52.2
 
 ### 2026-09-12 — parity-harness fixes found by running it

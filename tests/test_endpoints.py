@@ -516,3 +516,45 @@ plants:
     doc = _yaml.safe_load((tmp_path / "config.yaml").read_text())
     assert "plants" not in doc and len(doc["endpoints"]) == 1
     assert Config(str(tmp_path / "config.yaml")).endpoint_devices("legacy")
+
+
+# ── how many sockets the access point is worth ───────────────────────────────
+
+@needs_tc
+def test_the_lane_count_is_bounded_because_sockets_are_scarce(tmp_path):
+    """A master serves a handful of clients — the datalogger this replaces
+    starts refusing near five. A typo asking for thirty would take the access
+    point down for everything else on it, our own other units included."""
+    cfg, client = make_app(tmp_path)
+    for bad in (0, 9, "two", -1):
+        body = dict(ENDPOINT_BODY,
+                    connection=dict(ENDPOINT_BODY["connection"],
+                                    max_connections=bad))
+        r = client.post("/api/endpoints", json=body)
+        assert r.status_code == 422, bad
+        assert any("max_connections" in e
+                   for e in r.json()["detail"]["errors"])
+
+
+@needs_tc
+def test_a_measured_lane_count_is_persisted_and_reaches_every_unit(tmp_path):
+    cfg, client = make_app(tmp_path)
+    body = dict(ENDPOINT_BODY,
+                connection=dict(ENDPOINT_BODY["connection"], max_connections=2))
+    assert client.post("/api/endpoints", json=body).status_code == 200
+    got = client.get("/api/endpoints/sdm-endpoint").json()
+    assert got["connection"]["max_connections"] == 2
+    assert all(d.connection.max_connections == 2
+               for d in cfg.endpoint_devices("sdm-endpoint"))
+
+
+@needs_tc
+def test_an_endpoint_reports_what_its_wire_costs(tmp_path):
+    """Measured, not assumed: the interval an operator may ask for is bounded
+    by it, and no configuration file can know it."""
+    cfg, client = make_app(tmp_path)
+    assert client.post("/api/endpoints", json=ENDPOINT_BODY).status_code == 200
+    bus = client.get("/api/endpoints/sdm-endpoint").json()["bus"]
+    # nothing has polled (the endpoint is created disabled), so nothing is claimed
+    assert bus["lanes"] == 1 and bus["max_connections"] == 1
+    assert bus["tx_p50_s"] is None and bus["floor_s"] is None
