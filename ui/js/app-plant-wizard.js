@@ -31,7 +31,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 // who wants something else changes it in one click; a user who
                 // wants the common thing types nothing.
                 groups: [{ id: 'inverters', role: 'inverter', template: '',
-                           units: '', enabled: true, sources: [] }],
+                           units: '', enabled: true, modbus: true, http: false }],
             },
         };
         document.getElementById('plantWizTitle').textContent =
@@ -89,7 +89,9 @@ Object.assign(JanitzaMonitor.prototype, {
                 <select id="pwProto" class="input">
                     <option value="tcp" ${d.protocol === 'tcp' ? 'selected' : ''}>Modbus TCP</option>
                     <option value="rtu-tcp" ${d.protocol === 'rtu-tcp' ? 'selected' : ''}>Modbus RTU over TCP</option>
-                </select></div>
+                </select>
+                <div class="field-hint">${t('plant.wizard.protoHint',
+                    'How the master is addressed. An HTTP interface such as the Fronius Solar API is added per group in step 3 — it can sit beside Modbus or replace it entirely.')}</div></div>
             <div class="form-group flex-2"><label class="form-label" for="pwHost">${t('endpoints.host', 'Host')}</label>
                 <input id="pwHost" class="input" value="${this._esc(d.host)}" placeholder="192.168.1.50"></div>
             <div class="form-group"><label class="form-label" for="pwPort">${t('endpoints.port', 'Port')}</label>
@@ -158,11 +160,24 @@ Object.assign(JanitzaMonitor.prototype, {
                   <div class="form-group"><label class="form-label">${t('endpoints.srcTimeout', 'Timeout (s)')}</label>
                     <input class="input" type="number" min="1" data-g="${i}" data-f="timeout" value="${g.timeout || 3}"></div>
                 </div>
-                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                  <input type="checkbox" data-g="${i}" data-f="http" ${g.http ? 'checked' : ''}
-                         onchange="app.plantWizCollectAndRender()">
-                  ${t('plant.wizard.addHttp', 'Also read this group over HTTP (a second source)')}</label>
-                ${g.http ? `<div class="form-row" style="margin-top:8px;">
+                <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:6px;">
+                  <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                    <input type="checkbox" data-g="${i}" data-f="modbus" ${g.modbus !== false ? 'checked' : ''}
+                           onchange="app.plantWizCollectAndRender()">
+                    ${t('plant.wizard.useModbus', 'Read over Modbus')}</label>
+                  <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                    <input type="checkbox" data-g="${i}" data-f="http" ${g.http ? 'checked' : ''}
+                           onchange="app.plantWizCollectAndRender()">
+                    ${t('plant.wizard.useHttp', 'Read over HTTP / Solar API')}</label>
+                </div>
+                ${g.modbus === false && !g.http ? `<div class="field-hint" style="color:var(--danger,#ef4444);">
+                    ${t('plant.wizard.needAWay', 'A group needs at least one way to be read.')}</div>` : ''}
+                ${g.http ? `<div style="margin-top:10px;">
+                  <span style="color:var(--text-secondary);font-size:12px;">${t('plant.wizard.preset', 'Preset')}:</span>
+                  <button class="btn btn-ghost btn-sm" onclick="app.plantWizPreset(${i},'fronius_inverter')">Fronius · ${t('plant.role.inverter', 'inverters')}</button>
+                  <button class="btn btn-ghost btn-sm" onclick="app.plantWizPreset(${i},'fronius_meter')">Fronius · ${t('plant.role.meter', 'meter')}</button>
+                </div>
+                <div class="form-row" style="margin-top:8px;">
                   <div class="form-group flex-2"><label class="form-label">URL</label>
                     <input class="input" data-g="${i}" data-f="url" value="${this._esc(g.url || '')}"
                            placeholder="http://host/solar_api/v1/...DeviceId=\${unit_id}">
@@ -246,7 +261,8 @@ Object.assign(JanitzaMonitor.prototype, {
         const role = Object.keys(this.ROLE_PRESETS).find(r => !used.has(r)) || 'meter';
         const pre = this.ROLE_PRESETS[role];
         this._plantWiz.data.groups.push({ id: pre.group, role, template: '',
-                                          units: '', enabled: true });
+                                          units: '', enabled: true,
+                                          modbus: true, http: false });
         this._plantWizRender();
     },
 
@@ -266,6 +282,30 @@ Object.assign(JanitzaMonitor.prototype, {
         const wasPreset = Object.values(this.ROLE_PRESETS).some(v => v.group === g.id);
         g.role = role;
         if (wasPreset && pre) g.id = pre.group;
+        this._plantWizRender();
+    },
+
+    // Typing a Solar API URL by hand is how a plant ends up silently reading
+    // nothing: one wrong query parameter still returns 200 OK with an empty
+    // body. The presets fill the exact call, with ${unit_id} in place.
+    plantWizPreset(i, kind) {
+        this._plantWizCollect();
+        const d = this._plantWiz.data, g = d.groups[i];
+        const host = d.host || '<host>';
+        if (kind === 'fronius_inverter') {
+            g.url = `http://${host}/solar_api/v1/GetInverterRealtimeData.cgi`
+                  + '?Scope=Device&DeviceId=${unit_id}&DataCollection=CommonInverterData';
+            if (this._plantWiz.templates.some(x => x.id === 'fronius_solar_api_inverter')) {
+                g.httpTemplate = 'fronius_solar_api_inverter';
+            }
+        } else if (kind === 'fronius_meter') {
+            g.url = `http://${host}/solar_api/v1/GetMeterRealtimeData.cgi`
+                  + '?Scope=Device&DeviceId=${unit_id}';
+            if (this._plantWiz.templates.some(x => x.id === 'fronius_solar_api')) {
+                g.httpTemplate = 'fronius_solar_api';
+            }
+        }
+        g.httpEvery = g.httpEvery || 5;
         this._plantWizRender();
     },
 
@@ -314,20 +354,22 @@ Object.assign(JanitzaMonitor.prototype, {
                              stale_after_s: 0,
                              ...(g.template ? { template: g.template } : {}),
                              poll_groups: groupsOf(g.intervals || 'normal=20, slow=120') };
-            if (g.http && (g.url || '').trim()) {
-                // the faster source goes FIRST: it owns every field it offers,
-                // and hands them back to Modbus if it goes quiet
-                out.sources = [
-                    { id: 'http', protocol: 'http', url: g.url.trim(),
-                      ...(g.httpTemplate ? { template: g.httpTemplate } : {}),
-                      poll_groups: { realtime: { interval: parseFloat(g.httpEvery) || 5 } },
-                      stale_after_s: 30, timeout: 5 },
-                    modbus,
-                ];
-            } else {
-                out.connection = conn;
-                if (Object.keys(modbus.poll_groups).length) out.sources = [modbus];
-            }
+            const useHttp = g.http && (g.url || '').trim();
+            const useModbus = g.modbus !== false;
+            const http = {
+                id: 'solar_api', protocol: 'http', url: (g.url || '').trim(),
+                ...(g.httpTemplate ? { template: g.httpTemplate } : {}),
+                poll_groups: { realtime: { interval: parseFloat(g.httpEvery) || 5 } },
+                // it yields only if it goes quiet; with Modbus beside it that is
+                // automatic failover, and alone the window costs nothing
+                stale_after_s: useModbus ? 30 : 0, timeout: 5,
+            };
+            // The faster source goes FIRST: it owns every field it offers and
+            // the other fills in the rest.
+            const sources = [...(useHttp ? [http] : []),
+                             ...(useModbus ? [modbus] : [])];
+            out.sources = sources;
+            if (!useHttp) out.connection = conn;
             return out;
         });
         return { id: d.id, name: d.name || d.id, enabled: true,
@@ -372,6 +414,18 @@ Object.assign(JanitzaMonitor.prototype, {
                             `Unit ${u} is claimed by two groups — one address, one device.`); return;
                     }
                     seen.add(u);
+                }
+            }
+        }
+        if (w.step === 3) {
+            for (const g of d.groups) {
+                if (g.modbus === false && !g.http) {
+                    fb.textContent = this.t('plant.wizard.needAWay2',
+                        `Group "${g.id}": choose at least one way to read it.`); return;
+                }
+                if (g.http && !(g.url || '').trim()) {
+                    fb.textContent = this.t('plant.wizard.needUrl',
+                        `Group "${g.id}": the HTTP source needs a URL.`); return;
                 }
             }
         }

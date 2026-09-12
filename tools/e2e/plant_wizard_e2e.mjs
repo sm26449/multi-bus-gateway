@@ -93,12 +93,34 @@ try {
   // ---- step 3: how it is read -------------------------------------------
   const s3 = await page.locator('#plantWizBody').innerText();
   check('step 3 asks how each group is read', /Intervals/i.test(s3));
-  check('a second, faster source is offered', /HTTP/i.test(s3));
+  check('both ways of reading are offered',
+        await page.locator('[data-g="0"][data-f="modbus"]').count() === 1
+        && await page.locator('[data-g="0"][data-f="http"]').count() === 1);
+
+  // a group with NO way to be read must be refused
+  await page.locator('[data-g="0"][data-f="modbus"]').uncheck();
+  await page.waitForTimeout(400);
+  await page.click('#plantWizNext');
+  await page.waitForTimeout(400);
+  check('a group with no way to be read is refused',
+        /at least one way/i.test(await page.locator('#plantWizFeedback').innerText()),
+        await page.locator('#plantWizFeedback').innerText());
+
+  // Solar API alone is a first-class choice, and the preset fills the exact call
   await page.locator('[data-g="0"][data-f="http"]').check();
-  await page.waitForTimeout(500);
-  await page.locator('[data-g="0"][data-f="url"]')
-      .fill('http://127.0.0.1:9/solar_api/v1/x.cgi?DeviceId=${unit_id}');
-  await page.locator('[data-g="0"][data-f="httpTemplate"]').selectOption('fronius_solar_api_inverter');
+  await page.waitForTimeout(400);
+  await page.locator('button:has-text("Fronius")').first().click();
+  await page.waitForTimeout(400);
+  const url = await page.locator('[data-g="0"][data-f="url"]').inputValue();
+  check('the preset fills the Solar API call with the unit placeholder',
+        url.includes('GetInverterRealtimeData.cgi') && url.includes('${unit_id}'), url);
+  check('and picks the matching template',
+        await page.locator('[data-g="0"][data-f="httpTemplate"]').inputValue()
+          === 'fronius_solar_api_inverter');
+
+  // back on: both sources, fastest first
+  await page.locator('[data-g="0"][data-f="modbus"]').check();
+  await page.waitForTimeout(400);
   await page.click('#plantWizNext');
   await page.waitForTimeout(700);
 
@@ -121,7 +143,7 @@ try {
   const g = Object.fromEntries((d.groups || []).map(x => [x.id, x]));
   check('both groups were created', !!g.inverters && !!g.grid);
   check('the inverters carry both sources, fastest first',
-        (g.inverters.sources || []).map(s => s.id).join(',') === 'http,modbus',
+        (g.inverters.sources || []).map(s => s.id).join(',') === 'solar_api,modbus',
         (g.inverters.sources || []).map(s => s.id).join(','));
   check('the meter group is its own', g.grid.total_units === 1 && g.grid.role === 'meter');
   check('the first group owns the headline topic',

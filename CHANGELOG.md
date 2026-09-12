@@ -1,5 +1,38 @@
 # Changelog
 
+## 3.63.0
+
+### 2026-09-12 — Solar API is a way of reading, not an afterthought
+
+The wizard treated HTTP as an add-on to Modbus: you could bolt a Solar API
+source onto a Modbus group, but you could not build an installation read ONLY
+that way. On a Fronius that is backwards — the Solar API answers in a 54 ms
+median against 1945-2376 ms for Modbus on the same box, so for power, energy,
+frequency and U/I it is simply the better resolution.
+
+Step 3 now offers **two independent choices per group**, `Read over Modbus` and
+`Read over HTTP / Solar API`, with at least one required. Either alone is a
+complete installation; both together put the faster one first, so it owns every
+field it offers and the other fills in the rest. With Modbus beside it the HTTP
+source yields after 30 s of silence, which is automatic failover; alone it never
+yields, because there is nothing to yield to.
+
+**Presets fill the exact call.** Typing a Solar API URL by hand is how a plant
+ends up silently reading nothing: one wrong query parameter still returns 200 OK
+with an empty body. One click writes
+`GetInverterRealtimeData.cgi?Scope=Device&DeviceId=${unit_id}&DataCollection=CommonInverterData`
+or the meter equivalent, with `${unit_id}` in place and the matching template
+selected.
+
+The source is named `solar_api` rather than `http`, because that is what it is.
+
+**Verified in a real browser, 26 checks**, including that a group with no way to
+be read is refused before anything is created, that the preset fills the call
+and picks the template, and that the created installation carries both sources
+in precedence order. Separately confirmed against the live DataManager that an
+installation declaring ONLY a Solar API source materializes with no Modbus
+anywhere.
+
 ## 3.62.0
 
 ### 2026-09-12 — the Add Installation wizard
