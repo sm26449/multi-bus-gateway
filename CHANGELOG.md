@@ -1,5 +1,40 @@
 # Changelog
 
+## 3.54.2
+
+### 2026-09-12 — the grid meter was being read twice
+
+Unit 240 behind the Fronius datalogger measures the grid connection, and so
+does the Janitza UMG512 the gateway already polls. Sampled in the same second
+the two agree on sign and magnitude (-11766 W against -12636 W, the gap being
+that the Fronius reading was up to 10 s stale while the grid swung 400 W in
+two), and their energy accumulators agree to the decimal (181193.922 against
+181194.0 Wh imported). The Janitza reports four times a second instead of once
+per ten, with a fuller set: reactive inductive/capacitive, apparent energy, the
+whole power-quality side.
+
+Reading it twice bought nothing and cost 6 transactions a minute on an access
+point that collapses above roughly 26. Measured today, three ways:
+
+| inverters / meter | demanded | achieved | errors | device-down alerts |
+|---|---|---|---|---|
+| 20s / 20s | 17.1 | 17.3 | 0 % | 0 |
+| 10s / 20s | 28.9 | 26.2 | 0.8 % | 0 |
+| 10s / 10s | 32.0 | 21.6 | 6.5 % | 11 |
+
+Asking for more returned less: past the knee this datalogger does not saturate,
+it collapses. The `fronius-meter` endpoint is now `enabled: false` — configured
+and functional, simply not consuming wire — and the four inverters run at 10 s.
+
+What is genuinely given up is per-phase energy (import/export per line), which
+the Janitza template publishes only as totals today. If a consumer needs it, the
+UMG512 has the registers and the answer is to select them there, not to read a
+second meter over a saturated wire.
+
+`scripts/fronius_parity.py` no longer compares unit 240 (four pairs, not five),
+with the reason written where the pair used to be. `PARITY_INCLUDE_METER=1`
+restores it.
+
 ## 3.54.1
 
 ### 2026-09-12 — a healthy device has a story too
