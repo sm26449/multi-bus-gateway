@@ -355,7 +355,13 @@ class ModbusConnection:
         # First-class dropout observability (mirrors VMeterStats.record_event):
         # a timestamped ring of read failures + last success/failure times, so a
         # Janitza comms loss leaves a record in the app, not just docker logs.
-        self.events: deque = deque(maxlen=50)
+        #
+        # Sized for an EPISODE, not a moment. A datalogger that stalls in bursts
+        # every few minutes buries a 50-entry ring before anyone opens the page;
+        # diagnosing one cost an afternoon of grepping container logs by hand,
+        # for facts the process already had. 500 covers hours of a healthy
+        # device and a full bad night of a sick one.
+        self.events: deque = deque(maxlen=500)
         self.last_success_ts: Optional[float] = None
         self.last_success_mono: Optional[float] = None   # step-immune staleness
         self.last_failure_ts: Optional[float] = None
@@ -618,6 +624,9 @@ class ModbusConnection:
             if retry_sleep:
                 time.sleep(retry_sleep)   # lock RELEASED → a realtime read can slip in
 
+        self.record_event('error', 'batch_failed',
+                          f'{count} registers at {address} failed after '
+                          f'{self.config.retry_attempts} attempt(s)')
         with self.lock:                        # counter RMW shared across pollers
             self.failed_reads += 1
             self.batch_failures += 1
@@ -718,6 +727,9 @@ class ModbusConnection:
         # NO wedge backstop — a coil-only device on a wedged-but-open link
         # never forced a reopen — and declared unreachable on EVERY failed
         # batch, the exact flapping read_registers was cured of in DP-8).
+        self.record_event('error', 'batch_failed',
+                          f'{count} coil(s)/discrete(s) at {address} failed '
+                          f'after {self.config.retry_attempts} attempt(s)')
         with self.lock:                    # counter RMW shared across pollers
             self.failed_reads += 1
             self.batch_failures += 1
@@ -868,6 +880,19 @@ class RegisterPoller(threading.Thread):
         # Data-readiness gate: drop an all-zero frame (sleepy device) — opt-in.
         self._drop_all_zero = bool(getattr(
             getattr(connection, 'config', None), 'drop_all_zero', False))
+
+    def _record(self, level: str, kind: str, message: str) -> None:
+        """Put a poller-level fact into the DEVICE's event ring.
+
+        The poller knows things the connection cannot see — which group swept,
+        how long it took, whether it outran its interval — and those are exactly
+        the facts an operator needs when an endpoint starts misbehaving. They
+        used to exist only as container-log lines, addressable by nothing.
+        """
+        try:
+            self.connection.record_event(level, kind, message)
+        except Exception:  # noqa: BLE001 — observability never breaks polling
+            pass
 
     def _create_read_groups(self) -> List[Dict]:
         """
@@ -1162,8 +1187,19 @@ class RegisterPoller(threading.Thread):
                             "%.1fs — the group cannot keep up; raise the interval "
                             "or reduce what it reads",
                             self._tag, self.poll_group_name, elapsed, self.interval)
+                        # Edge-triggered in the ring too: an episode is one
+                        # entry, so a device that cannot keep up for an hour
+                        # does not evict the reason it started.
+                        self._record('warn', 'overrun',
+                                     f'{self.poll_group_name}: sweep took '
+                                     f'{elapsed:.1f}s, interval is '
+                                     f'{self.interval:.0f}s')
                 elif self._overrun_logged:
                     self._overrun_logged = False
+                    self._record('info', 'overrun_cleared',
+                                 f'{self.poll_group_name}: back inside its '
+                                 f'{self.interval:.0f}s interval '
+                                 f'({elapsed:.1f}s)')
                 self._stop_event.wait(
                     max(self.interval * 0.1, 0.05, self.interval - elapsed))
         finally:

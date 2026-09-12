@@ -37,3 +37,18 @@ It writes (toggles a setting, renames a unit), so point it at an EPHEMERAL
 instance. The header of the script carries the throwaway-container line and the
 config it expects — an endpoint on a TEST-NET host, so the offline/degraded paths
 are the ones under test.
+
+## Device logs
+
+`device_logs_e2e.mjs` validates the device page's Logs tab: the failed batches
+listed with the address and size they asked for, the live per-group state
+beside them, the counters, the problems-only filter, live refresh, and that
+leaving the tab stops the tick.
+
+Point the instance at a host that REFUSES (127.0.0.1:9), so the failure paths
+are the ones under test:
+
+```bash
+MBG_URL=http://localhost:18081 DEVICE=sunfield-u1 \
+  CHROMIUM_PATH=<chrome> node device_logs_e2e.mjs
+```

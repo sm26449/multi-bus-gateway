@@ -1882,6 +1882,57 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             _write_rl_state[ip] = (tokens - 1.0, now)
             return True
 
+    @app.get("/api/devices/{device_id}/events")
+    def device_events(device_id: str, limit: int = Query(200, ge=1, le=500),
+                      level: str = Query("")):
+        """What this device's acquisition has been doing, as a readable log.
+
+        The connection has always kept a timestamped ring of its own troubles —
+        unreachable, recovered, forced reopen, bus busy, failed batch — plus the
+        poller's overrun episodes. Until now the only reader was the alert
+        harvester, which fired on them and dropped them, so diagnosing a
+        misbehaving endpoint meant grepping container logs for facts the process
+        already had in memory and could not be asked for.
+
+        Returned alongside the log is the live per-group state (interval, last
+        sweep, reads per sweep, overruns), because "what happened" and "what it
+        is doing now" are the same question when an endpoint is struggling.
+        """
+        _i, dev_cfg, client = _find_device(device_id)
+        if client is None:
+            raise HTTPException(status_code=404,
+                                detail=f"device '{device_id}' is not running")
+        try:
+            st = client.get_stats() or {}
+        except Exception:  # noqa: BLE001 — a stats blip must not 500 the log
+            st = {}
+        events = list(st.get('events') or [])
+        if level:
+            keep = {x.strip() for x in level.split(',') if x.strip()}
+            events = [e for e in events if e.get('level') in keep]
+        # newest first: an operator opening the page is asking "what just
+        # happened", not "what happened when the process started"
+        events = events[::-1][:limit]
+        return {
+            "device_id": device_id,
+            "name": (dev_cfg.name or dev_cfg.id) if dev_cfg else device_id,
+            "events": events,
+            "truncated": len(st.get('events') or []) >= 500,
+            "poll_groups": st.get('poll_groups_detail') or [],
+            "counters": {
+                "successful_reads": st.get('successful_reads'),
+                "failed_reads": st.get('failed_reads'),
+                "batch_failures": getattr(getattr(client, 'connection', None),
+                                           'batch_failures', None),
+                "forced_reopens": getattr(getattr(client, 'connection', None),
+                                          'forced_reopens', None),
+                "error_counts": st.get('error_counts') or {},
+                "last_latency_ms": st.get('last_latency_ms'),
+                "last_success_ts": st.get('last_success_ts'),
+                "last_failure_ts": st.get('last_failure_ts'),
+            },
+        }
+
     @app.post("/api/devices/{device_id}/write")
     def write_device_register(device_id: str, request: Request, payload: Dict = Body(...)):
         """Write a value to a device (Modbus FC5 coil / FC6+FC16 holding).

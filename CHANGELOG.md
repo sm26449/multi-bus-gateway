@@ -1,5 +1,38 @@
 # Changelog
 
+## 3.54.0
+
+### 2026-09-12 — a device's acquisition log, finally addressable
+
+Every `ModbusConnection` has always kept a timestamped ring of its own
+troubles — unreachable, recovered, forced reopen, bus busy. The only reader was
+the alert harvester, which fired on them and dropped them. So diagnosing a
+misbehaving endpoint meant grepping container logs by hand for facts the
+process already had in memory and could not be asked for. That is exactly how
+this afternoon's Fronius tuning was done, and it should not have been.
+
+- **`GET /api/devices/{id}/events`** returns the ring newest-first, with
+  `?limit=` and `?level=error,warn` to narrow it to the problems. Alongside it
+  comes the live per-group state — interval, last sweep, reads per sweep,
+  overruns, age — because "what happened" and "what it is doing now" are the
+  same question when an endpoint is struggling.
+- **A Logs tab on the device page**, matching the one virtual meters already
+  had: live follow, a problems-only filter, error and warning rows tinted, and
+  the per-group table above the log.
+- **The ring is 50 entries no longer, but 500.** A datalogger that stalls in
+  bursts every few minutes buried the old ring before anyone could open the
+  page.
+- **Two failures that only ever reached the logger now reach the ring**: a
+  failed batch, recorded with the address and register count that were asked
+  for rather than a bare "something failed", and a poll group's overrun
+  episode, recorded with the group, the sweep time and the interval it broke.
+  Both are edge-triggered exactly like their log lines, so a group that cannot
+  keep up for an hour is one entry and does not evict the reason it started.
+
+The poller reaches the device's ring through `RegisterPoller._record`, which
+swallows everything: observability must never raise into the acquisition path,
+and there is a test that says so.
+
 ## 3.53.0
 
 ### 2026-09-12 — how many sockets an access point is worth is measured, not assumed

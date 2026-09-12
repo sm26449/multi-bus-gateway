@@ -496,6 +496,7 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     closeDeviceDetail() {
+        this._stopDeviceLogs();
         this._restoreWsPages();       // return embedded pages home BEFORE wiping the view
         const view = document.getElementById('deviceDetailView');
         if (view) { view.style.display = 'none'; view.innerHTML = ''; }
@@ -536,6 +537,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <button class="config-main-tab" data-dtab="outputs"><i aria-hidden="true" class="bi bi-signpost-split"></i> ${t('devices.detail.outputs', 'Outputs')}</button>
             <button class="config-main-tab" data-dtab="measurements"><i aria-hidden="true" class="bi bi-list-check"></i> ${t('devices.registers', 'Measurements')} (${d.selected_registers})</button>
             <button class="config-main-tab" data-dtab="calculated"><i aria-hidden="true" class="bi bi-calculator"></i> ${t('calc.tab', 'Calculated')}</button>
+            <button class="config-main-tab" data-dtab="logs"><i aria-hidden="true" class="bi bi-journal-text"></i> ${t('devices.tab.logs', 'Logs')}</button>
             <button class="config-main-tab" data-dtab="monitor" ${gMon}><i aria-hidden="true" class="bi bi-graph-up"></i> ${t('nav.monitor', 'Monitor')}</button>
             <button class="config-main-tab" data-dtab="history" ${gInf}><i aria-hidden="true" class="bi bi-clock-history"></i> ${t('nav.history', 'History')}</button>
             <button class="config-main-tab" data-dtab="energy" ${gInf}><i aria-hidden="true" class="bi bi-lightning-charge"></i> ${t('nav.energy', 'Energy')}</button>
@@ -551,6 +553,9 @@ Object.assign(JanitzaMonitor.prototype, {
 
         <!-- ── Calculated (formula-derived measurements) ── -->
         <div data-dpanel="calculated" hidden></div>
+
+        <!-- ── Logs — what this device's acquisition has been doing ── -->
+        <div data-dpanel="logs" hidden><div class="dev-log-host"></div></div>
 
         <!-- ── Overview (read-only) ── -->
         <div data-dpanel="overview">${this._deviceOverviewHtml(d, s.entry || {})}</div>
@@ -819,8 +824,124 @@ Object.assign(JanitzaMonitor.prototype, {
         this._loadDeviceSnapshot(this._devDetail?.id);   // Overview is the default tab
     },
 
+    // ── Logs ────────────────────────────────────────────────────────────────
+    //
+    // What this device's acquisition has been doing, with the live per-group
+    // state beside it. The connection has always kept this ring; until now the
+    // only reader was the alert harvester, so diagnosing a struggling endpoint
+    // meant grepping container logs for facts the process already had.
+
+    _stopDeviceLogs() {
+        if (this._devLogTimer) { clearInterval(this._devLogTimer); this._devLogTimer = null; }
+    },
+
+    _initDeviceLogs(id) {
+        const host = document.querySelector('#deviceDetailView [data-dpanel="logs"] .dev-log-host');
+        if (!host) return;
+        const t = (k, d) => this.t(k, d);
+        if (!host.dataset.built) {
+            host.dataset.built = '1';
+            host.innerHTML = `
+              <style>
+                .dev-log-row td{padding:3px 12px 3px 0;vertical-align:top;}
+                .dev-log-row.error td{background:rgba(192,57,43,.07);}
+                .dev-log-row.warn td{background:rgba(245,158,11,.08);}
+                .dev-log-when{white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--text-secondary);}
+                .dev-log-kind{white-space:nowrap;font-weight:600;}
+              </style>
+              <div class="settings-card"><div class="settings-card-body">
+                <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:12px;">
+                  <label class="form-label" style="display:flex;align-items:center;gap:6px;margin:0;">
+                    <input type="checkbox" class="dev-log-live" checked> ${t('devices.logs.live', 'live')}</label>
+                  <label class="form-label" style="display:flex;align-items:center;gap:6px;margin:0;">
+                    <input type="checkbox" class="dev-log-onlybad"> ${t('devices.logs.onlyBad', 'problems only')}</label>
+                  <span class="dev-log-meta" style="color:var(--text-secondary);font-size:12.5px;margin-left:auto;"></span>
+                </div>
+                <div class="dev-log-groups" style="margin-bottom:14px;"></div>
+                <div class="dev-log-body"></div>
+              </div></div>`;
+            host.querySelector('.dev-log-onlybad').addEventListener(
+                'change', () => this._refreshDeviceLogs(id));
+            host.querySelector('.dev-log-live').addEventListener('change', e => {
+                if (e.target.checked) this._initDeviceLogs(id); else this._stopDeviceLogs();
+            });
+        }
+        this._refreshDeviceLogs(id);
+        this._stopDeviceLogs();
+        this._devLogTimer = setInterval(() => {
+            const live = host.querySelector('.dev-log-live');
+            if (live && live.checked) this._refreshDeviceLogs(id);
+        }, 5000);
+    },
+
+    async _refreshDeviceLogs(id) {
+        const host = document.querySelector('#deviceDetailView [data-dpanel="logs"] .dev-log-host');
+        if (!host || !id) return;
+        const t = (k, d) => this.t(k, d);
+        const bad = host.querySelector('.dev-log-onlybad')?.checked;
+        let d;
+        try {
+            const r = await fetch(`/api/devices/${encodeURIComponent(id)}/events?limit=300`
+                                  + (bad ? '&level=error,warn' : ''));
+            if (!r.ok) throw new Error(r.status === 404
+                ? t('devices.logs.notRunning', 'This device is not running, so it has no acquisition log.')
+                : r.statusText);
+            d = await r.json();
+        } catch (e) {
+            host.querySelector('.dev-log-body').innerHTML =
+                `<span style="color:var(--text-secondary);">${this._esc(e.message)}</span>`;
+            host.querySelector('.dev-log-groups').innerHTML = '';
+            return;
+        }
+        const c = d.counters || {};
+        const pct = (c.successful_reads && (c.successful_reads + c.failed_reads))
+            ? (100 * c.failed_reads / (c.successful_reads + c.failed_reads)) : 0;
+        host.querySelector('.dev-log-meta').innerHTML =
+            `${c.successful_reads ?? '—'} ${t('devices.logs.ok', 'ok')} · `
+            + `${c.failed_reads ?? '—'} ${t('devices.logs.failed', 'failed')}`
+            + (pct ? ` (${pct.toFixed(1)}%)` : '')
+            + (c.forced_reopens ? ` · ${c.forced_reopens} ${t('devices.logs.reopens', 'reopens')}` : '')
+            + (c.last_latency_ms != null ? ` · ${t('devices.logs.lastRead', 'last read')} ${c.last_latency_ms} ms` : '');
+
+        // live per-group state: "what happened" and "what it is doing now" are
+        // the same question when an endpoint is struggling
+        const groups = d.poll_groups || [];
+        host.querySelector('.dev-log-groups').innerHTML = groups.length ? `
+            <table style="font-size:12.5px;"><tr style="color:var(--text-secondary);">
+              <td style="padding-right:14px;">${t('devices.logs.group', 'group')}</td>
+              <td style="padding-right:14px;">${t('devices.logs.interval', 'interval')}</td>
+              <td style="padding-right:14px;">${t('devices.logs.sweep', 'last sweep')}</td>
+              <td style="padding-right:14px;">${t('devices.logs.reads', 'reads')}</td>
+              <td style="padding-right:14px;">${t('devices.logs.overruns', 'overruns')}</td>
+              <td>${t('devices.logs.age', 'age')}</td></tr>
+            ${groups.map(g => {
+                const over = g.cycle_s != null && g.interval && g.cycle_s > g.interval;
+                return `<tr style="font-variant-numeric:tabular-nums;">
+                  <td style="padding-right:14px;"><b>${this._esc(g.name || '')}</b></td>
+                  <td style="padding-right:14px;">${g.interval ?? '—'}s</td>
+                  <td style="padding-right:14px;${over ? 'color:var(--danger,#ef4444);font-weight:600;' : ''}">${g.cycle_s != null ? g.cycle_s + 's' : '—'}</td>
+                  <td style="padding-right:14px;">${g.reads ?? '—'}</td>
+                  <td style="padding-right:14px;${g.overruns ? 'color:var(--warning,#f59e0b);font-weight:600;' : ''}">${g.overruns ?? 0}</td>
+                  <td>${g.age_s != null ? g.age_s + 's' : '—'}</td></tr>`;
+            }).join('')}</table>` : '';
+
+        const evs = d.events || [];
+        host.querySelector('.dev-log-body').innerHTML = evs.length ? `
+            <table style="width:100%;font-size:12.5px;">${evs.map(e => `
+              <tr class="dev-log-row ${this._esc(e.level || 'info')}">
+                <td class="dev-log-when">${new Date((e.ts || 0) * 1000).toLocaleTimeString()}</td>
+                <td class="dev-log-kind">${this._esc(e.kind || '')}</td>
+                <td>${this._esc(e.message || '')}</td></tr>`).join('')}</table>
+            ${d.truncated ? `<div class="field-hint" style="margin-top:8px;">${t('devices.logs.truncated',
+                'The ring is full — older entries have been dropped.')}</div>` : ''}`
+            : `<span style="color:var(--text-secondary);">${bad
+                ? t('devices.logs.noneBad', 'No errors or warnings recorded.')
+                : t('devices.logs.none', 'Nothing recorded yet. Acquisition events appear here as they happen.')}</span>`;
+    },
+
     _switchDeviceTab(name) {
         const id = this._devDetail?.id;
+        if (name !== 'logs') this._stopDeviceLogs();
         this._restoreWsPages();                       // return any embedded view home first
         document.querySelectorAll('#deviceWsTabs .config-main-tab[data-dtab]').forEach(t =>
             t.classList.toggle('active', t.dataset.dtab === name));
@@ -833,6 +954,7 @@ Object.assign(JanitzaMonitor.prototype, {
             if (this._devDetail?.data?.pq_supported) this._loadPqSinkStatus(id);
         }
         else if (name === 'calculated') this._initCalculated(id);
+        else if (name === 'logs') this._initDeviceLogs(id);
         else if (name === 'measurements') this._embedRegisters(id);
         else if (name === 'monitor') this._embedWsPage('monitor', () => this.initMonitorPage());
         else if (name === 'history') this._embedWsPage('history', () => this.initHistoryPage());

@@ -78,6 +78,7 @@ conventional status codes (401 unauthenticated, 403 forbidden, 404 not found,
 | DELETE | `/api/devices/restorable/{id}` | Permanently forget a deleted device's kept settings | admin |
 | GET | `/api/serial-ports` | Local `/dev` serial lines visible to the container (direct RTU mode; empty when MBG has no `/dev`) | viewer |
 | GET | `/api/bridge/adapters` | Live USB-adapter inventory from the serial bridge (RTU-over-network Scan); `available:false` with an `error` when the bridge is unreachable | viewer |
+| GET | `/api/devices/{id}/events` | This device's acquisition log, newest first: unreachable / recovered / forced reopen / bus busy / failed batch (with the address and register count) / poll-group overrun episodes. `?limit=1..500`, `?level=error,warn` to narrow to the problems. Returns the live per-group state (interval, last sweep, reads, overruns, age) and the read counters alongside, because "what happened" and "what it is doing now" are the same question when an endpoint is struggling. 404 when the device is not running | viewer |
 | POST | `/api/devices/test` | Ad-hoc connection probe for a not-yet-saved device (TCP/RTU/rtu-tcp/HTTP/MQTT) | operator |
 | POST | `/api/devices/{id}/test` | Probe a saved device (uses its first selected register address) | operator |
 | GET | `/api/devices/{id}/poll-groups` | Current poll-group intervals | viewer |
