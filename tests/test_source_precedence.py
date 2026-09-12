@@ -161,3 +161,107 @@ def test_a_value_carries_the_source_that_produced_it():
     c.publish_callback = lambda g, d: got.update(d)
     drv.publish_callback('normal', {40083: _item('power_active_total')})
     assert got[40083]['source'] == 'sunspec'
+
+
+# ── health on two levels ─────────────────────────────────────────────────────
+
+class _HSrc:
+    protocol, template, enabled = 'tcp', 't', True
+
+    def __init__(self, sid): self.id, self.stale_after_s = sid, 0.0
+
+
+class _HDrv:
+    publish_callback = None
+
+    def __init__(self, status='ok'): self.status, self.connected = status, True
+    def data_health(self, *a, **kw): return {'status': self.status, 'connected': True}
+    def get_stats(self): return {}
+
+
+def _client(*statuses):
+    from multibus.multi_source import MultiSourceClient
+    drvs = [_HDrv(s) for s in statuses]
+    c = MultiSourceClient('u1', [(_HSrc(f's{i}'), d) for i, d in enumerate(drvs)])
+    return c, drvs
+
+
+def test_a_unit_is_healthy_only_when_every_source_is():
+    """The failure this whole scheme exists to prevent: when the Modbus side of
+    an inverter dies we still get power and frequency over HTTP, but we have
+    silently stopped collecting power factor, reactive power, the event flags
+    and the MPPT strings. A green light there would be a lie."""
+    c, drvs = _client('ok', 'ok')
+    assert c.data_health()['status'] == 'ok'
+    drvs[1].status = 'down'
+    h = c.data_health()
+    assert h['status'] == 'degraded'          # NOT ok — half the fields are gone
+    assert h['sources'] == {'s0': 'ok', 's1': 'down'}
+    assert h['sources_down'] == ['s1']
+
+
+def test_a_unit_is_down_only_when_nothing_is_left():
+    c, drvs = _client('down', 'down')
+    assert c.data_health()['status'] == 'down'
+
+
+def test_a_single_source_device_judges_exactly_as_it_always_did():
+    """Every device written before sources existed is one of these."""
+    for st in ('ok', 'degraded', 'down'):
+        c, _d = _client(st)
+        assert c.data_health()['status'] == st
+
+
+def test_a_driver_with_no_verdict_is_judged_by_its_socket():
+    """Skipping it would let a broken source hide behind a healthy sibling."""
+    from multibus.multi_source import MultiSourceClient
+
+    class _Mute:
+        publish_callback, connected = None, False
+        def get_stats(self): return {}
+
+    c = MultiSourceClient('u1', [(_HSrc('live'), _HDrv('ok')),
+                                 (_HSrc('mute'), _Mute())])
+    h = c.data_health()
+    assert h['sources']['mute'] == 'down'
+    assert h['status'] == 'degraded'
+
+
+def test_a_source_falling_over_is_recorded_and_says_what_still_reads():
+    """The loss must be loud. The event reaches the device log and from there
+    the alert harvester."""
+    c, drvs = _client('ok', 'ok')
+    c.get_stats()                                   # first observation
+    drvs[1].status = 'down'
+    st = c.get_stats()
+    ev = [e for e in st['events'] if e['kind'] == 'source_down']
+    assert len(ev) == 1
+    assert ev[0]['source'] == 's1' and ev[0]['level'] == 'error'
+    assert 'still reading through s0' in ev[0]['message']
+
+
+def test_a_source_that_stays_down_is_one_entry_not_a_stream():
+    c, drvs = _client('ok', 'ok')
+    c.get_stats()
+    drvs[1].status = 'down'
+    for _ in range(5):
+        st = c.get_stats()
+    assert len([e for e in st['events'] if e['kind'] == 'source_down']) == 1
+
+
+def test_a_source_coming_back_is_recorded_too():
+    c, drvs = _client('ok', 'ok')
+    c.get_stats()
+    drvs[1].status = 'down'
+    c.get_stats()
+    drvs[1].status = 'ok'
+    st = c.get_stats()
+    back = [e for e in st['events'] if e['kind'] == 'source_ok']
+    assert back and back[-1]['source'] == 's1' and back[-1]['level'] == 'info'
+
+
+def test_the_first_observation_is_not_reported_as_a_transition():
+    """Booting with a source already down must not claim it just fell over."""
+    c, _d = _client('down', 'ok')
+    st = c.get_stats()
+    assert [e for e in st['events'] if e['kind'].startswith('source_')] == []

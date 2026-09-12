@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
+from collections import deque
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .source_arbiter import FieldArbiter, field_of
@@ -43,6 +45,12 @@ class MultiSourceClient:
         self.arbiter = FieldArbiter()
         self._publish_callback: Optional[Callable] = None
         self._lock = threading.Lock()
+        # A source changing state is an EVENT, not just a number. The whole
+        # danger of reading a unit two ways is that one way dies quietly while
+        # the other keeps the lights green — so every transition is recorded,
+        # lands in the device's log, and reaches the alert harvester.
+        self.events: deque = deque(maxlen=200)
+        self._seen: Dict[str, str] = {}
         for rank, (src, drv) in enumerate(parts):
             drv.publish_callback = self._make_filter(rank, src)
 
@@ -157,23 +165,92 @@ class MultiSourceClient:
 
     # ── health and telemetry ────────────────────────────────────────────────
 
-    def data_health(self, *a, **kw) -> Dict:
-        """The unit is as healthy as its BEST source. A dead Modbus side while
-        HTTP delivers is a degraded unit, not a down one — but `sources` below
-        names which one fell over, so the loss is never silent."""
-        best, rank = None, {"ok": 0, "degraded": 1, "down": 2}
-        for _src, drv in self.parts:
+    def _source_health(self, *a, **kw) -> List[Tuple[Any, Dict]]:
+        out = []
+        for src, drv in self.parts:
             fn = getattr(drv, 'data_health', None)
             if not callable(fn):
+                # A driver with no verdict of its own (a push input) is judged
+                # by its socket rather than skipped: skipping would let a
+                # broken source hide behind a healthy sibling, which is the one
+                # failure this whole two-level scheme exists to prevent.
+                out.append((src, {"status": "ok" if getattr(drv, 'connected', False)
+                                  else "down"}))
                 continue
             try:
-                h = fn(*a, **kw)
+                out.append((src, fn(*a, **kw) or {}))
             except Exception:  # noqa: BLE001
-                continue
-            if best is None or rank.get(h.get('status'), 3) < rank.get(best.get('status'), 3):
-                best = h
-        return best or {"status": "down", "stale": True, "staleness_age_s": None,
-                        "last_success_ts": None, "connected": False}
+                out.append((src, {"status": "down"}))
+        return out
+
+    def data_health(self, *a, **kw) -> Dict:
+        """The unit's verdict, and it does NOT hide a dead source.
+
+        A unit read two ways is ``ok`` only when EVERY source is ok. If one has
+        fallen over while another still delivers, the unit is ``degraded`` — not
+        ``ok`` — because the loss is real: when the Modbus side of an inverter
+        dies we still get power and frequency over HTTP, but we have silently
+        stopped collecting power factor, reactive power, the event flags and the
+        MPPT strings. A green light there would be a lie.
+
+        Only when nothing is left is the unit ``down``. A single-source device
+        behaves exactly as it always did: its one source's verdict IS the unit's.
+        """
+        parts = self._source_health(*a, **kw)
+        if not parts:
+            return {"status": "down", "stale": True, "staleness_age_s": None,
+                    "last_success_ts": None, "connected": False, "sources": {}}
+        order = {"ok": 0, "degraded": 1, "down": 2}
+        best = min(parts, key=lambda p: order.get(p[1].get('status'), 3))[1]
+        worst = max(order.get(h.get('status'), 3) for _s, h in parts)
+        status = best.get('status', 'down')
+        if status == 'ok' and worst > 0:
+            status = 'degraded'
+        out = dict(best)
+        out['status'] = status
+        out['sources'] = {src.id: h.get('status', 'down') for src, h in parts}
+        out['sources_down'] = [src.id for src, h in parts
+                               if h.get('status') == 'down']
+        return out
+
+    def note_source_transitions(self) -> None:
+        """Record a source changing state.
+
+        Driven from the stats path, which the health harvester already runs on a
+        timer, so a transition is noticed without a thread of its own. Every
+        source is sampled ONCE per call: asking twice could report a source as
+        both down and alive within one message.
+
+        Edge-triggered, so a source that stays down is one entry rather than a
+        stream — and a source that flaps says so, which is the signal.
+        """
+        parts = self._source_health()
+        live = [s.id for s, h in parts if h.get('status') != 'down']
+        new_events = []
+        # check-then-set under the lock: several API threads call get_stats()
+        # concurrently and would otherwise both see the transition and log it
+        with self._lock:
+            for src, h in parts:
+                now = h.get('status', 'down')
+                was = self._seen.get(src.id)
+                if was == now:
+                    continue
+                self._seen[src.id] = now
+                if was is None:
+                    continue      # first observation is not a transition
+                lvl = {'ok': 'info', 'degraded': 'warn'}.get(now, 'error')
+                others = [x for x in live if x != src.id]
+                detail = (f"source {src.id} {was} -> {now}"
+                          + (f"; still reading through {', '.join(others)}"
+                             if others and now == 'down' else ""))
+                ev = {"ts": round(time.time(), 3), "level": lvl,
+                      "kind": "source_" + now, "message": detail,
+                      "source": src.id}
+                self.events.append(ev)
+                new_events.append((lvl, detail))
+        for lvl, detail in new_events:      # log outside the lock
+            logger.log(logging.WARNING if lvl != 'info' else logging.INFO,
+                       "device %s: %s", self.device_id, detail)
 
     @property
     def connected(self) -> bool:
@@ -224,6 +301,8 @@ class MultiSourceClient:
                     a, b = merged.get(k), st.get(k)
                     if b and (not a or b > a):
                         merged[k] = b
+        self.note_source_transitions()
+        events.extend(self.events)
         merged['connected'] = self.connected
         merged['poll_groups_detail'] = groups
         events.sort(key=lambda e: e.get('ts') or 0)

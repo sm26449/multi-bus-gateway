@@ -1,5 +1,45 @@
 # Changelog
 
+## 3.59.0
+
+### 2026-09-12 — health on two levels, and the Sources card (P8, step 3)
+
+**A unit read two ways is `ok` only when EVERY source is.** When the Modbus side
+of an inverter dies we still get power and frequency over HTTP, but we have
+silently stopped collecting power factor, reactive power, the event flags and
+the MPPT strings. A green light there would be a lie, so the unit goes
+`degraded` — `down` only when nothing is left. A single-source device judges
+exactly as it always did: its one source's verdict IS the unit's.
+
+Every source transition is recorded as an event (`source_down`, `source_ok`),
+edge-triggered so a source that stays down is one entry rather than a stream,
+and the message names what still reads: *"source sunspec ok -> down; still
+reading through solar_api"*. Those reach the device Logs tab and from there the
+alert harvester. A driver with no health verdict of its own is judged by its
+socket rather than skipped — skipping would let a broken source hide behind a
+healthy sibling, which is the one failure this scheme exists to prevent.
+
+**The endpoint page gains a Sources card**: each source with its rank, protocol,
+address, template, intervals, yield window, live census, latency, failed reads,
+and how many fields it is currently authoritative for. That last number is the
+one that tells an operator whether a source earns its place. Arrows reorder,
+because order IS the precedence, and a reorder writes straight through. Add,
+edit, enable and remove are there too; the last remaining source cannot be
+removed, since a unit needs a way to be read.
+
+`GET /api/endpoints/{id}` now carries `sources` as flat JSON — configuration and
+live state in one object, because "which source is this value from" and "is that
+source still alive" are the same question. Readable by a Node-RED http-request
+node without unwrapping.
+
+**Recorded in the Solar API template, measured at 19:31:** when an inverter
+stops producing, the DataManager OMITS `PAC`, `FAC`, `UAC` and `IAC` from the
+response entirely rather than returning zero, and the call still succeeds. Under
+the source model this needs no handling at all — a field nobody offers falls to
+whichever source still does, and a SunSpec source beside it supplies them all
+night. The template says explicitly not to "fix" the absence by defaulting to
+zero: a fabricated zero is indistinguishable from a real one.
+
 ## 3.58.0
 
 ### 2026-09-12 — the runtime reads a unit several ways at once (P8, step 2)

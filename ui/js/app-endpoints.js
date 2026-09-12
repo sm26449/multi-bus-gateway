@@ -66,6 +66,9 @@ Object.assign(JanitzaMonitor.prototype, {
         set('#plCensus', `${p.online_units}/${p.total_units} ${this.t('endpoints.online', 'online')}`);
         set('#plAggGrid', this._endpointAggGridHtml(p));
         set('#plBus', this._endpointBusHtml(p));
+        if (!view.querySelector('#plSources [data-src-busy]')) {
+            set('#plSources', this._endpointSourcesHtml(p));
+        }
         // never redraw the unit rows while one of them is being renamed
         if (!view.querySelector('#plUnitsBody [data-renaming]')) {
             set('#plUnitsBody', this._endpointUnitRowsHtml(p));
@@ -110,6 +113,265 @@ Object.assign(JanitzaMonitor.prototype, {
                 'configured for')} ${want}</span>`);
         }
         return bits.join(' ');
+    },
+
+    // ── Sources ─────────────────────────────────────────────────────────────
+    //
+    // The ordered ways of reaching one endpoint's units. Configuration and live
+    // state together on purpose: "which source is this value from" and "is that
+    // source still alive" are the same question for an operator.
+
+    _endpointSourcesHtml(p) {
+        const t = (k, d) => this.t(k, d);
+        const srcs = p.sources || [];
+        if (!srcs.length) {
+            return `<span style="color:var(--text-secondary);">${t('endpoints.srcNone',
+                'No source declared yet.')}</span>`;
+        }
+        const rows = srcs.map((s, i) => {
+            const ok = s.units_total ? s.units_ok === s.units_total : null;
+            const dot = s.enabled === false ? 'var(--text-secondary,#8a94a0)'
+                : ok === null ? 'var(--text-secondary,#8a94a0)'
+                : ok ? 'var(--success,#22c55e)'
+                : s.units_ok ? 'var(--warning,#f59e0b)' : 'var(--danger,#ef4444)';
+            const groups = Object.entries(s.poll_groups || {})
+                .map(([k, v]) => `${this._esc(k)} ${v}s`).join(' · ') || '—';
+            const fails = s.failed_reads
+                ? ` <span style="color:var(--danger,#ef4444);">${s.failed_reads} failed</span>` : '';
+            return `
+            <tr data-src-row="${this._esc(s.id)}" style="border-top:1px solid var(--border,#2a3038);">
+              <td style="padding:8px 10px 8px 0;white-space:nowrap;">
+                <span class="status-dot" style="--dot:${dot};background:var(--dot);width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:7px;"></span>
+                <b>${this._esc(s.id)}</b>
+                <span class="dev-chip" style="margin-left:6px;">${t('endpoints.srcRank', 'rank')} ${s.rank}</span>
+                ${s.enabled === false ? `<span class="sink-pill warn" style="margin-left:6px;">${t('devices.disabled', 'disabled')}</span>` : ''}
+              </td>
+              <td style="padding:8px 10px 8px 0;">${this._esc(s.protocol)}</td>
+              <td style="padding:8px 10px 8px 0;font-size:12px;word-break:break-all;max-width:280px;">${this._esc(s.address || '')}</td>
+              <td style="padding:8px 10px 8px 0;font-size:12px;">${this._esc(s.template || '—')}</td>
+              <td style="padding:8px 10px 8px 0;font-size:12px;white-space:nowrap;">${groups}</td>
+              <td style="padding:8px 10px 8px 0;font-size:12px;white-space:nowrap;"
+                  title="${t('endpoints.srcStaleHint', 'How long this source stays authoritative before a lower-ranked one may fill the field. 0 never yields.')}">${s.stale_after_s ? s.stale_after_s + 's' : '∞'}</td>
+              <td style="padding:8px 10px 8px 0;font-variant-numeric:tabular-nums;white-space:nowrap;">
+                ${s.units_ok}/${s.units_total} ${t('endpoints.online', 'online')}${fails}
+                ${s.latency_ms != null ? ` · ${s.latency_ms} ms` : ''}
+              </td>
+              <td style="padding:8px 10px 8px 0;font-variant-numeric:tabular-nums;white-space:nowrap;"
+                  title="${t('endpoints.srcOwnsHint', 'How many fields this source is authoritative for right now. Zero means a higher-ranked source already supplies everything it offers.')}">
+                ${s.fields_owned} ${t('endpoints.srcFields', 'fields')}</td>
+              <td style="padding:8px 0;white-space:nowrap;text-align:right;">
+                <button class="btn btn-ghost btn-sm" ${i === 0 ? 'disabled' : ''}
+                        ${this._act('moveSource', [p.id, s.id, -1])}
+                        title="${t('endpoints.srcUp', 'Raise precedence')}"><i aria-hidden="true" class="bi bi-arrow-up"></i></button>
+                <button class="btn btn-ghost btn-sm" ${i === srcs.length - 1 ? 'disabled' : ''}
+                        ${this._act('moveSource', [p.id, s.id, 1])}
+                        title="${t('endpoints.srcDown', 'Lower precedence')}"><i aria-hidden="true" class="bi bi-arrow-down"></i></button>
+                <button class="btn btn-ghost btn-sm" ${this._act('openSourceModal', [p.id, s.id])}><i aria-hidden="true" class="bi bi-pencil"></i></button>
+                <button class="btn btn-ghost btn-sm" ${srcs.length < 2 ? 'disabled' : ''}
+                        ${this._act('deleteSource', [p.id, s.id])}
+                        title="${srcs.length < 2 ? t('endpoints.srcLast', 'A unit needs at least one source') : t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
+              </td>
+            </tr>`;
+        }).join('');
+        return `<div style="overflow-x:auto;"><table style="width:100%;font-size:13px;">
+            <tr style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;">
+              <td style="padding-right:10px;">${t('endpoints.srcName', 'source')}</td>
+              <td style="padding-right:10px;">${t('devices.wizard.protocol', 'protocol')}</td>
+              <td style="padding-right:10px;">${t('endpoints.srcAddress', 'address')}</td>
+              <td style="padding-right:10px;">${t('devices.wizard.template', 'template')}</td>
+              <td style="padding-right:10px;">${t('endpoints.srcGroups', 'intervals')}</td>
+              <td style="padding-right:10px;">${t('endpoints.srcStale', 'yields after')}</td>
+              <td style="padding-right:10px;">${t('endpoints.srcLive', 'live')}</td>
+              <td style="padding-right:10px;">${t('endpoints.srcOwns', 'owns')}</td>
+              <td></td></tr>
+            ${rows}</table></div>`;
+    },
+
+    // Reordering IS the precedence control, so it writes straight through.
+    async moveSource(endpointId, sourceId, delta) {
+        const p = this._endpointDetail;
+        if (!p || p.id !== endpointId) return;
+        const srcs = (p.sources || []).map(s => s.id);
+        const i = srcs.indexOf(sourceId), j = i + delta;
+        if (i < 0 || j < 0 || j >= srcs.length) return;
+        srcs.splice(j, 0, srcs.splice(i, 1)[0]);
+        await this._saveSources(endpointId, srcs.map(id => this._rawSource(p, id)));
+    },
+
+    async deleteSource(endpointId, sourceId) {
+        const p = this._endpointDetail;
+        if (!p || (p.sources || []).length < 2) return;
+        if (!confirm(this.t('endpoints.srcDeleteAsk', 'Remove source') + ` "${sourceId}"?\n\n`
+                + this.t('endpoints.srcDeleteNote',
+                    'Its registers stay on disk. The fields it owned fall to the next source that offers them.'))) return;
+        const rest = (p.sources || []).filter(s => s.id !== sourceId)
+            .map(s => this._rawSource(p, s.id));
+        await this._saveSources(endpointId, rest);
+    },
+
+    // The card renders a MERGED view (config + live); a save must send back only
+    // the declared half, or the live counters would be written into config.
+    _rawSource(p, id) {
+        const s = (p.sources || []).find(x => x.id === id) || {};
+        const out = { id: s.id, protocol: s.protocol, enabled: s.enabled !== false };
+        if (s.template) out.template = s.template;
+        if (s.timeout != null) out.timeout = s.timeout;
+        if (s.stale_after_s) out.stale_after_s = s.stale_after_s;
+        if (Object.keys(s.poll_groups || {}).length) {
+            out.poll_groups = {};
+            for (const [k, v] of Object.entries(s.poll_groups)) out.poll_groups[k] = { interval: v };
+        }
+        const a = s.address || '';
+        if (s.protocol === 'http') out.url = a;
+        else if (s.protocol === 'rtu') out.serial_port = a;
+        else if (s.protocol === 'mqtt') out.topic = a;
+        else { const m = a.match(/^(.*):(\d+)$/); out.host = m ? m[1] : a; out.port = m ? +m[2] : 502; }
+        return out;
+    },
+
+    async _saveSources(endpointId, sources) {
+        const host = document.querySelector('#plSources');
+        if (host) host.dataset.srcBusy = '1';
+        try {
+            const p = this._endpointDetail;
+            const body = {
+                id: endpointId, name: p.name, template: p.template,
+                enabled: p.enabled, connection: p.connection,
+                units: (p.units || []).map(u => ({ unit_id: u.unit_id, id: u.device_id, name: u.name })),
+                sources,
+            };
+            const rsp = await fetch(`/api/endpoints/${encodeURIComponent(endpointId)}`, {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            if (!rsp.ok) {
+                const d = await rsp.json().catch(() => ({}));
+                this.showToast((d.detail?.errors || [d.detail || rsp.statusText]).join('\n'), 'error');
+                return false;
+            }
+            this.showToast(this.t('endpoints.srcSaved', 'Sources updated'), 'success');
+            return true;
+        } finally {
+            if (host) delete host.dataset.srcBusy;
+            await this._refreshEndpointDetail(endpointId);
+        }
+    },
+
+    // Add or edit ONE source. Everything an operator sets about a way of
+    // reaching the units lives here — protocol, address, template, how often,
+    // and how long it stays authoritative before a lower source may fill in.
+    async openSourceModal(endpointId, sourceId) {
+        const p = this._endpointDetail;
+        if (!p || p.id !== endpointId) return;
+        const t = (k, d) => this.t(k, d);
+        const s = (p.sources || []).find(x => x.id === sourceId) || null;
+        let templates = [];
+        try { templates = (await (await fetch('/api/device-templates')).json()).templates || []; }
+        catch (e) { console.error(e); }
+        this._srcEditId = s ? s.id : '';
+        const proto = s?.protocol || 'tcp';
+        const addr = s?.address || '';
+        const hostPort = addr.match(/^(.*):(\d+)$/);
+        const groups = Object.entries(s?.poll_groups || { normal: 20 })
+            .map(([k, v]) => `${k}=${v}`).join(', ');
+        const tplOpts = ['<option value="">—</option>'].concat(templates.map(x =>
+            `<option value="${this._esc(x.id)}" ${s?.template === x.id ? 'selected' : ''}>${this._esc(x.name || x.id)}</option>`)).join('');
+        document.getElementById('endpointModalTitle').textContent = s
+            ? t('endpoints.srcEditTitle', 'Edit source') : t('endpoints.srcAddTitle', 'Add source');
+        document.getElementById('endpointModalBody').innerHTML = `
+            <p class="field-hint" style="margin:0 0 12px;">${t('endpoints.srcIntro',
+                'A source is one way of reaching the SAME units. Its position in the list is its precedence: the first source offering a field owns it.')}</p>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label" for="srcId">${t('endpoints.srcName', 'Source ID')}</label>
+                    <input id="srcId" class="input" value="${this._esc(s?.id || '')}" ${s ? 'disabled' : ''} placeholder="solar_api"></div>
+                <div class="form-group"><label class="form-label" for="srcProto">${t('devices.wizard.protocol', 'Protocol')}</label>
+                    <select id="srcProto" class="input" onchange="app._srcProtoChanged()">
+                        ${['tcp', 'rtu-tcp', 'rtu', 'http', 'mqtt'].map(x =>
+                            `<option value="${x}" ${proto === x ? 'selected' : ''}>${x}</option>`).join('')}
+                    </select></div>
+                <div class="form-group flex-2"><label class="form-label" for="srcTpl">${t('devices.wizard.template', 'Template')}</label>
+                    <select id="srcTpl" class="input">${tplOpts}</select></div>
+            </div>
+            <div class="form-row" id="srcAddrTcp" ${proto === 'http' || proto === 'mqtt' || proto === 'rtu' ? 'hidden' : ''}>
+                <div class="form-group flex-2"><label class="form-label" for="srcHost">${t('endpoints.host', 'Host')}</label>
+                    <input id="srcHost" class="input" value="${this._esc(hostPort ? hostPort[1] : (proto === 'tcp' || proto === 'rtu-tcp' ? addr : ''))}" placeholder="192.168.1.50"></div>
+                <div class="form-group"><label class="form-label" for="srcPort">${t('endpoints.port', 'Port')}</label>
+                    <input id="srcPort" class="input" type="number" value="${hostPort ? hostPort[2] : 502}"></div>
+            </div>
+            <div class="form-row" id="srcAddrUrl" ${proto === 'http' ? '' : 'hidden'}>
+                <div class="form-group flex-2"><label class="form-label" for="srcUrl">URL</label>
+                    <input id="srcUrl" class="input" value="${this._esc(proto === 'http' ? addr : '')}" placeholder="http://host/solar_api/v1/...DeviceId=\${unit_id}">
+                    <div class="field-hint">${t('endpoints.srcUrlHint', 'Use ${unit_id} — an HTTP master addresses its units by URL, not by a unit id inside a frame.')}</div></div>
+            </div>
+            <div class="form-row" id="srcAddrSerial" ${proto === 'rtu' ? '' : 'hidden'}>
+                <div class="form-group flex-2"><label class="form-label" for="srcSerial">${t('endpoints.srcSerial', 'Serial port')}</label>
+                    <input id="srcSerial" class="input" value="${this._esc(proto === 'rtu' ? addr : '')}" placeholder="/dev/ttyUSB0"></div>
+            </div>
+            <div class="form-row" id="srcAddrTopic" ${proto === 'mqtt' ? '' : 'hidden'}>
+                <div class="form-group flex-2"><label class="form-label" for="srcTopic">${t('endpoints.srcTopic', 'Topic')}</label>
+                    <input id="srcTopic" class="input" value="${this._esc(proto === 'mqtt' ? addr : '')}" placeholder="sensors/\${unit_id}/state"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group flex-2"><label class="form-label" for="srcGroups">${t('endpoints.srcGroups', 'Intervals')}</label>
+                    <input id="srcGroups" class="input" value="${this._esc(groups)}" placeholder="normal=20, slow=120">
+                    <div class="field-hint">${t('endpoints.srcGroupsHint', 'group=seconds, comma separated. This source polls ONLY the groups named here.')}</div></div>
+                <div class="form-group"><label class="form-label" for="srcStale">${t('endpoints.srcStale', 'Yields after (s)')}</label>
+                    <input id="srcStale" class="input" type="number" min="0" step="1" value="${s?.stale_after_s || 0}">
+                    <div class="field-hint">${t('endpoints.srcStaleHint2', '0 = never yields. Right for a counter.')}</div></div>
+                <div class="form-group"><label class="form-label" for="srcTimeout">${t('endpoints.srcTimeout', 'Timeout (s)')}</label>
+                    <input id="srcTimeout" class="input" type="number" min="1" value="${s?.timeout ?? 3}"></div>
+            </div>
+            <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                <input type="checkbox" id="srcEnabled" ${s?.enabled !== false ? 'checked' : ''}>
+                ${t('endpoints.srcEnabled', 'Poll this source')}</label>`;
+        document.getElementById('endpointFeedback').textContent = '';
+        const save = document.querySelector('#endpointModal [data-endpoint-save]')
+            || document.querySelector('#endpointModal .btn-primary');
+        if (save) save.setAttribute('onclick', `app.saveSource('${this._esc(endpointId)}')`);
+        this.openModal('endpointModal');
+    },
+
+    _srcProtoChanged() {
+        const v = document.getElementById('srcProto').value;
+        const show = (id, on) => { const e = document.getElementById(id); if (e) e.hidden = !on; };
+        show('srcAddrTcp', v === 'tcp' || v === 'rtu-tcp');
+        show('srcAddrUrl', v === 'http');
+        show('srcAddrSerial', v === 'rtu');
+        show('srcAddrTopic', v === 'mqtt');
+    },
+
+    async saveSource(endpointId) {
+        const p = this._endpointDetail;
+        const fb = document.getElementById('endpointFeedback');
+        const v = id => (document.getElementById(id) || {}).value;
+        const id = (this._srcEditId || v('srcId') || '').trim().toLowerCase();
+        if (!id) { fb.textContent = this.t('endpoints.srcNeedId', 'Source ID is required.'); return; }
+        const proto = v('srcProto');
+        const out = { id, protocol: proto, enabled: document.getElementById('srcEnabled').checked };
+        if (v('srcTpl')) out.template = v('srcTpl');
+        const st = parseFloat(v('srcStale')); if (st > 0) out.stale_after_s = st;
+        const to = parseInt(v('srcTimeout'), 10); if (to > 0) out.timeout = to;
+        if (proto === 'http') out.url = (v('srcUrl') || '').trim();
+        else if (proto === 'rtu') out.serial_port = (v('srcSerial') || '').trim();
+        else if (proto === 'mqtt') out.topic = (v('srcTopic') || '').trim();
+        else { out.host = (v('srcHost') || '').trim(); out.port = parseInt(v('srcPort'), 10) || 502; }
+        const groups = {};
+        for (const part of (v('srcGroups') || '').split(',')) {
+            const m = part.trim().match(/^([a-z0-9_-]+)\s*=\s*([\d.]+)$/i);
+            if (m) groups[m[1]] = { interval: parseFloat(m[2]) };
+            else if (part.trim()) {
+                fb.textContent = this.t('endpoints.srcBadGroups',
+                    'Intervals: use group=seconds, comma separated (e.g. normal=20, slow=120).');
+                return;
+            }
+        }
+        if (Object.keys(groups).length) out.poll_groups = groups;
+
+        const keep = (p.sources || []).filter(x => x.id !== id).map(x => this._rawSource(p, x.id));
+        const list = this._srcEditId
+            ? (p.sources || []).map(x => x.id === id ? out : this._rawSource(p, x.id))
+            : keep.concat([out]);
+        if (await this._saveSources(endpointId, list)) this.closeModal('endpointModal');
     },
 
     _endpointStatusColor(p) {
@@ -222,6 +484,18 @@ Object.assign(JanitzaMonitor.prototype, {
                     ${fact('MQTT', `<code style="font-size:11px;">mbg/endpoints/${this._esc(p.id)}/…</code>`)}
                     ${fact('InfluxDB', `<code style="font-size:11px;">${this._esc(ix.bucket || '—')}</code>`)}
                 </div>
+            </div>
+        </div>
+
+        <div class="settings-card">
+            <div class="settings-card-header">
+                <h3><i aria-hidden="true" class="bi bi-diagram-2"></i> ${t('endpoints.sources', 'Sources')}</h3>
+                <button class="btn btn-secondary btn-sm" ${this._act('openSourceModal', [p.id, ''])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('endpoints.srcAdd', 'Add source')}</button>
+            </div>
+            <div class="settings-card-body">
+                <div id="plSources">${this._endpointSourcesHtml(p)}</div>
+                <p class="field-hint" style="margin-top:12px;"><i aria-hidden="true" class="bi bi-info-circle"></i>
+                    ${t('endpoints.srcNote', 'Ordered ways of reaching the SAME units — a datalogger may answer Modbus and HTTP at once. Order is precedence: the first source offering a field owns it, and a lower one fills in only after the owner has been silent for its window. A window of 0 never yields, which is what an energy counter needs so it cannot walk backwards.')}</p>
             </div>
         </div>
 
@@ -474,6 +748,10 @@ Object.assign(JanitzaMonitor.prototype, {
                 <input type="checkbox" id="plEnabled" ${p ? (p.enabled ? 'checked' : '') : 'checked'}>
                 ${this.t('devices.wizard.enabled', 'Start polling immediately after saving')}</label>`;
         document.getElementById('endpointFeedback').textContent = '';
+        // the modal shell is shared with the source editor, which repoints this
+        // button — reclaim it, or Save would still be saving a source
+        const _save = document.querySelector('#endpointModal [data-endpoint-save]');
+        if (_save) _save.setAttribute('onclick', 'app.saveEndpoint()');
         this.openModal('endpointModal');
     },
 

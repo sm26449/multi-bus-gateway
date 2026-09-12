@@ -2298,6 +2298,75 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # must fail independently). The devices are managed THROUGH the endpoint:
     # device CRUD refuses them; edit/delete the endpoint instead.
 
+    def _endpoint_sources(p: Dict, pid: str) -> List[Dict]:
+        """Every declared way of reaching this endpoint's units, in precedence
+        order, with what each one is actually contributing right now.
+
+        Configuration and live state in one object on purpose: "which source is
+        this value from" and "is that source still alive" are the same question
+        for an operator, and answering them from two endpoints would invite them
+        to drift. Flat JSON, so a Node-RED http-request node reads it directly.
+        """
+        raw = p.get('sources') or []
+        if not raw:
+            conn = dict(p.get('connection', {}) or {})
+            if not conn:
+                return []
+            raw = [{'id': 'default', 'template': p.get('template', ''), **conn}]
+        # roll the live picture up across the endpoint's units
+        live: Dict[str, Dict] = {}
+        for dev in config.endpoint_devices(pid):
+            _i, _c, client = registry.find(dev.id)
+            if client is None:
+                continue
+            try:
+                st = client.get_stats() or {}
+            except Exception:  # noqa: BLE001
+                continue
+            for row in (st.get('sources') or []):
+                agg = live.setdefault(row['id'], {
+                    'units_ok': 0, 'units_total': 0, 'reads': 0, 'failed': 0,
+                    'latency_ms': [], 'owns': 0})
+                agg['units_total'] += 1
+                agg['units_ok'] += 1 if row.get('connected') else 0
+                agg['reads'] += int(row.get('successful_reads') or 0)
+                agg['failed'] += int(row.get('failed_reads') or 0)
+                if row.get('last_latency_ms') is not None:
+                    agg['latency_ms'].append(row['last_latency_ms'])
+            for _f, prov in (st.get('provenance') or {}).items():
+                a = live.get(prov.get('source'))
+                if a is not None:
+                    a['owns'] += 1
+
+        out = []
+        for rank, r in enumerate(raw):
+            sid = str(r.get('id') or f'source{rank + 1}')
+            agg = live.get(sid) or {}
+            lat = agg.get('latency_ms') or []
+            out.append({
+                'id': sid, 'rank': rank,
+                'enabled': bool(r.get('enabled', True)),
+                'protocol': str(r.get('protocol', 'tcp')).lower(),
+                'template': r.get('template', '') or p.get('template', ''),
+                'address': (r.get('url')
+                            or (r.get('serial_port') if r.get('protocol') == 'rtu'
+                                else f"{r.get('host', '')}:{r.get('port', 502)}")),
+                'poll_groups': {k: (v.get('interval') if isinstance(v, dict) else v)
+                                for k, v in (r.get('poll_groups') or {}).items()},
+                'timeout': r.get('timeout'),
+                'stale_after_s': float(r.get('stale_after_s', 0) or 0),
+                # live
+                'units_ok': agg.get('units_ok', 0),
+                'units_total': agg.get('units_total', 0),
+                'successful_reads': agg.get('reads', 0),
+                'failed_reads': agg.get('failed', 0),
+                'latency_ms': round(sum(lat) / len(lat), 1) if lat else None,
+                # how many fields this source is currently authoritative for —
+                # the number that tells an operator whether it earns its place
+                'fields_owned': agg.get('owns', 0),
+            })
+        return out
+
     def _endpoint_bus(p: Dict, units: List[Dict]) -> Dict:
         """What this access point costs, measured on the live wire.
 
@@ -2390,6 +2459,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'http_output_enabled': bool((p.get('http_output') or {}).get('enabled')),
                 'rest_push': dict(p.get('rest_push', {}) or {}),
                 'bus': bus,
+                'sources': _endpoint_sources(p, pid),
                 'status': agg.get('status', 'offline' if units else ''),
                 'online_units': sum(1 for u in units if u['connected']),
                 'total_units': len(units)}
@@ -2459,6 +2529,59 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         template_id = str(payload.get('template', '')).strip()
         if template_id and template_registry.get(template_id) is None:
             errors.append(f"template: '{template_id}' not found")
+        # ── sources: the ordered ways of reaching this endpoint's units ──
+        srcs = payload.get('sources')
+        if srcs is not None:
+            if not isinstance(srcs, list) or not srcs:
+                errors.append("sources: must be a non-empty list")
+                srcs = []
+            seen_sid = set()
+            _SID_RE = re.compile(r'^[a-z0-9][a-z0-9_-]{0,31}$')
+            for i, r in enumerate(srcs):
+                w = f"sources[{i}]"
+                if not isinstance(r, dict):
+                    errors.append(f"{w}: must be an object")
+                    continue
+                sid = str(r.get('id', '') or '').strip().lower()
+                if not _SID_RE.match(sid):
+                    errors.append(f"{w}.id: use a-z 0-9 - _ (1-32 chars)")
+                elif sid in seen_sid:
+                    # two sources with one name make provenance ambiguous,
+                    # which defeats the point of recording it
+                    errors.append(f"{w}.id: '{sid}' is declared twice")
+                seen_sid.add(sid)
+                proto = str(r.get('protocol', 'tcp')).lower()
+                if proto not in ('tcp', 'rtu', 'rtu-tcp', 'http', 'mqtt'):
+                    errors.append(f"{w}.protocol: must be tcp, rtu, rtu-tcp, "
+                                  f"http or mqtt")
+                if proto == 'http':
+                    if not str(r.get('url', '')).strip():
+                        errors.append(f"{w}.url: required for an http source")
+                elif proto == 'mqtt':
+                    if not str(r.get('topic', '')).strip():
+                        errors.append(f"{w}.topic: required for an mqtt source")
+                elif proto != 'rtu' and not str(r.get('host', '')).strip():
+                    errors.append(f"{w}.host: required")
+                tid = str(r.get('template', '') or template_id).strip()
+                if not tid:
+                    errors.append(f"{w}.template: required (the endpoint "
+                                  f"declares none to inherit)")
+                elif template_registry.get(tid) is None:
+                    errors.append(f"{w}.template: '{tid}' not found")
+                try:
+                    if float(r.get('stale_after_s', 0) or 0) < 0:
+                        raise ValueError
+                except (TypeError, ValueError):
+                    errors.append(f"{w}.stale_after_s: must be >= 0 "
+                                  f"(0 = never yields, right for a counter)")
+                for gname, g in (r.get('poll_groups') or {}).items():
+                    iv = g.get('interval') if isinstance(g, dict) else g
+                    try:
+                        if float(iv) < 0.05:
+                            raise ValueError
+                    except (TypeError, ValueError):
+                        errors.append(f"{w}.poll_groups.{gname}: interval must "
+                                      f"be a number >= 0.05")
         probe = {'id': pid, 'units': payload.get('units')}
         units = config._endpoint_units(probe)
         if not units:
@@ -2487,6 +2610,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             'enabled': bool(payload.get('enabled', True)),
             'connection': conn,
             'units': _merge_unit_overrides(pid, payload.get('units'), prev),
+            **({'sources': srcs} if srcs else {}),
         }
         if payload.get('aggregates') is not None:
             raw['aggregates'] = bool(payload['aggregates'])
