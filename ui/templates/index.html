@@ -360,8 +360,8 @@
                                         <i aria-hidden="true" class="bi bi-search"></i> <span data-i18n="devices.discover">Discover devices</span></button>
                                     <button class="btn btn-ghost btn-sm" onclick="app.openBuilderDeploy()" data-i18n-title="tip.deployNode" title="Build firmware for a remote ESP32/ESP8266 RS485 reader and adopt it as a device">
                                         <i aria-hidden="true" class="bi bi-magic"></i> <span data-i18n="builder.deployNew">Deploy new device</span></button>
-                                    <button class="btn btn-ghost btn-sm" onclick="app.openPlantModal()" data-i18n-title="tip.addPlant" title="Add several units of the same device behind one endpoint (e.g. 4 inverters on one datalogger)">
-                                        <i aria-hidden="true" class="bi bi-diagram-3"></i> <span data-i18n="plants.add">Add Plant</span>
+                                    <button class="btn btn-ghost btn-sm" onclick="app.openEndpointModal()" data-i18n-title="tip.addEndpoint" title="Add several units of the same device behind one endpoint (e.g. 4 inverters on one datalogger)">
+                                        <i aria-hidden="true" class="bi bi-diagram-3"></i> <span data-i18n="endpoints.add">Add Endpoint</span>
                                     </button>
                                     <button class="btn btn-primary btn-sm" onclick="app.openDeviceWizard()">
                                         <i aria-hidden="true" class="bi bi-plus-lg"></i> <span data-i18n="devices.add">Add Device</span>
@@ -2125,20 +2125,20 @@
         </div>
     </div>
 
-    <!-- Add/Edit Plant -->
-    <div class="modal" id="plantModal">
+    <!-- Add/Edit Endpoint -->
+    <div class="modal" id="endpointModal">
         <div class="modal-content modal-lg">
             <div class="modal-header">
-                <h3><i aria-hidden="true" class="bi bi-diagram-3"></i> <span id="plantModalTitle" data-i18n="plants.titleAdd">Add Plant</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeModal('plantModal')">&times;</button>
+                <h3><i aria-hidden="true" class="bi bi-diagram-3"></i> <span id="endpointModalTitle" data-i18n="endpoints.titleAdd">Add Endpoint</span></h3>
+                <button class="modal-close" aria-label="Close" onclick="app.closeModal('endpointModal')">&times;</button>
             </div>
             <div class="modal-body">
-                <div id="plantModalBody"></div>
+                <div id="endpointModalBody"></div>
             </div>
             <div class="modal-footer">
-                <span class="save-feedback" id="plantFeedback"></span>
-                <button class="btn btn-secondary btn-sm" onclick="app.closeModal('plantModal')"><span data-i18n="common.cancel">Cancel</span></button>
-                <button class="btn btn-primary btn-sm" onclick="app.savePlant()"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
+                <span class="save-feedback" id="endpointFeedback"></span>
+                <button class="btn btn-secondary btn-sm" onclick="app.closeModal('endpointModal')"><span data-i18n="common.cancel">Cancel</span></button>
+                <button class="btn btn-primary btn-sm" onclick="app.saveEndpoint()"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
             </div>
         </div>
     </div>
@@ -2195,7 +2195,7 @@
     <script src="/static/js/app-powerquality.js?v=0"></script>
     <script src="/static/js/app-monitor.js?v=0"></script>
     <script src="/static/js/app-devices.js?v=0"></script>
-    <script src="/static/js/app-plants.js?v=0"></script>
+    <script src="/static/js/app-endpoints.js?v=0"></script>
     <script src="/static/js/app-calculated.js?v=0"></script>
     <script src="/static/js/app-wizard.js?v=0"></script>
     <script src="/static/js/app-settings.js?v=0"></script>

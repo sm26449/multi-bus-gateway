@@ -1,11 +1,11 @@
-/* End-to-end validation of the Fronius plant UI (3.40.x, migration F1):
- * plants card, plant chip on materialized device rows, the plant-managed
- * Edit/Outputs panels in the device workspace, the Add/Edit Plant dialog,
+/* End-to-end validation of the Fronius endpoint UI (3.40.x, migration F1):
+ * endpoints card, endpoint chip on materialized device rows, the endpoint-managed
+ * Edit/Outputs panels in the device workspace, the Add/Edit Endpoint dialog,
  * and the datalogger-vs-direct template naming the operator relies on.
  *
  * Run against an EPHEMERAL instance (auth off, TEST-NET hosts):
  *   NODE_PATH=<node_modules with playwright> MBG_URL=http://localhost:8093 \
- *     node fronius_plant_e2e.mjs
+ *     node fronius_endpoint_e2e.mjs
  */
 import { chromium } from 'playwright';
 
@@ -44,55 +44,55 @@ try {
   await dismissOnboarding();
   await page.screenshot({ path: SHOT('f1-01-devices') });
 
-  // ---- 2. plant GROUPS in the devices list (units nested underneath) ------
-  const groups = page.locator('#devicesList .plant-row');
-  check('two plant groups listed', await groups.count() === 2,
+  // ---- 2. endpoint GROUPS in the devices list (units nested underneath) ------
+  const groups = page.locator('#devicesList .endpoint-row');
+  check('two endpoint groups listed', await groups.count() === 2,
         `count=${await groups.count()}`);
-  const meterGroup = page.locator('#devicesList .plant-row', { hasText: 'fronius-meter' });
+  const meterGroup = page.locator('#devicesList .endpoint-row', { hasText: 'fronius-meter' });
   check('meter group shows the unit census chip',
         await meterGroup.locator('.dev-chip', { hasText: /unit/ }).count() >= 1);
   check('meter group shows the SunSpec meter template',
         (await meterGroup.textContent()).includes('fronius_sunspec_meter'));
   check('group has a chevron (expand affordance)',
-        await meterGroup.locator('.plant-chevron').count() === 1);
+        await meterGroup.locator('.endpoint-chevron').count() === 1);
   // collapse → nested container hides; expand back
   await meterGroup.click();
-  const unitsBox = page.locator('[data-plant-units="fronius-meter"]');
-  check('collapse hides the plant units', !(await unitsBox.isVisible()));
+  const unitsBox = page.locator('[data-endpoint-units="fronius-meter"]');
+  check('collapse hides the endpoint units', !(await unitsBox.isVisible()));
   await meterGroup.click();
-  check('expand shows the plant units', await unitsBox.isVisible());
+  check('expand shows the endpoint units', await unitsBox.isVisible());
 
   // ---- 3. nested unit row --------------------------------------------------
   const row240 = unitsBox.locator('.device-row', { hasText: 'fronius-meter-240' });
-  check('meter unit row nests under its plant group', await row240.count() === 1);
+  check('meter unit row nests under its endpoint group', await row240.count() === 1);
   check('meter unit row has NO delete button',
         await row240.locator('button[title="Delete"], button [class*="trash"]').count() === 0);
 
-  // ---- 4. device workspace: plant-managed Edit -----------------------------
+  // ---- 4. device workspace: endpoint-managed Edit -----------------------------
   await row240.click();
   await page.waitForSelector('#deviceDetailView [data-dpanel="overview"]');
   await page.screenshot({ path: SHOT('f1-02-overview') });
   await page.click('#deviceWsTabs [data-dtab="edit"]');
   const editPanel = page.locator('[data-dpanel="edit"]');
-  // UNIFIED workspace: same layout as any device, plant-owned fields locked
-  check('edit tab shows the plant-owned banner with Edit plant',
-        await editPanel.locator('button:has-text("Edit plant")').count() >= 1);
+  // UNIFIED workspace: same layout as any device, endpoint-owned fields locked
+  check('edit tab shows the endpoint-owned banner with Edit endpoint',
+        await editPanel.locator('button:has-text("Edit endpoint")').count() >= 1);
   check('edit tab shows the STANDARD connection form',
         await editPanel.locator('#ddvHost').count() === 1);
-  check('connection fields are locked (plant-owned)',
+  check('connection fields are locked (endpoint-owned)',
         await editPanel.locator('#ddvHost').isDisabled()
         && await editPanel.locator('#ddvUnit').isDisabled());
   check('unit id shows 240', await editPanel.locator('#ddvUnit').inputValue() === '240');
   check('template select locked with the meter template selected',
         await editPanel.locator('#ddvTemplate').isDisabled()
         && (await editPanel.locator('#ddvTemplate option:checked').textContent()).includes('via datalogger'));
-  check('edit tab has NO Save & Apply (plant owns the definition)',
+  check('edit tab has NO Save & Apply (endpoint owns the definition)',
         await editPanel.locator('button:has-text("Save & Apply")').count() === 0);
   check('edit tab keeps per-unit poll intervals',
         await editPanel.locator('#ddvPollGroups .ddv-pg').count() >= 1);
-  await page.screenshot({ path: SHOT('f1-03-edit-plant-managed') });
+  await page.screenshot({ path: SHOT('f1-03-edit-endpoint-managed') });
 
-  // ---- 5. outputs tab: SAME sink cards, plant-level toggles locked ---------
+  // ---- 5. outputs tab: SAME sink cards, endpoint-level toggles locked ---------
   await page.click('#deviceWsTabs [data-dtab="outputs"]');
   const outPanel = page.locator('[data-dpanel="outputs"]');
   check('outputs shows the unit topic prefix',
@@ -100,35 +100,35 @@ try {
         || (await outPanel.locator('#ddvTopic').inputValue()).includes('meter/240'));
   check('outputs shows the shadow bucket',
         (await outPanel.locator('#ddvBucket').inputValue()) === 'fronius_shadow');
-  check('sink toggles present but plant-locked',
+  check('sink toggles present but endpoint-locked',
         await outPanel.locator('#ddvMqttEnabled').isDisabled()
         && await outPanel.locator('#ddvInfluxEnabled').isDisabled());
   check('write-protection card present on the unit',
         await outPanel.locator('#ddvWriteLock').count() === 1);
-  check('outputs has NO Save & Apply for plant units',
+  check('outputs has NO Save & Apply for endpoint units',
         await outPanel.locator('button:has-text("Save & Apply")').count() === 0);
-  await page.screenshot({ path: SHOT('f1-04-outputs-plant') });
+  await page.screenshot({ path: SHOT('f1-04-outputs-endpoint') });
 
   // ---- 6. measurements tab reachable + populated ---------------------------
   const measTab = page.locator('#deviceWsTabs [data-dtab="measurements"]');
   check('measurements tab shows the 48 seeded registers',
         (await measTab.textContent()).includes('48'));
 
-  // ---- 7. Edit Plant dialog from the unit ----------------------------------
-  await editPanel.locator('button:has-text("Edit plant"), button:has-text("Editează")')
+  // ---- 7. Edit Endpoint dialog from the unit ----------------------------------
+  await editPanel.locator('button:has-text("Edit endpoint"), button:has-text("Editează")')
       .first().waitFor({ state: 'attached' }).catch(() => {});
   await page.click('#deviceWsTabs [data-dtab="edit"]');
-  await editPanel.locator('button', { hasText: /Edit plant|Editează/ }).first().click();
-  await page.waitForSelector('#plantModal.active, #plantModal[style*="display"]',
+  await editPanel.locator('button', { hasText: /Edit endpoint|Editează/ }).first().click();
+  await page.waitForSelector('#endpointModal.active, #endpointModal[style*="display"]',
                              { state: 'attached' });
   const idInput = page.locator('#plId');
-  check('plant dialog opens prefilled', await idInput.inputValue() === 'fronius-meter');
-  check('plant id locked on edit', await idInput.isDisabled());
-  check('plant dialog shows unit list', (await page.locator('#plUnits').inputValue()).includes('240'));
-  check('plant dialog preselects the meter template',
+  check('endpoint dialog opens prefilled', await idInput.inputValue() === 'fronius-meter');
+  check('endpoint id locked on edit', await idInput.isDisabled());
+  check('endpoint dialog shows unit list', (await page.locator('#plUnits').inputValue()).includes('240'));
+  check('endpoint dialog preselects the meter template',
         await page.locator('#plTemplate').inputValue() === 'fronius_sunspec_meter');
-  await page.screenshot({ path: SHOT('f1-05-plant-dialog') });
-  await page.click('#plantModal .modal-close');
+  await page.screenshot({ path: SHOT('f1-05-endpoint-dialog') });
+  await page.click('#endpointModal .modal-close');
 
   // ---- 8. console hygiene (before the intentional-422 API probe) -----------
   check('zero console errors', consoleErrors.length === 0,
@@ -139,7 +139,7 @@ try {
   // hence it runs AFTER the console-hygiene check
   const del = await page.evaluate(async () =>
     (await fetch('/api/devices/fronius-meter-240', { method: 'DELETE' })).status);
-  check('API refuses deleting a plant unit (422)', del === 422);
+  check('API refuses deleting an endpoint unit (422)', del === 422);
 } catch (e) {
   check('script completed', false, String(e).slice(0, 300));
   await page.screenshot({ path: SHOT('f1-99-error') }).catch(() => {});

@@ -143,13 +143,13 @@ class GatewayApp:
         self.template_registry = TemplateRegistry(
             user_dir=self.config.config_path.parent / 'device_templates')
 
-        # Plant-materialized devices seed their register selection from the
+        # Endpoint-materialized devices seed their register selection from the
         # template at BOOT — the API's create path covers CRUD devices, but a
-        # plant can appear straight in config.yaml, and its units must poll
+        # endpoint can appear straight in config.yaml, and its units must poll
         # from the first start (one template instantiated N times).
         from multibus.device_seed import autoselect_template_registers
         for device in self.config.devices:
-            if device.plant_id and device.enabled and device.template:
+            if device.endpoint_id and device.enabled and device.template:
                 try:
                     autoselect_template_registers(
                         self.config, self.template_registry, device)
@@ -250,14 +250,14 @@ class GatewayApp:
         self.app.state.pq_manager = self.pq_manager   # for the /api/pq routes
 
         _cfg_dir = self.config.config_path.parent
-        # Plant aggregates: a plant is a real entity, so it publishes its own
-        # output (sums/averages of its units) on mbg/plants/<id>/… + InfluxDB.
-        from multibus.plant_aggregator import PlantAggregator
-        self.plant_aggregator = PlantAggregator(
+        # Endpoint aggregates: an endpoint is a real entity, so it publishes its own
+        # output (sums/averages of its units) on mbg/endpoints/<id>/… + InfluxDB.
+        from multibus.endpoint_aggregator import EndpointAggregator
+        self.endpoint_aggregator = EndpointAggregator(
             self.config, self.app.state.registry,
             get_mqtt=lambda: getattr(_api_ctx, 'mqtt_publisher', None),
             get_influx=lambda: getattr(_api_ctx, 'influxdb_publisher', None))
-        self.plant_aggregator.start()
+        self.endpoint_aggregator.start()
 
         self.vmeter_manager = VirtualMeterManager(self.app.state.current_values,
                                                   device_values=self.app.state.device_values,
@@ -426,8 +426,8 @@ class GatewayApp:
 
         if self.vmeter_manager:
             self.vmeter_manager.stop_all()
-        if getattr(self, 'plant_aggregator', None):
-            self.plant_aggregator.stop()
+        if getattr(self, 'endpoint_aggregator', None):
+            self.endpoint_aggregator.stop()
 
         if getattr(self, 'pq_manager', None):
             self.pq_manager.stop_all()

@@ -99,7 +99,7 @@ def _conn(**kw):
 def test_devices_sharing_an_endpoint_share_the_queue():
     a, b = _conn(), _conn()
     assert a._arbiter is not None
-    assert a._arbiter is b._arbiter          # the plant's units queue together
+    assert a._arbiter is b._arbiter          # the endpoint's units queue together
     other = ModbusConnection(ModbusConfig(host='192.0.2.78', port=502))
     assert other._arbiter is not a._arbiter   # a different gateway, its own queue
 

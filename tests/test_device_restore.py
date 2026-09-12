@@ -104,7 +104,7 @@ def test_stale_registers_reseeded_on_template_mismatch(tmp_path):
     """A kept registers file from a different template must NOT be decoded
     against a new template — it gets re-seeded instead."""
     cfg, client = make_app(tmp_path, extra_yaml=SECONDARY)
-    # plant a register selection whose names exist in NO template
+    # endpoint a register selection whose names exist in NO template
     client.post("/api/registers/selected?device=hall-em24", json=[
         {"address": 9, "name": "TOTALLY_ALIEN_REG", "label": "x", "unit": "",
          "data_type": "float", "poll_group": "normal"}])

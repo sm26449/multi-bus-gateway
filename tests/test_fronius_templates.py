@@ -190,7 +190,7 @@ def test_scale_from_wiring_matches_collector_sf_assignment():
 
 
 def test_every_routed_register_is_canonical():
-    """The whole point of the rework: a Fronius plant speaks EXACTLY the same
+    """The whole point of the rework: a Fronius endpoint speaks EXACTLY the same
     naming as the Janitza reference — canonical names, dictionary-derived
     topics and measurements. Only unrouted SF plumbing may deviate."""
     for path in (INV, MET):

@@ -159,7 +159,7 @@ _ARBITERS_LOCK = threading.Lock()
 
 def endpoint_arbiter(host: str, port: int) -> _EndpointArbiter:
     """The shared turnstile for one host:port — the same object for every
-    connection that talks to it, whichever device or plant owns them."""
+    connection that talks to it, whichever device or endpoint owns them."""
     key = f"{host}:{port}"
     with _ARBITERS_LOCK:
         arb = _ARBITERS.get(key)
@@ -278,7 +278,7 @@ class ModbusConnection:
         # to append a 'forced_reopen' every ~20 s, rotating the 50-entry event
         # ring in minutes and burying the events that mattered.
         self._reopen_logged = False
-        # Shared-endpoint arbiter: several devices (a plant's units) behind one
+        # Shared-endpoint arbiter: several devices (an endpoint's units) behind one
         # gateway must not race each other on it. None = this connection has
         # the endpoint to itself, and the gate below costs nothing.
         self._arbiter = (endpoint_arbiter(config.host, config.port)

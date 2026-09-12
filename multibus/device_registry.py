@@ -143,7 +143,7 @@ class DeviceRegistry:
 
 def client_is_live(client) -> bool:
     """THE liveness verdict for a southbound client — one definition, used by
-    the alert harvester, the MQTT availability/runtime leaves and the plant
+    the alert harvester, the MQTT availability/runtime leaves and the endpoint
     unit census, so the product never contradicts itself.
 
     A device is alive when its acquisition pipeline is PRODUCING, not when a
@@ -160,8 +160,8 @@ def client_is_live(client) -> bool:
     when NOTHING has been polled yet (a cold start, or a client whose pollers
     never started because the endpoint refused the first connection). It cannot
     tell that apart from healthy, so a client that has never produced a reading
-    defers to the transport flag — otherwise a plant of unreachable units
-    reports three green units underneath an ``offline`` plant.
+    defers to the transport flag — otherwise an endpoint of unreachable units
+    reports three green units underneath an ``offline`` endpoint.
 
     Falls back to the transport flag if a client cannot answer, and never
     raises: a health probe must not be able to kill its caller.
@@ -186,7 +186,7 @@ def client_health(client) -> str:
     A device that is not connected can never read ``ok``: the status dot must
     not contradict the connection text, and ``data_health()`` answers ``ok`` on
     a cold start. The device list has always applied this rule; sharing it here
-    keeps the plant page from disagreeing with it."""
+    keeps the endpoint page from disagreeing with it."""
     if client is None:
         return 'idle'
     try:

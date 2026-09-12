@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.51.0
+
+### 2026-09-12 — `plants` is now `endpoints`
+
+The concept was never PV-specific. One template + one access point + N unit ids
+describes a Fronius DataManager fronting inverters, a master fronting a bank of
+meters, and a master fronting temperature/humidity/PWM slaves equally well —
+and the name only fit the first. Renamed while nothing consumes it yet: after
+the cutover, the MQTT namespace would have had readers.
+
+- `plants:` → `endpoints:` in config.yaml, `/api/plants` → `/api/endpoints`,
+  `mbg/plants/<id>/…` → `mbg/endpoints/<id>/…`, the InfluxDB tag value
+  `aggregate=plant` → `aggregate=endpoint`, and the UI page and its strings.
+- **A config written by an older version keeps loading**: `plants:` is read as
+  `endpoints:` and the next save writes the new key.
+- The name now lines up with the machinery underneath it: the arbiter that
+  serializes a shared access point and the socket that serves it are keyed by
+  exactly the thing an endpoint entry describes.
+
 ## 3.50.0
 
 ### 2026-09-12 — the Fronius map is what the hardware actually answers

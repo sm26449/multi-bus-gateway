@@ -1539,7 +1539,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     def _autoselect_template_registers(dev_cfg):
         """Seed a new device with its template's registers — extracted to
-        device_seed.py so the boot path (plant units) uses the same logic."""
+        device_seed.py so the boot path (endpoint units) uses the same logic."""
         from .device_seed import autoselect_template_registers
         autoselect_template_registers(config, template_registry, dev_cfg)
 
@@ -2062,7 +2062,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     @_serialized_mutation
     def set_device_write_lock(device_id: str, request: Request, payload: Dict = Body(...)):
         """Set/clear the per-device write lock (F3a). A locked device refuses
-        every write regardless of guards. Plant units lock at the PLANT level
+        every write regardless of guards. Endpoint units lock at the ENDPOINT level
         (one physical endpoint — its units lock together); the primary maps to
         security.primary_write_locked. Audited."""
         if 'locked' not in payload:
@@ -2221,10 +2221,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         if dev_cfg.primary:
             raise HTTPException(status_code=422, detail={"errors": [
                 "the primary device cannot be deleted"]})
-        if dev_cfg.plant_id:
+        if dev_cfg.endpoint_id:
             raise HTTPException(status_code=422, detail={"errors": [
-                f"device '{device_id}' is materialized from plant "
-                f"'{dev_cfg.plant_id}' — edit or delete the plant instead"]})
+                f"device '{device_id}' is materialized from endpoint "
+                f"'{dev_cfg.endpoint_id}' — edit or delete the endpoint instead"]})
         # A virtual meter sourcing from this device would go permanently stale
         # (fail-safe, but confusing) — make the dependency explicit instead.
         users = _vmeter_users_of(device_id)
@@ -2241,16 +2241,16 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         logger.info(f"device {device_id}: deleted")
         return {"status": "deleted"}
 
-    # ── plants: one template × N unit ids behind one endpoint ──────────────
-    # A plant materializes into N ordinary devices (own socket each — unit-
+    # ── endpoints: one template × N unit ids behind one endpoint ──────────────
+    # An endpoint materializes into N ordinary devices (own socket each — unit-
     # switching on a shared socket corrupts some gateway buffers, and units
-    # must fail independently). The devices are managed THROUGH the plant:
-    # device CRUD refuses them; edit/delete the plant instead.
+    # must fail independently). The devices are managed THROUGH the endpoint:
+    # device CRUD refuses them; edit/delete the endpoint instead.
 
-    def _plant_entry(p: Dict) -> Dict:
+    def _endpoint_entry(p: Dict) -> Dict:
         pid = p.get('id')
         units = []
-        for dev in config.plant_devices(pid):
+        for dev in config.endpoint_devices(pid):
             _i, _cfg, client = registry.find(dev.id)
             st = {}
             if client is not None:
@@ -2266,7 +2266,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'enabled': dev.enabled,
                 'running': client is not None,
                 # the same liveness verdict the MQTT/alert paths use, so the
-                # plant census can never disagree with the unit's own topics
+                # endpoint census can never disagree with the unit's own topics
                 'connected': client_is_live(client),
                 'health': client_health(client),
                 'last_seen': (datetime.fromtimestamp(_seen).isoformat()
@@ -2276,9 +2276,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'failed_reads': st.get('failed_reads'),
             })
         from .canonical_fields import field_meta
-        from .plant_aggregator import compute_plant_aggregates
+        from .endpoint_aggregator import compute_endpoint_aggregates
         try:
-            agg = compute_plant_aggregates(config, registry, pid)
+            agg = compute_endpoint_aggregates(config, registry, pid)
         except Exception:  # noqa: BLE001 — aggregates must never break the list
             agg = {}
         return {'id': pid, 'name': p.get('name') or pid,
@@ -2294,7 +2294,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 # vocabulary client-side
                 'aggregate_fields': {k: m for k, m in
                                      ((k, field_meta(k)) for k in agg) if m},
-                # the plant's own settings, so the page can render + edit them
+                # the endpoint's own settings, so the page can render + edit them
                 'aggregates_enabled': bool(p.get('aggregates', True)),
                 'write_locked': bool(p.get('write_locked', False)),
                 'http_output_enabled': bool((p.get('http_output') or {}).get('enabled')),
@@ -2311,7 +2311,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         from the config. An explicit dict from the caller always wins."""
         if not prev:
             return units
-        overrides = {u['unit_id']: u for u in config._plant_units(prev)}
+        overrides = {u['unit_id']: u for u in config._endpoint_units(prev)}
         out = []
         for u in (units or []):
             if isinstance(u, dict):
@@ -2325,8 +2325,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 out.append(u)                      # no override → stays bare
         return out
 
-    def _validate_plant_payload(payload: Dict, *, existing_id: str = None) -> Dict:
-        """Normalize + validate a raw plant dict. Raises HTTPException(422)
+    def _validate_endpoint_payload(payload: Dict, *, existing_id: str = None) -> Dict:
+        """Normalize + validate a raw endpoint dict. Raises HTTPException(422)
         with a per-field error list."""
         errors = []
         pid = str(payload.get('id', existing_id or '')).strip().lower()
@@ -2334,7 +2334,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             errors.append("id: use a-z 0-9 - _ (2-64 chars, starts alphanumeric)")
         if existing_id and pid != existing_id:
             errors.append("id: cannot be changed after creation")
-        if not existing_id and (config.get_raw_plant(pid) is not None
+        if not existing_id and (config.get_raw_endpoint(pid) is not None
                                 or registry.has(pid)):
             errors.append(f"id: '{pid}' already exists")
         conn = payload.get('connection', {}) or {}
@@ -2342,7 +2342,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         if protocol not in ('tcp', 'rtu-tcp'):
             # plain RTU shares one serial line across masters — the same
             # one-master-per-line rule the device CRUD enforces; multi-drop
-            # RTU plants need the shared-bus arbiter (Tier 3) first.
+            # RTU endpoints need the shared-bus arbiter (Tier 3) first.
             errors.append("connection.protocol: must be 'tcp' or 'rtu-tcp'")
         if not str(conn.get('host', '')).strip():
             errors.append("connection.host: required")
@@ -2356,7 +2356,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         if template_id and template_registry.get(template_id) is None:
             errors.append(f"template: '{template_id}' not found")
         probe = {'id': pid, 'units': payload.get('units')}
-        units = config._plant_units(probe)
+        units = config._endpoint_units(probe)
         if not units:
             errors.append("units: at least one valid unit id (0..255) is required")
         seen_uids, seen_ids = set(), set()
@@ -2370,12 +2370,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 errors.append(f"units: duplicate device id '{u['id']}'")
             seen_ids.add(u['id'])
             ex = config.get_device(u['id'])
-            if ex is not None and ex.plant_id != pid:
+            if ex is not None and ex.endpoint_id != pid:
                 errors.append(f"units: id '{u['id']}' collides with an "
                               f"existing device")
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors})
-        prev = config.get_raw_plant(existing_id) if existing_id else None
+        prev = config.get_raw_endpoint(existing_id) if existing_id else None
         raw = {
             'id': pid,
             'name': str(payload.get('name', '') or pid),
@@ -2390,8 +2390,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             if payload.get(opt):
                 raw[opt] = dict(payload[opt])
         if prev is not None:
-            # An edit REPLACES the stored entry, so anything the plant owns but
-            # the form does not send would vanish: a locked plant silently
+            # An edit REPLACES the stored entry, so anything the endpoint owns but
+            # the form does not send would vanish: a locked endpoint silently
             # unlocked itself and `aggregates: false` came back on, one save
             # after the operator set them.
             for key in ('write_locked', 'aggregates', 'http_output', 'rest_push'):
@@ -2414,14 +2414,14 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                         raw.setdefault(sect, {})[k] = old
         return raw
 
-    def _stop_plant_devices(pid: str) -> None:
-        """Disconnect + deregister every materialized device of a plant."""
-        for dev in config.plant_devices(pid):
+    def _stop_endpoint_devices(pid: str) -> None:
+        """Disconnect + deregister every materialized device of an endpoint."""
+        for dev in config.endpoint_devices(pid):
             _i, _cfg, client = registry.find(dev.id)
             _teardown_device(dev.id, dev, client)
             registry.remove(dev.id)
 
-    def _start_plant_devices(made) -> List[Dict]:
+    def _start_endpoint_devices(made) -> List[Dict]:
         """Seed + bucket + start + register each materialized device."""
         out = []
         for dev_cfg in made:
@@ -2432,72 +2432,72 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             out.append(_device_entry(dev_cfg, client))
         return out
 
-    @app.get("/api/plants")
-    def list_plants():
-        """All plants with their materialized units and live status."""
-        return {"plants": [_plant_entry(p) for p in config.plants]}
+    @app.get("/api/endpoints")
+    def list_endpoints():
+        """All endpoints with their materialized units and live status."""
+        return {"endpoints": [_endpoint_entry(p) for p in config.endpoints]}
 
-    @app.get("/api/plants/{plant_id}")
-    def get_plant(plant_id: str):
-        p = config.get_raw_plant(plant_id)
+    @app.get("/api/endpoints/{endpoint_id}")
+    def get_endpoint(endpoint_id: str):
+        p = config.get_raw_endpoint(endpoint_id)
         if p is None:
-            raise HTTPException(status_code=404, detail="plant not found")
-        return _plant_entry(p)
+            raise HTTPException(status_code=404, detail="endpoint not found")
+        return _endpoint_entry(p)
 
-    @app.post("/api/plants/{plant_id}/test")
-    def test_plant(plant_id: str):
-        """Probe every unit of a plant on its shared endpoint.
+    @app.post("/api/endpoints/{endpoint_id}/test")
+    def test_endpoint(endpoint_id: str):
+        """Probe every unit of an endpoint on its shared endpoint.
 
-        One plant is one physical endpoint, so a per-unit answer is the only
+        One endpoint is one physical endpoint, so a per-unit answer is the only
         way to tell "the datalogger is deaf" from "unit 3 is not configured on
         it". CAUTION: a probe opens ANOTHER Modbus client on that endpoint, and
         dataloggers serve only a few at once — this is an operator-triggered
         check, never a background poll."""
-        p = config.get_raw_plant(plant_id)
+        p = config.get_raw_endpoint(endpoint_id)
         if p is None:
-            raise HTTPException(status_code=404, detail="plant not found")
+            raise HTTPException(status_code=404, detail="endpoint not found")
         conn = dict(p.get('connection', {}) or {})
         timeout = float(conn.get('timeout', 3) or 3)
         units = []
-        for dev in config.plant_devices(plant_id):
+        for dev in config.endpoint_devices(endpoint_id):
             regs, _g = config.load_device_registers(dev)
             # a real address beats address 0 — some gateways answer 0 blindly
             address = regs[0].address if regs else 0
             res = _modbus_probe(conn, dev.connection.unit_id, timeout, address)
             units.append({'unit_id': dev.connection.unit_id,
                           'device_id': dev.id, **res})
-        return {'plant': plant_id,
+        return {'endpoint': endpoint_id,
                 'ok': bool(units) and all(u.get('ok') for u in units),
                 'units': units}
 
-    @app.post("/api/plants")
+    @app.post("/api/endpoints")
     @_serialized_mutation
-    def create_plant(payload: Dict = Body(...)):
-        """Create a plant: validate → persist → materialize N devices, seed
+    def create_endpoint(payload: Dict = Body(...)):
+        """Create an endpoint: validate → persist → materialize N devices, seed
         each from the template and hot-start their pollers (no restart)."""
-        raw = _validate_plant_payload(payload)
+        raw = _validate_endpoint_payload(payload)
         try:
-            made = config.upsert_raw_plant(raw)
+            made = config.upsert_raw_endpoint(raw)
         except ValueError as e:
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
-        devices_out = _start_plant_devices(made)
+        devices_out = _start_endpoint_devices(made)
         _sync_device_discovery()
-        logger.info(f"plant {raw['id']}: created with "
+        logger.info(f"endpoint {raw['id']}: created with "
                     f"{len(made)} unit(s) (template={raw['template'] or '—'})")
-        return {"status": "created", "plant": _plant_entry(raw),
+        return {"status": "created", "endpoint": _endpoint_entry(raw),
                 "devices": devices_out}
 
-    def _plant_runtime_sig(raw: Dict) -> str:
+    def _endpoint_runtime_sig(raw: Dict) -> str:
         """Everything a materialized unit is BUILT from. Two definitions with
         the same signature produce identical clients, so an edit that leaves it
-        untouched — a rename, the plant-totals toggle — must not tear the
+        untouched — a rename, the endpoint-totals toggle — must not tear the
         pollers down: a cosmetic save should never punch a hole in acquisition.
         Unit NAMES are deliberately absent (cosmetic; refreshed in place)."""
         return json.dumps({
             'connection': raw.get('connection') or {},
             'template': raw.get('template', ''),
             'enabled': bool(raw.get('enabled', True)),
-            'units': [(u['unit_id'], u['id']) for u in config._plant_units(raw)],
+            'units': [(u['unit_id'], u['id']) for u in config._endpoint_units(raw)],
             'mqtt': raw.get('mqtt') or {},
             'influxdb': raw.get('influxdb') or {},
             'write_locked': bool(raw.get('write_locked', False)),
@@ -2506,29 +2506,29 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         }, sort_keys=True, default=str)
 
     # exposed for tests: the restart-or-not contract is worth pinning
-    app.state.plant_runtime_sig = _plant_runtime_sig
+    app.state.endpoint_runtime_sig = _endpoint_runtime_sig
 
-    @app.put("/api/plants/{plant_id}")
+    @app.put("/api/endpoints/{endpoint_id}")
     @_serialized_mutation
-    def update_plant(plant_id: str, payload: Dict = Body(...)):
-        """Update a plant. An edit that changes what the units are built from
+    def update_endpoint(endpoint_id: str, payload: Dict = Body(...)):
+        """Update an endpoint. An edit that changes what the units are built from
         re-materializes them (stop → rebuild → start); an edit that only changes
-        plant-level settings keeps every poller running and just refreshes the
+        endpoint-level settings keeps every poller running and just refreshes the
         config behind it."""
-        prev_raw = config.get_raw_plant(plant_id)
+        prev_raw = config.get_raw_endpoint(endpoint_id)
         if prev_raw is None:
-            raise HTTPException(status_code=404, detail="plant not found")
-        raw = _validate_plant_payload(payload, existing_id=plant_id)
-        settings_only = _plant_runtime_sig(prev_raw) == _plant_runtime_sig(raw)
+            raise HTTPException(status_code=404, detail="endpoint not found")
+        raw = _validate_endpoint_payload(payload, existing_id=endpoint_id)
+        settings_only = _endpoint_runtime_sig(prev_raw) == _endpoint_runtime_sig(raw)
         if not settings_only:
-            _stop_plant_devices(plant_id)
+            _stop_endpoint_devices(endpoint_id)
         try:
-            made = config.upsert_raw_plant(raw)
+            made = config.upsert_raw_endpoint(raw)
         except ValueError as e:
             # config restored the previous definition — restart its units so
-            # a failed edit doesn't leave the plant stopped
+            # a failed edit doesn't leave the endpoint stopped
             if not settings_only:
-                _start_plant_devices(config.plant_devices(plant_id))
+                _start_endpoint_devices(config.endpoint_devices(endpoint_id))
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
         if settings_only:
             # the DeviceConfig objects were rebuilt by upsert; swap them in
@@ -2537,33 +2537,33 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 registry.replace(dev_cfg.id, dev_cfg)
             devices_out = [_device_entry(d, registry.find(d.id)[2]) for d in made]
         else:
-            devices_out = _start_plant_devices(made)
+            devices_out = _start_endpoint_devices(made)
         _sync_device_discovery()
-        logger.info("plant %s: updated (%d unit(s))%s", plant_id, len(made),
+        logger.info("endpoint %s: updated (%d unit(s))%s", endpoint_id, len(made),
                     " — settings only, pollers kept running" if settings_only else "")
-        return {"status": "updated", "plant": _plant_entry(raw),
+        return {"status": "updated", "endpoint": _endpoint_entry(raw),
                 "devices": devices_out}
 
-    @app.delete("/api/plants/{plant_id}")
+    @app.delete("/api/endpoints/{endpoint_id}")
     @_serialized_mutation
-    def delete_plant(plant_id: str):
-        """Delete a plant and stop all its units (their register files are
-        kept on disk, so re-adding the plant restores the selection)."""
-        if config.get_raw_plant(plant_id) is None:
-            raise HTTPException(status_code=404, detail="plant not found")
-        used = {u for d in config.plant_devices(plant_id)
+    def delete_endpoint(endpoint_id: str):
+        """Delete an endpoint and stop all its units (their register files are
+        kept on disk, so re-adding the endpoint restores the selection)."""
+        if config.get_raw_endpoint(endpoint_id) is None:
+            raise HTTPException(status_code=404, detail="endpoint not found")
+        used = {u for d in config.endpoint_devices(endpoint_id)
                 for u in _vmeter_users_of(d.id)}
         if used:
             raise HTTPException(status_code=422, detail={"errors": [
-                f"plant units feed virtual meter(s): {', '.join(sorted(used))} — "
+                f"endpoint units feed virtual meter(s): {', '.join(sorted(used))} — "
                 "delete or re-point them first"]})
-        _stop_plant_devices(plant_id)
+        _stop_endpoint_devices(endpoint_id)
         try:
-            removed = config.delete_plant(plant_id)
+            removed = config.delete_endpoint(endpoint_id)
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e))
         _sync_device_discovery()
-        logger.info(f"plant {plant_id}: deleted ({len(removed)} unit(s))")
+        logger.info(f"endpoint {endpoint_id}: deleted ({len(removed)} unit(s))")
         return {"status": "deleted", "removed_devices": removed}
 
     def _modbus_probe(conn: Dict, unit_id: int, timeout: float,

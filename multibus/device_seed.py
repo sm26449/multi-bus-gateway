@@ -3,8 +3,8 @@
 """Template → register-selection seeding, shared by the API and the boot path.
 
 Extracted from ``create_api()``'s ``_autoselect_template_registers`` closure so
-plant-materialized devices can seed at BOOT too (main.py builds their clients
-before the API exists — a plant unit with no selection file would otherwise
+endpoint-materialized devices can seed at BOOT too (main.py builds their clients
+before the API exists — an endpoint unit with no selection file would otherwise
 poll nothing until someone opened the UI). Behavior is identical to the
 closure this replaces; the API keeps a thin wrapper.
 """
@@ -101,7 +101,7 @@ def autoselect_template_registers(config: Any, template_registry: Any,
     config.save_device_registers(dev_cfg.id, reg_list, poll_groups=tpg)
     # Derived measurements ship WITH the map. A template that decodes its own
     # status word or derives an alarm hands every device seeded from it the
-    # same output — instead of each unit of a plant needing the formula
+    # same output — instead of each unit of an endpoint needing the formula
     # retyped, which is exactly how two devices of one family end up speaking
     # differently.
     calcs = [c.to_dict() for c in (getattr(tpl, 'calculated', None) or [])]

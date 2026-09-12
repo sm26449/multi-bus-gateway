@@ -95,22 +95,22 @@ def build(ctx) -> APIRouter:
                                   "data_health": "idle",
                                   "note": "transport not available yet (rtu = Tier 3)"})
                 out["devices"].append(entry)
-        # Plants are entities in their own right, not just a grouping of rows:
-        # a status page that lists four healthy units while the plant sits at
-        # 2/4 producing tells the operator nothing about the PLANT.
-        plants = getattr(config, "plants", None) or []
-        if plants and registry:
-            from ..plant_aggregator import compute_plant_aggregates
-            out["plants"] = []
-            for p in plants:
+        # Endpoints are entities in their own right, not just a grouping of rows:
+        # a status page that lists four healthy units while the endpoint sits at
+        # 2/4 producing tells the operator nothing about the ENDPOINT.
+        endpoints = getattr(config, "endpoints", None) or []
+        if endpoints and registry:
+            from ..endpoint_aggregator import compute_endpoint_aggregates
+            out["endpoints"] = []
+            for p in endpoints:
                 pid = p.get("id")
                 if not pid:
                     continue
                 try:
-                    agg = compute_plant_aggregates(config, registry, pid)
+                    agg = compute_endpoint_aggregates(config, registry, pid)
                 except Exception:  # noqa: BLE001 — status must never 500
                     agg = {}
-                out["plants"].append({
+                out["endpoints"].append({
                     "id": pid, "name": p.get("name") or pid,
                     "enabled": bool(p.get("enabled", True)),
                     "status": agg.get("status", ""),

@@ -62,14 +62,14 @@ sau intri în **registrele** unui dispozitiv. Fiecare rând arată protocolul
 (Modbus TCP/RTU, HTTP/JSON, MQTT), adresa, starea de conectare și numărul de
 măsurători selectate. Dispozitivul primar apare primul.
 
-Unitățile unei **plante** (un template + un endpoint + N unit id-uri) stau
-grupate sub rândul plantei. Butonul de deschidere de pe acel rând duce la
-**pagina plantei**: starea ei (`online` / `partial` / `offline`) și
-recensământul unităților, grila de totaluri publicate pe `mbg/plants/<id>/…`,
+Unitățile unei **endpointuri** (un template + un endpoint + N unit id-uri) stau
+grupate sub rândul endpointului. Butonul de deschidere de pe acel rând duce la
+**pagina endpointului**: starea ei (`online` / `partial` / `offline`) și
+recensământul unităților, grila de totaluri publicate pe `mbg/endpoints/<id>/…`,
 tabelul unităților (sănătate, ultima citire, cadență, erori — cu redenumire și
 intrare în fiecare unitate), comutatorul de totaluri și cardul de ieșiri.
-Identitatea de rutare a plantei e fixată după creare; sink-urile per unitate se
-declară o singură dată și se aplică întregii plante.
+Identitatea de rutare a endpointului e fixată după creare; sink-urile per unitate se
+declară o singură dată și se aplică întregii endpointuri.
 
 ---
 

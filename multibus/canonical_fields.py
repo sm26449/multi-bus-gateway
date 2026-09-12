@@ -155,7 +155,7 @@ def measurement_for(name: str) -> Optional[str]:
 def field_meta(name: str):
     """A canonical field's ``{measurement, unit, topic, label}``, or None for a
     name outside the dictionary. Lets a view label a value it only knows by
-    name — a plant's aggregate, say — without re-deriving the vocabulary."""
+    name — an endpoint's aggregate, say — without re-deriving the vocabulary."""
     row = CANONICAL_FIELDS.get(name)
     if not row:
         return None

@@ -239,7 +239,7 @@ group, next to the real registers:
 - A **template may ship them**: a top-level `calculated:` block next to
   `registers:` is seeded into every device made from that template, so a
   vendor's decoded status or an alarm flag travels WITH the device map instead
-  of being retyped per unit (the fifth inverter of a plant would otherwise
+  of being retyped per unit (the fifth inverter of an endpoint would otherwise
   speak differently from the first four). An entry may pin an explicit MQTT
   `topic` — a derived value usually belongs under an existing branch, e.g.
   `status/text` — and an `enum`, which turns the computed code into text
@@ -256,19 +256,19 @@ group, next to the real registers:
   division-by-zero → skip, a missing input skips the round (no partial
   publishes), and an engine error can never kill a poller.
 
-### Plants and the PlantAggregator (`plant_aggregator.py`)
+### Endpoints and the EndpointAggregator (`endpoint_aggregator.py`)
 
-A `plants:` entry is one template + one endpoint + N unit ids, expanded by
-`Config._expand_plants()` into N ordinary devices (own socket each, managed
-through the plant). On top of the units, `PlantAggregator` — a daemon
-thread started with the app — combines each plant's live stores every 10 s
-and publishes the result as a first-class entity: `mbg/plants/<id>/<canonical
+A `endpoints:` entry is one template + one endpoint + N unit ids, expanded by
+`Config._expand_endpoints()` into N ordinary devices (own socket each, managed
+through the endpoint). On top of the units, `EndpointAggregator` — a daemon
+thread started with the app — combines each endpoint's live stores every 10 s
+and publishes the result as a first-class entity: `mbg/endpoints/<id>/<canonical
 topic>` on MQTT (plus `units_online`, `units_total`, `status`) and the same
-canonical measurements in InfluxDB tagged `device=<plant id>,
-aggregate=plant`. `compute_plant_aggregates()` is pure and shared with
-`GET /api/plants`, which also drives the plant's own page in the UI (census,
-status, aggregate grid, unit table) and the `plants` section of
-`GET /api/status`. A plant resolves like a device on the InfluxDB read path
+canonical measurements in InfluxDB tagged `device=<endpoint id>,
+aggregate=endpoint`. `compute_endpoint_aggregates()` is pure and shared with
+`GET /api/endpoints`, which also drives the endpoint's own page in the UI (census,
+status, aggregate grid, unit table) and the `endpoints` section of
+`GET /api/status`. An endpoint resolves like a device on the InfluxDB read path
 too, so its totals chart the way a unit's do.
 
 Three rules, because three kinds of quantity behave differently: instantaneous
@@ -276,21 +276,21 @@ sums (`power_*`, `current_*`) and averages (`voltage_*`, `frequency`,
 `temperature_*`) are **freshness-gated** — a stalled unit drops out rather than
 freezing the total, since its production genuinely is unknown; **counters**
 (`energy_*`) use each unit's last-known value at any age and publish only on a
-COMPLETE census, because freshness-gating a lifetime counter makes the plant
+COMPLETE census, because freshness-gating a lifetime counter makes the endpoint
 total walk backwards at dusk and poisons every `increase()` downstream; and
 power factor is **derived** (Σ active / Σ apparent), never an average of ratios.
 Identity strings, status codes and event bitfields are skipped. The census and
 `status` publish on every cycle, including the one where nothing is fresh. The namespace convention is deliberate: device values
-live under `mbg/devices/<id>/…`, plant values under `mbg/plants/<id>/…`,
+live under `mbg/devices/<id>/…`, endpoint values under `mbg/endpoints/<id>/…`,
 so a consumer always knows which entity published a topic. The roadmap
-for making the aggregate counter-safe and giving plants a full UI is in
+for making the aggregate counter-safe and giving endpoints a full UI is in
 [fronius-migration-plan.md](fronius-migration-plan.md).
 
 ### Value flow conventions
 
 - **Liveness is data freshness, not socket state.** `device_registry.
   client_is_live()` is the single definition used by the alert harvester, the
-  MQTT `availability` / `runtime/status` leaves and the plant unit census: a
+  MQTT `availability` / `runtime/status` leaves and the endpoint unit census: a
   client is alive while `data_health()` reads `ok` or `degraded`, dead once it
   reads `down`. A transport flag survives a vanished endpoint, so it could
   report "online" for hours after the data froze.

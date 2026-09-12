@@ -72,8 +72,8 @@ class _Cold:
 
 
 def test_a_client_that_never_read_anything_is_not_live_unless_connected():
-    # the plant symptom: three unreachable units reported green under an
-    # `offline` plant, because `ok` also means "nothing polled yet"
+    # the endpoint symptom: three unreachable units reported green under an
+    # `offline` endpoint, because `ok` also means "nothing polled yet"
     assert client_is_live(_Cold(connected=False)) is False
     assert client_health(_Cold(connected=False)) == "degraded"
     # connected but still warming up → alive; a cold start must not scream down

@@ -3,7 +3,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
     // Devices page: show the list, hide the detail + register-editor overlays.
     _showDevicesList() {
-        if (this._stopPlantDetail) this._stopPlantDetail();
+        if (this._stopEndpointDetail) this._stopEndpointDetail();
         const list = document.getElementById('devicesListView');
         const detail = document.getElementById('deviceDetailView');
         const reg = document.getElementById('deviceRegistersView');
@@ -63,47 +63,47 @@ Object.assign(JanitzaMonitor.prototype, {
         const devices = await this._fetchDevices(true);
         this._renderRegDeviceSelectors();
         this._renderRestorableDevices();          // deleted-but-restorable list
-        let plants = [];
-        try { plants = (await (await fetch('/api/plants')).json()).plants || []; }
+        let endpoints = [];
+        try { endpoints = (await (await fetch('/api/endpoints')).json()).endpoints || []; }
         catch (e) { console.error(e); }
-        this._plants = plants;
-        if (!devices.length && !plants.length) {
+        this._endpoints = endpoints;
+        if (!devices.length && !endpoints.length) {
             el.innerHTML = `<span class="field-hint">${this.t('devices.none', 'No devices configured.')}</span>`;
             return;
         }
         const healthColor = { ok: 'var(--success,#22c55e)', degraded: 'var(--warning,#f59e0b)',
                               down: 'var(--danger,#ef4444)', idle: 'var(--text-secondary,var(--text-secondary))' };
-        // Devices belonging to a plant render NESTED under their plant group
+        // Devices belonging to an endpoint render NESTED under their endpoint group
         // (expandable); only standalone devices render as top-level rows.
-        const standalone = devices.filter(d => !d.plant_id);
-        const byPlant = {};
-        devices.forEach(d => { if (d.plant_id) (byPlant[d.plant_id] ||= []).push(d); });
+        const standalone = devices.filter(d => !d.endpoint_id);
+        const byEndpoint = {};
+        devices.forEach(d => { if (d.endpoint_id) (byEndpoint[d.endpoint_id] ||= []).push(d); });
         const html = standalone.map(d => this._deviceRowHtml(d, healthColor)).join('')
-            + plants.map(p => this._plantGroupHtml(p, byPlant[p.id] || [], healthColor)).join('');
+            + endpoints.map(p => this._endpointGroupHtml(p, byEndpoint[p.id] || [], healthColor)).join('');
         el.innerHTML = html;
-        // expand/collapse wiring (state persists per plant in localStorage)
-        el.querySelectorAll('[data-plant-toggle]').forEach(h =>
+        // expand/collapse wiring (state persists per endpoint in localStorage)
+        el.querySelectorAll('[data-endpoint-toggle]').forEach(h =>
             h.addEventListener('click', (ev) => {
                 if (ev.target.closest('.device-row-actions')) return;
-                const pid = h.dataset.plantToggle;
-                const open = !this._plantOpenState(pid);
-                try { localStorage.setItem(`mbg-plant-open-${pid}`, open ? '1' : '0'); } catch (e) { /* private mode */ }
-                const box = el.querySelector(`[data-plant-units="${CSS.escape(pid)}"]`);
+                const pid = h.dataset.endpointToggle;
+                const open = !this._endpointOpenState(pid);
+                try { localStorage.setItem(`mbg-endpoint-open-${pid}`, open ? '1' : '0'); } catch (e) { /* private mode */ }
+                const box = el.querySelector(`[data-endpoint-units="${CSS.escape(pid)}"]`);
                 if (box) box.style.display = open ? '' : 'none';
-                const chev = h.querySelector('.plant-chevron');
+                const chev = h.querySelector('.endpoint-chevron');
                 if (chev) chev.style.transform = open ? 'rotate(90deg)' : '';
             }));
     },
 
-    _plantOpenState(pid) {
-        try { return localStorage.getItem(`mbg-plant-open-${pid}`) !== '0'; }
+    _endpointOpenState(pid) {
+        try { return localStorage.getItem(`mbg-endpoint-open-${pid}`) !== '0'; }
         catch (e) { return true; }
     },
 
-    // One plant as an expandable GROUP: header row (identity + unit census +
-    // plant actions) + its unit devices nested underneath.
-    _plantGroupHtml(p, units, healthColor) {
-        const open = this._plantOpenState(p.id);
+    // One endpoint as an expandable GROUP: header row (identity + unit census +
+    // endpoint actions) + its unit devices nested underneath.
+    _endpointGroupHtml(p, units, healthColor) {
+        const open = this._endpointOpenState(p.id);
         const conn = p.connection || {};
         const proto = (conn.protocol || 'tcp') === 'rtu-tcp' ? 'RTU/TCP' : 'TCP';
         const online = units.filter(u => u.connected).length;
@@ -112,33 +112,33 @@ Object.assign(JanitzaMonitor.prototype, {
             ? `Σ ${pw >= 10000 ? (pw / 1000).toFixed(1) + ' kW' : Math.round(pw) + ' W'} · ` : '';
         const stats = p.enabled === false
             ? this.t('devices.disabled', 'disabled')
-            : `${pwTxt}${online}/${units.length} ${this.t('plants.online', 'online')}`;
+            : `${pwTxt}${online}/${units.length} ${this.t('endpoints.online', 'online')}`;
         const dot = p.enabled === false ? 'var(--text-secondary,#8a94a0)'
             : online === units.length && units.length ? 'var(--success,#22c55e)'
             : online ? 'var(--warning,#f59e0b)' : 'var(--danger,#ef4444)';
         const rows = units.map(d => this._deviceRowHtml(d, healthColor, true)).join('')
-            || `<div class="field-hint" style="margin:6px 0 6px 34px;">${this.t('plants.noUnits', 'No units materialized.')}</div>`;
+            || `<div class="field-hint" style="margin:6px 0 6px 34px;">${this.t('endpoints.noUnits', 'No units materialized.')}</div>`;
         return `
-        <div class="device-row plant-row" role="button" tabindex="0" data-plant-toggle="${this._esc(p.id)}" data-key-enter
-             title="${this.t('plants.toggle', 'Click to expand/collapse the plant’s units')}">
-            <i aria-hidden="true" class="bi bi-chevron-right plant-chevron"
+        <div class="device-row endpoint-row" role="button" tabindex="0" data-endpoint-toggle="${this._esc(p.id)}" data-key-enter
+             title="${this.t('endpoints.toggle', 'Click to expand/collapse the endpoint’s units')}">
+            <i aria-hidden="true" class="bi bi-chevron-right endpoint-chevron"
                style="transition:transform .15s;${open ? 'transform:rotate(90deg);' : ''}"></i>
             <span class="status-dot" style="--dot:${dot}" title="${this._esc(stats)}"></span>
             <div class="device-row-main">
                 <div class="device-row-title"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(p.name || p.id)}
                     <span class="dev-chip">${this._esc(p.id)}</span>
-                    <span class="dev-chip">${units.length} ${units.length === 1 ? this.t('plants.unit', 'unit') : this.t('plants.units', 'units')}</span></div>
+                    <span class="dev-chip">${units.length} ${units.length === 1 ? this.t('endpoints.unit', 'unit') : this.t('endpoints.units', 'units')}</span></div>
                 <div class="device-row-sub">${proto} · ${this._esc(conn.host || '')}:${conn.port || 502}
                     · ${this._esc(p.template || '—')}</div>
             </div>
             <div class="device-row-stats">${stats}</div>
             <div class="device-row-actions">
-                <button class="btn btn-ghost btn-sm" ${this._act('openPlantDetail', [p.id])} title="${this.t('plants.open', 'Open the plant')}"><i aria-hidden="true" class="bi bi-box-arrow-up-right"></i></button>
-                <button class="btn btn-ghost btn-sm" ${this._act('openPlantModal', [p.id])} title="${this.t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
-                <button class="btn btn-ghost btn-sm" ${this._act('deletePlantUi', [p.id])} title="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
+                <button class="btn btn-ghost btn-sm" ${this._act('openEndpointDetail', [p.id])} title="${this.t('endpoints.open', 'Open the endpoint')}"><i aria-hidden="true" class="bi bi-box-arrow-up-right"></i></button>
+                <button class="btn btn-ghost btn-sm" ${this._act('openEndpointModal', [p.id])} title="${this.t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
+                <button class="btn btn-ghost btn-sm" ${this._act('deleteEndpointUi', [p.id])} title="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
             </div>
         </div>
-        <div data-plant-units="${this._esc(p.id)}" style="display:${open ? '' : 'none'};
+        <div data-endpoint-units="${this._esc(p.id)}" style="display:${open ? '' : 'none'};
              margin-left:22px;border-left:2px solid var(--border,#e5e7eb);padding-left:8px;">
             ${rows}
         </div>`;
@@ -166,12 +166,12 @@ Object.assign(JanitzaMonitor.prototype, {
                 `<button class="btn btn-ghost btn-sm" ${this._act('testDevice', [d.id], {el: true})} title="${this.t('devices.test', 'Test read')}"><i aria-hidden="true" class="bi bi-activity"></i></button>`,
             ];
             actions.push(`<button class="btn btn-ghost btn-sm" ${this._act('openDeviceDetail', [d.id])} title="${this.t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>`);
-            if (!d.primary && !d.plant_id) {
+            if (!d.primary && !d.endpoint_id) {
                 actions.push(`<button class="btn btn-ghost btn-sm" ${this._act('deleteDevice', [d.id])} title="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>`);
             }
-            // nested rows sit under their plant group — the chip would repeat it
-            const plantChip = (d.plant_id && !nested)
-                ? ` <span class="dev-chip" title="${this.t('devices.plantManaged', 'Managed through its plant — edit or delete the plant')}"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(d.plant_id)}</span>`
+            // nested rows sit under their endpoint group — the chip would repeat it
+            const endpointChip = (d.endpoint_id && !nested)
+                ? ` <span class="dev-chip" title="${this.t('devices.endpointManaged', 'Managed through its endpoint — edit or delete the endpoint')}"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(d.endpoint_id)}</span>`
                 : '';
             // The row (outside its action buttons) opens the full-page detail;
             // data-guard keeps clicks inside the action-buttons cell from bubbling
@@ -182,7 +182,7 @@ Object.assign(JanitzaMonitor.prototype, {
                       title="${this._esc(d.data_health || 'idle')}"></span>
                 <div class="device-row-main">
                     <div class="device-row-title">${this._esc(d.name || d.id)}
-                        <span class="dev-chip">${this._esc(d.id)}</span>${plantChip}</div>
+                        <span class="dev-chip">${this._esc(d.id)}</span>${endpointChip}</div>
                     <div class="device-row-sub">${proto} · unit ${d.unit_id}
                         · ${this._esc(d.template || '—')} · ${d.selected_registers ?? 0} ${this.t('devices.regsSelected', 'measurements')}</div>
                     <div class="device-row-routing">→ MQTT <code>${this._esc(d.mqtt_topic_prefix || '')}/…</code>
@@ -449,7 +449,7 @@ Object.assign(JanitzaMonitor.prototype, {
     // existing history and Home Assistant entities never break.
     async openDeviceDetail(id) {
         if (this.currentPage !== 'devices') this.navigateTo('devices');
-        this._showDevicesList();        // also stops a plant page's live tick
+        this._showDevicesList();        // also stops an endpoint page's live tick
         await this._fetchDevices(true);
         const dev = (this._devices || []).find(d => d.id === id);
         if (!dev) { this.showToast('error', this.t('devices.notFound', 'Device not found'), id); return; }
@@ -458,7 +458,7 @@ Object.assign(JanitzaMonitor.prototype, {
         catch (e) { console.error(e); }
         const c = dev.connection || {};
         this._devDetail = {
-            id, primary: !!dev.primary, plant_id: dev.plant_id || '', templates,
+            id, primary: !!dev.primary, endpoint_id: dev.endpoint_id || '', templates,
             data: {
                 name: dev.name || id, template: dev.template || '',
                 enabled: dev.enabled !== false,
@@ -507,8 +507,8 @@ Object.assign(JanitzaMonitor.prototype, {
     _deviceDetailHtml() {
         const s = this._devDetail, d = s.data;
         const primary = s.primary;
-        const plantId = s.plant_id || '';
-        const plantLk = plantId ? 'disabled' : '';   // plant-owned field lock
+        const endpointId = s.endpoint_id || '';
+        const endpointLk = endpointId ? 'disabled' : '';   // endpoint-owned field lock
         const tcp = d.protocol !== 'rtu';
         const tplOptions = [`<option value="">${this.t('devices.detail.noTemplate', '(no template)')}</option>`]
             .concat(s.templates.map(t =>
@@ -522,8 +522,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 <i aria-hidden="true" class="bi bi-cpu"></i> ${this._esc(d.name)}
                 <span class="dev-chip">${this._esc(s.id)}</span></h2>
             <div class="header-actions">
-                ${plantId ? `<span class="dev-chip" title="${t('devices.plantManaged', 'Managed through its plant — edit or delete the plant')}"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(plantId)}</span>` : ''}
-                ${(primary || plantId) ? '' : `<button class="btn btn-ghost btn-sm" ${this._act('deleteDevice', [s.id])}><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>`}
+                ${endpointId ? `<span class="dev-chip" title="${t('devices.endpointManaged', 'Managed through its endpoint — edit or delete the endpoint')}"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(endpointId)}</span>` : ''}
+                ${(primary || endpointId) ? '' : `<button class="btn btn-ghost btn-sm" ${this._act('deleteDevice', [s.id])}><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>`}
             </div>
         </div>
 
@@ -539,7 +539,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <button class="config-main-tab" data-dtab="monitor" ${gMon}><i aria-hidden="true" class="bi bi-graph-up"></i> ${t('nav.monitor', 'Monitor')}</button>
             <button class="config-main-tab" data-dtab="history" ${gInf}><i aria-hidden="true" class="bi bi-clock-history"></i> ${t('nav.history', 'History')}</button>
             <button class="config-main-tab" data-dtab="energy" ${gInf}><i aria-hidden="true" class="bi bi-lightning-charge"></i> ${t('nav.energy', 'Energy')}</button>
-            ${d.pq_supported && !plantId ? `<button class="config-main-tab" data-dtab="pq" ${gInf}><i aria-hidden="true" class="bi bi-activity"></i> ${t('nav.pq', 'Power Quality')}</button>` : ''}
+            ${d.pq_supported && !endpointId ? `<button class="config-main-tab" data-dtab="pq" ${gInf}><i aria-hidden="true" class="bi bi-activity"></i> ${t('nav.pq', 'Power Quality')}</button>` : ''}
         </div>
 
         <!-- host panels for the embedded, device-scoped views -->
@@ -555,14 +555,14 @@ Object.assign(JanitzaMonitor.prototype, {
         <!-- ── Overview (read-only) ── -->
         <div data-dpanel="overview">${this._deviceOverviewHtml(d, s.entry || {})}</div>
 
-        <!-- ── Edit ── one layout for every device; plant-owned fields are
-             disabled and marked (defined once on the plant), never a
+        <!-- ── Edit ── one layout for every device; endpoint-owned fields are
+             disabled and marked (defined once on the endpoint), never a
              different page -->
         <div data-dpanel="edit" hidden>
-        ${plantId ? `
+        ${endpointId ? `
         <div class="field-hint" style="margin:0 0 12px;display:flex;align-items:center;gap:10px;">
-            <span><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.plantOwned', 'Connection, template and routing are defined on the plant and apply to every unit — locked fields below are edited on the plant.')}</span>
-            <button class="btn btn-secondary btn-sm" onclick="app.openPlantModal('${this._esc(plantId)}')"><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('devices.plantUnit.editPlant', 'Edit plant')}</button>
+            <span><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.endpointOwned', 'Connection, template and routing are defined on the endpoint and apply to every unit — locked fields below are edited on the endpoint.')}</span>
+            <button class="btn btn-secondary btn-sm" onclick="app.openEndpointModal('${this._esc(endpointId)}')"><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('devices.endpointUnit.editEndpoint', 'Edit endpoint')}</button>
         </div>` : ''}
         <div class="settings-card">
             <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-ethernet"></i> ${t('devices.detail.connection', 'Connection')}</h3></div>
@@ -580,48 +580,48 @@ Object.assign(JanitzaMonitor.prototype, {
                 </div>
                 <div id="ddvHttp" style="display:${d.protocol === 'http' ? '' : 'none'}">
                     <div class="form-group"><label class="form-label" for="ddvUrl">${t('devices.wizard.httpUrl', 'JSON endpoint URL')}</label>
-                        <input type="text" id="ddvUrl" class="input" value="${this._esc(d.url || '')}" ${plantLk} placeholder="http://192.168.1.50/rpc/Shelly.GetStatus"></div>
+                        <input type="text" id="ddvUrl" class="input" value="${this._esc(d.url || '')}" ${endpointLk} placeholder="http://192.168.1.50/rpc/Shelly.GetStatus"></div>
                 </div>
                 <div id="ddvTcp" style="display:${(d.protocol === 'tcp' || d.protocol === 'rtu-tcp') ? '' : 'none'}">
                     <div class="form-row">
                         <div class="form-group flex-2"><label class="form-label" for="ddvHost">${this.t('lbl.hostIp', "Host / IP")}</label>
-                            <input type="text" id="ddvHost" class="input" value="${this._esc(d.host)}" ${plantLk} placeholder="192.168.1.60"></div>
+                            <input type="text" id="ddvHost" class="input" value="${this._esc(d.host)}" ${endpointLk} placeholder="192.168.1.60"></div>
                         <div class="form-group"><label class="form-label" for="ddvPort">${this.t('lbl.port', "Port")}</label>
-                            <input type="number" id="ddvPort" class="input" aria-label="Port" value="${d.port}" ${plantLk} min="1" max="65535"></div>
+                            <input type="number" id="ddvPort" class="input" aria-label="Port" value="${d.port}" ${endpointLk} min="1" max="65535"></div>
                         <div class="form-group"><label class="form-label" for="ddvUnit">${this.t('lbl.unitId', "Unit ID")}</label>
-                            <input type="number" id="ddvUnit" class="input" aria-label="Unit ID" value="${d.unit_id}" ${plantLk} min="0" max="255"></div>
+                            <input type="number" id="ddvUnit" class="input" aria-label="Unit ID" value="${d.unit_id}" ${endpointLk} min="0" max="255"></div>
                         <div class="form-group"><label class="form-label" for="ddvTimeout">${this.t('lbl.timeoutS', "Timeout (s)")}</label>
-                            <input type="number" id="ddvTimeout" class="input" aria-label="Timeout seconds" value="${d.timeout}" ${plantLk} min="1" max="30"></div>
+                            <input type="number" id="ddvTimeout" class="input" aria-label="Timeout seconds" value="${d.timeout}" ${endpointLk} min="1" max="30"></div>
                     </div>
                 </div>
                 <div id="ddvRtu" style="display:${d.protocol === 'rtu' ? '' : 'none'}">
                     <div class="form-row">
                         <div class="form-group flex-2"><label class="form-label" for="ddvSerial">${t('devices.wizard.serialPort', 'Serial port')}</label>
-                            <input type="text" id="ddvSerial" class="input" value="${this._esc(d.serial_port)}" ${plantLk} placeholder="/dev/ttyUSB0"></div>
+                            <input type="text" id="ddvSerial" class="input" value="${this._esc(d.serial_port)}" ${endpointLk} placeholder="/dev/ttyUSB0"></div>
                         <div class="form-group"><label class="form-label" for="ddvBaud">${this.t('lbl.baudrate', "Baudrate")}</label>
-                            <select id="ddvBaud" class="input" aria-label="Baudrate" ${plantLk}>${[9600, 19200, 38400, 57600, 115200].map(b => `<option ${b === +d.baudrate ? 'selected' : ''}>${b}</option>`).join('')}</select></div>
+                            <select id="ddvBaud" class="input" aria-label="Baudrate" ${endpointLk}>${[9600, 19200, 38400, 57600, 115200].map(b => `<option ${b === +d.baudrate ? 'selected' : ''}>${b}</option>`).join('')}</select></div>
                         <div class="form-group"><label class="form-label" for="ddvParity">${this.t('lbl.parity', "Parity")}</label>
-                            <select id="ddvParity" class="input" aria-label="Parity" ${plantLk}>${['N', 'E', 'O'].map(x => `<option ${x === d.parity ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+                            <select id="ddvParity" class="input" aria-label="Parity" ${endpointLk}>${['N', 'E', 'O'].map(x => `<option ${x === d.parity ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
                         <div class="form-group"><label class="form-label" for="ddvUnitR">${this.t('lbl.unitId', "Unit ID")}</label>
-                            <input type="number" id="ddvUnitR" class="input" aria-label="Unit ID" value="${d.unit_id}" ${plantLk} min="0" max="255"></div>
+                            <input type="number" id="ddvUnitR" class="input" aria-label="Unit ID" value="${d.unit_id}" ${endpointLk} min="0" max="255"></div>
                     </div>
                 </div>
                 <div id="ddvMqtt" style="display:${d.protocol === 'mqtt' ? '' : 'none'}">
                     <div class="form-row">
                         <div class="form-group flex-2"><label class="form-label" for="ddvBroker">${t('devices.wizard.broker', 'MQTT broker')}</label>
-                            <input type="text" id="ddvBroker" class="input" value="${this._esc(d.broker || '')}" ${plantLk} placeholder="192.168.1.100"></div>
+                            <input type="text" id="ddvBroker" class="input" value="${this._esc(d.broker || '')}" ${endpointLk} placeholder="192.168.1.100"></div>
                         <div class="form-group"><label class="form-label" for="ddvMqttPort">${this.t('lbl.port', 'Port')}</label>
-                            <input type="number" id="ddvMqttPort" class="input" value="${d.mqtt_port || 1883}" ${plantLk} min="1" max="65535"></div>
+                            <input type="number" id="ddvMqttPort" class="input" value="${d.mqtt_port || 1883}" ${endpointLk} min="1" max="65535"></div>
                     </div>
                     <div class="form-group"><label class="form-label" for="ddvMqttTopic">${t('devices.wizard.mqttTopic', 'Topic (subscribe)')}</label>
-                        <input type="text" id="ddvMqttTopic" class="input" value="${this._esc(d.topic || '')}" ${plantLk} placeholder="sensors/# or shellies/shelly1/status"></div>
+                        <input type="text" id="ddvMqttTopic" class="input" value="${this._esc(d.topic || '')}" ${endpointLk} placeholder="sensors/# or shellies/shelly1/status"></div>
                     <div class="form-row">
                         <div class="form-group"><label class="form-label" for="ddvMqttUser">${this.t('lbl.username', 'Username')}</label>
-                            <input type="text" id="ddvMqttUser" class="input" value="${this._esc(d.mqtt_username || '')}" ${plantLk} autocomplete="off"></div>
+                            <input type="text" id="ddvMqttUser" class="input" value="${this._esc(d.mqtt_username || '')}" ${endpointLk} autocomplete="off"></div>
                         <div class="form-group"><label class="form-label" for="ddvMqttPass">${this.t('lbl.password', 'Password')}</label>
-                            <input type="password" id="ddvMqttPass" class="input" value="" placeholder="••••••" ${plantLk} autocomplete="new-password"></div>
+                            <input type="password" id="ddvMqttPass" class="input" value="" placeholder="••••••" ${endpointLk} autocomplete="new-password"></div>
                         <div class="form-group" style="align-self:end;"><label style="display:flex;align-items:center;gap:8px;">
-                            <input type="checkbox" id="ddvMqttTls" ${d.mqtt_tls ? 'checked' : ''} ${plantLk}> ${t('devices.wizard.mqttTls', 'TLS (8883)')}</label></div>
+                            <input type="checkbox" id="ddvMqttTls" ${d.mqtt_tls ? 'checked' : ''} ${endpointLk}> ${t('devices.wizard.mqttTls', 'TLS (8883)')}</label></div>
                     </div>
                     <div class="field-hint">${t('devices.editPassKeep', 'Leave the password blank to keep the stored one.')}</div>
                 </div>
@@ -635,9 +635,9 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="settings-card-body">
                 <div class="form-row">
                     <div class="form-group flex-2"><label class="form-label" for="ddvName">${t('devices.wizard.name', 'Device name')}</label>
-                        <input type="text" id="ddvName" class="input" value="${this._esc(d.name)}" ${plantLk}></div>
+                        <input type="text" id="ddvName" class="input" value="${this._esc(d.name)}" ${endpointLk}></div>
                     <div class="form-group"><label class="form-label" for="ddvTemplate">${t('devices.wizard.template', 'Template')}</label>
-                        <select id="ddvTemplate" class="input" aria-label="${t('devices.wizard.template', 'Template')}" ${plantLk}>${tplOptions}</select></div>
+                        <select id="ddvTemplate" class="input" aria-label="${t('devices.wizard.template', 'Template')}" ${endpointLk}>${tplOptions}</select></div>
                 </div>
             </div>
         </div>
@@ -646,7 +646,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-arrow-repeat"></i> ${t('devices.detail.polling', 'Polling')}</h3></div>
             <div class="settings-card-body">
                 <label style="display:flex;align-items:center;gap:8px;">
-                    <input type="checkbox" id="ddvEnabled" ${d.enabled ? 'checked' : ''} ${plantLk}>
+                    <input type="checkbox" id="ddvEnabled" ${d.enabled ? 'checked' : ''} ${endpointLk}>
                     ${t('devices.wizard.enabled', 'Start polling immediately after saving')}</label>
                 <div style="margin-top:14px;">
                     <div style="color:var(--text-secondary);font-size:12px;margin-bottom:6px;">${t('devices.pollGroups', 'Poll-group intervals (seconds)')}</div>
@@ -654,11 +654,11 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
                         <button class="btn btn-secondary btn-sm" ${this._act('saveDevicePollGroups', [s.id], {el: true})}><i aria-hidden="true" class="bi bi-clock"></i> ${t('devices.savePollGroups', 'Save intervals')}</button>
                         <span class="save-feedback" id="ddvPgFeedback"></span>
-                        ${plantId ? `<span class="field-hint">${t('devices.plantUnit.perUnit', 'Per-unit: the measurement selection (Measurements tab) and the poll intervals stay editable on THIS unit only.')}</span>` : ''}
+                        ${endpointId ? `<span class="field-hint">${t('devices.endpointUnit.perUnit', 'Per-unit: the measurement selection (Measurements tab) and the poll intervals stay editable on THIS unit only.')}</span>` : ''}
                     </div>
                 </div>
             </div>
-            ${plantId ? '' : `
+            ${endpointId ? '' : `
             <div class="settings-card-footer">
                 <span class="save-feedback" id="ddvFeedback"></span>
                 <button class="btn btn-primary btn-sm" onclick="app.saveDeviceDetail(this)"><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
@@ -666,21 +666,21 @@ Object.assign(JanitzaMonitor.prototype, {
         </div>
         </div>
 
-        <!-- ── Outputs ── same cards for every device; plant-level toggles are
-             disabled on units and edited on the plant -->
+        <!-- ── Outputs ── same cards for every device; endpoint-level toggles are
+             disabled on units and edited on the endpoint -->
         <div data-dpanel="outputs" hidden>
-            ${plantId ? `
+            ${endpointId ? `
             <div class="field-hint" style="margin:0 0 12px;display:flex;align-items:center;gap:10px;">
-                <span><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.plantUnit.outputs', 'Output routing is defined on the plant (with per-unit substitution) and applied to every unit:')}</span>
-                <button class="btn btn-secondary btn-sm" onclick="app.openPlantModal('${this._esc(plantId)}')"><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('devices.plantUnit.editPlant', 'Edit plant')}</button>
+                <span><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.endpointUnit.outputs', 'Output routing is defined on the endpoint (with per-unit substitution) and applied to every unit:')}</span>
+                <button class="btn btn-secondary btn-sm" onclick="app.openEndpointModal('${this._esc(endpointId)}')"><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('devices.endpointUnit.editEndpoint', 'Edit endpoint')}</button>
             </div>` : ''}
             ${this._sinkCardMqtt(d, primary)}
             ${this._sinkCardInflux(d, primary)}
             ${this._sinkCardHttp(d, primary)}
             ${this._sinkCardRest(d, primary)}
-            ${d.pq_supported && !plantId ? this._sinkCardPq(d, primary) : ''}
+            ${d.pq_supported && !endpointId ? this._sinkCardPq(d, primary) : ''}
             ${this._sinkCardWriteLock(d, primary)}
-            ${plantId ? '' : `
+            ${endpointId ? '' : `
             <div class="settings-card"><div class="settings-card-footer">
                 <span class="save-feedback" id="ddvFeedback2"></span>
                 <button class="btn btn-primary btn-sm" onclick="app.saveDeviceDetail(this)"><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
@@ -708,8 +708,8 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="settings-card-body">
                 <p class="field-hint" style="margin:0;">${primary
                     ? this.t('devices.writeLock.primaryHint', 'The primary device ships locked (security.primary_write_locked). Unlock only deliberately — this is the meter your live systems read.')
-                    : this._devDetail?.plant_id
-                    ? this.t('devices.writeLock.plantHint', 'Plant-level lock — locking/unlocking here applies to EVERY unit of the plant (one physical endpoint). The global master switch must also be on for any write.')
+                    : this._devDetail?.endpoint_id
+                    ? this.t('devices.writeLock.endpointHint', 'Endpoint-level lock — locking/unlocking here applies to EVERY unit of the endpoint (one physical endpoint). The global master switch must also be on for any write.')
                     : this.t('devices.writeLock.hint', 'Locked: every Modbus write to this device is refused, declared or not. The global master switch (Settings → Security → Allow Modbus writes) must also be on for any write.')}</p>
             </div>
         </div>`;
@@ -750,13 +750,13 @@ Object.assign(JanitzaMonitor.prototype, {
 
     _sinkCardMqtt(d, primary) {
         const s = this._devDetail.sinks?.mqtt || {};
-        const plant = !!this._devDetail?.plant_id;
-        const lock = primary || plant;   // #1 always publishes; plant units follow the plant
+        const endpoint = !!this._devDetail?.endpoint_id;
+        const lock = primary || endpoint;   // #1 always publishes; endpoint units follow the endpoint
         return `
         <div class="settings-card">
             <div class="settings-card-header">
                 <h3><i aria-hidden="true" class="bi bi-broadcast"></i> MQTT ${this._sinkStatusPill(s, d.mqtt_enabled, this._devDetail?.entry?.connected)}</h3>
-                <label class="switch-label" title="${primary ? this.t('devices.sink.lockedPrimary', 'Always on for device #1') : plant ? this.t('devices.sink.plantLevel', 'Set on the plant — applies to every unit') : ''}">
+                <label class="switch-label" title="${primary ? this.t('devices.sink.lockedPrimary', 'Always on for device #1') : endpoint ? this.t('devices.sink.endpointLevel', 'Set on the endpoint — applies to every unit') : ''}">
                     <input type="checkbox" id="ddvMqttEnabled" ${d.mqtt_enabled ? 'checked' : ''} ${lock ? 'disabled' : ''}>
                     <span>${this.t('devices.sink.enable', 'Enable')}</span>
                 </label>
@@ -767,12 +767,12 @@ Object.assign(JanitzaMonitor.prototype, {
                         <input type="text" id="ddvTopic" class="input" value="${this._esc(d.topic_prefix)}" disabled></div>
                 </div>
                 <label style="display:flex;align-items:center;gap:8px;margin-top:6px;">
-                    <input type="checkbox" id="ddvHaDisc" ${d.ha_discovery_enabled ? 'checked' : ''} ${plant ? 'disabled' : ''}>
+                    <input type="checkbox" id="ddvHaDisc" ${d.ha_discovery_enabled ? 'checked' : ''} ${endpoint ? 'disabled' : ''}>
                     ${this.t('devices.wizard.haDiscovery', 'Publish Home Assistant MQTT discovery for this device')}</label>
                 <p class="field-hint"><i aria-hidden="true" class="bi bi-lock"></i> ${primary
                     ? this.t('devices.sink.mqttLockNote', 'Topic and MQTT output are fixed for device #1 (protects existing history & Home Assistant).')
-                    : plant
-                    ? this.t('devices.sink.plantLevel', 'Set on the plant — applies to every unit')
+                    : endpoint
+                    ? this.t('devices.sink.endpointLevel', 'Set on the endpoint — applies to every unit')
                     : this.t('devices.sink.routeLockNote', 'Topic prefix is fixed after creation — changing it would orphan existing history & HA entities.')}</p>
             </div>
         </div>`;
@@ -780,13 +780,13 @@ Object.assign(JanitzaMonitor.prototype, {
 
     _sinkCardInflux(d, primary) {
         const s = this._devDetail.sinks?.influxdb || {};
-        const plant = !!this._devDetail?.plant_id;
-        const lock = primary || plant;
+        const endpoint = !!this._devDetail?.endpoint_id;
+        const lock = primary || endpoint;
         return `
         <div class="settings-card">
             <div class="settings-card-header">
                 <h3><i aria-hidden="true" class="bi bi-database"></i> InfluxDB ${this._sinkStatusPill(s, d.influxdb_enabled, this._devDetail?.entry?.connected)}</h3>
-                <label class="switch-label" title="${primary ? this.t('devices.sink.lockedPrimary', 'Always on for device #1') : plant ? this.t('devices.sink.plantLevel', 'Set on the plant — applies to every unit') : ''}">
+                <label class="switch-label" title="${primary ? this.t('devices.sink.lockedPrimary', 'Always on for device #1') : endpoint ? this.t('devices.sink.endpointLevel', 'Set on the endpoint — applies to every unit') : ''}">
                     <input type="checkbox" id="ddvInfluxEnabled" ${d.influxdb_enabled ? 'checked' : ''} ${lock ? 'disabled' : ''}>
                     <span>${this.t('devices.sink.enable', 'Enable')}</span>
                 </label>
@@ -1085,19 +1085,19 @@ Object.assign(JanitzaMonitor.prototype, {
                     </div>
                     <pre id="ddvHttpPreview" class="http-feed-preview" aria-live="polite"></pre>
                 </div>
-                ${this._plantSinkNote()}
+                ${this._endpointSinkNote()}
                 <p class="field-hint"><i aria-hidden="true" class="bi bi-info-circle"></i> ${this.t('devices.sink.httpNote', 'Serves the live values of this device as read-only JSON, keyed by measurement name (Solar-API style) — pull it from any HTTP client without MQTT or InfluxDB. Guarded by the same IP allowlist / auth as the UI.')}</p>
             </div>
         </div>`;
     },
 
-    // A plant is ONE endpoint: these sinks are declared on the plant and apply
+    // An endpoint is ONE endpoint: these sinks are declared on the endpoint and apply
     // to every unit, so say so next to the switch that flips them.
-    _plantSinkNote() {
-        const pid = this._devDetail?.plant_id;
+    _endpointSinkNote() {
+        const pid = this._devDetail?.endpoint_id;
         if (!pid) return '';
-        return `<p class="field-hint"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this.t('devices.plantUnit.sinkShared',
-            'Declared on the plant — switching this applies to every unit of')} <code>${this._esc(pid)}</code>.</p>`;
+        return `<p class="field-hint"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this.t('devices.endpointUnit.sinkShared',
+            'Declared on the endpoint — switching this applies to every unit of')} <code>${this._esc(pid)}</code>.</p>`;
     },
 
     _sinkCardRest(d, primary) {
@@ -1134,7 +1134,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <button class="btn btn-ghost btn-sm" ${this._act('testRestPush', [this._devDetail.id])}><i aria-hidden="true" class="bi bi-send"></i> ${this.t('rest.test', 'Test push')}</button>
                     <button class="btn btn-primary btn-sm" ${this._act('saveRestPush', [this._devDetail.id])}><i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}</button>
                 </div>
-                ${this._plantSinkNote()}
+                ${this._endpointSinkNote()}
                 <p class="field-hint"><i aria-hidden="true" class="bi bi-info-circle"></i> ${this.t('rest.note', 'POSTs the live values of this device as JSON to the URL every interval. External URLs are allowed. Put a Bearer / API key in Headers (stored masked).')}</p>
             </div>
         </div>`;

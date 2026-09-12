@@ -1,17 +1,17 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
 # Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
-"""Plant-level aggregates — a plant is a real entity, so it publishes its own
+"""Endpoint-level aggregates — an endpoint is a real entity, so it publishes its own
 output like any device.
 
-For every enabled plant, its units' values are combined by canonical-name rule
+For every enabled endpoint, its units' values are combined by canonical-name rule
 and published:
 
-- MQTT under ``mbg/plants/<plant_id>/<canonical topic>`` (the entity-typed
+- MQTT under ``mbg/endpoints/<endpoint_id>/<canonical topic>`` (the entity-typed
   namespace next to ``mbg/devices/…``), plus ``units_online`` / ``units_total``
   / ``status``;
-- InfluxDB into the plant's bucket, SAME canonical measurements/fields as the
-  units, tagged ``device=<plant_id>`` + ``aggregate=plant`` — a dashboard reads
-  plant totals exactly like it reads a device, filtered by tag.
+- InfluxDB into the endpoint's bucket, SAME canonical measurements/fields as the
+  units, tagged ``device=<endpoint_id>`` + ``aggregate=endpoint`` — a dashboard reads
+  endpoint totals exactly like it reads a device, filtered by tag.
 
 Three rules, because three kinds of quantity behave differently:
 
@@ -24,7 +24,7 @@ Three rules, because three kinds of quantity behave differently:
   freshness gate.
 * **COUNTERS** — ``energy_*``. Last-known value at ANY age, and published only
   when EVERY expected unit has one. A sleeping inverter still holds its lifetime
-  energy: dropping it from the sum makes the plant counter jump BACKWARDS, which
+  energy: dropping it from the sum makes the endpoint counter jump BACKWARDS, which
   poisons every ``increase()`` / derivative downstream (an evening of 4 units
   reporting 178 MWh became 113 MWh the moment three of them went dark). An
   incomplete sum is a lie, so a missing unit withholds the leaf entirely and the
@@ -34,14 +34,14 @@ Three rules, because three kinds of quantity behave differently:
 1 kW inverter like a 20 kW one. It is derived as Σ active / Σ apparent, the only
 definition that survives units of different size. (Until the Fronius templates
 normalize PF to a fraction, a unit's own ``power_factor/total`` is still the raw
-SunSpec ±100 while the plant's is a true ±1 — see
+SunSpec ±100 while the endpoint's is a true ±1 — see
 ``docs/fronius-migration-plan.md``, phase P3.)
 
 ``units_online`` / ``units_total`` / ``status`` publish on EVERY cycle,
-including the one where nothing is fresh: a plant that never says ``offline``
-leaves its consumers unable to tell a dark plant from a dead gateway.
+including the one where nothing is fresh: an endpoint that never says ``offline``
+leaves its consumers unable to tell a dark endpoint from a dead gateway.
 
-Opt-out per plant with ``aggregates: false`` in the ``plants:`` entry.
+Opt-out per endpoint with ``aggregates: false`` in the ``endpoints:`` entry.
 """
 from __future__ import annotations
 
@@ -86,14 +86,14 @@ def _rule_for(name: str) -> Optional[str]:
 
 
 def aggregation_rule(name: str) -> Optional[str]:
-    """How a canonical field combines across a plant's units: ``sum`` | ``avg``
+    """How a canonical field combines across an endpoint's units: ``sum`` | ``avg``
     | ``counter`` | None (not aggregated). Public because the history picker
-    needs to know which of a unit's series a plant actually republishes."""
+    needs to know which of a unit's series an endpoint actually republishes."""
     return _rule_for(name)
 
 
 def _derive_power_factor(out: Dict[str, Any]) -> Optional[float]:
-    """A plant's power factor is Σ active / Σ apparent. None when the plant has
+    """An endpoint's power factor is Σ active / Σ apparent. None when the endpoint has
     no apparent power (register not selected) or stands still (Σ apparent 0)."""
     p, s = out.get("power_active_total"), out.get("power_apparent_total")
     if not isinstance(p, (int, float)) or isinstance(p, bool):
@@ -103,19 +103,19 @@ def _derive_power_factor(out: Dict[str, Any]) -> Optional[float]:
     return round(max(-1.0, min(1.0, p / s)), 4)
 
 
-def compute_plant_aggregates(config, registry, plant_id: str,
+def compute_endpoint_aggregates(config, registry, endpoint_id: str,
                              now: Optional[float] = None) -> Dict[str, Any]:
-    """Pure computation: ``{name: value}`` for one plant from its units' live
+    """Pure computation: ``{name: value}`` for one endpoint from its units' live
     stores, plus ``units_online`` / ``units_total`` / ``status``. Shared by the
-    publisher thread and the ``/api/plants`` endpoint.
+    publisher thread and the ``/api/endpoints`` endpoint.
 
     ``units_total`` counts the units EXPECTED to contribute (the enabled ones) —
     the denominator of "how many are producing", not the configuration census
     the UI lists. A disabled unit is excluded everywhere: it must not hold the
-    plant's counters hostage, nor make ``status`` unreachable from ``online``.
+    endpoint's counters hostage, nor make ``status`` unreachable from ``online``.
     """
     now = now if now is not None else time.time()
-    expected = [d for d in config.plant_devices(plant_id)
+    expected = [d for d in config.endpoint_devices(endpoint_id)
                 if getattr(d, "enabled", True)]
     fresh: Dict[str, List[float]] = {}
     counters: Dict[str, List[float]] = {}
@@ -161,33 +161,33 @@ def compute_plant_aggregates(config, registry, plant_id: str,
     return out
 
 
-def plant_bucket(plant: Dict, plant_id: str) -> Optional[str]:
-    """The InfluxDB bucket for a plant's OWN points. The plant's units resolve
+def endpoint_bucket(endpoint: Dict, endpoint_id: str) -> Optional[str]:
+    """The InfluxDB bucket for an endpoint's OWN points. The endpoint's units resolve
     ``${unit_id}`` / ``${device_id}`` per unit; the aggregate belongs to no unit,
-    so every placeholder resolves to the plant itself — a legal, findable bucket
+    so every placeholder resolves to the endpoint itself — a legal, findable bucket
     name instead of a literal ``fronius_${unit_id}`` on the wire."""
-    bucket = (plant.get("influxdb") or {}).get("bucket") or None
+    bucket = (endpoint.get("influxdb") or {}).get("bucket") or None
     if not bucket:
         return None
-    return (str(bucket).replace("${plant_id}", plant_id)
-                       .replace("${device_id}", plant_id)
-                       .replace("${unit_id}", plant_id))
+    return (str(bucket).replace("${endpoint_id}", endpoint_id)
+                       .replace("${device_id}", endpoint_id)
+                       .replace("${unit_id}", endpoint_id))
 
 
-class PlantAggregator(threading.Thread):
-    """Periodic publisher of plant aggregates (daemon thread, one per app)."""
+class EndpointAggregator(threading.Thread):
+    """Periodic publisher of endpoint aggregates (daemon thread, one per app)."""
 
     def __init__(self, config, registry, get_mqtt, get_influx,
                  interval_s: float = 10.0):
-        super().__init__(daemon=True, name="Plant-Aggregator")
+        super().__init__(daemon=True, name="Endpoint-Aggregator")
         self._config = config
         self._registry = registry
         self._get_mqtt = get_mqtt
         self._get_influx = get_influx
         self._interval = interval_s
         self._stop = threading.Event()
-        # per-plant {name: last written value} — InfluxDB honours the same
-        # change-detection contract as every other sink, so a plant standing
+        # per-endpoint {name: last written value} — InfluxDB honours the same
+        # change-detection contract as every other sink, so an endpoint standing
         # still overnight does not write 8 640 identical points per field
         self._influx_last: Dict[str, Dict[str, Any]] = {}
 
@@ -195,7 +195,7 @@ class PlantAggregator(threading.Thread):
         self._stop.set()
 
     def run(self):
-        logger.info("plant aggregator started (interval %.0fs)", self._interval)
+        logger.info("endpoint aggregator started (interval %.0fs)", self._interval)
         # small startup delay so the first cycle sees warmed-up stores
         self._stop.wait(self._interval)
         n = 0
@@ -203,22 +203,22 @@ class PlantAggregator(threading.Thread):
             try:
                 self._publish_all(log=(n % 60 == 0))
             except Exception as e:  # noqa: BLE001 — the loop must survive anything
-                logger.warning("plant aggregator cycle failed: %s", e, exc_info=True)
+                logger.warning("endpoint aggregator cycle failed: %s", e, exc_info=True)
             n += 1
             self._stop.wait(self._interval)
 
     def _publish_all(self, log: bool = False):
-        for p in self._config.plants:
+        for p in self._config.endpoints:
             pid = p.get("id")
             if not pid or not bool(p.get("enabled", True)):
                 continue
             if not bool(p.get("aggregates", True)):
                 continue
-            agg = compute_plant_aggregates(self._config, self._registry, pid)
+            agg = compute_endpoint_aggregates(self._config, self._registry, pid)
             if log:
                 fields = sum(1 for k in agg if k not in _META)
                 energy = sum(1 for k in agg if k.startswith("energy_"))
-                logger.info("plant %s aggregates: %s online=%s/%s fields=%d "
+                logger.info("endpoint %s aggregates: %s online=%s/%s fields=%d "
                             "energy_leaves=%d (power_active_total=%s)", pid,
                             agg.get("status", "—"), agg.get("units_online"),
                             agg.get("units_total"), fields, energy,
@@ -233,14 +233,14 @@ class PlantAggregator(threading.Thread):
         mqtt = self._get_mqtt()
         if mqtt is None or not getattr(mqtt, "connected", False):
             return
-        base = f"mbg/plants/{pid}"
+        base = f"mbg/endpoints/{pid}"
         for name, val in agg.items():
             leaf = name if name in _META else (mqtt_topic_for(name) or name)
             # publish_if_changed keeps the change-detection semantics every
             # other topic has (heartbeat republish included)
             mqtt.publish_if_changed(f"{base}/{leaf}", val)
 
-    def _publish_influx(self, plant: Dict, pid: str, agg: Dict[str, Any]):
+    def _publish_influx(self, endpoint: Dict, pid: str, agg: Dict[str, Any]):
         influx = self._get_influx()
         if influx is None or not getattr(influx, "connected", False):
             return
@@ -249,7 +249,7 @@ class PlantAggregator(threading.Thread):
             from influxdb_client import Point, WritePrecision
         except Exception:  # noqa: BLE001 — influx client optional in tests
             return
-        bucket = plant_bucket(plant, pid)
+        bucket = endpoint_bucket(endpoint, pid)
         changed_only = getattr(influx, "publish_mode", "changed") == "changed"
         last = self._influx_last.setdefault(pid, {})
         ts = time.time()
@@ -258,9 +258,9 @@ class PlantAggregator(threading.Thread):
                 continue                     # status text is MQTT-only
             if changed_only and last.get(name) == val:
                 continue
-            meas = "plant" if name in _META else (measurement_for(name) or "plant")
+            meas = "endpoint" if name in _META else (measurement_for(name) or "endpoint")
             point = (Point(meas)
-                     .tag("device", pid).tag("aggregate", "plant")
+                     .tag("device", pid).tag("aggregate", "endpoint")
                      .field(name, float(val))
                      .time(int(ts * 1e9), WritePrecision.NS))
             influx.write_point(point, ts=ts, bucket=bucket)

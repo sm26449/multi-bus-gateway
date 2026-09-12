@@ -18,7 +18,7 @@
 
 A *leased* write carries a TTL. If it is not renewed before the TTL expires, the
 register is automatically reverted to a declared safe value. This protects the
-plant from a controller that crashes or hangs while holding a device at a
+endpoint from a controller that crashes or hangs while holding a device at a
 dangerous setpoint (e.g. an export limit stuck high while the battery fills).
 
 The manager is transport-agnostic: it stores a zero-arg ``revert`` callable per

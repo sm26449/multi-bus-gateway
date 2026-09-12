@@ -3,7 +3,7 @@
 """Templates ship DERIVED measurements (P3).
 
 A vendor's decoded status, an alarm flag or a derived total belongs WITH the
-device map, not retyped per unit — otherwise the fifth inverter of a plant
+device map, not retyped per unit — otherwise the fifth inverter of an endpoint
 speaks differently from the first four. A template's ``calculated`` block is
 seeded into every device made from it, the calc engine honours an explicit
 topic so a derived value lands on the branch it belongs to, and an ``enum``

@@ -216,7 +216,7 @@ its interval — the two numbers an interval is chosen from.
 | `allowlist` | `[]` (open) | IPs/CIDRs allowed to reach the HTTP API/UI. Loopback and the docker gateway are always allowed. |
 | `allow_nonlan_http_devices` | `false` (opt-in) | SSRF guard: HTTP/JSON device URLs must point at a private LAN host unless this is true |
 | `allow_writes` | `false` (opt-in) | master **arming** switch for Modbus writes (FC5/6/15/16). When armed, any device that is not `write_locked` can be written — declared registers with their template encoding + whatever guards were declared; undeclared registers via the raw path (`unguarded: true` in the payload). Every write is authenticated, rate-limited and audited. |
-| `primary_write_locked` | `true` | per-device write LOCK for the primary. Read-only used to be hardcoded; it is now this flag, defaulting to locked so the historical behavior survives upgrades. Unlock deliberately. Non-primary devices carry `write_locked` in their `devices[]`/`plants:` entry (default unlocked) — toggle from the device's Outputs tab. |
+| `primary_write_locked` | `true` | per-device write LOCK for the primary. Read-only used to be hardcoded; it is now this flag, defaulting to locked so the historical behavior survives upgrades. Unlock deliberately. Non-primary devices carry `write_locked` in their `devices[]`/`endpoints:` entry (default unlocked) — toggle from the device's Outputs tab. |
 | `write_rate_limit_per_s` | `10.0` | per-client-IP write rate limit on the write API; excess gets 429; `0` disables |
 
 ### `polling:`
@@ -331,19 +331,19 @@ devices:
 `rtu-tcp` speaks RTU framing over a TCP socket (a ser2net-style serial bridge);
 `rtu` opens a local serial port directly — see [rtu-serial.md](rtu-serial.md).
 
-### `plants:` — N units of the same device behind one endpoint
+### `endpoints:` — N units of the same device behind one endpoint
 
-A plant instantiates **one template** for **several unit IDs** on **one
+An endpoint instantiates **one template** for **several unit IDs** on **one
 endpoint** — the classic case is several inverters behind a single
 datalogger/gateway (Fronius DataManager, Deye/Huawei loggers, an RS-485
 multi-drop bridge). Each unit is materialized as an ordinary device (visible
 in `/api/devices` and the UI) with its **own socket** — deliberate:
 unit-switching on a shared socket corrupts some gateway buffers, and units
 must fail independently. Materialized devices are managed **through the
-plant**: device create/edit/delete refuses their ids.
+endpoint**: device create/edit/delete refuses their ids.
 
 ```yaml
-plants:
+endpoints:
   - id: fronius                  # required; device ids default to <id>-u<unit>
     name: Fronius PV
     template: fronius_sunspec_inverter
@@ -359,36 +359,36 @@ plants:
     influxdb:
       bucket: fronius_shadow
       device_tag: inverter_${unit_id}
-    aggregates: true             # false = no plant-level output (see below)
+    aggregates: true             # false = no endpoint-level output (see below)
     write_locked: false          # applies to every unit (one endpoint, one lock)
     http_output: { enabled: false }        # applies to every unit
     rest_push:   { enabled: false, url: "" }   # applies to every unit
 ```
 
-A plant is ONE endpoint, so the sinks that belong to the endpoint are declared
-once: `write_locked`, `http_output` and `rest_push` sit on the plant and are
+An endpoint is ONE endpoint, so the sinks that belong to the endpoint are declared
+once: `write_locked`, `http_output` and `rest_push` sit on the endpoint and are
 propagated to every materialized unit. They are edited from any unit's Outputs
-tab (the switch says it applies plant-wide) or from the plant page.
+tab (the switch says it applies endpoint-wide) or from the endpoint page.
 
-Editing a plant re-materializes its units only when something they are BUILT
-from changed (connection, template, unit membership, routing, the plant-level
+Editing an endpoint re-materializes its units only when something they are BUILT
+from changed (connection, template, unit membership, routing, the endpoint-level
 flags). A settings-only edit — a rename, the `aggregates` toggle, a unit's
 display name — keeps every poller running: a cosmetic save must not punch a
 hole in acquisition.
 
-`${unit_id}`, `${plant_id}` and `${device_id}` substitute per unit in the
+`${unit_id}`, `${endpoint_id}` and `${device_id}` substitute per unit in the
 topic prefix, bucket, device tag and name. Each unit's register selection is
 seeded from the template at boot (`devices/<id>/selected_registers.json`) and
-can then be tuned per unit like any device. API: `GET/POST /api/plants`,
-`GET/PUT/DELETE /api/plants/{id}` (unit availability is aggregated in the
-`GET` responses). Deleting a plant keeps the units' register files on disk,
+can then be tuned per unit like any device. API: `GET/POST /api/endpoints`,
+`GET/PUT/DELETE /api/endpoints/{id}` (unit availability is aggregated in the
+`GET` responses). Deleting an endpoint keeps the units' register files on disk,
 so re-adding it restores the selection.
 
-**Plant-level output** (`aggregates: true`, the default): every 10 s the
-plant publishes its units' combined values on `mbg/plants/<id>/<canonical
+**Endpoint-level output** (`aggregates: true`, the default): every 10 s the
+endpoint publishes its units' combined values on `mbg/endpoints/<id>/<canonical
 topic>`, plus `units_online`, `units_total` and `status`. The same values go
-to InfluxDB under the canonical measurements, tagged `device=<plant id>,
-aggregate=plant`, written on change like every other sink.
+to InfluxDB under the canonical measurements, tagged `device=<endpoint id>,
+aggregate=endpoint`, written on change like every other sink.
 
 Three rules, because three kinds of quantity behave differently:
 
@@ -399,7 +399,7 @@ Three rules, because three kinds of quantity behave differently:
 | `energy_*` (counters) | sum of **last-known** values | none — but published only when EVERY expected unit has a value |
 
 A counter is never freshness-gated: a sleeping inverter still holds its
-lifetime energy, and dropping it would make the plant total jump backwards
+lifetime energy, and dropping it would make the endpoint total jump backwards
 and poison every `increase()` downstream. An incomplete sum is withheld
 entirely, so the retained topic keeps the last COMPLETE total.
 
@@ -412,11 +412,11 @@ is exactly what a consumer needs at nightfall. `units_total` counts the units
 EXPECTED to contribute (the enabled ones), so a disabled unit neither holds the
 counters hostage nor makes `online` unreachable.
 
-The aggregate's InfluxDB bucket resolves `${plant_id}` / `${device_id}` /
-`${unit_id}` all to the plant itself — the plant's own points belong to no
+The aggregate's InfluxDB bucket resolves `${endpoint_id}` / `${device_id}` /
+`${unit_id}` all to the endpoint itself — the endpoint's own points belong to no
 single unit.
 
-**Device liveness leaves** (every device, plant units included): retained
+**Device liveness leaves** (every device, endpoint units included): retained
 `availability` (`online`/`offline`), `runtime/status` (same verdict),
 `runtime/last_seen` (ISO timestamp of the last successful read) and
 `runtime/read_errors` (cumulative failed reads), published on change next to

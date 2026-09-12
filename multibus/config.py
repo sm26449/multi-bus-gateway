@@ -151,7 +151,7 @@ class ModbusConfig:
     # of clients: N devices polling one of them at once do not go faster, they
     # go slower and start timing out. Queueing in the gateway turns a race back
     # into an orderly line. Off by default (a device with the endpoint to
-    # itself gains nothing); plants turn it on, because a plant IS one endpoint.
+    # itself gains nothing); endpoints turn it on, because an endpoint IS one endpoint.
     serialize_endpoint: bool = True
     # Share ONE socket with every other device behind the same access point.
     # A master device (DataManager, Modbus TCP/RTU gateway, RS-485 bridge)
@@ -216,8 +216,8 @@ class DeviceConfig:
     http_output_enabled: bool = False        # serve this device's live values as JSON (GET /api/meters/<id>)
     rest_push: Dict[str, Any] = field(default_factory=dict)   # push values to a URL: {enabled,url,interval_s,headers,format,verify_tls,timeout}
     pq_recorder: Dict[str, Any] = field(default_factory=dict)  # Jasic PQ event recorder: {enabled,poll_s,archive_waveforms,base_url}
-    plant_id: str = ""    # non-empty → materialized from a `plants:` entry
-                          # (managed via the plant, not the device CRUD)
+    endpoint_id: str = ""    # non-empty → materialized from a `endpoints:` entry
+                          # (managed via the endpoint, not the device CRUD)
     write_locked: bool = False   # per-device write lock (F3a): refuses every
                                  # write regardless of guards. The primary
                                  # defaults to locked (security.primary_write_locked).
@@ -226,7 +226,7 @@ class DeviceConfig:
         return {
             'id': self.id, 'name': self.name, 'template': self.template,
             'enabled': self.enabled, 'primary': self.primary,
-            'plant_id': self.plant_id, 'write_locked': self.write_locked,
+            'endpoint_id': self.endpoint_id, 'write_locked': self.write_locked,
             'ha_discovery_enabled': self.ha_discovery_enabled,
             'mqtt_enabled': self.mqtt_enabled,
             'influxdb_enabled': self.influxdb_enabled,
@@ -508,9 +508,9 @@ class Config:
         self.all_registers: Dict = {}
         self.devices: List[DeviceConfig] = []
         self._raw_devices: List[Dict] = []
-        # Plants (one template + one endpoint + N unit ids → N materialized
+        # Endpoints (one template + one endpoint + N unit ids → N materialized
         # devices). Raw yaml-shaped list; expanded in _build_devices().
-        self._raw_plants: List[Dict] = []
+        self._raw_endpoints: List[Dict] = []
         # HTTP/JSON output sink for the PRIMARY device (non-primary devices carry
         # their own flag in the raw `devices[]` list). Off by default — the
         # /api/meters/<id> endpoint is opt-in per device.
@@ -578,24 +578,24 @@ class Config:
             dev = self._device_from_raw(d)
             if dev is not None:
                 devices.append(dev)
-        # Plants: one template + one endpoint + N unit ids → N materialized
+        # Endpoints: one template + one endpoint + N unit ids → N materialized
         # devices, each with its OWN socket. Deliberate: unit-switching on a
         # shared socket corrupts some gateway buffers (Fronius DataManager),
         # and independent sockets make units fail independently.
-        for pid, d in self._expand_plants():
+        for pid, d in self._expand_endpoints():
             did = str(d.get('id', '')).strip()
             if did == PRIMARY_DEVICE_ID or any(x.id == did for x in devices):
-                logger.warning(f"plants[{pid}]: materialized id {did!r} "
+                logger.warning(f"endpoints[{pid}]: materialized id {did!r} "
                                f"collides with an existing device — skipped")
                 continue
-            dev = self._device_from_raw(d, plant_id=pid)
+            dev = self._device_from_raw(d, endpoint_id=pid)
             if dev is not None:
                 devices.append(dev)
         self.devices = devices
 
-    def _device_from_raw(self, d: Dict, plant_id: str = "") -> Optional[DeviceConfig]:
+    def _device_from_raw(self, d: Dict, endpoint_id: str = "") -> Optional[DeviceConfig]:
         """Build ONE DeviceConfig from its raw yaml dict (a devices[] entry or
-        a plant-materialized dict). Returns None (with a warning) on invalid
+        an endpoint-materialized dict). Returns None (with a warning) on invalid
         values — a single malformed entry must not crash the whole boot."""
         did = str(d.get('id', '')).strip()
         conn = d.get('connection', {}) or {}
@@ -607,7 +607,7 @@ class Config:
         try:
             return DeviceConfig(
                 id=did,
-                plant_id=plant_id,
+                endpoint_id=endpoint_id,
                 write_locked=bool(d.get('write_locked', False)),
                 name=d.get('name', did),
                 template=d.get('template', ''),
@@ -661,10 +661,10 @@ class Config:
             return None
 
     @staticmethod
-    def _plant_units(p: Dict) -> List[Dict]:
-        """Normalize a plant's ``units`` list. Accepts bare unit ids
+    def _endpoint_units(p: Dict) -> List[Dict]:
+        """Normalize an endpoint's ``units`` list. Accepts bare unit ids
         (``[1, 2, 3]``) or dicts (``{unit_id, id?, name?}``); returns
-        ``{unit_id, id, name}`` with the id defaulting to ``<plant>-u<unit>``.
+        ``{unit_id, id, name}`` with the id defaulting to ``<endpoint>-u<unit>``.
         Invalid entries are skipped with a warning."""
         pid = str(p.get('id', '')).strip()
         out: List[Dict] = []
@@ -675,7 +675,7 @@ class Config:
                 if not (0 <= uid <= 255):
                     raise ValueError
             except (TypeError, ValueError):
-                logger.warning(f"plants[{pid}]: invalid unit {raw_uid!r} skipped")
+                logger.warning(f"endpoints[{pid}]: invalid unit {raw_uid!r} skipped")
                 continue
             ov = u if isinstance(u, dict) else {}
             out.append({'unit_id': uid,
@@ -683,33 +683,33 @@ class Config:
                         'name': str(ov.get('name') or '')})
         return out
 
-    def _expand_plants(self) -> List[tuple]:
-        """Expand ``plants:`` into (plant_id, raw-device-dict) pairs, shaped
+    def _expand_endpoints(self) -> List[tuple]:
+        """Expand ``endpoints:`` into (endpoint_id, raw-device-dict) pairs, shaped
         exactly like devices[] entries so both flow through _device_from_raw.
-        ``${unit_id}`` / ``${plant_id}`` / ``${device_id}`` substitute in the
+        ``${unit_id}`` / ``${endpoint_id}`` / ``${device_id}`` substitute in the
         MQTT topic prefix, InfluxDB bucket, device tag and name."""
         out: List[tuple] = []
-        for p in self._raw_plants:
+        for p in self._raw_endpoints:
             pid = str(p.get('id', '')).strip()
             if not pid:
-                logger.warning("plants[]: entry without id skipped")
+                logger.warning("endpoints[]: entry without id skipped")
                 continue
-            # a disabled plant still materializes (units stay visible/managed);
+            # a disabled endpoint still materializes (units stay visible/managed);
             # enabled=False propagates so no clients/pollers are started
             conn = dict(p.get('connection', {}) or {})
             mqtt_cfg = dict(p.get('mqtt', {}) or {})
             influx_cfg = dict(p.get('influxdb', {}) or {})
             seen_units: set = set()
-            for u in self._plant_units(p):
+            for u in self._endpoint_units(p):
                 uid, did = u['unit_id'], u['id']
                 if uid in seen_units:
-                    logger.warning(f"plants[{pid}]: duplicate unit {uid} skipped")
+                    logger.warning(f"endpoints[{pid}]: duplicate unit {uid} skipped")
                     continue
                 seen_units.add(uid)
 
                 def sub(s: str) -> str:
                     return (str(s).replace('${unit_id}', str(uid))
-                                  .replace('${plant_id}', pid)
+                                  .replace('${endpoint_id}', pid)
                                   .replace('${device_id}', did))
 
                 m = dict(mqtt_cfg)
@@ -729,7 +729,7 @@ class Config:
                     'connection': {**conn, 'unit_id': uid},
                     'mqtt': m,
                     'influxdb': i,
-                    # a plant is ONE endpoint: its sinks are declared once and
+                    # an endpoint is ONE endpoint: its sinks are declared once and
                     # apply to every unit, like the write lock above
                     **({'http_output': dict(p['http_output'])}
                        if p.get('http_output') else {}),
@@ -766,9 +766,9 @@ class Config:
             raise ValueError(f"'{PRIMARY_DEVICE_ID}' is the primary device — "
                              "edit it via the Modbus settings")
         _ex = self.get_device(did)
-        if _ex is not None and _ex.plant_id:
-            raise ValueError(f"device {did!r} is materialized from plant "
-                             f"{_ex.plant_id!r} — edit the plant instead")
+        if _ex is not None and _ex.endpoint_id:
+            raise ValueError(f"device {did!r} is materialized from endpoint "
+                             f"{_ex.endpoint_id!r} — edit the endpoint instead")
         # Transactional: snapshot the raw list so a build/save failure restores
         # the PREVIOUS state exactly, instead of leaving the old entry deleted
         # (which a later unrelated save would then persist — the device would
@@ -791,20 +791,20 @@ class Config:
     def set_write_locked(self, device_id: str, locked: bool) -> None:
         """Set the per-device write lock and persist. Primary → the
         security.primary_write_locked flag; devices[] entries → their dict;
-        plant units → the PLANT's flag (applies to every unit — a plant is one
+        endpoint units → the ENDPOINT's flag (applies to every unit — an endpoint is one
         physical endpoint, its units lock together)."""
         dev = self.get_device(device_id)
         if dev is None:
             raise ValueError(f"device {device_id!r} not found")
         if dev.primary:
             self.security.primary_write_locked = bool(locked)
-        elif dev.plant_id:
-            for p in self._raw_plants:
-                if p.get('id') == dev.plant_id:
+        elif dev.endpoint_id:
+            for p in self._raw_endpoints:
+                if p.get('id') == dev.endpoint_id:
                     p['write_locked'] = bool(locked)
                     break
             else:
-                raise ValueError(f"plant {dev.plant_id!r} not found")
+                raise ValueError(f"endpoint {dev.endpoint_id!r} not found")
         else:
             for d in self._raw_devices:
                 if d.get('id') == device_id:
@@ -818,16 +818,16 @@ class Config:
     def set_http_output(self, device_id: str, enabled: bool) -> None:
         """Enable/disable the HTTP/JSON output sink for a device and persist.
         Primary → the flat `http_output:` section; devices[] entries → their
-        own block; plant units → the PLANT's block, applying to every unit (a
-        plant is one endpoint, so its sinks are declared once — the same rule
+        own block; endpoint units → the ENDPOINT's block, applying to every unit (a
+        endpoint is one endpoint, so its sinks are declared once — the same rule
         the write lock follows)."""
         dev = self.get_device(device_id)
         if dev is None:
             raise ValueError(f"device {device_id!r} not found")
         if dev.primary:
             self.http_output_primary_enabled = bool(enabled)
-        elif dev.plant_id:
-            self._plant_entry_for(dev.plant_id).setdefault(
+        elif dev.endpoint_id:
+            self._endpoint_entry_for(dev.endpoint_id).setdefault(
                 'http_output', {})['enabled'] = bool(enabled)
         else:
             for d in self._raw_devices:
@@ -858,25 +858,25 @@ class Config:
         self._build_devices()
         self.save_yaml_config()
 
-    def _plant_entry_for(self, plant_id: str) -> Dict:
-        """The raw plants[] entry, for a setter that writes a plant-level flag."""
-        for p in self._raw_plants:
-            if p.get('id') == plant_id:
+    def _endpoint_entry_for(self, endpoint_id: str) -> Dict:
+        """The raw endpoints[] entry, for a setter that writes an endpoint-level flag."""
+        for p in self._raw_endpoints:
+            if p.get('id') == endpoint_id:
                 return p
-        raise ValueError(f"plant {plant_id!r} not found")
+        raise ValueError(f"endpoint {endpoint_id!r} not found")
 
     def set_rest_push(self, device_id: str, cfg: Dict) -> None:
         """Set the REST push config for a device and persist. Primary → flat
-        `rest_push:` section; devices[] entries → their own block; plant units
-        → the PLANT's block (one endpoint, one declaration)."""
+        `rest_push:` section; devices[] entries → their own block; endpoint units
+        → the ENDPOINT's block (one endpoint, one declaration)."""
         dev = self.get_device(device_id)
         if dev is None:
             raise ValueError(f"device {device_id!r} not found")
         cfg = dict(cfg or {})
         if dev.primary:
             self.rest_push_primary = cfg
-        elif dev.plant_id:
-            self._plant_entry_for(dev.plant_id)['rest_push'] = cfg
+        elif dev.endpoint_id:
+            self._endpoint_entry_for(dev.endpoint_id)['rest_push'] = cfg
         else:
             for d in self._raw_devices:
                 if d.get('id') == device_id:
@@ -943,54 +943,54 @@ class Config:
             raise ValueError("device is active — delete it first")
         return self._tombstones.forget(device_id)
 
-    # ── plants ─────────────────────────────────────────────────────────────
+    # ── endpoints ─────────────────────────────────────────────────────────────
 
     @property
-    def plants(self) -> List[Dict]:
-        """The raw ``plants:`` entries (yaml-shaped, copies)."""
-        return [dict(p) for p in self._raw_plants]
+    def endpoints(self) -> List[Dict]:
+        """The raw ``endpoints:`` entries (yaml-shaped, copies)."""
+        return [dict(p) for p in self._raw_endpoints]
 
-    def get_raw_plant(self, plant_id: str) -> Optional[Dict]:
-        return next((dict(p) for p in self._raw_plants
-                     if p.get('id') == plant_id), None)
+    def get_raw_endpoint(self, endpoint_id: str) -> Optional[Dict]:
+        return next((dict(p) for p in self._raw_endpoints
+                     if p.get('id') == endpoint_id), None)
 
-    def plant_devices(self, plant_id: str) -> List[DeviceConfig]:
-        """The materialized DeviceConfigs of one plant, in units[] order."""
-        return [d for d in self.devices if d.plant_id == plant_id]
+    def endpoint_devices(self, endpoint_id: str) -> List[DeviceConfig]:
+        """The materialized DeviceConfigs of one endpoint, in units[] order."""
+        return [d for d in self.devices if d.endpoint_id == endpoint_id]
 
-    def upsert_raw_plant(self, raw: Dict) -> List[DeviceConfig]:
-        """Create or update a plant from its raw yaml-shaped dict, re-expand
+    def upsert_raw_endpoint(self, raw: Dict) -> List[DeviceConfig]:
+        """Create or update an endpoint from its raw yaml-shaped dict, re-expand
         the device list and persist. Returns the materialized DeviceConfigs.
         Transactional — a build/save failure restores the previous state."""
         pid = str(raw.get('id', '')).strip()
         if not pid:
-            raise ValueError("plant id is required")
-        _snapshot = [dict(p) for p in self._raw_plants]
+            raise ValueError("endpoint id is required")
+        _snapshot = [dict(p) for p in self._raw_endpoints]
         try:
-            self._raw_plants = ([p for p in self._raw_plants
+            self._raw_endpoints = ([p for p in self._raw_endpoints
                                  if p.get('id') != pid] + [raw])
             self._build_devices()
-            made = self.plant_devices(pid)
+            made = self.endpoint_devices(pid)
             if not made:
-                raise ValueError(f"plant {pid!r} produced no devices — check "
+                raise ValueError(f"endpoint {pid!r} produced no devices — check "
                                  "its units[] (valid unit ids 0..255, ids "
                                  "must not collide with existing devices)")
             self.save_yaml_config()
             return made
         except Exception:
-            self._raw_plants = _snapshot
+            self._raw_endpoints = _snapshot
             self._build_devices()
             raise
 
-    def delete_plant(self, plant_id: str) -> List[str]:
-        """Remove a plant; its materialized devices vanish on rebuild. Returns
+    def delete_endpoint(self, endpoint_id: str) -> List[str]:
+        """Remove an endpoint; its materialized devices vanish on rebuild. Returns
         the removed device ids (register files stay on disk for a re-add).
-        Raises ValueError when the plant does not exist."""
-        if self.get_raw_plant(plant_id) is None:
-            raise ValueError(f"plant {plant_id!r} not found")
-        removed = [d.id for d in self.plant_devices(plant_id)]
-        self._raw_plants = [p for p in self._raw_plants
-                            if p.get('id') != plant_id]
+        Raises ValueError when the endpoint does not exist."""
+        if self.get_raw_endpoint(endpoint_id) is None:
+            raise ValueError(f"endpoint {endpoint_id!r} not found")
+        removed = [d.id for d in self.endpoint_devices(endpoint_id)]
+        self._raw_endpoints = [p for p in self._raw_endpoints
+                            if p.get('id') != endpoint_id]
         self._build_devices()
         self.save_yaml_config()
         return removed
@@ -1361,8 +1361,16 @@ class Config:
             # _build_devices() after env overrides.
             self._raw_devices = data.get('devices', []) or []
 
-            # Plants — expanded into materialized devices in _build_devices().
-            self._raw_plants = data.get('plants', []) or []
+            # Endpoints — expanded into materialized devices in _build_devices().
+            # `endpoints:` was called `plants:` until 3.51.0 — the concept was
+            # never PV-specific (a master fronting units is just as likely to be
+            # a meter bank or a sensor bus). A config written by an older
+            # version keeps loading; the next save writes the new key.
+            self._raw_endpoints = (data.get('endpoints')
+                                   or data.get('plants') or [])
+            if 'plants' in data and 'endpoints' not in data:
+                logger.info("config: `plants:` read as `endpoints:` — the next "
+                            "save writes the new key")
 
             # Optional alerting hooks (off unless enabled). Kept as a raw dict —
             # the AlertManager reads it. See multibus/alerts.py.
@@ -1913,10 +1921,10 @@ class Config:
         if self._raw_devices:
             data['devices'] = self._raw_devices
 
-        # Plants persist as their raw entries — the materialized devices are
+        # Endpoints persist as their raw entries — the materialized devices are
         # NEVER written to devices[] (they are derived, like the primary).
-        if self._raw_plants:
-            data['plants'] = self._raw_plants
+        if self._raw_endpoints:
+            data['endpoints'] = self._raw_endpoints
 
         # Preserve the optional alerts block across saves (device/config edits
         # rewrite this file; without this a save would silently drop alerting).

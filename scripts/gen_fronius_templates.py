@@ -3,7 +3,7 @@
 """Generate the Fronius SunSpec (int + scale factor) device templates.
 
 CANONICAL OUTPUT (2026-09-11 rework): register names come from the canonical
-dictionary (multibus/canonical_fields.py), so a Fronius plant publishes the
+dictionary (multibus/canonical_fields.py), so a Fronius endpoint publishes the
 SAME topics, fields and InfluxDB measurements as every other MBG device
 (meters/<device>/power/active/total, measurement `power_active`, field
 `power_active_total` — exactly like the Janitza reference). The LEGACY
@@ -294,7 +294,7 @@ def main():
         "SunSpec-name tree (…/W, …/PhVphA) is available via "
         "mqtt.compat_aliases. Use this when the datalogger's Modbus TCP "
         "slave is enabled and set to 'int+SF' (the Fronius default). For "
-        "SEVERAL inverters behind one datalogger, add a `plants:` entry with "
+        "SEVERAL inverters behind one datalogger, add a `endpoints:` entry with "
         "this template and the unit IDs (1, 2, ...) — each unit becomes its "
         "own device. CAUTION: dataloggers serve only a few concurrent Modbus "
         "clients; if another system polls the same datalogger, keep poll "

@@ -120,14 +120,14 @@ def build(ctx) -> APIRouter:
                                 detail="no JSON feed for this device")
         return _meter_payload(dev_cfg)
 
-    def _plant_history_registers(pid: str):
-        """The aggregate series a PLANT writes: the canonical names its units
+    def _endpoint_history_registers(pid: str):
+        """The aggregate series a ENDPOINT writes: the canonical names its units
         contribute (by the aggregator's own rules), the derived power factor,
         and the unit census. Derived from configuration, not from live values,
         so the picker is honest before the first reading of the day."""
-        from ..plant_aggregator import aggregation_rule
+        from ..endpoint_aggregator import aggregation_rule
         seen = {}
-        for d in config.plant_devices(pid):
+        for d in config.endpoint_devices(pid):
             regs, _g = config.load_device_registers(d)
             for x in regs:
                 if (not getattr(x, "influxdb_enabled", False)
@@ -149,12 +149,12 @@ def build(ctx) -> APIRouter:
     async def history_registers(device: str = Query(default="")):
         """Registers with InfluxDB enabled — for the history view's picker.
         ``device`` selects a non-primary device's register set (Tier 2), or a
-        PLANT's aggregate series."""
+        ENDPOINT's aggregate series."""
         dev = config.get_device(device) if device else None
-        if device and dev is None and hasattr(config, "get_raw_plant") \
-                and config.get_raw_plant(device) is not None:
+        if device and dev is None and hasattr(config, "get_raw_endpoint") \
+                and config.get_raw_endpoint(device) is not None:
             influxdb_publisher = ctx.influxdb_publisher
-            return {"registers": _plant_history_registers(device),
+            return {"registers": _endpoint_history_registers(device),
                     "influx_enabled": bool(
                         influxdb_publisher
                         and getattr(influxdb_publisher.config, "enabled", False))}
