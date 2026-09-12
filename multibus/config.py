@@ -145,6 +145,18 @@ class ModbusConfig:
     # fire in lock-step and hammer a shared transport (e.g. the RTU-over-TCP
     # serial bridge) at boot. 0 = off (all groups fire immediately, as before).
     startup_jitter_s: float = 0.0
+    # Serialize every Modbus transaction that shares this TCP endpoint
+    # (host:port) with other devices. Cheap gateways — a Fronius DataManager,
+    # most RS-485-over-TCP bridges — serialize internally and serve a handful
+    # of clients: N devices polling one of them at once do not go faster, they
+    # go slower and start timing out. Queueing in the gateway turns a race back
+    # into an orderly line. Off by default (a device with the endpoint to
+    # itself gains nothing); plants turn it on, because a plant IS one endpoint.
+    serialize_endpoint: bool = True
+    # How long a read may wait for its turn before giving up on the cycle. A
+    # missed turn is not a device failure: the value is simply skipped, exactly
+    # as if that cycle had not come round yet.
+    endpoint_wait_s: float = 10.0
     # Addresses this slave answers with ILLEGAL DATA ADDRESS (exception 02).
     # The batch builder never bridges a merged read across one of these (and
     # skips a selected register that sits on one), so a single unmapped address
@@ -606,6 +618,8 @@ class Config:
                         self.modbus.startup_jitter_s) or 0.0),
                     illegal_registers=parse_address_list(conn.get('illegal_registers')),
                     drop_all_zero=bool(conn.get('drop_all_zero', False)),
+                    serialize_endpoint=bool(conn.get('serialize_endpoint', True)),
+                    endpoint_wait_s=float(conn.get('endpoint_wait_s', 10.0)),
                     protocol=str(conn.get('protocol', 'tcp')).lower(),
                     serial_port=conn.get('serial_port', ''),
                     baudrate=int(conn.get('baudrate', 9600)),
@@ -1227,6 +1241,8 @@ class Config:
                         data.get('polling', {}).get('startup_jitter_s', 0.0)) or 0.0),
                     illegal_registers=parse_address_list(m.get('illegal_registers')),
                     drop_all_zero=bool(m.get('drop_all_zero', False)),
+                    serialize_endpoint=bool(m.get('serialize_endpoint', True)),
+                    endpoint_wait_s=float(m.get('endpoint_wait_s', 10.0)),
                 )
 
             # MQTT

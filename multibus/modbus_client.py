@@ -16,6 +16,7 @@
 #
 """Modbus TCP Client for Janitza UMG 512-PRO."""
 
+import contextlib
 import time
 import logging
 import random
@@ -31,6 +32,80 @@ from .config import ModbusConfig, SelectedRegister, PollGroup
 from .counter_filter import MonotonicFilter
 from .register_parser import RegisterParser
 from .value_decode import apply_corrections
+
+class _EndpointArbiter:
+    """A FIFO turnstile for one TCP endpoint.
+
+    Measured on a production Fronius DataManager serving five units: a
+    50-register read costs ~0.4 s when the gateway is the only caller, and
+    ~3 s when five of its own pollers race each other — with the aggregate
+    rate falling BELOW one read per second, and fresh connections starting to
+    time out. The device serializes internally and serves few clients, so
+    concurrency buys nothing and costs everything. Queueing here turns five
+    clients back into one well-mannered one.
+
+    FIFO on purpose: a plain Lock hands the turn to whoever the OS wakes, and
+    under steady contention one poller can wait a very long time. Every unit
+    gets its turn in the order it asked.
+    """
+
+    def __init__(self):
+        self._cv = threading.Condition()
+        self._waiting = deque()
+        self._busy = False
+        self.turns = 0
+        self.timeouts = 0
+
+    def acquire(self, budget_s: float) -> None:
+        """Wait for this caller's turn, or raise TimeoutError."""
+        me = object()
+        with self._cv:
+            self._waiting.append(me)
+            deadline = time.monotonic() + max(0.0, budget_s)
+            while self._busy or self._waiting[0] is not me:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    try:
+                        self._waiting.remove(me)
+                    except ValueError:  # pragma: no cover — already popped
+                        pass
+                    self.timeouts += 1
+                    self._cv.notify_all()
+                    raise TimeoutError("endpoint busy")
+                self._cv.wait(left)
+            self._waiting.popleft()
+            self._busy = True
+            self.turns += 1
+
+    def release(self) -> None:
+        with self._cv:
+            self._busy = False
+            self._cv.notify_all()
+
+    @contextlib.contextmanager
+    def turn(self, budget_s: float):
+        """Take the endpoint for one transaction, or raise TimeoutError."""
+        self.acquire(budget_s)
+        try:
+            yield
+        finally:
+            self.release()
+
+
+_ARBITERS: Dict[str, _EndpointArbiter] = {}
+_ARBITERS_LOCK = threading.Lock()
+
+
+def endpoint_arbiter(host: str, port: int) -> _EndpointArbiter:
+    """The shared turnstile for one host:port — the same object for every
+    connection that talks to it, whichever device or plant owns them."""
+    key = f"{host}:{port}"
+    with _ARBITERS_LOCK:
+        arb = _ARBITERS.get(key)
+        if arb is None:
+            arb = _ARBITERS[key] = _EndpointArbiter()
+        return arb
+
 
 # Suppress pymodbus exception logging
 logging.getLogger("pymodbus").setLevel(logging.CRITICAL)
@@ -138,6 +213,13 @@ class ModbusConnection:
         # to append a 'forced_reopen' every ~20 s, rotating the 50-entry event
         # ring in minutes and burying the events that mattered.
         self._reopen_logged = False
+        # Shared-endpoint arbiter: several devices (a plant's units) behind one
+        # gateway must not race each other on it. None = this connection has
+        # the endpoint to itself, and the gate below costs nothing.
+        self._arbiter = (endpoint_arbiter(config.host, config.port)
+                         if getattr(config, 'serialize_endpoint', False)
+                         and config.host else None)
+        self._bus_busy_logged = False
         # Retired connections never touch the wire again (audit DP-5): after a
         # config reconnect swaps in a NEW ModbusConnection, an orphan poller
         # still finishing its cycle would otherwise REOPEN this one on demand —
@@ -164,6 +246,41 @@ class ModbusConnection:
         # link would otherwise spam a warning per failed batch × poll group.
         self._reachable = True
 
+    @contextlib.contextmanager
+    def _endpoint_gate(self):
+        """Yield True once this connection may talk to a shared endpoint, or
+        False when its turn never came inside the budget. A missed turn is NOT
+        a device failure: the cycle is skipped, exactly as if it had not come
+        round yet, so a busy gateway never masquerades as a dead one."""
+        if self._arbiter is None:
+            yield True
+            return
+        try:
+            self._arbiter.acquire(self.config.endpoint_wait_s)
+        except TimeoutError:
+            self._note_bus_busy()
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            self._arbiter.release()
+
+    def _note_bus_busy(self) -> None:
+        """One event per episode of endpoint congestion — the operator needs to
+        know the gateway is the bottleneck, not to have the ring filled with it."""
+        if self._bus_busy_logged:
+            return
+        self._bus_busy_logged = True
+        logger.warning("%sshared endpoint busy: no turn within %.0fs — cycle skipped",
+                       self._tag_or_empty(), self.config.endpoint_wait_s)
+        self.record_event('warn', 'bus_busy',
+                          f'shared endpoint busy — no turn within '
+                          f'{self.config.endpoint_wait_s:.0f}s, cycle skipped')
+
+    def _tag_or_empty(self) -> str:
+        return f"[{self.trace_label}] " if self.trace_label else ""
+
     def _note_reachable(self) -> None:
         """A successful read — announce recovery once if we were down. Hot path:
         the plain-bool read short-circuits without a lock; only the rare
@@ -175,6 +292,7 @@ class ModbusConnection:
                 return
             self._reachable = True
             self._reopen_logged = False       # the next outage announces itself
+            self._bus_busy_logged = False
         logger.info("Modbus device recovered (%s)", _endpoint(self.config))
         self.record_event("info", "recovered", "device reachable again")
 
@@ -276,7 +394,12 @@ class ModbusConnection:
             if self._retired or (stop_event is not None and stop_event.is_set()):
                 return None
             retry_sleep: Optional[float] = None
-            with self.lock:
+            # The shared endpoint comes BEFORE the connection lock: a gateway
+            # that serializes internally gets slower, not faster, when its
+            # clients race each other (see _EndpointArbiter).
+            with self._endpoint_gate() as _turn, self.lock:
+                if not _turn:
+                    return None
                 try:
                     # Reconnect if needed — close the dead client first so its
                     # socket FD is released now, not whenever GC gets to it.
@@ -400,7 +523,9 @@ class ModbusConnection:
             if self._retired or (stop_event is not None and stop_event.is_set()):
                 return None                       # audit DP-5, same as read_registers
             retry_sleep: Optional[float] = None
-            with self.lock:
+            with self._endpoint_gate() as _turn, self.lock:   # shared endpoint first
+                if not _turn:
+                    return None
                 try:
                     if not self._ensure_connected():
                         self._count_error("connect refused")
@@ -475,7 +600,11 @@ class ModbusConnection:
         the same state), so a single reconnect-and-retry is safe. Returns
         (ok: bool, error: Optional[str]). Never writes input/discrete (read-only).
         """
-        with self.lock:
+        # a write queues on the shared endpoint like any read: a command that
+        # barges in mid-sweep is exactly what makes a cheap gateway stumble
+        with self._endpoint_gate() as _turn, self.lock:
+            if not _turn:
+                return False, "shared endpoint busy"
             try:
                 if not self._ensure_connected():
                     return False, "not connected"
@@ -554,6 +683,13 @@ class RegisterPoller(threading.Thread):
         self.poll_count = 0
         self.last_poll_time = None       # wall time (display)
         self.last_poll_mono = None       # monotonic (step-immune age)
+        # How long the last sweep actually took on the wire, and how often it
+        # outran its own interval. The operator tuning "read more often" needs
+        # exactly these two numbers: an interval below the cycle time buys
+        # nothing but a hot bus.
+        self.last_cycle_s = None
+        self.overruns = 0
+        self._overrun_logged = False
 
         # Optimize reads by grouping consecutive addresses
         self._read_groups = self._create_read_groups()
@@ -833,6 +969,7 @@ class RegisterPoller(threading.Thread):
                 logger.debug(f"{self._tag}Poller {self.poll_group_name}: startup jitter {delay:.2f}s")
                 self._stop_event.wait(delay)
             while not self._stop_event.is_set():
+                cycle_start = time.monotonic()
                 try:
                     data = self._poll_registers()
 
@@ -852,8 +989,28 @@ class RegisterPoller(threading.Thread):
                     import traceback
                     logger.error(f"{self._tag}Poller {self.poll_group_name} error: {e}\n{traceback.format_exc()}")
 
-                # Sleep for interval
-                self._stop_event.wait(self.interval)
+                # Fixed RATE, not fixed delay. The interval is the cadence the
+                # operator asked for, not a pause bolted onto however long the
+                # bus took: a 3 s sweep under a 5 s interval used to produce an
+                # 8 s cadence, and the slower the endpoint the further the data
+                # drifted from the freshness the config promised.
+                elapsed = time.monotonic() - cycle_start
+                self.last_cycle_s = round(elapsed, 3)
+                if elapsed > self.interval:
+                    # can't keep up: still leave a breather rather than polling
+                    # back-to-back, and say so ONCE per episode
+                    self.overruns += 1
+                    if not self._overrun_logged:
+                        self._overrun_logged = True
+                        logger.warning(
+                            "%sPoller %s: a sweep takes %.1fs but the interval is "
+                            "%.1fs — the group cannot keep up; raise the interval "
+                            "or reduce what it reads",
+                            self._tag, self.poll_group_name, elapsed, self.interval)
+                elif self._overrun_logged:
+                    self._overrun_logged = False
+                self._stop_event.wait(
+                    max(self.interval * 0.1, 0.05, self.interval - elapsed))
         finally:
             # Close the loop we created so its FDs don't leak — every register
             # reload spawns fresh poller threads, each with a fresh event loop.
@@ -1203,7 +1360,12 @@ class ModbusClient:
              'last_poll_ts': p.last_poll_time,
              'age_s': (round(now_mono - p.last_poll_mono, 1)
                        if getattr(p, 'last_poll_mono', None) else None),
-             'poll_count': p.poll_count}
+             'poll_count': p.poll_count,
+             # what one sweep costs on the wire, and whether it outran its
+             # interval — the two numbers an interval is chosen from
+             'cycle_s': getattr(p, 'last_cycle_s', None),
+             'reads': len(getattr(p, '_read_groups', []) or []),
+             'overruns': getattr(p, 'overruns', 0)}
             for p in self.pollers]
 
         return {

@@ -50,8 +50,11 @@ def test_no_jitter_fires_immediately(monkeypatch):
     monkeypatch.setattr(p._stop_event, "wait", fake_wait)
     p.connection.read_registers.return_value = [0]
     p.run()
-    # the only wait is the end-of-loop interval wait, never a jitter pre-wait
-    assert waits == [5]                       # not [<jitter>, 5]
+    # the only wait is the end-of-loop cadence wait, never a jitter pre-wait
+    assert len(waits) == 1                    # not [<jitter>, <cadence>]
+    # fixed RATE: the wait is the interval MINUS what the sweep just cost, so a
+    # 5 s interval stays a 5 s cadence instead of becoming 5 s + read time
+    assert 4.9 <= waits[0] <= 5.0
 
 
 def test_jitter_waits_before_first_poll(monkeypatch):
@@ -82,3 +85,50 @@ def test_config_threads_jitter_from_polling_section(tmp_path):
     assert c.modbus.startup_jitter_s == 2.5
     # round-trips through to_dict + save
     assert c.to_dict()["modbus"]["startup_jitter_s"] == 2.5
+
+
+def test_the_wait_is_the_interval_minus_the_sweep(monkeypatch):
+    """Fixed RATE, not fixed delay: the interval is the cadence the operator
+    asked for, not a pause bolted onto however long the bus took. A 3 s sweep
+    under a 5 s interval used to produce an 8 s cadence."""
+    p = _poller(5, 0)
+    waits = []
+    clock = {"t": 0.0}
+    monkeypatch.setattr("multibus.modbus_client.time.monotonic", lambda: clock["t"])
+
+    def slow_read(*a, **kw):
+        clock["t"] += 3.0                     # the sweep costs 3 s
+        return [0]
+
+    p.connection.read_registers.side_effect = slow_read
+
+    def fake_wait(d=None):
+        waits.append(d)
+        p.stop()
+        return True
+
+    monkeypatch.setattr(p._stop_event, "wait", fake_wait)
+    p.run()
+    assert waits == [2.0]                     # 5 - 3, not 5
+    assert p.last_cycle_s == 3.0
+
+
+def test_a_sweep_that_outruns_its_interval_still_gets_a_breather(monkeypatch):
+    """A group that cannot keep up must not poll back-to-back: that hammers a
+    bus which is already the reason it is late."""
+    p = _poller(5, 0)
+    waits = []
+    clock = {"t": 0.0}
+    monkeypatch.setattr("multibus.modbus_client.time.monotonic", lambda: clock["t"])
+    p.connection.read_registers.side_effect = lambda *a, **kw: (
+        clock.__setitem__("t", clock["t"] + 9.0) or [0])
+
+    def fake_wait(d=None):
+        waits.append(d)
+        p.stop()
+        return True
+
+    monkeypatch.setattr(p._stop_event, "wait", fake_wait)
+    p.run()
+    assert waits == [0.5]                     # 10% of the interval, never 0
+    assert p.overruns == 1
