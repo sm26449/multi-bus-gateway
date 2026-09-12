@@ -20,12 +20,27 @@ from __future__ import annotations
 
 
 def device_influx(config, device: str):
-    """Resolve a device id to its (bucket, device_tag) for InfluxDB reads.
-    Primary / absent → (None, None) so queries hit the default bucket with
-    no device filter (byte-identical to the single-device path)."""
+    """Resolve a device OR PLANT id to its (bucket, device_tag) for InfluxDB
+    reads. Primary / absent → (None, None) so queries hit the default bucket
+    with no device filter (byte-identical to the single-device path).
+
+    A plant resolves like a device: it writes its own aggregate series into the
+    plant's bucket tagged ``device=<plant id>``, so a plant total charts
+    exactly the way a unit's does.
+
+    An id that is neither raises ``ValueError`` — returning (None, None) sent
+    the query to the PRIMARY's bucket with no filter, so a typo answered with
+    somebody else's data instead of saying it did not know the device.
+    """
     if not device or device == config.primary_device.id:
         return None, None
     dev = config.get_device(device)
-    if dev is None:
-        return None, None
-    return dev.influxdb_bucket, dev.influxdb_device_tag
+    if dev is not None:
+        return dev.influxdb_bucket, dev.influxdb_device_tag
+    plant = None
+    if hasattr(config, "get_raw_plant"):
+        plant = config.get_raw_plant(device)
+    if plant is not None:
+        from ..plant_aggregator import plant_bucket
+        return plant_bucket(plant, device), device
+    raise ValueError(f"unknown device or plant: {device!r}")

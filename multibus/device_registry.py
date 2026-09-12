@@ -156,26 +156,46 @@ def client_is_live(client) -> bool:
     implements it; ``degraded`` still counts as alive — it means slow or
     partially stale, not gone.
 
+    One exception runs the other way: ``data_health()`` also answers ``ok``
+    when NOTHING has been polled yet (a cold start, or a client whose pollers
+    never started because the endpoint refused the first connection). It cannot
+    tell that apart from healthy, so a client that has never produced a reading
+    defers to the transport flag — otherwise a plant of unreachable units
+    reports three green units underneath an ``offline`` plant.
+
     Falls back to the transport flag if a client cannot answer, and never
     raises: a health probe must not be able to kill its caller.
     """
     if client is None:
         return False
     try:
-        return client.data_health().get('status') != 'down'
+        health = client.data_health()
     except Exception:  # noqa: BLE001 — liveness must never break the caller
         return bool(getattr(client, 'connected', False))
+    if health.get('status') == 'down':
+        return False
+    if health.get('last_success_ts') is None:
+        return bool(getattr(client, 'connected', False))
+    return True
 
 
 def client_health(client) -> str:
     """``client``'s acquisition-health word (``ok`` / ``degraded`` / ``down``),
-    or ``idle`` when there is no client to ask."""
+    or ``idle`` when there is no client to ask.
+
+    A device that is not connected can never read ``ok``: the status dot must
+    not contradict the connection text, and ``data_health()`` answers ``ok`` on
+    a cold start. The device list has always applied this rule; sharing it here
+    keeps the plant page from disagreeing with it."""
     if client is None:
         return 'idle'
     try:
-        return str(client.data_health().get('status') or 'idle')
+        status = str(client.data_health().get('status') or 'idle')
     except Exception:  # noqa: BLE001
         return 'ok' if getattr(client, 'connected', False) else 'idle'
+    if status == 'ok' and not getattr(client, 'connected', False):
+        return 'degraded'
+    return status
 
 
 def purge_deselected(store: dict, registers) -> int:

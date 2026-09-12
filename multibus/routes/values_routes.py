@@ -120,11 +120,44 @@ def build(ctx) -> APIRouter:
                                 detail="no JSON feed for this device")
         return _meter_payload(dev_cfg)
 
+    def _plant_history_registers(pid: str):
+        """The aggregate series a PLANT writes: the canonical names its units
+        contribute (by the aggregator's own rules), the derived power factor,
+        and the unit census. Derived from configuration, not from live values,
+        so the picker is honest before the first reading of the day."""
+        from ..plant_aggregator import aggregation_rule
+        seen = {}
+        for d in config.plant_devices(pid):
+            regs, _g = config.load_device_registers(d)
+            for x in regs:
+                if (not getattr(x, "influxdb_enabled", False)
+                        or x.name in seen or not aggregation_rule(x.name)):
+                    continue
+                seen[x.name] = {"name": x.name,
+                                "label": getattr(x, "label", "") or x.name,
+                                "unit": getattr(x, "unit", "")}
+        if "power_active_total" in seen and "power_apparent_total" in seen:
+            seen["power_factor_total"] = {"name": "power_factor_total",
+                                          "label": "System power factor",
+                                          "unit": ""}
+        for nm, lbl in (("units_online", "Units online"),
+                        ("units_total", "Units total")):
+            seen[nm] = {"name": nm, "label": lbl, "unit": ""}
+        return list(seen.values())
+
     @r.get("/api/history/registers")
     async def history_registers(device: str = Query(default="")):
         """Registers with InfluxDB enabled — for the history view's picker.
-        ``device`` selects a non-primary device's register set (Tier 2)."""
+        ``device`` selects a non-primary device's register set (Tier 2), or a
+        PLANT's aggregate series."""
         dev = config.get_device(device) if device else None
+        if device and dev is None and hasattr(config, "get_raw_plant") \
+                and config.get_raw_plant(device) is not None:
+            influxdb_publisher = ctx.influxdb_publisher
+            return {"registers": _plant_history_registers(device),
+                    "influx_enabled": bool(
+                        influxdb_publisher
+                        and getattr(influxdb_publisher.config, "enabled", False))}
         if dev is not None and not dev.primary:
             regs_src, _g = config.load_device_registers(dev)
         else:
@@ -157,7 +190,10 @@ def build(ctx) -> APIRouter:
         influxdb_publisher = ctx.influxdb_publisher          # request-time (rebindable)
         if influxdb_publisher is None or not influxdb_publisher.config.enabled:
             raise HTTPException(status_code=503, detail="InfluxDB not enabled")
-        bucket, device_tag = device_influx(config, device)
+        try:
+            bucket, device_tag = device_influx(config, device)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
         # off the event loop: a slow/hung InfluxDB must not stall the whole API
         res = await asyncio.to_thread(influxdb_publisher.query_history,
                                       name, start, stop, every, fn, measurement,

@@ -706,6 +706,12 @@ class Config:
                     'connection': {**conn, 'unit_id': uid},
                     'mqtt': m,
                     'influxdb': i,
+                    # a plant is ONE endpoint: its sinks are declared once and
+                    # apply to every unit, like the write lock above
+                    **({'http_output': dict(p['http_output'])}
+                       if p.get('http_output') else {}),
+                    **({'rest_push': dict(p['rest_push'])}
+                       if p.get('rest_push') else {}),
                 }))
         return out
 
@@ -788,13 +794,18 @@ class Config:
 
     def set_http_output(self, device_id: str, enabled: bool) -> None:
         """Enable/disable the HTTP/JSON output sink for a device and persist.
-        Works for the primary (flat `http_output:` section) and non-primary
-        devices (their `http_output` block in the raw list) alike."""
+        Primary → the flat `http_output:` section; devices[] entries → their
+        own block; plant units → the PLANT's block, applying to every unit (a
+        plant is one endpoint, so its sinks are declared once — the same rule
+        the write lock follows)."""
         dev = self.get_device(device_id)
         if dev is None:
             raise ValueError(f"device {device_id!r} not found")
         if dev.primary:
             self.http_output_primary_enabled = bool(enabled)
+        elif dev.plant_id:
+            self._plant_entry_for(dev.plant_id).setdefault(
+                'http_output', {})['enabled'] = bool(enabled)
         else:
             for d in self._raw_devices:
                 if d.get('id') == device_id:
@@ -824,15 +835,25 @@ class Config:
         self._build_devices()
         self.save_yaml_config()
 
+    def _plant_entry_for(self, plant_id: str) -> Dict:
+        """The raw plants[] entry, for a setter that writes a plant-level flag."""
+        for p in self._raw_plants:
+            if p.get('id') == plant_id:
+                return p
+        raise ValueError(f"plant {plant_id!r} not found")
+
     def set_rest_push(self, device_id: str, cfg: Dict) -> None:
         """Set the REST push config for a device and persist. Primary → flat
-        `rest_push:` section; non-primary → their `rest_push` block."""
+        `rest_push:` section; devices[] entries → their own block; plant units
+        → the PLANT's block (one endpoint, one declaration)."""
         dev = self.get_device(device_id)
         if dev is None:
             raise ValueError(f"device {device_id!r} not found")
         cfg = dict(cfg or {})
         if dev.primary:
             self.rest_push_primary = cfg
+        elif dev.plant_id:
+            self._plant_entry_for(dev.plant_id)['rest_push'] = cfg
         else:
             for d in self._raw_devices:
                 if d.get('id') == device_id:

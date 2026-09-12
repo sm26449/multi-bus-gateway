@@ -2252,6 +2252,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         units = []
         for dev in config.plant_devices(pid):
             _i, _cfg, client = registry.find(dev.id)
+            st = {}
+            if client is not None:
+                try:
+                    st = client.get_stats() or {}
+                except Exception:  # noqa: BLE001 — a stats blip must not 500 the list
+                    st = {}
+            _seen = st.get('last_success_ts')
             units.append({
                 'unit_id': dev.connection.unit_id,
                 'device_id': dev.id,
@@ -2262,7 +2269,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 # plant census can never disagree with the unit's own topics
                 'connected': client_is_live(client),
                 'health': client_health(client),
+                'last_seen': (datetime.fromtimestamp(_seen).isoformat()
+                              if _seen else None),
+                'staleness_age_s': st.get('staleness_age_s'),
+                'poll_rate': st.get('poll_rate'),
+                'failed_reads': st.get('failed_reads'),
             })
+        from .canonical_fields import field_meta
         from .plant_aggregator import compute_plant_aggregates
         try:
             agg = compute_plant_aggregates(config, registry, pid)
@@ -2276,8 +2289,41 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'influxdb': dict(p.get('influxdb', {}) or {}),
                 'units': units,
                 'aggregates': agg,
+                # canonical label/unit/topic per aggregate name, so a view can
+                # render "Total active power · W" without re-deriving the
+                # vocabulary client-side
+                'aggregate_fields': {k: m for k, m in
+                                     ((k, field_meta(k)) for k in agg) if m},
+                # the plant's own settings, so the page can render + edit them
+                'aggregates_enabled': bool(p.get('aggregates', True)),
+                'write_locked': bool(p.get('write_locked', False)),
+                'http_output_enabled': bool((p.get('http_output') or {}).get('enabled')),
+                'rest_push': dict(p.get('rest_push', {}) or {}),
+                'status': agg.get('status', 'offline' if units else ''),
                 'online_units': sum(1 for u in units if u['connected']),
                 'total_units': len(units)}
+
+    def _merge_unit_overrides(pid: str, units, prev: Dict = None):
+        """Keep a unit's hand-written id/name when the caller sends a bare id.
+
+        ``units: [1, 2, 3]`` is the common shape, and a client that re-sends it
+        after an edit used to ERASE `{unit_id: 3, id: inv3, name: East roof}`
+        from the config. An explicit dict from the caller always wins."""
+        if not prev:
+            return units
+        overrides = {u['unit_id']: u for u in config._plant_units(prev)}
+        out = []
+        for u in (units or []):
+            if isinstance(u, dict):
+                out.append(u)                      # explicit wins
+                continue
+            po = overrides.get(u if isinstance(u, int) else None)
+            if po and (po['id'] != f"{pid}-u{po['unit_id']}" or po['name']):
+                out.append({'unit_id': po['unit_id'], 'id': po['id'],
+                            **({'name': po['name']} if po['name'] else {})})
+            else:
+                out.append(u)                      # no override → stays bare
+        return out
 
     def _validate_plant_payload(payload: Dict, *, existing_id: str = None) -> Dict:
         """Normalize + validate a raw plant dict. Raises HTTPException(422)
@@ -2329,17 +2375,43 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                               f"existing device")
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors})
+        prev = config.get_raw_plant(existing_id) if existing_id else None
         raw = {
             'id': pid,
             'name': str(payload.get('name', '') or pid),
             'template': template_id,
             'enabled': bool(payload.get('enabled', True)),
             'connection': conn,
-            'units': payload.get('units'),
+            'units': _merge_unit_overrides(pid, payload.get('units'), prev),
         }
+        if payload.get('aggregates') is not None:
+            raw['aggregates'] = bool(payload['aggregates'])
         for opt in ('mqtt', 'influxdb'):
             if payload.get(opt):
                 raw[opt] = dict(payload[opt])
+        if prev is not None:
+            # An edit REPLACES the stored entry, so anything the plant owns but
+            # the form does not send would vanish: a locked plant silently
+            # unlocked itself and `aggregates: false` came back on, one save
+            # after the operator set them.
+            for key in ('write_locked', 'aggregates', 'http_output', 'rest_push'):
+                if key not in raw and key in prev:
+                    raw[key] = prev[key]
+            # a form that omits a whole sink block keeps the stored one — the
+            # pin below would otherwise rebuild it from the routing keys ALONE
+            # and drop ha_discovery/enabled with it
+            for sect in ('mqtt', 'influxdb'):
+                if sect not in raw and prev.get(sect):
+                    raw[sect] = dict(prev[sect])
+            # Routing identity is FIXED after creation, exactly as for a device
+            # (see update_device): changing it re-routes every unit's future
+            # data and orphans their history + Home Assistant entities.
+            for sect, keys in (('mqtt', ('topic_prefix',)),
+                               ('influxdb', ('bucket', 'device_tag'))):
+                for k in keys:
+                    old = (prev.get(sect) or {}).get(k)
+                    if old is not None:
+                        raw.setdefault(sect, {})[k] = old
         return raw
 
     def _stop_plant_devices(pid: str) -> None:
@@ -2372,6 +2444,32 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             raise HTTPException(status_code=404, detail="plant not found")
         return _plant_entry(p)
 
+    @app.post("/api/plants/{plant_id}/test")
+    def test_plant(plant_id: str):
+        """Probe every unit of a plant on its shared endpoint.
+
+        One plant is one physical endpoint, so a per-unit answer is the only
+        way to tell "the datalogger is deaf" from "unit 3 is not configured on
+        it". CAUTION: a probe opens ANOTHER Modbus client on that endpoint, and
+        dataloggers serve only a few at once — this is an operator-triggered
+        check, never a background poll."""
+        p = config.get_raw_plant(plant_id)
+        if p is None:
+            raise HTTPException(status_code=404, detail="plant not found")
+        conn = dict(p.get('connection', {}) or {})
+        timeout = float(conn.get('timeout', 3) or 3)
+        units = []
+        for dev in config.plant_devices(plant_id):
+            regs, _g = config.load_device_registers(dev)
+            # a real address beats address 0 — some gateways answer 0 blindly
+            address = regs[0].address if regs else 0
+            res = _modbus_probe(conn, dev.connection.unit_id, timeout, address)
+            units.append({'unit_id': dev.connection.unit_id,
+                          'device_id': dev.id, **res})
+        return {'plant': plant_id,
+                'ok': bool(units) and all(u.get('ok') for u in units),
+                'units': units}
+
     @app.post("/api/plants")
     @_serialized_mutation
     def create_plant(payload: Dict = Body(...)):
@@ -2389,25 +2487,60 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         return {"status": "created", "plant": _plant_entry(raw),
                 "devices": devices_out}
 
+    def _plant_runtime_sig(raw: Dict) -> str:
+        """Everything a materialized unit is BUILT from. Two definitions with
+        the same signature produce identical clients, so an edit that leaves it
+        untouched — a rename, the plant-totals toggle — must not tear the
+        pollers down: a cosmetic save should never punch a hole in acquisition.
+        Unit NAMES are deliberately absent (cosmetic; refreshed in place)."""
+        return json.dumps({
+            'connection': raw.get('connection') or {},
+            'template': raw.get('template', ''),
+            'enabled': bool(raw.get('enabled', True)),
+            'units': [(u['unit_id'], u['id']) for u in config._plant_units(raw)],
+            'mqtt': raw.get('mqtt') or {},
+            'influxdb': raw.get('influxdb') or {},
+            'write_locked': bool(raw.get('write_locked', False)),
+            'http_output': raw.get('http_output') or {},
+            'rest_push': raw.get('rest_push') or {},
+        }, sort_keys=True, default=str)
+
+    # exposed for tests: the restart-or-not contract is worth pinning
+    app.state.plant_runtime_sig = _plant_runtime_sig
+
     @app.put("/api/plants/{plant_id}")
     @_serialized_mutation
     def update_plant(plant_id: str, payload: Dict = Body(...)):
-        """Update a plant: stop its current units, re-materialize from the new
-        definition and start the new set."""
-        if config.get_raw_plant(plant_id) is None:
+        """Update a plant. An edit that changes what the units are built from
+        re-materializes them (stop → rebuild → start); an edit that only changes
+        plant-level settings keeps every poller running and just refreshes the
+        config behind it."""
+        prev_raw = config.get_raw_plant(plant_id)
+        if prev_raw is None:
             raise HTTPException(status_code=404, detail="plant not found")
         raw = _validate_plant_payload(payload, existing_id=plant_id)
-        _stop_plant_devices(plant_id)
+        settings_only = _plant_runtime_sig(prev_raw) == _plant_runtime_sig(raw)
+        if not settings_only:
+            _stop_plant_devices(plant_id)
         try:
             made = config.upsert_raw_plant(raw)
         except ValueError as e:
             # config restored the previous definition — restart its units so
             # a failed edit doesn't leave the plant stopped
-            _start_plant_devices(config.plant_devices(plant_id))
+            if not settings_only:
+                _start_plant_devices(config.plant_devices(plant_id))
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
-        devices_out = _start_plant_devices(made)
+        if settings_only:
+            # the DeviceConfig objects were rebuilt by upsert; swap them in
+            # behind the RUNNING clients so a rename shows up without a restart
+            for dev_cfg in made:
+                registry.replace(dev_cfg.id, dev_cfg)
+            devices_out = [_device_entry(d, registry.find(d.id)[2]) for d in made]
+        else:
+            devices_out = _start_plant_devices(made)
         _sync_device_discovery()
-        logger.info(f"plant {plant_id}: updated ({len(made)} unit(s))")
+        logger.info("plant %s: updated (%d unit(s))%s", plant_id, len(made),
+                    " — settings only, pollers kept running" if settings_only else "")
         return {"status": "updated", "plant": _plant_entry(raw),
                 "devices": devices_out}
 

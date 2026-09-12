@@ -104,7 +104,10 @@ def build(ctx) -> APIRouter:
         if influxdb_publisher is None or not influxdb_publisher.config.enabled:
             raise HTTPException(status_code=503, detail="InfluxDB not enabled")
         regs = _energy_regs(device)
-        bucket, device_tag = device_influx(config, device)
+        try:
+            bucket, device_tag = device_influx(config, device)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
         tz = (config.ui.timezone or "Europe/Bucharest")
         res = await asyncio.to_thread(influxdb_publisher.energy_report, year, month, regs,
                                       tz, bucket, device_tag)

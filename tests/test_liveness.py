@@ -58,3 +58,39 @@ def test_every_client_type_implements_the_verdict():
     from multibus.mqtt_input import MqttInputClient
     for cls in (ModbusClient, HttpClient, MqttInputClient):
         assert callable(getattr(cls, "data_health", None)), cls.__name__
+
+
+class _Cold:
+    """A client whose pollers never started: data_health() answers `ok` because
+    nothing has been polled, not because anything is healthy."""
+
+    def __init__(self, connected):
+        self.connected = connected
+
+    def data_health(self, stale_threshold_s=30):
+        return {"status": "ok", "last_success_ts": None, "connected": self.connected}
+
+
+def test_a_client_that_never_read_anything_is_not_live_unless_connected():
+    # the plant symptom: three unreachable units reported green under an
+    # `offline` plant, because `ok` also means "nothing polled yet"
+    assert client_is_live(_Cold(connected=False)) is False
+    assert client_health(_Cold(connected=False)) == "degraded"
+    # connected but still warming up → alive; a cold start must not scream down
+    assert client_is_live(_Cold(connected=True)) is True
+    assert client_health(_Cold(connected=True)) == "ok"
+
+
+def test_a_client_that_has_read_before_trusts_the_freshness_verdict():
+    class _Warm:
+        connected = True          # the flag that survived a vanished endpoint
+
+        def __init__(self, status):
+            self._s = status
+
+        def data_health(self, stale_threshold_s=30):
+            return {"status": self._s, "last_success_ts": 1_700_000_000}
+
+    assert client_is_live(_Warm("ok")) is True
+    assert client_is_live(_Warm("degraded")) is True
+    assert client_is_live(_Warm("down")) is False

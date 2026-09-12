@@ -85,6 +85,13 @@ def _rule_for(name: str) -> Optional[str]:
     return None
 
 
+def aggregation_rule(name: str) -> Optional[str]:
+    """How a canonical field combines across a plant's units: ``sum`` | ``avg``
+    | ``counter`` | None (not aggregated). Public because the history picker
+    needs to know which of a unit's series a plant actually republishes."""
+    return _rule_for(name)
+
+
 def _derive_power_factor(out: Dict[str, Any]) -> Optional[float]:
     """A plant's power factor is Σ active / Σ apparent. None when the plant has
     no apparent power (register not selected) or stands still (Σ apparent 0)."""
