@@ -161,3 +161,41 @@ endpoints:
       - { id: only, protocol: tcp, host: 192.0.2.1 }
 """)
     assert cfg.get_device('inherit-u1').sources[0].template == 'eastron_sdm120'
+
+
+# ── the primary is a device too ──────────────────────────────────────────────
+
+def test_the_primary_device_has_a_source(tmp_path):
+    """It is synthesized from the flat sections rather than built from a raw
+    dict, so it must be handed its source explicitly. Without one it has no way
+    to be reached at all — every device is started from its sources — and the
+    Janitza went dark in production for exactly this reason."""
+    from tests.test_devices import write_config
+    cfg = write_config(tmp_path)
+    d = cfg.primary_device
+    assert [s.id for s in d.sources] == ['default']
+    s = d.sources[0]
+    assert s.protocol == 'tcp'
+    # the SAME ModbusConfig object, so a live UI edit still reaches the poller
+    assert s.connection is cfg.modbus
+    assert s.template == 'janitza_umg512_pro'
+
+
+def test_every_device_can_be_started_from_its_sources(tmp_path):
+    """The invariant the regression broke: no device may have an empty source
+    list, or build_device_client silently returns None and it never polls."""
+    from tests.test_devices import write_config
+    cfg = write_config(tmp_path, extra_yaml="""
+devices:
+  - id: extra
+    template: eastron_sdm120
+    connection: { protocol: tcp, host: 192.0.2.5 }
+endpoints:
+  - id: ep
+    template: eastron_sdm120
+    connection: { protocol: tcp, host: 192.0.2.6 }
+    units: [1, 2]
+""")
+    assert cfg.devices
+    for d in cfg.devices:
+        assert d.sources, f"device {d.id} has no source — it would never poll"

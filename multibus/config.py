@@ -644,6 +644,12 @@ class Config:
             rest_push=dict(self.rest_push_primary or {}),
             pq_recorder=dict(self.pq_recorder_primary or {}),
             write_locked=self.security.primary_write_locked,
+            # The primary is synthesized from the flat sections rather than
+            # built from a raw dict, so it must be handed its one source
+            # explicitly. Without it the device has no way to be reached at all
+            # — every device, primary included, is started from its sources.
+            sources=[SourceConfig(id='default', template='janitza_umg512_pro',
+                                  protocol='tcp', connection=self.modbus)],
         )]
         for d in self._raw_devices:
             did = str(d.get('id', '')).strip()
