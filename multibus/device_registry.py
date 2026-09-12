@@ -141,6 +141,43 @@ class DeviceRegistry:
                 for dev in device_cfgs]
 
 
+def client_is_live(client) -> bool:
+    """THE liveness verdict for a southbound client — one definition, used by
+    the alert harvester, the MQTT availability/runtime leaves and the plant
+    unit census, so the product never contradicts itself.
+
+    A device is alive when its acquisition pipeline is PRODUCING, not when a
+    socket happens to be open. ``client.connected`` is a transport flag that
+    survives a vanished endpoint (it clears only on an explicit disconnect or
+    the wedge backstop's forced reopen), so a datalogger that went dark
+    overnight kept reporting "online" to Home Assistant, to MQTT and to the
+    alert log while its data froze. ``data_health()`` already owns the
+    freshness verdict (``ok`` / ``degraded`` / ``down``) and every client type
+    implements it; ``degraded`` still counts as alive — it means slow or
+    partially stale, not gone.
+
+    Falls back to the transport flag if a client cannot answer, and never
+    raises: a health probe must not be able to kill its caller.
+    """
+    if client is None:
+        return False
+    try:
+        return client.data_health().get('status') != 'down'
+    except Exception:  # noqa: BLE001 — liveness must never break the caller
+        return bool(getattr(client, 'connected', False))
+
+
+def client_health(client) -> str:
+    """``client``'s acquisition-health word (``ok`` / ``degraded`` / ``down``),
+    or ``idle`` when there is no client to ask."""
+    if client is None:
+        return 'idle'
+    try:
+        return str(client.data_health().get('status') or 'idle')
+    except Exception:  # noqa: BLE001
+        return 'ok' if getattr(client, 'connected', False) else 'idle'
+
+
 def purge_deselected(store: dict, registers) -> int:
     """Drop live-store entries whose ADDRESS is no longer in the selected set
     (audit 2026-08-14 M2). A template re-select that moves a register to a new

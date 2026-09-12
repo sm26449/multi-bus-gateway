@@ -788,25 +788,33 @@ class MQTTPublisher:
             self._availability_last[topic] = payload
 
     def publish_device_runtime(self, topic_prefix: str, online: bool,
-                               last_seen: Optional[str]) -> None:
+                               last_seen: Optional[str],
+                               read_errors: Optional[int] = None) -> None:
         """Publish a device's runtime heartbeat (retained): ``runtime/status``
-        ("online"/"offline") and ``runtime/last_seen`` (ISO timestamp of the
-        last successful read). Leaf names match the long-lived collector
-        convention so liveness consumers (flow dashboards, NR heartbeat
-        watchers) keep working through compat aliases. Change-only, same
-        confirm-after-publish discipline as availability."""
+        ("online"/"offline"), ``runtime/last_seen`` (ISO timestamp of the last
+        successful read) and ``runtime/read_errors`` (cumulative failed reads).
+
+        ``online`` is the product's ONE liveness verdict — data freshness, not
+        socket state (see ``device_registry.client_is_live``). Leaf names match
+        the long-lived collector convention, so liveness consumers (flow
+        dashboards, heartbeat watchers) keep working on the new namespace.
+        A ``None`` component is left untouched rather than published empty.
+        Change-only, same confirm-after-publish discipline as availability."""
         if not self.connected or not topic_prefix:
             return
-        status_topic = f"{topic_prefix}/runtime/status"
-        status_payload = "online" if online else "offline"
-        if self._runtime_last.get(status_topic) != status_payload:
-            if self._publish(status_topic, status_payload, retain=True):
-                self._runtime_last[status_topic] = status_payload
-        if last_seen:
-            seen_topic = f"{topic_prefix}/runtime/last_seen"
-            if self._runtime_last.get(seen_topic) != last_seen:
-                if self._publish(seen_topic, last_seen, retain=True):
-                    self._runtime_last[seen_topic] = last_seen
+        for leaf, value in (("status", "online" if online else "offline"),
+                            ("last_seen", last_seen),
+                            ("read_errors", read_errors)):
+            if value is None:
+                continue
+            topic = f"{topic_prefix}/runtime/{leaf}"
+            payload = str(value)
+            if self._runtime_last.get(topic) == payload:
+                continue
+            # confirm AFTER a successful publish: a dropped heartbeat must be
+            # retried on the next tick, not cached away as delivered
+            if self._publish(topic, payload, retain=True):
+                self._runtime_last[topic] = payload
 
     def set_command_write_handler(self, fn) -> None:
         """Install the gated executor for HA write commands. ``fn(device_id,

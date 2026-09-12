@@ -89,3 +89,27 @@ def test_starts_reachable_and_a_clean_run_logs_nothing():
         assert conn.read_registers(0, 2) == [0, 0]
     # no transitions at all → no unreachable/recovered noise
     assert not any(k in ("unreachable", "recovered") for k in _kinds(conn))
+
+
+def test_forced_reopen_is_announced_once_per_outage():
+    """The wedge backstop keeps firing while the link stays down — but the
+    EVENT belongs to the OUTAGE, not to each run of failures. A datalogger
+    asleep for the night used to append a 'forced_reopen' every ~20s, rotating
+    the 50-entry ring in minutes and burying the events that mattered."""
+    conn = _conn()
+
+    # three full runs of failures → three actual reopens, ONE event
+    for _ in range(conn._reopen_after_fails * 3):
+        assert conn.read_registers(0, 2) is None
+    assert conn.forced_reopens == 3
+    assert _kinds(conn).count("forced_reopen") == 1
+
+    # recovery re-arms the announcement for the NEXT outage
+    _Client.ok = True
+    assert conn.read_registers(0, 2) == [0, 0]
+    assert conn._reopen_logged is False
+    _Client.ok = False
+    for _ in range(conn._reopen_after_fails):
+        assert conn.read_registers(0, 2) is None
+    assert conn.forced_reopens == 4
+    assert _kinds(conn).count("forced_reopen") == 2

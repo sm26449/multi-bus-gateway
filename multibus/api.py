@@ -541,7 +541,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # current_values dict (alias), so the UI/vmeters/api keep reading the same
     # object. Mutations are atomic inside the registry (device CRUD runs in
     # FastAPI's threadpool); reads are lock-free snapshots, as before.
-    from .device_registry import DeviceRegistry
+    from .device_registry import (DeviceRegistry, client_health,
+                                  client_is_live)
     registry = DeviceRegistry(config.primary_device.id, current_values)
     for dev_cfg, _client in (devices or []):
         registry.register(dev_cfg, _client)
@@ -800,7 +801,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     did = dev_cfg.id if dev_cfg else 'modbus'
                     name = (dev_cfg.name or dev_cfg.id) if dev_cfg else 'Modbus'
                     note(name, st.get('events'))
-                    transition('dev:' + did, name, bool(st.get('connected')), 'device')
+                    # ONE liveness verdict (see device_registry.client_is_live):
+                    # data freshness, not socket state. The transport flag said
+                    # "connected" for hours after an endpoint vanished, so a
+                    # dark datalogger looked identical to a producing one.
+                    live = client_is_live(client)
+                    transition('dev:' + did, name, live, 'device')
                     # feed the per-device HA connectivity binary_sensor (publishes
                     # only on change). The PRIMARY publishes too (audit DP-1): it
                     # was the only device without an availability topic, so its
@@ -811,12 +817,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                                          if (dev_cfg is None or dev_cfg.primary)
                                          else dev_cfg.mqtt_topic_prefix)
                         mqtt_publisher.publish_device_availability(
-                            _avail_prefix, bool(st.get('connected')))
+                            _avail_prefix, live)
                         _seen_ts = st.get('last_success_ts')
                         mqtt_publisher.publish_device_runtime(
-                            _avail_prefix, bool(st.get('connected')),
+                            _avail_prefix, live,
                             datetime.fromtimestamp(_seen_ts).isoformat()
-                            if _seen_ts else None)
+                            if _seen_ts else None,
+                            read_errors=st.get('failed_reads'))
                     lat = st.get('last_latency_ms')
                     if alert_mgr.sig_latency and lat and lat > alert_mgr.latency_ms:
                         alert_mgr.fire('warn', 'lat:' + did, name,
@@ -2251,7 +2258,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'name': dev.name,
                 'enabled': dev.enabled,
                 'running': client is not None,
-                'connected': bool(getattr(client, 'connected', False)),
+                # the same liveness verdict the MQTT/alert paths use, so the
+                # plant census can never disagree with the unit's own topics
+                'connected': client_is_live(client),
+                'health': client_health(client),
             })
         from .plant_aggregator import compute_plant_aggregates
         try:

@@ -132,6 +132,12 @@ class ModbusConnection:
         self._consecutive_fail = 0
         self._reopen_after_fails = 5
         self.forced_reopens = 0
+        # The backstop keeps firing for as long as the link stays down — but the
+        # EVENT is worth one line per OUTAGE, not one per run of failures. An
+        # endpoint that is simply gone (a datalogger asleep for the night) used
+        # to append a 'forced_reopen' every ~20 s, rotating the 50-entry event
+        # ring in minutes and burying the events that mattered.
+        self._reopen_logged = False
         # Retired connections never touch the wire again (audit DP-5): after a
         # config reconnect swaps in a NEW ModbusConnection, an orphan poller
         # still finishing its cycle would otherwise REOPEN this one on demand —
@@ -168,6 +174,7 @@ class ModbusConnection:
             if self._reachable:
                 return
             self._reachable = True
+            self._reopen_logged = False       # the next outage announces itself
         logger.info("Modbus device recovered (%s)", _endpoint(self.config))
         self.record_event("info", "recovered", "device reachable again")
 
@@ -348,9 +355,11 @@ class ModbusConnection:
                 self.connected = False
                 self.forced_reopens += 1
                 self._consecutive_fail = 0
-                self.record_event('warn', 'forced_reopen',
-                                  f'link wedged — forced reopen after '
-                                  f'{self._reopen_after_fails} consecutive failures')
+                if not self._reopen_logged:      # once per outage, not per run
+                    self._reopen_logged = True
+                    self.record_event('warn', 'forced_reopen',
+                                      f'link wedged — forced reopen after '
+                                      f'{self._reopen_after_fails} consecutive failures')
         self.last_failure_ts = time.time()
         # Reachability is a LINK verdict, not a batch verdict (audit DP-8): one
         # chronically-failing batch among healthy ones used to flap
@@ -442,9 +451,11 @@ class ModbusConnection:
                 self.connected = False
                 self.forced_reopens += 1
                 self._consecutive_fail = 0
-                self.record_event('warn', 'forced_reopen',
-                                  f'link wedged — forced reopen after '
-                                  f'{self._reopen_after_fails} consecutive failures')
+                if not self._reopen_logged:      # once per outage, not per run
+                    self._reopen_logged = True
+                    self.record_event('warn', 'forced_reopen',
+                                      f'link wedged — forced reopen after '
+                                      f'{self._reopen_after_fails} consecutive failures')
         self.last_failure_ts = time.time()
         if _link_down:
             self._note_unreachable(f"bits addr {address} — no response after "

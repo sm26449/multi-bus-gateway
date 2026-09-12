@@ -342,3 +342,23 @@ def test_device_runtime_heartbeat_published_and_change_only():
     pub._captured.clear()
     pub.publish_device_runtime("mbg/devices/d1", False, None)
     assert pub._captured["mbg/devices/d1/runtime/status"] == "offline"
+
+
+def test_device_runtime_publishes_read_errors():
+    pub = _pub()
+    pub.publish_device_runtime("mbg/devices/d1", True, "2026-09-12T08:00:00",
+                               read_errors=0)
+    assert pub._captured["mbg/devices/d1/runtime/read_errors"] == 0
+    pub._captured.clear()
+    # unchanged → silent; a growing error count republishes only that leaf
+    pub.publish_device_runtime("mbg/devices/d1", True, "2026-09-12T08:00:00",
+                               read_errors=0)
+    assert pub._captured == {}
+    pub.publish_device_runtime("mbg/devices/d1", True, "2026-09-12T08:00:00",
+                               read_errors=7)
+    assert list(pub._captured) == ["mbg/devices/d1/runtime/read_errors"]
+    assert pub._captured["mbg/devices/d1/runtime/read_errors"] == 7
+    # omitted (None) leaves the topic alone rather than publishing an empty one
+    pub._captured.clear()
+    pub.publish_device_runtime("mbg/devices/d1", True, "2026-09-12T08:00:30")
+    assert list(pub._captured) == ["mbg/devices/d1/runtime/last_seen"]

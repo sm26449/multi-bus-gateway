@@ -222,6 +222,13 @@ def _no_real_mqtt(monkeypatch):
         def __init__(self, *a, **k):
             self.connected = False
 
+        def get_stats(self):
+            # the alert harvester reads sink stats every 5s on a background
+            # thread: the catch-all below answered `False`, and `False.get(...)`
+            # blew up whichever harvester tick landed inside this test — an
+            # intermittent 'event harvest error' with no bug behind it
+            return {"connected": self.connected}
+
         def __getattr__(self, name):            # any method → inert no-op
             return lambda *a, **k: False
     monkeypatch.setattr(api_mod, "MQTTPublisher", _StubPub)
