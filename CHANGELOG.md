@@ -1,5 +1,30 @@
 # Changelog
 
+## 3.49.0
+
+### 2026-09-12 — one master, one socket
+
+A master device — a Fronius DataManager, a Modbus TCP/RTU gateway, an RS-485
+bridge — fronts its units on ONE access point. Giving each unit its own socket
+never made them independent (they still queue inside the master), and a master
+that serves a handful of clients runs out of them: measured on the production
+DataManager, five of the gateway's own sockets plus five probes and fresh
+connections started timing out.
+
+- **The socket belongs to the access point**, not to the unit. Devices sharing
+  a `host:port` share one connection and the lock that serializes it; the last
+  one to let go closes it, so stopping one inverter cannot take its three
+  siblings off the master. A directly-attached serial line never shares (one
+  master per line is a different rule), and `share_transport: false` restores a
+  socket per unit.
+- **What describes a unit stays with the unit**: its counters, latency, error
+  taxonomy, reachability verdict and health are untouched. Units share a wire,
+  never an identity — `tests/test_shared_transport.py` exists to keep that line
+  from blurring.
+- Tests gained a fixture that clears the pooled access points between cases: a
+  socket pooled per `host:port` outlives the connection objects that borrow it,
+  which is the point in production and cross-contamination in a test file.
+
 ## 3.48.0
 
 ### 2026-09-12 — fresher data: the gateway queues instead of racing

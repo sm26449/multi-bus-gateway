@@ -153,6 +153,14 @@ class ModbusConfig:
     # into an orderly line. Off by default (a device with the endpoint to
     # itself gains nothing); plants turn it on, because a plant IS one endpoint.
     serialize_endpoint: bool = True
+    # Share ONE socket with every other device behind the same access point.
+    # A master device (DataManager, Modbus TCP/RTU gateway, RS-485 bridge)
+    # fronts its units on one connection: giving each unit its own does not
+    # make them independent — they still queue inside the master — and a master
+    # that serves a handful of clients runs out of them. Per-unit counters,
+    # health and reachability are unaffected: units share a wire, not an
+    # identity. Set false to go back to a socket per unit.
+    share_transport: bool = True
     # How long a read may wait for its turn before giving up on the cycle. A
     # missed turn is not a device failure: the value is simply skipped, exactly
     # as if that cycle had not come round yet.
@@ -619,6 +627,7 @@ class Config:
                     illegal_registers=parse_address_list(conn.get('illegal_registers')),
                     drop_all_zero=bool(conn.get('drop_all_zero', False)),
                     serialize_endpoint=bool(conn.get('serialize_endpoint', True)),
+                    share_transport=bool(conn.get('share_transport', True)),
                     endpoint_wait_s=float(conn.get('endpoint_wait_s', 10.0)),
                     protocol=str(conn.get('protocol', 'tcp')).lower(),
                     serial_port=conn.get('serial_port', ''),
@@ -1242,6 +1251,7 @@ class Config:
                     illegal_registers=parse_address_list(m.get('illegal_registers')),
                     drop_all_zero=bool(m.get('drop_all_zero', False)),
                     serialize_endpoint=bool(m.get('serialize_endpoint', True)),
+                    share_transport=bool(m.get('share_transport', True)),
                     endpoint_wait_s=float(m.get('endpoint_wait_s', 10.0)),
                 )
 

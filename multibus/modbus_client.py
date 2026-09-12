@@ -92,6 +92,67 @@ class _EndpointArbiter:
             self.release()
 
 
+class _EndpointTransport:
+    """The socket a group of devices shares, and the lock that keeps their
+    transactions from overlapping on it.
+
+    A master device — a Fronius DataManager, a Modbus TCP/RTU gateway, an
+    RS-485 bridge — fronts several units behind ONE access point. Giving each
+    unit its own socket does not make them independent: they still queue inside
+    the master, and a device that serves only a handful of clients runs out of
+    them (measured: five of the gateway's own sockets plus five probes, and
+    fresh connections started timing out). One access point, one socket, one
+    queue — which is exactly how the long-lived collector this replaces did it.
+
+    What stays PER UNIT is everything that describes the unit: its counters,
+    its latency, its error taxonomy, its reachability verdict and its health.
+    Units share a wire, never an identity.
+    """
+
+    def __init__(self, key: str = ""):
+        self.key = key
+        # RLock, and shared: it serializes both the wire transaction and the
+        # client swap behind it, so one unit's forced reopen can never land
+        # between another unit's is_socket_open() check and its read.
+        self.lock = threading.RLock()
+        self.client = None
+        self.connected = False
+        self.users = 0
+
+
+_TRANSPORTS: Dict[str, _EndpointTransport] = {}
+_TRANSPORTS_LOCK = threading.Lock()
+
+
+def transport_for(host: str, port: int, shared: bool) -> _EndpointTransport:
+    """The socket holder for one access point. ``shared`` False (or no host —
+    a directly-attached serial line) hands back a private one, so a device that
+    owns its transport behaves exactly as it always has."""
+    if not shared or not host:
+        return _EndpointTransport()
+    key = f"{host}:{port}"
+    with _TRANSPORTS_LOCK:
+        tp = _TRANSPORTS.get(key)
+        if tp is None:
+            tp = _TRANSPORTS[key] = _EndpointTransport(key)
+        tp.users += 1
+        return tp
+
+
+def release_transport(tp: _EndpointTransport) -> bool:
+    """Give up one user's claim. Returns True when that was the LAST user and
+    the socket should be closed — a unit going away must not take the master
+    down for its siblings."""
+    if not tp.key:
+        return True
+    with _TRANSPORTS_LOCK:
+        tp.users -= 1
+        if tp.users > 0:
+            return False
+        _TRANSPORTS.pop(tp.key, None)
+        return True
+
+
 _ARBITERS: Dict[str, _EndpointArbiter] = {}
 _ARBITERS_LOCK = threading.Lock()
 
@@ -194,9 +255,13 @@ class ModbusConnection:
     def __init__(self, config: ModbusConfig, trace_label: str = ""):
         self.config = config
         self.trace_label = trace_label or _endpoint(config)
-        self.client = None
-        self.connected = False
-        self.lock = threading.Lock()
+        # The socket lives on the ACCESS POINT, not on the unit: several units
+        # behind one master share it (and the lock that serializes it), while
+        # every counter below stays this unit's own.
+        self._tp = transport_for(config.host, config.port,
+                                 bool(getattr(config, 'share_transport', True))
+                                 and str(getattr(config, 'protocol', 'tcp')).lower() != 'rtu')
+        self.lock = self._tp.lock
         self.successful_reads = 0
         self.failed_reads = 0
         # Wedged-link backstop: a serial/PTY port (or a stuck ser2net bridge) can
@@ -340,6 +405,26 @@ class ModbusConnection:
         with self._ev_lock:
             return list(self.events)
 
+    # `client` and `connected` describe the SOCKET, so they live on the shared
+    # transport; every counter and verdict beside them describes the UNIT and
+    # stays here. Properties keep the rest of this class written as if it owned
+    # the socket outright.
+    @property
+    def client(self):
+        return self._tp.client
+
+    @client.setter
+    def client(self, value):
+        self._tp.client = value
+
+    @property
+    def connected(self) -> bool:
+        return self._tp.connected
+
+    @connected.setter
+    def connected(self, value: bool) -> None:
+        self._tp.connected = bool(value)
+
     def _new_client(self):
         """Build a fresh pymodbus client, wired into the bus-trace monitor."""
         client = _build_client(self.config)
@@ -368,12 +453,23 @@ class ModbusConnection:
             return False
 
     def disconnect(self):
-        """Close Modbus connection."""
+        """Give up this unit's claim on the access point, closing the socket
+        only when the last unit lets go — stopping one inverter must not take
+        its three siblings off the master with it."""
         with self.lock:
-            if self.client:
-                self.client.close()
-            self.connected = False
-            logger.info("Modbus disconnected")
+            last = release_transport(self._tp)
+            if last:
+                if self.client:
+                    try:
+                        self.client.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                self.client = None
+                self.connected = False
+                logger.info("Modbus disconnected")
+            else:
+                logger.debug("%sreleased the shared access point (%d user(s) left)",
+                             self._tag_or_empty(), self._tp.users)
 
     def read_registers(self, address: int, count: int,
                        register_type: str = "holding",

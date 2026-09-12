@@ -34,12 +34,15 @@ SERVICE_S = 0.40          # what one 50-register read costs when nobody else ask
 THRASH_S = 0.30           # what EACH extra in-flight caller costs the device
 
 _dev_lock = threading.Lock()
+_sockets = 0        # how many clients the master had to serve
 _inflight = 0
 _inflight_lock = threading.Lock()
 
 
 def _serve(conn):
-    global _inflight
+    global _inflight, _sockets
+    with _inflight_lock:
+        _sockets += 1
     try:
         while True:
             hdr = conn.recv(12)
@@ -79,11 +82,16 @@ def start_slave():
     return srv
 
 
-def run(serialize, seconds=30, interval=3.0):
+def run(serialize, seconds=30, interval=3.0, share=None):
     from multibus.config import ModbusConfig, SelectedRegister
-    from multibus.modbus_client import ModbusConnection, RegisterPoller, _ARBITERS
+    from multibus.modbus_client import (ModbusConnection, RegisterPoller,
+                                        _ARBITERS, _TRANSPORTS)
     from multibus.register_parser import RegisterParser
+    global _sockets
     _ARBITERS.clear()
+    _TRANSPORTS.clear()
+    _sockets = 0
+    share = serialize if share is None else share
     regs = [SelectedRegister(address=40071 + i, name=f'r{i}', label='r', unit='',
                              data_type='uint16', poll_group='normal') for i in range(50)]
     stamps = {}
@@ -91,7 +99,8 @@ def run(serialize, seconds=30, interval=3.0):
     for u in (1, 2, 3, 4, 240):
         cfg = ModbusConfig(host='127.0.0.1', port=15502, unit_id=u, timeout=10,
                            retry_attempts=1, retry_delay=0,
-                           serialize_endpoint=serialize, endpoint_wait_s=30)
+                           serialize_endpoint=serialize, endpoint_wait_s=30,
+                           share_transport=share)
         conn = ModbusConnection(cfg)
         stamps[u] = []
         def cb(group, data, _u=u): stamps[_u].append(time.monotonic())
@@ -101,7 +110,8 @@ def run(serialize, seconds=30, interval=3.0):
         p.start()
     time.sleep(seconds)
     for p, c in pollers:
-        p.stop(); c.disconnect()
+        p.stop()
+        c.disconnect()
     for p, _ in pollers:
         p.join(timeout=5)
 
@@ -116,7 +126,7 @@ def run(serialize, seconds=30, interval=3.0):
     if gaps:
         print(f'{label}: {total} reads in {seconds}s ({total/seconds:.2f}/s) | '
               f'cadence p50 {st.median(gaps):.2f}s max {max(gaps):.2f}s | '
-              f'sweep {st.median(cycles):.2f}s')
+              f'sweep {st.median(cycles):.2f}s | sockets the master served: {_sockets}')
     else:
         print(f'{label}: {total} reads — nothing completed')
     return total
@@ -126,6 +136,6 @@ srv = start_slave()
 time.sleep(0.3)
 print(f'fake slave: {SERVICE_S}s per read, +{THRASH_S}s per extra caller in flight')
 print('5 units, interval 3.0s, 30s run\n')
-run(False)
-time.sleep(1)
-run(True)
+run(False, share=False)          # a socket per unit, all racing — the old shape
+time.sleep(3)                    # let the previous run's sockets finish closing
+run(True)                        # one socket, one queue
