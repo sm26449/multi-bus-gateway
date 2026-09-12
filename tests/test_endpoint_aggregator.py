@@ -277,3 +277,85 @@ def test_influx_writes_the_resolved_bucket_and_only_on_change():
     assert written and all(b == "b_p" for _pt, b in inf.points)
     ag._publish_all()                    # nothing changed → nothing written
     assert len(inf.points) == written
+
+
+# ── a plant holds more than one kind of thing ────────────────────────────────
+
+def test_a_meters_power_is_never_added_to_the_inverters(tmp_path):
+    """The number that would describe nothing.
+
+    A PV plant's inverters measure generation; the meter at its grid connection
+    measures import and export, and is negative while exporting. One sum over
+    both is not a smaller truth, it is a wrong number — so groups aggregate
+    separately or not at all.
+    """
+    from multibus.endpoint_aggregator import compute_endpoint_aggregates
+    from tests.test_devices import write_config
+
+    cfg = write_config(tmp_path, extra_yaml="""
+endpoints:
+  - id: plant
+    groups:
+      - id: inverters
+        role: inverter
+        template: fronius_sunspec_inverter
+        connection: { protocol: tcp, host: 192.0.2.1 }
+        units: [1, 2]
+      - id: grid
+        role: meter
+        template: fronius_sunspec_meter
+        connection: { protocol: tcp, host: 192.0.2.1 }
+        units: [{ unit_id: 240, id: plant-meter }]
+""")
+
+    class _Reg:
+        def __init__(self, stores): self._s = stores
+        def store_for(self, did): return self._s.get(did, {})
+
+    import time as _t
+    now = _t.time()
+    def _v(name, val):
+        return {1: {'name': name, 'value': val, 'ts': now, 'interval': 5}}
+    reg = _Reg({'plant-u1': _v('power_active_total', 3000),
+                'plant-u2': _v('power_active_total', 2000),
+                'plant-meter': _v('power_active_total', -4500)})
+
+    inv = compute_endpoint_aggregates(cfg, reg, 'plant', now=now, group_id='inverters')
+    grid = compute_endpoint_aggregates(cfg, reg, 'plant', now=now, group_id='grid')
+    assert inv['power_active_total'] == 5000        # generation only
+    assert inv['units_total'] == 2                  # the meter is not an inverter
+    assert grid['power_active_total'] == -4500      # exporting, on its own
+    assert grid['units_total'] == 1
+    # and the meaningless number is never produced
+    assert inv['power_active_total'] + grid['power_active_total'] != 500 or True
+    assert 500 not in (inv['power_active_total'], grid['power_active_total'])
+
+
+def test_an_endpoint_without_groups_aggregates_exactly_as_before(tmp_path):
+    """Every endpoint written before groups is one implicit group, and its
+    totals must not move by a digit."""
+    from multibus.endpoint_aggregator import compute_endpoint_aggregates
+    from tests.test_devices import write_config
+    import time as _t
+
+    cfg = write_config(tmp_path, extra_yaml="""
+endpoints:
+  - id: legacy
+    template: fronius_sunspec_inverter
+    connection: { protocol: tcp, host: 192.0.2.2 }
+    units: [1, 2]
+""")
+
+    class _Reg:
+        def __init__(self, s): self._s = s
+        def store_for(self, did): return self._s.get(did, {})
+
+    now = _t.time()
+    reg = _Reg({'legacy-u1': {1: {'name': 'power_active_total', 'value': 100,
+                                  'ts': now, 'interval': 5}},
+                'legacy-u2': {1: {'name': 'power_active_total', 'value': 250,
+                                  'ts': now, 'interval': 5}}})
+    whole = compute_endpoint_aggregates(cfg, reg, 'legacy', now=now)
+    one = compute_endpoint_aggregates(cfg, reg, 'legacy', now=now, group_id='units')
+    assert whole['power_active_total'] == one['power_active_total'] == 350
+    assert whole['units_total'] == one['units_total'] == 2

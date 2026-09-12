@@ -199,3 +199,83 @@ endpoints:
     assert cfg.devices
     for d in cfg.devices:
         assert d.sources, f"device {d.id} has no source — it would never poll"
+
+
+# ── a plant holds more than one kind of thing ────────────────────────────────
+
+PLANT = """
+endpoints:
+  - id: fronius
+    name: Fronius PV
+    mqtt: { topic_prefix: "mbg/devices/${device_id}" }
+    groups:
+      - id: inverters
+        role: inverter
+        template: fronius_sunspec_inverter
+        connection: { protocol: tcp, host: 192.168.1.240, port: 502 }
+        units: [1, 2]
+      - id: grid
+        role: meter
+        template: fronius_sunspec_meter
+        connection: { protocol: tcp, host: 192.168.1.240, port: 502 }
+        units:
+          - { unit_id: 240, id: fronius-meter-240, name: Grid meter }
+"""
+
+
+def test_one_plant_holds_inverters_and_its_meter(tmp_path):
+    """A PV plant is an installation, not one kind of device. Modelling the
+    meter as a separate endpoint was the same duplication we removed at the
+    source level, one level up."""
+    from tests.test_devices import write_config
+    cfg = write_config(tmp_path, extra_yaml=PLANT)
+    devs = {d.id: d for d in cfg.endpoint_devices('fronius')}
+    assert set(devs) == {'fronius-u1', 'fronius-u2', 'fronius-meter-240'}
+    assert devs['fronius-u1'].group_id == 'inverters'
+    assert devs['fronius-u1'].role == 'inverter'
+    assert devs['fronius-meter-240'].group_id == 'grid'
+    assert devs['fronius-meter-240'].role == 'meter'
+
+
+def test_a_group_brings_its_own_template(tmp_path):
+    from tests.test_devices import write_config
+    cfg = write_config(tmp_path, extra_yaml=PLANT)
+    devs = {d.id: d for d in cfg.endpoint_devices('fronius')}
+    assert devs['fronius-u1'].template == 'fronius_sunspec_inverter'
+    assert devs['fronius-meter-240'].template == 'fronius_sunspec_meter'
+
+
+def test_a_units_hand_written_id_survives_being_grouped(tmp_path):
+    """Moving the meter into the plant must not rename it: `fronius-meter-240`
+    keeps its topic, its bucket tag and its history."""
+    from tests.test_devices import write_config
+    cfg = write_config(tmp_path, extra_yaml=PLANT)
+    d = cfg.get_device('fronius-meter-240')
+    assert d is not None
+    assert d.mqtt_topic_prefix == 'mbg/devices/fronius-meter-240'
+
+
+def test_a_group_can_be_switched_off_on_its_own(tmp_path):
+    from tests.test_devices import write_config
+    cfg = write_config(tmp_path, extra_yaml=PLANT.replace(
+        "      - id: grid\n", "      - id: grid\n        enabled: false\n"))
+    devs = {d.id: d for d in cfg.endpoint_devices('fronius')}
+    # it still materializes — visible and editable — but does not poll
+    assert devs['fronius-meter-240'].enabled is False
+    assert devs['fronius-u1'].enabled is True
+
+
+def test_an_endpoint_without_groups_is_one_implicit_group(tmp_path):
+    """Every endpoint written before groups existed is one of these, and no
+    device may be renamed by the change."""
+    from tests.test_devices import write_config
+    cfg = write_config(tmp_path, extra_yaml="""
+endpoints:
+  - id: legacy
+    template: fronius_sunspec_inverter
+    connection: { protocol: tcp, host: 192.0.2.9 }
+    units: [1, 2]
+""")
+    assert cfg.endpoint_group_ids('legacy') == ['units']
+    assert [d.id for d in cfg.endpoint_devices('legacy')] == ['legacy-u1', 'legacy-u2']
+    assert all(d.group_id == 'units' for d in cfg.endpoint_devices('legacy'))

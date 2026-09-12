@@ -104,7 +104,8 @@ def _derive_power_factor(out: Dict[str, Any]) -> Optional[float]:
 
 
 def compute_endpoint_aggregates(config, registry, endpoint_id: str,
-                             now: Optional[float] = None) -> Dict[str, Any]:
+                             now: Optional[float] = None,
+                             group_id: Optional[str] = None) -> Dict[str, Any]:
     """Pure computation: ``{name: value}`` for one endpoint from its units' live
     stores, plus ``units_online`` / ``units_total`` / ``status``. Shared by the
     publisher thread and the ``/api/endpoints`` endpoint.
@@ -113,10 +114,19 @@ def compute_endpoint_aggregates(config, registry, endpoint_id: str,
     the denominator of "how many are producing", not the configuration census
     the UI lists. A disabled unit is excluded everywhere: it must not hold the
     endpoint's counters hostage, nor make ``status`` unreachable from ``online``.
+
+    ``group_id`` restricts the sum to ONE group of the endpoint, and it must be
+    used whenever an endpoint holds more than one kind of thing. A PV plant
+    holds inverters and the meter at its grid connection: their active powers
+    have opposite meanings — generation against import/export — and adding them
+    would produce a number that describes nothing. Groups aggregate separately
+    or not at all.
     """
     now = now if now is not None else time.time()
     expected = [d for d in config.endpoint_devices(endpoint_id)
-                if getattr(d, "enabled", True)]
+                if getattr(d, "enabled", True)
+                and (group_id is None
+                     or (getattr(d, "group_id", "") or "units") == group_id)]
     fresh: Dict[str, List[float]] = {}
     counters: Dict[str, List[float]] = {}
     online = 0
@@ -214,33 +224,49 @@ class EndpointAggregator(threading.Thread):
                 continue
             if not bool(p.get("aggregates", True)):
                 continue
-            agg = compute_endpoint_aggregates(self._config, self._registry, pid)
-            if log:
-                fields = sum(1 for k in agg if k not in _META)
-                energy = sum(1 for k in agg if k.startswith("energy_"))
-                logger.info("endpoint %s aggregates: %s online=%s/%s fields=%d "
-                            "energy_leaves=%d (power_active_total=%s)", pid,
-                            agg.get("status", "—"), agg.get("units_online"),
-                            agg.get("units_total"), fields, energy,
-                            agg.get("power_active_total"))
-            # Publishes UNCONDITIONALLY, including a cycle with nothing fresh:
-            # that cycle still carries status=offline and units_online=0, which
-            # is precisely the information a consumer needs at nightfall.
-            self._publish_mqtt(pid, agg)
-            self._publish_influx(p, pid, agg)
+            # One total per GROUP. A plant's inverters and the meter at its
+            # grid connection measure opposite things — generation against
+            # import/export — so one sum over both would describe nothing.
+            # A config stub in a test (or an older one) may not know about
+            # groups; one implicit group is the right answer for it, and the
+            # same answer groups-unaware endpoints get anyway.
+            _gids = getattr(self._config, 'endpoint_group_ids', None)
+            groups = (_gids(pid) if callable(_gids) else None) or ['units']
+            for gi, gid in enumerate(groups):
+                agg = compute_endpoint_aggregates(self._config, self._registry,
+                                                  pid, group_id=gid)
+                # The FIRST group keeps the bare endpoint path, so every topic
+                # and Influx series that existed before groups is byte-identical.
+                sub = '' if gi == 0 else gid
+                if log:
+                    fields = sum(1 for k in agg if k not in _META)
+                    energy = sum(1 for k in agg if k.startswith("energy_"))
+                    logger.info("endpoint %s/%s aggregates: %s online=%s/%s "
+                                "fields=%d energy_leaves=%d "
+                                "(power_active_total=%s)", pid, gid,
+                                agg.get("status", "—"), agg.get("units_online"),
+                                agg.get("units_total"), fields, energy,
+                                agg.get("power_active_total"))
+                # Publishes UNCONDITIONALLY, including a cycle with nothing
+                # fresh: that cycle still carries status=offline and
+                # units_online=0, which is precisely what a consumer needs at
+                # nightfall.
+                self._publish_mqtt(pid, agg, sub)
+                self._publish_influx(p, pid, agg, sub)
 
-    def _publish_mqtt(self, pid: str, agg: Dict[str, Any]):
+    def _publish_mqtt(self, pid: str, agg: Dict[str, Any], sub: str = ""):
         mqtt = self._get_mqtt()
         if mqtt is None or not getattr(mqtt, "connected", False):
             return
-        base = f"mbg/endpoints/{pid}"
+        base = f"mbg/endpoints/{pid}" + (f"/{sub}" if sub else "")
         for name, val in agg.items():
             leaf = name if name in _META else (mqtt_topic_for(name) or name)
             # publish_if_changed keeps the change-detection semantics every
             # other topic has (heartbeat republish included)
             mqtt.publish_if_changed(f"{base}/{leaf}", val)
 
-    def _publish_influx(self, endpoint: Dict, pid: str, agg: Dict[str, Any]):
+    def _publish_influx(self, endpoint: Dict, pid: str, agg: Dict[str, Any],
+                        sub: str = ""):
         influx = self._get_influx()
         if influx is None or not getattr(influx, "connected", False):
             return
@@ -251,7 +277,9 @@ class EndpointAggregator(threading.Thread):
             return
         bucket = endpoint_bucket(endpoint, pid)
         changed_only = getattr(influx, "publish_mode", "changed") == "changed"
-        last = self._influx_last.setdefault(pid, {})
+        # change detection is per GROUP: two groups carry the same field names
+        # and one shared memo would hide the second group's every value
+        last = self._influx_last.setdefault(f"{pid}/{sub}" if sub else pid, {})
         ts = time.time()
         for name, val in agg.items():
             if not isinstance(val, (int, float)) or isinstance(val, bool):
@@ -263,5 +291,11 @@ class EndpointAggregator(threading.Thread):
                      .tag("device", pid).tag("aggregate", "endpoint")
                      .field(name, float(val))
                      .time(int(ts * 1e9), WritePrecision.NS))
+            # A tag CHANGES series identity, so the first group must not gain
+            # one: its series has to stay byte-identical to what it wrote
+            # before groups existed. Later groups are tagged, which is also what
+            # keeps a plant's meter from overwriting its inverters' totals.
+            if sub:
+                point = point.tag("group", sub)
             influx.write_point(point, ts=ts, bucket=bucket)
             last[name] = val

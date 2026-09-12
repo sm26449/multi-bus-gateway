@@ -1,5 +1,48 @@
 # Changelog
 
+## 3.60.0
+
+### 2026-09-12 — a plant is an installation, not one kind of device (P8, step 4)
+
+A PV plant holds inverters AND the meter at its grid connection. Modelling that
+as two endpoints was the same duplication we removed at the source level, one
+level up: two aggregates, two pages, two things to keep in step, for one
+physical installation.
+
+An endpoint now holds **groups** — zero, one or many — each with its own role,
+template, connection and sources:
+
+```yaml
+endpoints:
+  - id: fronius
+    name: Fronius PV
+    groups:
+      - { id: inverters, role: inverter, template: …, units: [1,2,3,4], sources: [...] }
+      - { id: grid, role: meter, template: …, units: [{unit_id: 240, id: fronius-meter-240}] }
+```
+
+A plant may have no meter, one, or several, and a meter group reaches its units
+over Modbus or the Solar API like any other — a group is just "these units, this
+way, this map".
+
+**Groups aggregate separately, and that is the point.** Inverters measure
+generation; the meter at the grid connection measures import and export and is
+negative while exporting. One sum over both is not a smaller truth, it is a
+wrong number. A test pins it: 3000 W + 2000 W of generation stays 5000, the
+meter's -4500 W stays on its own, and the meaningless 500 is never produced.
+
+**Nothing existing moves.** An endpoint that declares no groups is one implicit
+group holding its flat units, so every endpoint written before today keeps its
+device ids, its topics and its totals to the digit. The FIRST group keeps the
+bare `mbg/endpoints/<id>/…` path and its untagged InfluxDB series; later groups
+publish under `mbg/endpoints/<id>/<group>/…` and carry a `group` tag. A tag
+changes series identity, so adding one to the first group would have orphaned
+its history — it does not get one.
+
+A unit's hand-written id survives being grouped, so moving `fronius-meter-240`
+into the plant keeps its topic, its tag and its history. A group can be disabled
+on its own: its units stay visible and editable, they simply stop polling.
+
 ## 3.59.0
 
 ### 2026-09-12 — health on two levels, and the Sources card (P8, step 3)
