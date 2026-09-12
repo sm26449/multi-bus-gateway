@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.52.1
+
+### 2026-09-12 — migration fix: a template that curates nothing prunes nothing
+
+`--prune-uncurated` read "this template has no curated subset" as "every
+selected register is stale" and emptied the device. `device_seed` seeds such a
+template WHOLE, so on it every register IS curated. Caught on the live config
+during the cutover — it wiped a production meter's entire selection, which the
+script's own backup put straight back, and the gateway had not been restarted
+onto it.
+
 ## 3.52.0
 
 ### 2026-09-12 — the cutover parity harness proves nothing is lost
