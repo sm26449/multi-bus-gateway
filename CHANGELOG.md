@@ -44,6 +44,22 @@ Where concurrency helps it is worth 3.4x the data and the cadence you actually
 configured; where it does not, the knob is inert. That is the property worth
 having: it cannot make a serializing datalogger worse.
 
+Run against the production Fronius DataManager (four inverters, the 49-register
+`normal` block, while both the gateway and the reference collector were
+polling), the script declined to recommend anything at all: every level, one
+connection included, produced timeouts and late answers. The access point has
+no spare capacity even for a probe, which is the strongest form of the same
+conclusion — it stays at one connection. A calibration that refuses to answer
+is worth more than one that guesses.
+
+- **The calibration counts what a naive probe would miss.** An overloaded
+  master answers late: the read times out, the connection moves on, and the
+  stale reply turns up against the next transaction's id, where pymodbus drops
+  it and carries on. The next read then pays for the previous one's failure and
+  both look healthy. Late answers and over-timeout reads are now counted and
+  disqualify the level, and a short frame is no longer taken for a read. The
+  first live run reported a clean 1.2x win for two connections; with the
+  counters it reported the truth.
 - **Fixed: editing an endpoint erased the rest of its connection block.** The
   modal rebuilt `connection` from the three fields it shows, so timeouts, retry
   budgets and illegal-register lists written in `config.yaml` disappeared on the

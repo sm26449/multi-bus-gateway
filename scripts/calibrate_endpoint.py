@@ -29,6 +29,7 @@ Two things to know before running it:
   what is running. ``--solo`` prints the reminder and nothing else changes.
 """
 import argparse
+import logging
 import statistics as stats
 import sys
 import threading
@@ -38,6 +39,31 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pymodbus.client import ModbusTcpClient  # noqa: E402
+
+
+class DesyncCounter(logging.Handler):
+    """Count the answers that arrived for a question we had stopped asking.
+
+    When a master is overloaded it answers late: the read times out, the lane
+    moves on, and the stale reply turns up against the next transaction's id.
+    pymodbus drops it with "request ask for id=N but got id=M, Skipping" and
+    carries on — so the NEXT read pays for the previous one's failure, and both
+    look fine from the outside. A measurement that did not count these would
+    quietly report a degraded endpoint as a healthy one, which is the exact
+    mistake this script exists to prevent. Observed on a production Fronius
+    DataManager at three connections.
+    """
+
+    def __init__(self):
+        super().__init__(level=logging.ERROR)
+        self.count = 0
+
+    def emit(self, record):
+        if "Skipping" in record.getMessage():
+            self.count += 1
+
+
+_DESYNC = DesyncCounter()
 
 
 class Lane(threading.Thread):
@@ -69,11 +95,16 @@ class Lane(threading.Thread):
                     try:
                         rr = client.read_holding_registers(
                             self.address, count=self.count, device_id=unit)
-                        bad = rr.isError()
+                        # A short frame is not a read. Some masters answer a
+                        # block they cannot serve with whatever they have.
+                        bad = rr.isError() or len(getattr(rr, 'registers', [])
+                                                  or []) != self.count
                     except Exception:  # noqa: BLE001 — a timeout IS the datum
                         bad = True
                     dt = time.perf_counter() - t0
-                    if bad:
+                    # A read that outran the socket timeout did not succeed on
+                    # time even if a frame eventually came back.
+                    if bad or dt >= self.timeout:
                         self.errors += 1
                     else:
                         self.latencies.append(dt)
@@ -103,6 +134,8 @@ def probe(host, port, units, address, count, lanes, seconds, timeout):
         t.join()
     elapsed = time.perf_counter() - t0
 
+    desync = _DESYNC.count
+    _DESYNC.count = 0
     refused = [t.connect_error for t in threads if t.connect_error]
     lat = [x for t in threads for x in t.latencies]
     errors = sum(t.errors for t in threads)
@@ -119,6 +152,7 @@ def probe(host, port, units, address, count, lanes, seconds, timeout):
         'tx_p95': _pct(lat, 0.95),
         'sweep_s': sweep,
         'refused': len(refused),
+        'desync': desync,
     }
 
 
@@ -132,9 +166,11 @@ def recommend(rows, tolerance=0.10):
     that started refusing connections or erroring is not a candidate at all.
     """
     ok = [r for r in rows if not r['refused'] and r['reads']
-          and r['errors'] <= max(1, r['reads'] * 0.02)]
+          and r['errors'] <= max(1, r['reads'] * 0.02)
+          and not r['desync']]
     if not ok:
-        return None, "every level refused connections or errored — leave it at 1"
+        return None, ("every level errored, was refused, or answered late — "
+                      "leave it at 1")
     best = min(ok, key=lambda r: r['sweep_s'])
     for r in ok:
         if r['sweep_s'] <= best['sweep_s'] * (1 + tolerance):
@@ -165,6 +201,8 @@ def main():
                     help='pause between levels, so one does not taint the next')
     a = ap.parse_args()
 
+    logging.getLogger('pymodbus').addHandler(_DESYNC)
+    logging.getLogger('pymodbus').setLevel(logging.ERROR)
     units = [int(u) for u in a.units.replace(' ', '').split(',') if u]
     if not units:
         ap.error('--units needs at least one unit id')
@@ -174,7 +212,7 @@ def main():
           f"{a.count} registers from {a.address} · {a.seconds:.0f}s per level")
     print("This reads the live device and competes with anything else polling "
           "it.\n")
-    print(f"{'lanes':>5} {'reads':>7} {'err':>5} {'reads/s':>8} "
+    print(f"{'conns':>5} {'reads':>7} {'err':>5} {'late':>5} {'reads/s':>8} "
           f"{'tx p50':>8} {'tx p95':>8} {'sweep':>8}")
 
     rows = []
@@ -184,9 +222,11 @@ def main():
         r = probe(a.host, a.port, units, a.address, a.count, lanes,
                   a.seconds, a.timeout)
         rows.append(r)
-        note = f"  ({r['refused']} lane(s) refused)" if r['refused'] else ""
+        note = f"  ({r['refused']} connection(s) refused)" if r['refused'] else ""
+        if r['desync']:
+            note += "  (late answers — this level is over the master's head)"
         print(f"{r['lanes']:>5} {r['reads']:>7} {r['errors']:>5} "
-              f"{r['reads_per_s']:>8.2f} {r['tx_p50']:>8.3f} "
+              f"{r['desync']:>5} {r['reads_per_s']:>8.2f} {r['tx_p50']:>8.3f} "
               f"{r['tx_p95']:>8.3f} {r['sweep_s']:>8.2f}{note}")
 
     k, why = recommend(rows)
