@@ -44,6 +44,7 @@ from typing import Callable, Dict, Optional
 
 from . import expressions
 from .config import SelectedRegister
+from .value_decode import decode_register
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,18 @@ class CalcEngine:
                 label=e.get('label') or e.get('name') or f'CALC_{i}',
                 unit=e.get('unit', ''), data_type='float',
                 poll_group=e.get('poll_group') or 'normal',
+                # An explicit topic/measurement lets a DERIVED value land on the
+                # branch it belongs to (`status/text`) instead of its flat name.
+                # Deliberately no canonical fallback: every calc register that
+                # exists today publishes to its flat name, and routing identity
+                # must not shift under a user who only upgraded.
+                mqtt_topic=str(e.get('topic') or ''),
+                influxdb_measurement=str(e.get('measurement') or ''),
+                mqtt_enabled=bool(e.get('mqtt', True)),
+                influxdb_enabled=bool(e.get('influxdb', True)),
+                # a computed CODE becomes text through the same decoder real
+                # status registers use — one decode path, not two
+                enum=e.get('enum') or None,
             )
             _ok, _err, refs = expressions.validate_expression(e.get('expr', ''))
             # compile the AST ONCE here (not per poll) — the hot path reuses it
@@ -192,6 +205,10 @@ class CalcEngine:
                 except (TypeError, ValueError):
                     pass
             reg = e['_reg']
+            if reg.enum:
+                val = decode_register(val, reg)
+                if val is None:
+                    continue                  # undecodable → publish nothing
             # The result is only as fresh as its OLDEST input (vmeter 'sum'
             # rule) — a calc referencing a dead device must not be re-stamped
             # now() every cycle and read as good forever. ISO timestamps sort

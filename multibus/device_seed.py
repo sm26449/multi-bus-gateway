@@ -99,4 +99,13 @@ def autoselect_template_registers(config: Any, template_registry: Any,
     tpg = {n: {'interval': g.get('interval', 5), 'description': g.get('description', '')}
            for n, g in (tpl.poll_groups or {}).items()} or None
     config.save_device_registers(dev_cfg.id, reg_list, poll_groups=tpg)
-    logger.info(f"device {dev_cfg.id}: auto-selected {len(reg_list)} template registers")
+    # Derived measurements ship WITH the map. A template that decodes its own
+    # status word or derives an alarm hands every device seeded from it the
+    # same output — instead of each unit of a plant needing the formula
+    # retyped, which is exactly how two devices of one family end up speaking
+    # differently.
+    calcs = [c.to_dict() for c in (getattr(tpl, 'calculated', None) or [])]
+    if calcs:
+        config.save_calculated(dev_cfg.id, calcs)
+    logger.info(f"device {dev_cfg.id}: auto-selected {len(reg_list)} template "
+                f"registers" + (f" + {len(calcs)} derived" if calcs else ""))

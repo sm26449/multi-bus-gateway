@@ -266,3 +266,69 @@ def test_identity_block_present_and_static():
             assert r.address == doc - 1
             assert r.data_type == "string:16"
             assert r.poll_group == "static"
+
+
+# ── P3: power factor is a fraction, and the status ships decoded ─────────────
+
+def _tpl(path):
+    with open(path) as f:
+        return parse_template(json.load(f))
+
+
+def test_power_factor_carries_the_percent_to_fraction_conversion():
+    """SunSpec reports PF as a PERCENTAGE. Without the fixed scale on top of
+    the dynamic scale factor, a Fronius unit's power_factor/total read ±100
+    while the Janitza next to it read ±1 — one canonical topic, two meanings."""
+    for path, names in ((INV, ["power_factor_total"]),
+                        (MET, ["power_factor_total", "power_factor_l1",
+                               "power_factor_l2", "power_factor_l3"])):
+        t = _tpl(path)
+        for n in names:
+            r = next(x for x in t.registers if x.name == n)
+            assert r.scale_from == "pf_sf", (path, n)
+            assert r.scale == 100, (path, n)
+
+
+def test_the_inverter_ships_its_status_decoded():
+    t = _tpl(INV)
+    by_name = {c.name: c for c in t.calculated}
+    assert set(by_name) == {"status_text", "status_alarm", "status_active"}
+    assert by_name["status_text"].topic == "status/text"
+    assert by_name["status_alarm"].topic == "status/alarm"
+    assert by_name["status_active"].topic == "status/active"
+    # text is MQTT-only; InfluxDB has no use for a string state
+    assert by_name["status_text"].influxdb is False
+    # the flags land in the same measurement as the code they derive from
+    assert by_name["status_alarm"].measurement == "status"
+    # every derived name is in the canonical dictionary, like every other leaf
+    for n, c in by_name.items():
+        assert is_canonical(n), n
+        assert mqtt_topic_for(n) == c.topic, n
+
+
+def test_status_text_matches_the_reference_collector_wording():
+    """Anything reading the old collector's `status` leaf must see the same
+    words on the new one — the migration moves a topic, not a vocabulary."""
+    expected = {
+        1: "Off", 2: "Sleeping (auto-shutdown)", 3: "Starting up",
+        4: "Tracking power point", 5: "Forced power reduction",
+        6: "Shutting down", 7: "One or more faults exist", 8: "Standby",
+        9: "No SolarNet communication", 10: "No communication with inverter",
+        11: "Overcurrent on SolarNet plug", 12: "Inverter is being updated",
+        13: "AFCI Event",
+    }
+    enum = next(c for c in _tpl(INV).calculated if c.name == "status_text").enum
+    assert {int(k): v for k, v in enum.items()} == expected
+
+
+def test_alarm_and_active_cover_the_vendor_code_sets():
+    from multibus import expressions
+    calcs = {c.name: expressions.compile_expression(c.expr)
+             for c in _tpl(INV).calculated if c.name != "status_text"}
+    # the vendor table flags these as alarms; 4/5 are the producing states
+    alarm, active = {5, 7, 9, 10, 11, 13}, {4, 5}
+    for code in range(1, 14):
+        got = {n: int(expressions.evaluate_tree(tree, lambda _r, c=code: c))
+               for n, tree in calcs.items()}
+        assert got["status_alarm"] == (1 if code in alarm else 0), code
+        assert got["status_active"] == (1 if code in active else 0), code

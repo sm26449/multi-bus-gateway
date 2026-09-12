@@ -129,6 +129,11 @@ CANONICAL_FIELDS: Dict[str, Tuple[str, str, str, str]] = {
     'vendor_event_flags_2': ('status', '', 'status/vendor_event_flags/2', 'Vendor event flags word 2'),
     'vendor_event_flags_3': ('status', '', 'status/vendor_event_flags/3', 'Vendor event flags word 3'),
     'vendor_event_flags_4': ('status', '', 'status/vendor_event_flags/4', 'Vendor event flags word 4'),
+    # Derived: a template ships these as calculated measurements, not as
+    # registers — the decoded state and the two flags a controller acts on.
+    'status_text':   ('status', '', 'status/text', 'Operating state, decoded to vendor wording'),
+    'status_alarm':  ('status', '', 'status/alarm', 'Operating state is an alarm condition (1/0)'),
+    'status_active': ('status', '', 'status/active', 'Device is actively producing (1/0)'),
 }
 
 CANONICAL_NAMES = frozenset(CANONICAL_FIELDS)

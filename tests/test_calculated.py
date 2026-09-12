@@ -328,3 +328,36 @@ def test_calc_evaluates_on_mqtt_wildcard_group():
     eng.run("dev", "mqtt", store, topic_prefix="", bucket=None, device_tag=None,
             device_id="dev", mqtt_on=False, influx_on=False)
     assert store[CALC_ADDR_BASE]["value"] == 10.0
+
+
+@needs_tc
+def test_saving_preserves_routing_and_decode(tmp_path):
+    """A template ships derived measurements with a topic and an enum. Saving
+    from the UI used to rebuild each entry from a fixed field list, so one save
+    silently re-routed a template-shipped measurement and turned its text back
+    into a bare code."""
+    _cfg, client = make_app(tmp_path)
+    body = {"calculated": [{
+        "name": "status_text", "label": "Operating state",
+        "expr": "1 + 1", "poll_group": "normal",
+        "topic": "status/text", "measurement": "status",
+        "enum": {"2": "Sleeping"}, "influxdb": False,
+    }]}
+    r = client.post("/api/devices/umg512/calculated", json=body)
+    assert r.status_code == 200
+    saved = Config(str(tmp_path / "config.yaml")).load_calculated("umg512")[0]
+    assert saved["topic"] == "status/text"
+    assert saved["measurement"] == "status"
+    assert saved["enum"] == {"2": "Sleeping"}
+    assert saved["influxdb"] is False
+
+
+@needs_tc
+def test_saving_rejects_a_wildcard_topic_and_an_empty_enum(tmp_path):
+    _cfg, client = make_app(tmp_path)
+    bad_topic = {"calculated": [{"name": "X", "expr": "1", "topic": "a/#"}]}
+    assert client.post("/api/devices/umg512/calculated",
+                       json=bad_topic).status_code == 422
+    bad_enum = {"calculated": [{"name": "X", "expr": "1", "enum": {}}]}
+    assert client.post("/api/devices/umg512/calculated",
+                       json=bad_enum).status_code == 422

@@ -107,12 +107,39 @@ def build(ctx) -> APIRouter:
             if not ok:
                 errors.append(f"#{i+1} ({name or '?'}): {err}")
             dec = it.get('decimals')
-            clean.append({
+            entry = {
                 'name': name, 'label': str(it.get('label', '') or name),
                 'unit': str(it.get('unit', '')), 'expr': expr,
                 'poll_group': str(it.get('poll_group', '') or 'normal'),
                 'decimals': int(dec) if isinstance(dec, int) and not isinstance(dec, bool) else None,
-            })
+            }
+            # Routing + decode belong to the calc register, and a template can
+            # ship them (a decoded status wants `status/text`, not a flat name).
+            # They are carried through UNCHANGED here: rebuilding the entry from
+            # a fixed field list used to DROP them, so one save from the UI
+            # silently re-routed a template-shipped measurement and turned its
+            # text back into a bare code.
+            topic = str(it.get('topic', '') or '')
+            if topic and (topic.startswith('/') or topic.endswith('/')
+                          or '+' in topic or '#' in topic):
+                errors.append(f"#{i+1} ({name or '?'}): topic must be a "
+                              f"relative leaf without wildcards")
+            elif topic:
+                entry['topic'] = topic
+            meas = str(it.get('measurement', '') or '')
+            if meas:
+                entry['measurement'] = meas
+            enum_map = it.get('enum')
+            if enum_map is not None:
+                if not isinstance(enum_map, dict) or not enum_map:
+                    errors.append(f"#{i+1} ({name or '?'}): enum must be a "
+                                  f"non-empty object")
+                else:
+                    entry['enum'] = {str(k): str(v) for k, v in enum_map.items()}
+            for flag in ('mqtt', 'influxdb'):
+                if flag in it:
+                    entry[flag] = bool(it[flag])
+            clean.append(entry)
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors})
         config.save_calculated(device_id, clean)
