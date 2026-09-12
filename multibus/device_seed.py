@@ -31,8 +31,15 @@ def autoselect_template_registers(config: Any, template_registry: Any,
     With no ``source`` this behaves exactly as it always did, which is what
     every device written before sources existed still wants.
     """
+    # Which map to seed from. With an explicit source, its template wins. With
+    # none, the device's own — and failing that, its FIRST source's: a group
+    # that declares one way of being read puts the template on that source, and
+    # the device itself may carry none at all. Missing this left a
+    # single-source group with zero registers and no error, which is the worst
+    # shape a failure can take.
     template_id = (getattr(source, 'template', '') or dev_cfg.template) if source \
-        else dev_cfg.template
+        else (dev_cfg.template
+              or next((s.template for s in (dev_cfg.sources or []) if s.template), ''))
     if not template_id or (dev_cfg.primary and source is None):
         return
     tpl = template_registry.get(template_id)

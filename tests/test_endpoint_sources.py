@@ -279,3 +279,35 @@ endpoints:
     assert cfg.endpoint_group_ids('legacy') == ['units']
     assert [d.id for d in cfg.endpoint_devices('legacy')] == ['legacy-u1', 'legacy-u2']
     assert all(d.group_id == 'units' for d in cfg.endpoint_devices('legacy'))
+
+
+def test_a_single_source_group_seeds_from_its_sources_template(tmp_path):
+    """A group that declares one way of being read puts the template on that
+    source, and the device itself may carry none. Seeding used to look only at
+    the device and quietly produce ZERO registers — a device that polls nothing
+    while reporting no error at all."""
+    from multibus.device_seed import autoselect_template_registers
+    from multibus.device_template import TemplateRegistry
+    from tests.test_devices import write_config
+
+    cfg = write_config(tmp_path, extra_yaml="""
+endpoints:
+  - id: apionly
+    groups:
+      - id: inverters
+        role: inverter
+        units: [1, 2]
+        sources:
+          - id: solar_api
+            protocol: http
+            url: "http://h/x.cgi?DeviceId=${unit_id}"
+            template: fronius_solar_api_inverter
+            poll_groups: { realtime: { interval: 5 } }
+""")
+    reg = TemplateRegistry()
+    dev = cfg.get_device('apionly-u1')
+    assert dev.template == ''                      # nothing on the device
+    autoselect_template_registers(cfg, reg, dev)
+    regs, _g = cfg.load_device_registers(dev, source=dev.sources[0])
+    assert regs, 'a single-source group must still be seeded'
+    assert {'power_active_total', 'frequency'} <= {r.name for r in regs}
