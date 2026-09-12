@@ -1,5 +1,57 @@
 # Changelog
 
+## 3.57.0
+
+### 2026-09-12 — an endpoint declares SOURCES, not a connection (P8, step 1)
+
+A master device offers the same slave over several protocols. The Fronius
+DataManager speaks Modbus TCP (complete, 1945-2376 ms a read) and a Solar API
+over HTTP (partial, 54 ms, and it does not disturb the Modbus side). Declaring
+that as two endpoints gave two device identities, two topic trees and two sets
+of aggregates for ONE physical inverter. That was built and removed on the same
+evening; this is the model that replaces it.
+
+An endpoint is now an access point, N units, and **M ordered sources**:
+
+```yaml
+endpoints:
+  - id: fronius
+    units: [1, 2, 3, 4]
+    sources:
+      - id: sunspec
+        protocol: tcp
+        host: 192.168.1.240
+        template: fronius_sunspec_inverter
+        poll_groups: { normal: { interval: 20 }, slow: { interval: 120 } }
+      - id: solar_api
+        protocol: http
+        url: "…?Scope=Device&DeviceId=${unit_id}&DataCollection=CommonInverterData"
+        template: fronius_solar_api_inverter
+        poll_groups: { realtime: { interval: 5 } }
+        stale_after_s: 15
+```
+
+**Identity belongs to the unit.** `fronius-u1` keeps one topic prefix, one
+bucket, one tag and one history, whichever source produced a value. A source is
+only how it arrived, and nothing in the routing identity names one.
+
+**Order is precedence.** The first source offering a field owns it; a later one
+fills that field only once the earlier has gone stale past its `stale_after_s`.
+That makes failover automatic when a cached HTTP view freezes, without the
+flapping "freshest wins" would cause. `stale_after_s: 0` never yields, which is
+the right setting for a counter — one that alternated between sources would go
+non-monotonic.
+
+Nothing existing changes: a plain `connection:` is the shorthand for exactly one
+source named `default`, so every config written before today is a one-source
+endpoint and `dev.connection` still means the first source's transport. The
+ModbusConfig build is now shared between devices and sources rather than
+duplicated, so a knob added once reaches both.
+
+This step is the schema and the expansion only. The runtime still polls the
+first source; several clients writing into one store, per-field provenance, and
+the UI card follow.
+
 ## 3.56.0
 
 ### 2026-09-12 — an endpoint can front an HTTP master (Solar API, phase P7)

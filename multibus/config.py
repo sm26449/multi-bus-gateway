@@ -209,7 +209,58 @@ class ModbusConfig:
     bytesize: int = 8
 
 
+def _serial_from_conn(c: Dict) -> Dict[str, Any]:
+    return {k: c[k] for k in
+            ('serial_port', 'baudrate', 'parity', 'stopbits', 'bytesize') if k in c}
+
+
+def _http_from_conn(c: Dict) -> Dict[str, Any]:
+    return {k: c[k] for k in ('url', 'timeout', 'headers', 'verify_tls') if k in c}
+
+
+def _mqtt_in_from_conn(c: Dict) -> Dict[str, Any]:
+    return {k: c[k] for k in
+            ('broker', 'port', 'username', 'password', 'tls', 'topic') if k in c}
+
+
 PRIMARY_DEVICE_ID = "umg512"
+
+
+@dataclass
+class SourceConfig:
+    """One WAY OF REACHING a unit — not another unit.
+
+    A master device offers the same slave over several protocols. A Fronius
+    DataManager speaks Modbus TCP (complete, measured 1945-2376 ms a read) and
+    a Solar API over HTTP (partial, 54 ms, and it does not disturb the Modbus
+    side). Before this, using both meant declaring two endpoints, which meant
+    two device identities, two topic trees and two sets of aggregates for one
+    physical inverter. Identity belongs to the UNIT; a source is only how the
+    value arrived.
+
+    Sources are ordered, and the order IS the precedence: the first source that
+    offers a field owns it. A later source fills that field only once the
+    earlier one has gone stale past its ``stale_after_s`` — which is what makes
+    failover automatic when a cached HTTP view freezes, without the flapping
+    that "freshest wins" would produce.
+    """
+    id: str
+    template: str = ""
+    enabled: bool = True
+    protocol: str = "tcp"                    # tcp | rtu | rtu-tcp | http | mqtt
+    connection: "ModbusConfig" = field(default_factory=lambda: ModbusConfig())
+    serial: Dict[str, Any] = field(default_factory=dict)
+    http: Dict[str, Any] = field(default_factory=dict)
+    mqtt_in: Dict[str, Any] = field(default_factory=dict)
+    # Per-source intervals. A slow, complete source and a fast, partial one do
+    # not share a polling rhythm, so the groups belong to the source and not to
+    # the device.
+    poll_groups: Dict[str, "PollGroup"] = field(default_factory=dict)
+    # How long this source's value stays authoritative before a lower-ranked
+    # source may fill the field. 0 = never yields (the right answer for a
+    # counter, which must never alternate between sources or it goes
+    # non-monotonic).
+    stale_after_s: float = 0.0
 
 
 @dataclass
@@ -226,6 +277,11 @@ class DeviceConfig:
     primary: bool = False
     protocol: str = "tcp"                    # tcp | rtu | http
     connection: "ModbusConfig" = field(default_factory=lambda: ModbusConfig())
+    # The ordered ways of reaching this unit. Always at least one: a plain
+    # `connection:` is the shorthand for a single source named `default`, so
+    # `connection` above stays exactly what it has always been — the FIRST
+    # source's transport. Order is precedence (see SourceConfig).
+    sources: List["SourceConfig"] = field(default_factory=list)
     serial: Dict[str, Any] = field(default_factory=dict)   # rtu params (reserved)
     http: Dict[str, Any] = field(default_factory=dict)     # http input: url, timeout, headers, verify_tls
     mqtt_in: Dict[str, Any] = field(default_factory=dict)  # mqtt input: broker, port, username, password, tls, topic
@@ -615,6 +671,81 @@ class Config:
                 devices.append(dev)
         self.devices = devices
 
+    def _modbus_from_conn(self, conn: Dict) -> "ModbusConfig":
+        """Build the transport settings from one raw connection dict. Shared by
+        the device and by every source, so a knob added here reaches both."""
+        return ModbusConfig(
+            host=conn.get('host', ''),
+            port=int(conn.get('port', 502)),
+            unit_id=int(conn.get('unit_id', 1)),
+            timeout=conn.get('timeout', 3),
+            retry_attempts=int(conn.get('retry_attempts', 3)),
+            retry_delay=float(conn.get('retry_delay', 1.0)),
+            stale_after_s=int(conn.get('stale_after_s', 30)),
+            max_gap=int(conn.get('max_gap', 10)),
+            startup_jitter_s=float(conn.get('startup_jitter_s',
+                self.modbus.startup_jitter_s) or 0.0),
+            illegal_registers=parse_address_list(conn.get('illegal_registers')),
+            drop_all_zero=bool(conn.get('drop_all_zero', False)),
+            serialize_endpoint=bool(conn.get('serialize_endpoint', True)),
+            share_transport=bool(conn.get('share_transport', True)),
+            max_connections=max(1, int(conn.get('max_connections', 1) or 1)),
+            endpoint_wait_s=float(conn.get('endpoint_wait_s', 10.0)),
+            endpoint_min_gap_s=max(0.0, float(conn.get('endpoint_min_gap_s', 0.0) or 0.0)),
+            protocol=str(conn.get('protocol', 'tcp')).lower(),
+            serial_port=conn.get('serial_port', ''),
+            baudrate=int(conn.get('baudrate', 9600)),
+            parity=str(conn.get('parity', 'N')),
+            stopbits=int(conn.get('stopbits', 1)),
+            bytesize=int(conn.get('bytesize', 8)),
+        )
+
+    def _sources_from_raw(self, d: Dict) -> List["SourceConfig"]:
+        """The ordered ways of reaching this unit.
+
+        ``sources:`` is the full form. A plain ``connection:`` is the shorthand
+        for exactly one source named ``default`` — which is what every existing
+        config is, so nothing has to be rewritten and ``dev.connection`` keeps
+        meaning what it always meant (the first source's transport).
+        """
+        raw = d.get('sources')
+        if not raw:
+            raw = [{'id': 'default', 'template': d.get('template', ''),
+                    **(d.get('connection', {}) or {})}]
+        out: List[SourceConfig] = []
+        seen = set()
+        for i, r in enumerate(raw):
+            if not isinstance(r, dict):
+                logger.warning("sources[]: entry %d is not a mapping — skipped", i)
+                continue
+            sid = str(r.get('id', '') or f'source{i + 1}').strip()
+            if sid in seen:
+                # Two sources with one name would make provenance ambiguous,
+                # which defeats the point of recording it at all.
+                logger.warning("sources[]: duplicate id %r skipped", sid)
+                continue
+            seen.add(sid)
+            groups = {k: PollGroup(interval=v.get('interval', 5),
+                                   description=v.get('description', ''))
+                      if isinstance(v, dict) else PollGroup(interval=float(v))
+                      for k, v in (r.get('poll_groups') or {}).items()}
+            try:
+                out.append(SourceConfig(
+                    id=sid,
+                    template=str(r.get('template', '') or d.get('template', '')),
+                    enabled=bool(r.get('enabled', True)),
+                    protocol=str(r.get('protocol', 'tcp')).lower(),
+                    connection=self._modbus_from_conn(r),
+                    serial=_serial_from_conn(r),
+                    http=_http_from_conn(r),
+                    mqtt_in=_mqtt_in_from_conn(r),
+                    poll_groups=groups,
+                    stale_after_s=max(0.0, float(r.get('stale_after_s', 0.0) or 0.0)),
+                ))
+            except (ValueError, TypeError) as e:
+                logger.warning("sources[]: skipping %r — invalid config: %s", sid, e)
+        return out
+
     def _device_from_raw(self, d: Dict, endpoint_id: str = "") -> Optional[DeviceConfig]:
         """Build ONE DeviceConfig from its raw yaml dict (a devices[] entry or
         an endpoint-materialized dict). Returns None (with a warning) on invalid
@@ -626,6 +757,15 @@ class Config:
         http_out_cfg = d.get('http_output', {}) or {}
         prefix = mqtt_cfg.get('topic_prefix', 'mbg/devices/${device_id}')
         prefix = prefix.replace('${device_id}', did).replace('${id}', did)
+        sources = self._sources_from_raw(d)
+        # `connection:`/`template:` stay the FIRST source's, so every caller
+        # that predates sources keeps reading what it always read.
+        if sources and not d.get('connection'):
+            conn = {**(sources[0].http or {}), **(sources[0].mqtt_in or {}),
+                    'protocol': sources[0].protocol,
+                    'host': sources[0].connection.host,
+                    'port': sources[0].connection.port,
+                    'unit_id': sources[0].connection.unit_id}
         try:
             return DeviceConfig(
                 id=did,
@@ -635,38 +775,11 @@ class Config:
                 template=d.get('template', ''),
                 enabled=bool(d.get('enabled', True)),
                 protocol=str(conn.get('protocol', 'tcp')).lower(),
-                connection=ModbusConfig(
-                    host=conn.get('host', ''),
-                    port=int(conn.get('port', 502)),
-                    unit_id=int(conn.get('unit_id', 1)),
-                    timeout=conn.get('timeout', 3),
-                    retry_attempts=int(conn.get('retry_attempts', 3)),
-                    retry_delay=float(conn.get('retry_delay', 1.0)),
-                    stale_after_s=int(conn.get('stale_after_s', 30)),
-                    max_gap=int(conn.get('max_gap', 10)),
-                    startup_jitter_s=float(conn.get('startup_jitter_s',
-                        self.modbus.startup_jitter_s) or 0.0),
-                    illegal_registers=parse_address_list(conn.get('illegal_registers')),
-                    drop_all_zero=bool(conn.get('drop_all_zero', False)),
-                    serialize_endpoint=bool(conn.get('serialize_endpoint', True)),
-                    share_transport=bool(conn.get('share_transport', True)),
-                    max_connections=max(1, int(conn.get('max_connections', 1) or 1)),
-                    endpoint_wait_s=float(conn.get('endpoint_wait_s', 10.0)),
-                    endpoint_min_gap_s=max(0.0, float(conn.get('endpoint_min_gap_s', 0.0) or 0.0)),
-                    protocol=str(conn.get('protocol', 'tcp')).lower(),
-                    serial_port=conn.get('serial_port', ''),
-                    baudrate=int(conn.get('baudrate', 9600)),
-                    parity=str(conn.get('parity', 'N')),
-                    stopbits=int(conn.get('stopbits', 1)),
-                    bytesize=int(conn.get('bytesize', 8)),
-                ),
-                serial={k: conn[k] for k in
-                        ('serial_port', 'baudrate', 'parity', 'stopbits', 'bytesize')
-                        if k in conn},
-                http={k: conn[k] for k in
-                      ('url', 'timeout', 'headers', 'verify_tls') if k in conn},
-                mqtt_in={k: conn[k] for k in
-                         ('broker', 'port', 'username', 'password', 'tls', 'topic') if k in conn},
+                connection=self._modbus_from_conn(conn),
+                sources=sources,
+                serial=_serial_from_conn(conn),
+                http=_http_from_conn(conn),
+                mqtt_in=_mqtt_in_from_conn(conn),
                 mqtt_topic_prefix=prefix,
                 influxdb_bucket=influx_cfg.get('bucket', self.influxdb.bucket),
                 influxdb_device_tag=influx_cfg.get('device_tag', did),
@@ -721,6 +834,7 @@ class Config:
             # a disabled endpoint still materializes (units stay visible/managed);
             # enabled=False propagates so no clients/pollers are started
             conn = dict(p.get('connection', {}) or {})
+            srcs = [dict(x) for x in (p.get('sources') or []) if isinstance(x, dict)]
             mqtt_cfg = dict(p.get('mqtt', {}) or {})
             influx_cfg = dict(p.get('influxdb', {}) or {})
             seen_units: set = set()
@@ -751,10 +865,19 @@ class Config:
                 # `…?Scope=Device&DeviceId=${unit_id}` — so without this an
                 # endpoint could not describe an HTTP master at all, and four
                 # inverters would need four hand-written devices.
-                c = dict(conn, unit_id=uid)
-                for _k in ('url', 'host', 'serial_port'):
-                    if isinstance(c.get(_k), str) and '${' in c[_k]:
-                        c[_k] = sub(c[_k])
+                def _addr(raw: dict) -> dict:
+                    """One unit's view of a connection block. ${unit_id} and
+                    friends substitute in the ADDRESS fields too, because an
+                    HTTP master addresses its units by URL rather than by a unit
+                    id inside a frame."""
+                    out = dict(raw, unit_id=uid)
+                    for _k in ('url', 'host', 'serial_port', 'topic'):
+                        if isinstance(out.get(_k), str) and '${' in out[_k]:
+                            out[_k] = sub(out[_k])
+                    return out
+
+                c = _addr(conn)
+                unit_sources = [_addr(x) for x in srcs]
                 out.append((pid, {
                     'id': did,
                     'name': u['name'] or f"{p.get('name') or pid} unit {uid}",
@@ -762,6 +885,8 @@ class Config:
                     'enabled': bool(p.get('enabled', True)),
                     'write_locked': bool(p.get('write_locked', False)),
                     'connection': c,
+                    # declared once on the endpoint, resolved per unit
+                    **({'sources': unit_sources} if unit_sources else {}),
                     'mqtt': m,
                     'influxdb': i,
                     # an endpoint is ONE endpoint: its sinks are declared once and
