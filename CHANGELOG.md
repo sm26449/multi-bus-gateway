@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.54.1
+
+### 2026-09-12 — a healthy device has a story too
+
+The new acquisition log recorded only TROUBLE, so opening a device that is
+perfectly fine — the Janitza, 52189 reads and zero errors — showed an empty
+page that reads as broken rather than as healthy. Starting a poll group now
+records what the work looks like: which group, how many registers, how many
+requests that costs on the wire, and how often. That line is also the baseline
+an operator compares against when the device later misbehaves.
+
+Fronius meter 240 returned to a 10 s `normal` interval, restoring decision D6
+of the migration plan. It is a single transaction, and this afternoon's retune
+had moved it to 20 s along with the inverters for no reason. It was also the
+dominant source of parity mismatches, since the reference collector samples it
+twice as often on a signal that swings hard.
+
 ## 3.54.0
 
 ### 2026-09-12 — a device's acquisition log, finally addressable

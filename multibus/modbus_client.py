@@ -1327,6 +1327,16 @@ class ModbusClient:
             )
             poller.start()
             self.pollers.append(poller)
+            # A log that only ever records TROUBLE is an empty page on a
+            # healthy device, which reads as broken rather than as fine. The
+            # shape of the work is itself the baseline an operator compares
+            # against when it later goes wrong: which groups exist, how often,
+            # how many registers, and how many requests that costs on the wire.
+            self.connection.record_event(
+                'info', 'poll_started',
+                f'{group_name}: {len(regs)} register(s) in '
+                f'{len(poller._read_groups)} request(s) every '
+                f'{poller.interval:g}s')
 
         logger.info(f"Started {len(self.pollers)} polling threads")
 

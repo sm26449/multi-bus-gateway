@@ -195,3 +195,30 @@ def test_the_log_can_be_narrowed_to_the_problems(tmp_path):
 def test_a_device_that_is_not_running_says_so_instead_of_500(tmp_path):
     cfg, api, _c = _app(tmp_path)
     assert api.get("/api/devices/nosuchdevice/events").status_code == 404
+
+
+def test_a_healthy_device_still_has_something_to_show():
+    """A log that only records TROUBLE is an empty page on a device that is
+    fine, which reads as broken rather than as healthy. Starting a poll group
+    states the shape of the work — the baseline an operator compares against
+    when it later goes wrong."""
+    from multibus.config import PollGroup, SelectedRegister
+    from multibus.modbus_client import ModbusClient
+
+    regs = [SelectedRegister(address=40071 + i, name=f'r{i}', label='r', unit='',
+                             data_type='uint16', register_type='holding',
+                             poll_group='normal') for i in range(4)]
+    client = ModbusClient(ModbusConfig(host='192.0.2.61', port=502, unit_id=1),
+                          registers=regs,
+                          poll_groups={'normal': PollGroup(interval=5)})
+    client.connection._new_client = _Client
+    try:
+        client.start_polling()
+        ev = [e for e in client.connection.snapshot_events()
+              if e['kind'] == 'poll_started']
+        assert len(ev) == 1
+        msg = ev[0]['message']
+        assert 'normal' in msg and '4 register' in msg and '5s' in msg
+        assert ev[0]['level'] == 'info'
+    finally:
+        client.disconnect()
