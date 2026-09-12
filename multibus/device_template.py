@@ -61,6 +61,9 @@ VALID_DATA_TYPES = {
 }
 
 _ID_RE = re.compile(r'^[a-z0-9][a-z0-9_-]{1,63}$')
+# derived-measurement names share the device's value namespace with real
+# register names (expressions resolve by name), so they use the same shape
+_CALC_NAME_RE = re.compile(r'^[A-Za-z0-9_\[\]]{1,64}$')
 
 
 def _norm_rtype(v) -> str:
@@ -185,6 +188,49 @@ class TemplateRegister:
 
 
 @dataclass
+class TemplateCalculated:
+    """A derived measurement a template ships with the device.
+
+    A plain calculated register — evaluated by ``CalcEngine`` at a synthetic
+    address like any user-defined one — except that the TEMPLATE owns it, so
+    every device seeded from the template gets it without anyone re-typing a
+    formula. This is how a vendor's decoded status ("Tracking power point"),
+    an alarm flag or a derived total ships WITH the device map instead of
+    being reinvented per unit.
+
+    ``topic`` pins the MQTT leaf (a derived measurement usually belongs under
+    an existing branch, e.g. ``status/text``); ``enum`` turns the computed code
+    into text through the same decoder real registers use.
+    """
+    name: str
+    expr: str
+    label: str = ""
+    unit: str = ""
+    poll_group: str = ""
+    decimals: Optional[int] = None
+    topic: str = ""                 # explicit MQTT leaf, relative to the device prefix
+    measurement: str = ""           # explicit InfluxDB measurement
+    enum: Optional[Dict[Any, str]] = None    # computed code → text
+    mqtt: bool = True
+    influxdb: bool = True
+
+    def to_dict(self) -> Dict[str, Any]:
+        d: Dict[str, Any] = {'name': self.name, 'expr': self.expr}
+        for k in ('label', 'unit', 'poll_group', 'topic', 'measurement'):
+            if getattr(self, k):
+                d[k] = getattr(self, k)
+        if self.decimals is not None:
+            d['decimals'] = self.decimals
+        if self.enum:
+            d['enum'] = self.enum
+        if not self.mqtt:
+            d['mqtt'] = False
+        if not self.influxdb:
+            d['influxdb'] = False
+        return d
+
+
+@dataclass
 class DeviceTemplate:
     id: str
     name: str
@@ -205,6 +251,9 @@ class DeviceTemplate:
     # empty = the device has none. Gates the PQ recorder feature + UI tab.
     pq_recorder: str = ""
     registers: List[TemplateRegister] = field(default_factory=list)
+    # derived measurements the template ships with (seeded into each device's
+    # `calculated` list) — see TemplateCalculated
+    calculated: List['TemplateCalculated'] = field(default_factory=list)
     # provenance (not serialized into exports)
     builtin: bool = False
     path: str = ""
@@ -224,6 +273,8 @@ class DeviceTemplate:
             'canonical': self.canonical,
             **({'pq_recorder': self.pq_recorder} if self.pq_recorder else {}),
             'registers': [r.to_dict() for r in self.registers],
+            **({'calculated': [c.to_dict() for c in self.calculated]}
+               if self.calculated else {}),
         }}
 
     def summary(self) -> Dict[str, Any]:
@@ -352,9 +403,67 @@ def validate_template(data: Dict[str, Any]) -> List[str]:
             errors.append(f"register #{i} (addr {r.get('address')!r}, "
                           f"name {r.get('name')!r}): scale_from "
                           f"{sf_ref!r} does not match any register name")
-        if sf_ref and r.get('scale', 1) not in (1, 1.0):
-            errors.append(f"register #{i} (name {r.get('name')!r}): scale and "
-                          f"scale_from are mutually exclusive")
+        # scale ACCOMPANIES scale_from (it divides after the exponent, as a
+        # unit conversion — SunSpec power factor is a percentage), so the two
+        # are no longer exclusive. A zero scale is still nonsense.
+        if r.get('scale', 1) == 0:
+            errors.append(f"register #{i} (name {r.get('name')!r}): "
+                          f"scale must not be 0")
+
+    # ── derived measurements the template ships with ─────────────────────────
+    calcs = t.get('calculated', [])
+    if calcs and not isinstance(calcs, list):
+        errors.append("calculated: must be a list")
+        calcs = []
+    _reg_names = {r.get('name') for r in regs if isinstance(r, dict)}
+    _seen_calc: set = set()
+    for i, c in enumerate(calcs):
+        where = f"calculated #{i} (name {(c or {}).get('name')!r})"
+        if not isinstance(c, dict):
+            errors.append(f"{where}: must be an object")
+            continue
+        cname = c.get('name')
+        if not isinstance(cname, str) or not _CALC_NAME_RE.match(cname):
+            errors.append(f"{where}: name must be letters, digits, _ or []")
+        elif cname in _reg_names:
+            # expressions resolve by NAME out of one per-device value store, so
+            # a derived name that shadows a register would make the formula
+            # reference itself and the topic collide
+            errors.append(f"{where}: name collides with a register name")
+        elif cname in _seen_calc:
+            errors.append(f"{where}: duplicate name")
+        if isinstance(cname, str):
+            _seen_calc.add(cname)
+        from . import expressions as _expr
+        ok, err, _refs = _expr.validate_expression(str(c.get('expr', '') or ''))
+        if not ok:
+            errors.append(f"{where}: {err}")
+        pg = c.get('poll_group')
+        if pg and poll_groups and pg not in poll_groups:
+            errors.append(f"{where}: poll_group {pg!r} is not declared by this template")
+        topic = c.get('topic')
+        if topic is not None and not isinstance(topic, str):
+            errors.append(f"{where}: topic must be a string")
+        elif isinstance(topic, str) and topic and (
+                topic.startswith('/') or topic.endswith('/')
+                or '+' in topic or '#' in topic):
+            errors.append(f"{where}: topic must be a relative leaf "
+                          f"without wildcards (e.g. 'status/text')")
+        enum_map = c.get('enum')
+        if enum_map is not None:
+            if not isinstance(enum_map, dict) or not enum_map:
+                errors.append(f"{where}: enum must be a non-empty object")
+            else:
+                for k, v in enum_map.items():
+                    try:
+                        int(k)
+                    except (TypeError, ValueError):
+                        errors.append(f"{where}: enum key {k!r} is not an integer")
+                    if not isinstance(v, str):
+                        errors.append(f"{where}: enum label for {k!r} must be a string")
+        dec = c.get('decimals')
+        if dec is not None and (not isinstance(dec, int) or isinstance(dec, bool)):
+            errors.append(f"{where}: decimals must be an integer")
     return errors
 
 
@@ -400,6 +509,18 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         icon=str(r.get('icon', '') or ''),
         suggested_display_precision=r.get('suggested_display_precision'),
     ) for r in t['registers']]
+    calcs = [TemplateCalculated(
+        name=str(c['name']), expr=str(c.get('expr', '') or ''),
+        label=str(c.get('label', '') or c['name']),
+        unit=str(c.get('unit', '') or ''),
+        poll_group=str(c.get('poll_group', '') or ''),
+        decimals=c.get('decimals'),
+        topic=str(c.get('topic', '') or ''),
+        measurement=str(c.get('measurement', '') or ''),
+        enum=c.get('enum'),
+        mqtt=bool(c.get('mqtt', True)),
+        influxdb=bool(c.get('influxdb', True)),
+    ) for c in (t.get('calculated') or [])]
     return DeviceTemplate(
         id=t['id'], name=t['name'],
         vendor=t.get('vendor', ''), model=t.get('model', ''),
@@ -412,7 +533,7 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         categories=t.get('categories', {}) or {},
         canonical=bool(t.get('canonical', False)),
         pq_recorder=str(t.get('pq_recorder', '') or ''),
-        registers=regs, builtin=builtin, path=path,
+        registers=regs, calculated=calcs, builtin=builtin, path=path,
     )
 
 

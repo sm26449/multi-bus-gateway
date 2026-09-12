@@ -332,10 +332,24 @@ def test_scale_from_missing_or_invalid_sf_means_missing_value():
         assert info["stage"] == "sf_missing"
 
 
-def test_scale_from_wins_over_static_scale_and_applies_offset_after():
+def test_static_scale_applies_after_the_dynamic_one_then_offset():
+    """A fixed `scale` ACCOMPANIES `scale_from`: the exponent does the SunSpec
+    decode, the scale does the unit conversion the exponent cannot express."""
     reg = _reg(scale_from="w_sf", scale=10.0, offset=1.0)
-    # static scale ignored; offset still applies after the dynamic scaling
-    assert apply_corrections(100, reg, siblings={"w_sf": -1}) == 11.0
+    # 100 x 10^-1 = 10.0, / 10 = 1.0, + offset = 2.0
+    assert apply_corrections(100, reg, siblings={"w_sf": -1}) == 2.0
+
+
+def test_power_factor_percent_becomes_a_fraction():
+    """The real case: SunSpec reports PF as a PERCENTAGE. Without the fixed
+    scale one device's power_factor/total read +-100 while the next read +-1 —
+    the same canonical topic meaning two different things."""
+    reg = _reg(scale_from="pf_sf", scale=100)
+    assert apply_corrections(-9999, reg, siblings={"pf_sf": -2}) == -0.9999
+    assert apply_corrections(10000, reg, siblings={"pf_sf": -2}) == 1.0
+    # the SF rounding still happens FIRST, so the conversion keeps the digits
+    # the exponent settled instead of inheriting float noise
+    assert apply_corrections(3, reg, siblings={"pf_sf": -2}) == 0.0003
 
 
 def test_scale_from_sentinel_checked_on_raw_before_sf():

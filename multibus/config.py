@@ -433,7 +433,9 @@ class SelectedRegister:
     scale: float = 1.0    # Modbus input: engineering_value = raw / scale (SunSpec 10^-SF etc.)
     offset: float = 0.0   # engineering_value = raw / scale + offset (zero-point / unit shift)
     scale_from: str = ""  # dynamic SF: sibling register NAME whose raw value is the
-                          # base-10 exponent → engineering = raw × 10^SF (scale ignored)
+                          # base-10 exponent → engineering = raw × 10^SF; a fixed
+                          # `scale` may accompany it and divides AFTER the exponent
+                          # (unit conversion, e.g. SunSpec PF percent → fraction)
     nan: Any = None       # not-available sentinel (True=std for type / value / list) → missing
     monotonic: bool = False   # cumulative counter (energy): reject downward glitches → HA/Victron safe
     # status-register decode (mutually exclusive): raw int → text

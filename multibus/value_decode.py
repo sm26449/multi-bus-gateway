@@ -15,6 +15,7 @@ shift`` before the enum lookup).
 """
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, Optional
 
 
@@ -137,6 +138,12 @@ def apply_corrections(value, reg, *, counter_filter=None, info=None,
          wrongly-scaled reading is worse than no reading. Negative SF also
          rounds to −SF decimals to kill float noise (parity with the SunSpec
          collectors this replaces).
+         A fixed ``scale`` MAY accompany ``scale_from``: it divides AFTER the
+         exponent, as a pure unit conversion. SunSpec reports power factor as
+         a PERCENTAGE, so ``scale: 100`` turns the spec's ±100 into the ±1
+         fraction every other meter in the gateway publishes — without it,
+         one device's power_factor/total means something different from the
+         next one's.
       4. monotonic counter filter — STATEFUL: only POLLING callers own a
          per-register MonotonicFilter and pass it. Diagnostic reads
          (query/read-back/views) must NOT pass one — a debug read must never
@@ -174,6 +181,7 @@ def apply_corrections(value, reg, *, counter_filter=None, info=None,
         return decoded
 
     if isinstance(value, (int, float)) and not isinstance(value, bool):
+        decimals = None            # digits the scaling chain settles the value at
         sf_ref = _f("scale_from", "") or ""
         if sf_ref:
             sf = (siblings or {}).get(sf_ref)
@@ -184,12 +192,26 @@ def apply_corrections(value, reg, *, counter_filter=None, info=None,
                 return None
             sf = int(sf)
             value = value * (10.0 ** sf)
-            if sf < 0:
-                value = round(value, -sf)
-        else:
-            sc = _f("scale", 1.0) or 1.0
-            if sc != 1.0:
-                value = value / sc
+            # a negative exponent settles the value at −SF decimals; everything
+            # past that is float noise from the multiply
+            decimals = -sf if sf < 0 else None
+        # A fixed scale applies to BOTH paths: on its own it is the whole
+        # conversion, and on top of a dynamic SF it is the unit conversion the
+        # exponent cannot express (percent → fraction).
+        sc = _f("scale", 1.0) or 1.0
+        if sc != 1.0:
+            value = value / sc
+            if decimals is not None:
+                # dividing by a power of ten moves the decimal point, so the
+                # value settles that many digits further out. Round ONCE, at the
+                # end, or the divide re-introduces the noise the SF just killed
+                # (99.99 / 100 = 0.9998999999999999). A scale that is not a
+                # power of ten has no such natural precision — leave it alone,
+                # exactly as the plain-scale path always has.
+                lg = math.log10(abs(sc))
+                decimals = decimals + int(lg) if lg == int(lg) else None
+        if decimals is not None:
+            value = round(value, decimals)
         off = _f("offset", 0.0) or 0.0
         if off:
             value = value + off

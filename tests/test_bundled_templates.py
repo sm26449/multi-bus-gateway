@@ -238,13 +238,24 @@ def test_scale_from_dangling_referent_is_a_validation_error():
     assert any("scale_from" in e and "nope_sf" in e for e in errs)
 
 
-def test_scale_from_and_static_scale_are_mutually_exclusive():
+def test_scale_may_accompany_scale_from_as_a_unit_conversion():
+    """A fixed scale on top of a dynamic SF is the unit conversion the exponent
+    cannot express — SunSpec power factor is a PERCENTAGE, so `scale: 100`
+    turns the spec's +-100 into the +-1 fraction every other device publishes."""
+    data = _sunspec_stub([
+        {"address": 40092, "name": "power_factor_total", "label": "PF",
+         "unit": "", "data_type": "int16", "register_type": "holding",
+         "scale": 100, "scale_from": "pf_sf"},
+        {"address": 40093, "name": "pf_sf", "label": "SF",
+         "unit": "", "data_type": "int16", "register_type": "holding"},
+    ])
+    assert validate_template(data) == []
+
+
+def test_zero_scale_is_rejected():
     data = _sunspec_stub([
         {"address": 40092, "name": "ac_power", "label": "AC Power",
          "unit": "W", "data_type": "int16", "register_type": "holding",
-         "scale": 10, "scale_from": "ac_power_sf"},
-        {"address": 40093, "name": "ac_power_sf", "label": "SF",
-         "unit": "", "data_type": "int16", "register_type": "holding"},
+         "scale": 0},
     ])
-    errs = validate_template(data)
-    assert any("mutually exclusive" in e for e in errs)
+    assert any("scale must not be 0" in e for e in validate_template(data))
