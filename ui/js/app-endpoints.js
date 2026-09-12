@@ -66,12 +66,10 @@ Object.assign(JanitzaMonitor.prototype, {
         set('#plCensus', `${p.online_units}/${p.total_units} ${this.t('endpoints.online', 'online')}`);
         set('#plAggGrid', this._endpointAggGridHtml(p));
         set('#plBus', this._endpointBusHtml(p));
-        if (!view.querySelector('#plSources [data-src-busy]')) {
-            set('#plSources', this._endpointSourcesHtml(p));
-        }
-        // never redraw the unit rows while one of them is being renamed
-        if (!view.querySelector('#plUnitsBody [data-renaming]')) {
-            set('#plUnitsBody', this._endpointUnitRowsHtml(p));
+        // never redraw while a unit is being renamed or a source saved
+        if (!view.querySelector('[data-renaming]')
+            && !view.querySelector('[data-src-busy]')) {
+            set('#plGroups', this._endpointGroupsHtml(p));
         }
     },
 
@@ -115,18 +113,153 @@ Object.assign(JanitzaMonitor.prototype, {
         return bits.join(' ');
     },
 
+    // ── Groups ──────────────────────────────────────────────────────────────
+    //
+    // An installation is not one kind of thing: a PV plant holds inverters AND
+    // the meter at its grid connection. They differ in template, in rhythm, and
+    // in what it means to add them up — so each group carries its own units,
+    // its own sources and its own total.
+
+    _endpointGroupsHtml(p) {
+        const t = (k, d) => this.t(k, d);
+        const groups = p.groups || [];
+        if (!groups.length) {
+            return `<div class="settings-card"><div class="settings-card-body">
+                <span style="color:var(--text-secondary);">${t('endpoints.groupNone',
+                    'No group yet. Add one to say what this installation holds.')}</span>
+            </div></div>`;
+        }
+        return groups.map((g, gi) => {
+            const roleIcon = { inverter: 'bi-sun', meter: 'bi-speedometer2',
+                               battery: 'bi-battery-half' }[g.role] || 'bi-cpu';
+            const off = g.enabled === false;
+            return `
+            <div class="settings-card" data-group="${this._esc(g.id)}" ${off ? 'style="opacity:.62;"' : ''}>
+              <div class="settings-card-header">
+                <h3><i aria-hidden="true" class="bi ${roleIcon}"></i> ${this._esc(g.id)}
+                  ${g.role ? `<span class="dev-chip">${this._esc(g.role)}</span>` : ''}
+                  <span class="dev-chip">${g.online_units}/${g.total_units} ${t('endpoints.online', 'online')}</span>
+                  ${off ? `<span class="sink-pill warn">${t('devices.disabled', 'disabled')}</span>` : ''}
+                  ${gi === 0 ? `<span class="dev-chip" title="${t('endpoints.groupPrimaryHint',
+                      'The first group owns the endpoint\'s headline topic and its untagged InfluxDB series — which is what keeps everything that predates groups unchanged.')}">${t('endpoints.groupPrimary', 'primary')}</span>` : ''}
+                </h3>
+                <div class="header-actions">
+                  <label class="switch-label" title="${t('endpoints.groupToggleHint', 'Stop polling this group. Its units stay visible and editable.')}">
+                    <input type="checkbox" ${off ? '' : 'checked'}
+                           onchange="app.toggleGroup('${this._esc(p.id)}','${this._esc(g.id)}',this)">
+                    <span>${t('endpoints.groupOn', 'Poll')}</span></label>
+                  <button class="btn btn-ghost btn-sm" ${this._act('openGroupModal', [p.id, g.id])}><i aria-hidden="true" class="bi bi-pencil"></i></button>
+                  <button class="btn btn-ghost btn-sm" ${(p.groups || []).length < 2 ? 'disabled' : ''}
+                          ${this._act('deleteGroup', [p.id, g.id])}
+                          title="${(p.groups || []).length < 2 ? t('endpoints.groupLast', 'An endpoint needs at least one group') : t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
+                </div>
+              </div>
+              <div class="settings-card-body">
+                <div style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;">${t('endpoints.sources', 'Sources')}</div>
+                <div data-group-sources="${this._esc(g.id)}">${this._endpointSourcesHtml({ ...p, sources: g.sources }, g.id)}</div>
+                <div style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;margin:16px 0 6px;">${t('endpoints.unitsTitle', 'Units')}</div>
+                <div style="overflow-x:auto;"><table class="data-table" style="width:100%;">
+                  <thead><tr>
+                    <th>${t('endpoints.unitId', 'Unit')}</th>
+                    <th>${t('endpoints.deviceId', 'Device')}</th>
+                    <th>${t('devices.wizard.name', 'Name')}</th>
+                    <th>${t('endpoints.health', 'Health')}</th>
+                    <th>${t('devices.overview.lastRead', 'Last read')}</th>
+                    <th>${t('dashboard.pollRate', 'Poll rate')}</th>
+                    <th>${t('endpoints.errors', 'Errors')}</th>
+                    <th></th>
+                  </tr></thead>
+                  <tbody data-group-units="${this._esc(g.id)}">${this._endpointUnitRowsHtml({ ...p, units: g.units })}</tbody>
+                </table></div>
+                <p class="field-hint" style="margin-top:10px;"><i aria-hidden="true" class="bi bi-broadcast"></i>
+                  ${t('endpoints.groupTopic', 'Totals for this group publish on')} <code>${this._esc(g.topic || '')}/…</code></p>
+              </div>
+            </div>`;
+        }).join('');
+    },
+
+    async toggleGroup(endpointId, groupId, el) {
+        const p = this._endpointDetail;
+        const groups = (p.groups || []).map(g => this._rawGroup(p, g.id,
+            g.id === groupId ? { enabled: el.checked } : {}));
+        if (!await this._saveGroups(endpointId, groups)) el.checked = !el.checked;
+    },
+
+    async deleteGroup(endpointId, groupId) {
+        const p = this._endpointDetail;
+        if ((p.groups || []).length < 2) return;
+        if (!confirm(this.t('endpoints.groupDeleteAsk', 'Remove group') + ` "${groupId}"?\n\n`
+            + this.t('endpoints.groupDeleteNote',
+                'Its units stop being managed by this endpoint. Their register files stay on disk.'))) return;
+        const rest = (p.groups || []).filter(g => g.id !== groupId)
+            .map(g => this._rawGroup(p, g.id));
+        await this._saveGroups(endpointId, rest);
+    },
+
+    // The card renders config + live merged; a save must send back only the
+    // declared half, or live counters would be written into the config.
+    _rawGroup(p, id, over) {
+        const g = (p.groups || []).find(x => x.id === id) || {};
+        const out = {
+            id: g.id, role: g.role || '',
+            enabled: g.enabled !== false,
+            units: (g.units || []).map(u => ({ unit_id: u.unit_id, id: u.device_id,
+                                               ...(u.name ? { name: u.name } : {}) })),
+            ...over,
+        };
+        if (g.template) out.template = g.template;
+        const srcs = (g.sources || []).map(s => this._rawSource({ sources: g.sources }, s.id));
+        if (srcs.length === 1 && srcs[0].id === 'default') {
+            const s = srcs[0];
+            out.connection = { protocol: s.protocol, ...(s.host ? { host: s.host, port: s.port } : {}),
+                               ...(s.url ? { url: s.url } : {}),
+                               ...(s.serial_port ? { serial_port: s.serial_port } : {}) };
+        } else if (srcs.length) {
+            out.sources = srcs;
+        }
+        return out;
+    },
+
+    async _saveGroups(endpointId, groups) {
+        const host = document.querySelector('#plGroups');
+        if (host) host.dataset.srcBusy = '1';
+        try {
+            const p = this._endpointDetail;
+            const rsp = await fetch(`/api/endpoints/${encodeURIComponent(endpointId)}`, {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    id: endpointId, name: p.name, enabled: p.enabled,
+                    connection: p.connection, template: p.template,
+                    units: (groups[0] || {}).units || [], groups,
+                }),
+            });
+            if (!rsp.ok) {
+                const d = await rsp.json().catch(() => ({}));
+                this.showToast((d.detail?.errors || [d.detail || rsp.statusText]).join('\n'), 'error');
+                return false;
+            }
+            this.showToast(this.t('endpoints.groupSaved', 'Groups updated'), 'success');
+            return true;
+        } finally {
+            if (host) delete host.dataset.srcBusy;
+            await this._refreshEndpointDetail(endpointId);
+        }
+    },
+
     // ── Sources ─────────────────────────────────────────────────────────────
     //
     // The ordered ways of reaching one endpoint's units. Configuration and live
     // state together on purpose: "which source is this value from" and "is that
     // source still alive" are the same question for an operator.
 
-    _endpointSourcesHtml(p) {
+    _endpointSourcesHtml(p, groupId) {
         const t = (k, d) => this.t(k, d);
         const srcs = p.sources || [];
+        const gq = groupId ? `, '${this._esc(groupId)}'` : '';
         if (!srcs.length) {
             return `<span style="color:var(--text-secondary);">${t('endpoints.srcNone',
-                'No source declared yet.')}</span>`;
+                'No source declared yet.')}</span>
+                <button class="btn btn-ghost btn-sm" ${this._act('openSourceModal', [p.id, '', groupId || ''])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('endpoints.srcAdd', 'Add source')}</button>`;
         }
         const rows = srcs.map((s, i) => {
             const ok = s.units_total ? s.units_ok === s.units_total : null;
@@ -161,14 +294,14 @@ Object.assign(JanitzaMonitor.prototype, {
                 ${s.fields_owned} ${t('endpoints.srcFields', 'fields')}</td>
               <td style="padding:8px 0;white-space:nowrap;text-align:right;">
                 <button class="btn btn-ghost btn-sm" ${i === 0 ? 'disabled' : ''}
-                        ${this._act('moveSource', [p.id, s.id, -1])}
+                        ${this._act('moveSource', [p.id, s.id, -1, groupId || ''])}
                         title="${t('endpoints.srcUp', 'Raise precedence')}"><i aria-hidden="true" class="bi bi-arrow-up"></i></button>
                 <button class="btn btn-ghost btn-sm" ${i === srcs.length - 1 ? 'disabled' : ''}
-                        ${this._act('moveSource', [p.id, s.id, 1])}
+                        ${this._act('moveSource', [p.id, s.id, 1, groupId || ''])}
                         title="${t('endpoints.srcDown', 'Lower precedence')}"><i aria-hidden="true" class="bi bi-arrow-down"></i></button>
-                <button class="btn btn-ghost btn-sm" ${this._act('openSourceModal', [p.id, s.id])}><i aria-hidden="true" class="bi bi-pencil"></i></button>
+                <button class="btn btn-ghost btn-sm" ${this._act('openSourceModal', [p.id, s.id, groupId || ''])}><i aria-hidden="true" class="bi bi-pencil"></i></button>
                 <button class="btn btn-ghost btn-sm" ${srcs.length < 2 ? 'disabled' : ''}
-                        ${this._act('deleteSource', [p.id, s.id])}
+                        ${this._act('deleteSource', [p.id, s.id, groupId || ''])}
                         title="${srcs.length < 2 ? t('endpoints.srcLast', 'A unit needs at least one source') : t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
               </td>
             </tr>`;
@@ -183,30 +316,53 @@ Object.assign(JanitzaMonitor.prototype, {
               <td style="padding-right:10px;">${t('endpoints.srcStale', 'yields after')}</td>
               <td style="padding-right:10px;">${t('endpoints.srcLive', 'live')}</td>
               <td style="padding-right:10px;">${t('endpoints.srcOwns', 'owns')}</td>
-              <td></td></tr>
+              <td style="text-align:right;"><button class="btn btn-ghost btn-sm"
+                  ${this._act('openSourceModal', [p.id, '', groupId || ''])}
+                  title="${t('endpoints.srcAdd', 'Add source')}"><i aria-hidden="true" class="bi bi-plus-lg"></i></button></td></tr>
             ${rows}</table></div>`;
     },
 
     // Reordering IS the precedence control, so it writes straight through.
-    async moveSource(endpointId, sourceId, delta) {
-        const p = this._endpointDetail;
-        if (!p || p.id !== endpointId) return;
-        const srcs = (p.sources || []).map(s => s.id);
-        const i = srcs.indexOf(sourceId), j = i + delta;
-        if (i < 0 || j < 0 || j >= srcs.length) return;
-        srcs.splice(j, 0, srcs.splice(i, 1)[0]);
-        await this._saveSources(endpointId, srcs.map(id => this._rawSource(p, id)));
+    _group(p, groupId) {
+        return (p.groups || []).find(g => g.id === groupId) || { sources: p.sources || [] };
     },
 
-    async deleteSource(endpointId, sourceId) {
+    async moveSource(endpointId, sourceId, delta, groupId) {
         const p = this._endpointDetail;
-        if (!p || (p.sources || []).length < 2) return;
+        if (!p || p.id !== endpointId) return;
+        const g = this._group(p, groupId);
+        const ids = (g.sources || []).map(s => s.id);
+        const i = ids.indexOf(sourceId), j = i + delta;
+        if (i < 0 || j < 0 || j >= ids.length) return;
+        ids.splice(j, 0, ids.splice(i, 1)[0]);
+        await this._saveGroupSources(endpointId, groupId,
+            ids.map(id => this._rawSource(g, id)));
+    },
+
+    async deleteSource(endpointId, sourceId, groupId) {
+        const p = this._endpointDetail;
+        const g = this._group(p, groupId);
+        if ((g.sources || []).length < 2) return;
         if (!confirm(this.t('endpoints.srcDeleteAsk', 'Remove source') + ` "${sourceId}"?\n\n`
                 + this.t('endpoints.srcDeleteNote',
                     'Its registers stay on disk. The fields it owned fall to the next source that offers them.'))) return;
-        const rest = (p.sources || []).filter(s => s.id !== sourceId)
-            .map(s => this._rawSource(p, s.id));
-        await this._saveSources(endpointId, rest);
+        await this._saveGroupSources(endpointId, groupId,
+            (g.sources || []).filter(s => s.id !== sourceId)
+                .map(s => this._rawSource(g, s.id)));
+    },
+
+    // Writing a group's source list back is a groups save with that one group
+    // rebuilt — the endpoint is saved whole, so a partial write cannot leave
+    // two groups disagreeing about which units they own.
+    async _saveGroupSources(endpointId, groupId, sources) {
+        const p = this._endpointDetail;
+        const groups = (p.groups || []).map(g => {
+            const raw = this._rawGroup(p, g.id);
+            if (g.id !== groupId) return raw;
+            delete raw.connection;
+            return { ...raw, sources };
+        });
+        return this._saveGroups(endpointId, groups);
     },
 
     // The card renders a MERGED view (config + live); a save must send back only
@@ -229,42 +385,18 @@ Object.assign(JanitzaMonitor.prototype, {
         return out;
     },
 
-    async _saveSources(endpointId, sources) {
-        const host = document.querySelector('#plSources');
-        if (host) host.dataset.srcBusy = '1';
-        try {
-            const p = this._endpointDetail;
-            const body = {
-                id: endpointId, name: p.name, template: p.template,
-                enabled: p.enabled, connection: p.connection,
-                units: (p.units || []).map(u => ({ unit_id: u.unit_id, id: u.device_id, name: u.name })),
-                sources,
-            };
-            const rsp = await fetch(`/api/endpoints/${encodeURIComponent(endpointId)}`, {
-                method: 'PUT', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
-            if (!rsp.ok) {
-                const d = await rsp.json().catch(() => ({}));
-                this.showToast((d.detail?.errors || [d.detail || rsp.statusText]).join('\n'), 'error');
-                return false;
-            }
-            this.showToast(this.t('endpoints.srcSaved', 'Sources updated'), 'success');
-            return true;
-        } finally {
-            if (host) delete host.dataset.srcBusy;
-            await this._refreshEndpointDetail(endpointId);
-        }
-    },
+
 
     // Add or edit ONE source. Everything an operator sets about a way of
     // reaching the units lives here — protocol, address, template, how often,
     // and how long it stays authoritative before a lower source may fill in.
-    async openSourceModal(endpointId, sourceId) {
+    async openSourceModal(endpointId, sourceId, groupId) {
         const p = this._endpointDetail;
         if (!p || p.id !== endpointId) return;
         const t = (k, d) => this.t(k, d);
-        const s = (p.sources || []).find(x => x.id === sourceId) || null;
+        this._srcGroupId = groupId || ((p.groups || [])[0] || {}).id || '';
+        const g = this._group(p, this._srcGroupId);
+        const s = (g.sources || []).find(x => x.id === sourceId) || null;
         let templates = [];
         try { templates = (await (await fetch('/api/device-templates')).json()).templates || []; }
         catch (e) { console.error(e); }
@@ -367,11 +499,119 @@ Object.assign(JanitzaMonitor.prototype, {
         }
         if (Object.keys(groups).length) out.poll_groups = groups;
 
-        const keep = (p.sources || []).filter(x => x.id !== id).map(x => this._rawSource(p, x.id));
+        const g = this._group(p, this._srcGroupId);
+        const cur = g.sources || [];
         const list = this._srcEditId
-            ? (p.sources || []).map(x => x.id === id ? out : this._rawSource(p, x.id))
-            : keep.concat([out]);
-        if (await this._saveSources(endpointId, list)) this.closeModal('endpointModal');
+            ? cur.map(x => x.id === id ? out : this._rawSource(g, x.id))
+            : cur.filter(x => x.id !== id).map(x => this._rawSource(g, x.id)).concat([out]);
+        if (await this._saveGroupSources(endpointId, this._srcGroupId, list)) {
+            this.closeModal('endpointModal');
+        }
+    },
+
+    // ── the group editor ────────────────────────────────────────────────────
+    //
+    // A group answers one question: WHAT does this installation hold, and which
+    // units are it. Everything about HOW they are reached lives in its sources.
+    async openGroupModal(endpointId, groupId) {
+        const p = this._endpointDetail;
+        if (!p || p.id !== endpointId) return;
+        const t = (k, d) => this.t(k, d);
+        const g = (p.groups || []).find(x => x.id === groupId) || null;
+        this._grpEditId = g ? g.id : '';
+        let templates = [];
+        try { templates = (await (await fetch('/api/device-templates')).json()).templates || []; }
+        catch (e) { console.error(e); }
+        const tplOpts = ['<option value="">—</option>'].concat(templates.map(x =>
+            `<option value="${this._esc(x.id)}" ${g?.template === x.id ? 'selected' : ''}>${this._esc(x.name || x.id)}</option>`)).join('');
+        const units = (g?.units || []).map(u => u.unit_id).join(', ');
+        const roles = ['inverter', 'meter', 'battery', 'sensor', ''];
+        document.getElementById('endpointModalTitle').textContent = g
+            ? t('endpoints.groupEditTitle', 'Edit group') : t('endpoints.groupAddTitle', 'Add group');
+        document.getElementById('endpointModalBody').innerHTML = `
+            <p class="field-hint" style="margin:0 0 12px;">${t('endpoints.groupIntro',
+                'A group is one kind of thing this installation holds — its inverters, or the meter at its grid connection. Groups are totalled separately, because adding a meter\'s power to the inverters\' would describe nothing.')}</p>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label" for="grpId">${t('endpoints.groupId', 'Group ID')}</label>
+                    <input id="grpId" class="input" value="${this._esc(g?.id || '')}" ${g ? 'disabled' : ''} placeholder="inverters"></div>
+                <div class="form-group"><label class="form-label" for="grpRole">${t('endpoints.groupRole', 'Role')}</label>
+                    <select id="grpRole" class="input">${roles.map(r =>
+                        `<option value="${r}" ${(g?.role || '') === r ? 'selected' : ''}>${r || '—'}</option>`).join('')}</select></div>
+                <div class="form-group flex-2"><label class="form-label" for="grpTpl">${t('devices.wizard.template', 'Template')}</label>
+                    <select id="grpTpl" class="input">${tplOpts}</select>
+                    <div class="field-hint">${t('endpoints.groupTplHint', 'Used by any source in this group that declares none of its own.')}</div></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group flex-2"><label class="form-label" for="grpUnits">${t('endpoints.unitsLabel', 'Unit IDs')}</label>
+                    <input id="grpUnits" class="input" value="${this._esc(units)}" placeholder="1, 2, 3, 4">
+                    <div class="field-hint">${t('endpoints.unitsHint', 'Comma-separated, ranges allowed (1-4).')}
+                        ${g ? t('endpoints.unitsKeep', 'Per-unit names are kept — rename a unit in its row.') : ''}</div></div>
+            </div>
+            ${g ? '' : `<div class="form-row">
+                <div class="form-group"><label class="form-label" for="grpProto">${t('devices.wizard.protocol', 'Protocol')}</label>
+                    <select id="grpProto" class="input"><option value="tcp">tcp</option><option value="rtu-tcp">rtu-tcp</option><option value="http">http</option></select></div>
+                <div class="form-group flex-2"><label class="form-label" for="grpAddr">${t('endpoints.srcAddress', 'Address')}</label>
+                    <input id="grpAddr" class="input" value="${this._esc((p.connection || {}).host || '')}" placeholder="192.168.1.50">
+                    <div class="field-hint">${t('endpoints.groupAddrHint', 'Host for Modbus, or a URL with ${unit_id} for HTTP. You can add more sources afterwards.')}</div></div>
+                <div class="form-group"><label class="form-label" for="grpPort">${t('endpoints.port', 'Port')}</label>
+                    <input id="grpPort" class="input" type="number" value="${(p.connection || {}).port || 502}"></div>
+            </div>`}
+            <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                <input type="checkbox" id="grpEnabled" ${g?.enabled !== false ? 'checked' : ''}>
+                ${t('endpoints.groupOnLong', 'Poll this group')}</label>`;
+        document.getElementById('endpointFeedback').textContent = '';
+        const save = document.querySelector('#endpointModal [data-endpoint-save]');
+        if (save) save.setAttribute('onclick', `app.saveGroup('${this._esc(endpointId)}')`);
+        this.openModal('endpointModal');
+    },
+
+    async saveGroup(endpointId) {
+        const p = this._endpointDetail;
+        const fb = document.getElementById('endpointFeedback');
+        const v = id => (document.getElementById(id) || {}).value;
+        const id = (this._grpEditId || v('grpId') || '').trim().toLowerCase();
+        if (!id) { fb.textContent = this.t('endpoints.groupNeedId', 'Group ID is required.'); return; }
+        const units = this._parseUnitList(v('grpUnits'));
+        if (!units || !units.length) {
+            fb.textContent = this.t('endpoints.badUnits',
+                'Unit IDs: use numbers, commas and ranges (e.g. 1, 2, 5-8).');
+            return;
+        }
+        const prev = (p.groups || []).find(x => x.id === id);
+        const out = {
+            id, role: v('grpRole') || '',
+            enabled: document.getElementById('grpEnabled').checked,
+            units: this._mergeUnitIds(prev, units),
+        };
+        if (v('grpTpl')) out.template = v('grpTpl');
+        if (prev) {
+            const raw = this._rawGroup(p, id);
+            if (raw.sources) out.sources = raw.sources;
+            else if (raw.connection) out.connection = raw.connection;
+        } else {
+            const proto = v('grpProto') || 'tcp';
+            const addr = (v('grpAddr') || '').trim();
+            out.connection = proto === 'http'
+                ? { protocol: 'http', url: addr }
+                : { protocol: proto, host: addr, port: parseInt(v('grpPort'), 10) || 502 };
+        }
+        const list = prev
+            ? (p.groups || []).map(x => x.id === id ? out : this._rawGroup(p, x.id))
+            : (p.groups || []).map(x => this._rawGroup(p, x.id)).concat([out]);
+        if (await this._saveGroups(endpointId, list)) this.closeModal('endpointModal');
+    },
+
+    // keep a unit's hand-written id and name when the operator only edits the
+    // id list — otherwise editing a group would rename its devices and orphan
+    // their history
+    _mergeUnitIds(prevGroup, unitIds) {
+        const byId = {};
+        for (const u of (prevGroup?.units || [])) byId[u.unit_id] = u;
+        return unitIds.map(uid => {
+            const o = byId[uid];
+            return o ? { unit_id: uid, id: o.device_id, ...(o.name ? { name: o.name } : {}) }
+                     : uid;
+        });
     },
 
     _endpointStatusColor(p) {
@@ -489,18 +729,6 @@ Object.assign(JanitzaMonitor.prototype, {
 
         <div class="settings-card">
             <div class="settings-card-header">
-                <h3><i aria-hidden="true" class="bi bi-diagram-2"></i> ${t('endpoints.sources', 'Sources')}</h3>
-                <button class="btn btn-secondary btn-sm" ${this._act('openSourceModal', [p.id, ''])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('endpoints.srcAdd', 'Add source')}</button>
-            </div>
-            <div class="settings-card-body">
-                <div id="plSources">${this._endpointSourcesHtml(p)}</div>
-                <p class="field-hint" style="margin-top:12px;"><i aria-hidden="true" class="bi bi-info-circle"></i>
-                    ${t('endpoints.srcNote', 'Ordered ways of reaching the SAME units — a datalogger may answer Modbus and HTTP at once. Order is precedence: the first source offering a field owns it, and a lower one fills in only after the owner has been silent for its window. A window of 0 never yields, which is what an energy counter needs so it cannot walk backwards.')}</p>
-            </div>
-        </div>
-
-        <div class="settings-card">
-            <div class="settings-card-header">
                 <h3><i aria-hidden="true" class="bi bi-bounding-box"></i> ${t('endpoints.output', 'Endpoint output')}</h3>
                 <label class="switch-label">
                     <input type="checkbox" id="plAggEnabled" ${p.aggregates_enabled !== false ? 'checked' : ''}
@@ -517,27 +745,14 @@ Object.assign(JanitzaMonitor.prototype, {
             </div>
         </div>
 
-        <div class="settings-card">
-            <div class="settings-card-header">
-                <h3><i aria-hidden="true" class="bi bi-cpu"></i> ${t('endpoints.unitsTitle', 'Units')}</h3>
-            </div>
-            <div class="settings-card-body" style="overflow-x:auto;">
-                <table class="data-table" style="width:100%;">
-                    <thead><tr>
-                        <th>${t('endpoints.unitId', 'Unit')}</th>
-                        <th>${t('endpoints.deviceId', 'Device')}</th>
-                        <th>${t('devices.wizard.name', 'Name')}</th>
-                        <th>${t('endpoints.health', 'Health')}</th>
-                        <th>${t('devices.overview.lastRead', 'Last read')}</th>
-                        <th>${t('dashboard.pollRate', 'Poll rate')}</th>
-                        <th>${t('endpoints.errors', 'Errors')}</th>
-                        <th></th>
-                    </tr></thead>
-                    <tbody id="plUnitsBody">${this._endpointUnitRowsHtml(p)}</tbody>
-                </table>
-                <div id="plTestOut" style="margin-top:10px;"></div>
+        <div class="section-header" style="margin-top:18px;">
+            <h3 style="margin:0;"><i aria-hidden="true" class="bi bi-collection"></i> ${t('endpoints.groups', 'Groups')}</h3>
+            <div class="header-actions">
+                <button class="btn btn-secondary btn-sm" ${this._act('openGroupModal', [p.id, ''])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('endpoints.groupAdd', 'Add group')}</button>
             </div>
         </div>
+        <div id="plGroups">${this._endpointGroupsHtml(p)}</div>
+        <div id="plTestOut" style="margin:10px 0;"></div>
 
         <div class="settings-card">
             <div class="settings-card-header">
@@ -601,7 +816,7 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     endpointRenameUnit(deviceId) {
-        const row = document.querySelector(`#plUnitsBody tr[data-unit="${CSS.escape(deviceId)}"]`);
+        const row = document.querySelector(`[data-group-units] tr[data-unit="${CSS.escape(deviceId)}"]`);
         if (!row || row.hasAttribute('data-renaming')) return;
         const cell = row.querySelector('[data-unit-name]');
         const cur = (this._endpointDetail?.units || []).find(u => u.device_id === deviceId);
@@ -615,7 +830,7 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     cancelEndpointUnitName(deviceId) {
-        const row = document.querySelector(`#plUnitsBody tr[data-unit="${CSS.escape(deviceId)}"]`);
+        const row = document.querySelector(`[data-group-units] tr[data-unit="${CSS.escape(deviceId)}"]`);
         if (row) row.removeAttribute('data-renaming');
         this._refreshEndpointDetail(this._endpointDetail?.id);
     },
@@ -634,7 +849,7 @@ Object.assign(JanitzaMonitor.prototype, {
             body: JSON.stringify(body),
         });
         const d = await rsp.json().catch(() => ({}));
-        const row = document.querySelector(`#plUnitsBody tr[data-unit="${CSS.escape(deviceId)}"]`);
+        const row = document.querySelector(`[data-group-units] tr[data-unit="${CSS.escape(deviceId)}"]`);
         if (row) row.removeAttribute('data-renaming');
         if (!rsp.ok) {
             const errs = d.detail?.errors || [d.detail || rsp.statusText];

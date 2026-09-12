@@ -52,3 +52,21 @@ are the ones under test:
 MBG_URL=http://localhost:18081 DEVICE=sunfield-u1 \
   CHROMIUM_PATH=<chrome> node device_logs_e2e.mjs
 ```
+
+## Plant groups
+
+`plant_groups_e2e.mjs` drives the whole operator path over a plant that holds
+more than one kind of thing: a card per group, roles, which group owns the
+headline topic, per-group enable/disable, adding a source to ONE group,
+reordering precedence with the arrows, removing a source (and the last one being
+refused), adding and removing a whole group, and the API refusing two groups
+that claim the same unit id.
+
+Config it expects: auth off, one endpoint with an `inverters` group (units 1, 2)
+and a `grid` group (unit 240, id `<endpoint>-meter-240`), pointed at a host that
+REFUSES so the offline paths are the ones under test.
+
+```bash
+MBG_URL=http://localhost:18085 ENDPOINT=sunfield \
+  CHROMIUM_PATH=<chrome> node plant_groups_e2e.mjs
+```

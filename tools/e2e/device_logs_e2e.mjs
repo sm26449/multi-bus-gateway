@@ -33,7 +33,7 @@ try {
   // into the endpoint, then into one of its units
   await page.locator('.endpoint-row button[data-action="openEndpointDetail"]').first().click();
   await page.waitForTimeout(1500);
-  const open = page.locator(`#plUnitsBody tr[data-unit="${DEVICE}"] button[data-action="openDeviceDetail"]`);
+  const open = page.locator(`[data-group-units] tr[data-unit="${DEVICE}"] button[data-action="openDeviceDetail"]`);
   check('a device can be opened', await open.count() === 1);
   await open.click();
   await page.waitForTimeout(2000);

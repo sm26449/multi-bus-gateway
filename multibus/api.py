@@ -2298,7 +2298,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # must fail independently). The devices are managed THROUGH the endpoint:
     # device CRUD refuses them; edit/delete the endpoint instead.
 
-    def _endpoint_sources(p: Dict, pid: str) -> List[Dict]:
+    def _endpoint_sources(p: Dict, pid: str, holder: Dict = None,
+                          group_id: str = '') -> List[Dict]:
         """Every declared way of reaching this endpoint's units, in precedence
         order, with what each one is actually contributing right now.
 
@@ -2307,15 +2308,20 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         for an operator, and answering them from two endpoints would invite them
         to drift. Flat JSON, so a Node-RED http-request node reads it directly.
         """
-        raw = p.get('sources') or []
+        h = holder if holder is not None else p
+        raw = h.get('sources') or []
         if not raw:
-            conn = dict(p.get('connection', {}) or {})
+            conn = dict(h.get('connection', {}) or {})
             if not conn:
                 return []
-            raw = [{'id': 'default', 'template': p.get('template', ''), **conn}]
+            raw = [{'id': 'default',
+                    'template': h.get('template', '') or p.get('template', ''),
+                    **conn}]
         # roll the live picture up across the endpoint's units
         live: Dict[str, Dict] = {}
         for dev in config.endpoint_devices(pid):
+            if group_id and (getattr(dev, 'group_id', '') or 'units') != group_id:
+                continue
             _i, _c, client = registry.find(dev.id)
             if client is None:
                 continue
@@ -2347,7 +2353,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'id': sid, 'rank': rank,
                 'enabled': bool(r.get('enabled', True)),
                 'protocol': str(r.get('protocol', 'tcp')).lower(),
-                'template': r.get('template', '') or p.get('template', ''),
+                'template': (r.get('template', '') or h.get('template', '')
+                             or p.get('template', '')),
                 'address': (r.get('url')
                             or (r.get('serial_port') if r.get('protocol') == 'rtu'
                                 else f"{r.get('host', '')}:{r.get('port', 502)}")),
@@ -2398,6 +2405,37 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             st['floor_s'] = None
         return st
 
+    def _endpoint_group_entries(p: Dict, pid: str, units: List[Dict]) -> List[Dict]:
+        """One entry per unit group, with its units, its sources and its own
+        total. The FIRST group owns the endpoint's headline aggregate, which is
+        what keeps every topic and series that predates groups unchanged."""
+        from .endpoint_aggregator import compute_endpoint_aggregates
+        out = []
+        for i, g in enumerate(config._endpoint_groups(p)):
+            gid = g['id']
+            try:
+                agg = compute_endpoint_aggregates(config, registry, pid,
+                                                  group_id=gid)
+            except Exception:  # noqa: BLE001 — a total must not break the page
+                agg = {}
+            mine = [u for u in units if u.get('group_id') == gid]
+            out.append({
+                'id': gid,
+                'role': g.get('role', '') or '',
+                'enabled': bool(g.get('enabled', True)),
+                'template': g.get('template', '') or p.get('template', ''),
+                'units': mine,
+                'sources': _endpoint_sources(p, pid, g, gid),
+                'aggregates': agg,
+                'online_units': sum(1 for u in mine if u['connected']),
+                'total_units': len(mine),
+                # the bare endpoint path belongs to the first group; the others
+                # publish under their own name
+                'topic': (f"mbg/endpoints/{pid}" if i == 0
+                          else f"mbg/endpoints/{pid}/{gid}"),
+            })
+        return out
+
     def _endpoint_entry(p: Dict) -> Dict:
         pid = p.get('id')
         units = []
@@ -2416,6 +2454,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'device_id': dev.id,
                 'name': dev.name,
                 'enabled': dev.enabled,
+                'group_id': getattr(dev, 'group_id', '') or 'units',
+                'role': getattr(dev, 'role', '') or '',
                 'running': client is not None,
                 # the same liveness verdict the MQTT/alert paths use, so the
                 # endpoint census can never disagree with the unit's own topics
@@ -2460,6 +2500,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'rest_push': dict(p.get('rest_push', {}) or {}),
                 'bus': bus,
                 'sources': _endpoint_sources(p, pid),
+                # An installation is not one kind of thing: a plant holds
+                # inverters and the meter at its grid connection. Each group
+                # carries its own units, sources and total, because adding a
+                # meter's power to the inverters' would describe nothing.
+                'groups': _endpoint_group_entries(p, pid, units),
                 'status': agg.get('status', 'offline' if units else ''),
                 'online_units': sum(1 for u in units if u['connected']),
                 'total_units': len(units)}
@@ -2486,6 +2531,60 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 out.append(u)                      # no override → stays bare
         return out
 
+    def _validate_sources(srcs, errors, inherit_template: str, prefix: str = ""):
+        """Validate one ordered source list. Shared by an endpoint's flat form
+        and by every group, so a rule written once applies everywhere."""
+        if srcs is None:
+            return
+        if not isinstance(srcs, list) or not srcs:
+            errors.append(f"{prefix}sources: must be a non-empty list")
+            return
+        seen = set()
+        _SID_RE = re.compile(r'^[a-z0-9][a-z0-9_-]{0,31}$')
+        for i, r in enumerate(srcs):
+            w = f"{prefix}sources[{i}]"
+            if not isinstance(r, dict):
+                errors.append(f"{w}: must be an object")
+                continue
+            sid = str(r.get('id', '') or '').strip().lower()
+            if not _SID_RE.match(sid):
+                errors.append(f"{w}.id: use a-z 0-9 - _ (1-32 chars)")
+            elif sid in seen:
+                # two sources with one name make provenance ambiguous, which
+                # defeats the point of recording it
+                errors.append(f"{w}.id: '{sid}' is declared twice")
+            seen.add(sid)
+            proto = str(r.get('protocol', 'tcp')).lower()
+            if proto not in ('tcp', 'rtu', 'rtu-tcp', 'http', 'mqtt'):
+                errors.append(f"{w}.protocol: must be tcp, rtu, rtu-tcp, http or mqtt")
+            if proto == 'http':
+                if not str(r.get('url', '')).strip():
+                    errors.append(f"{w}.url: required for an http source")
+            elif proto == 'mqtt':
+                if not str(r.get('topic', '')).strip():
+                    errors.append(f"{w}.topic: required for an mqtt source")
+            elif proto != 'rtu' and not str(r.get('host', '')).strip():
+                errors.append(f"{w}.host: required")
+            tid = str(r.get('template', '') or inherit_template).strip()
+            if not tid:
+                errors.append(f"{w}.template: required (nothing to inherit)")
+            elif template_registry.get(tid) is None:
+                errors.append(f"{w}.template: '{tid}' not found")
+            try:
+                if float(r.get('stale_after_s', 0) or 0) < 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors.append(f"{w}.stale_after_s: must be >= 0 "
+                              f"(0 = never yields, right for a counter)")
+            for gname, g in (r.get('poll_groups') or {}).items():
+                iv = g.get('interval') if isinstance(g, dict) else g
+                try:
+                    if float(iv) < 0.05:
+                        raise ValueError
+                except (TypeError, ValueError):
+                    errors.append(f"{w}.poll_groups.{gname}: interval must be "
+                                  f"a number >= 0.05")
+
     def _validate_endpoint_payload(payload: Dict, *, existing_id: str = None) -> Dict:
         """Normalize + validate a raw endpoint dict. Raises HTTPException(422)
         with a per-field error list."""
@@ -2499,20 +2598,27 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                                 or registry.has(pid)):
             errors.append(f"id: '{pid}' already exists")
         conn = payload.get('connection', {}) or {}
-        protocol = str(conn.get('protocol', 'tcp')).lower()
-        if protocol not in ('tcp', 'rtu-tcp'):
-            # plain RTU shares one serial line across masters — the same
-            # one-master-per-line rule the device CRUD enforces; multi-drop
-            # RTU endpoints need the shared-bus arbiter (Tier 3) first.
-            errors.append("connection.protocol: must be 'tcp' or 'rtu-tcp'")
-        if not str(conn.get('host', '')).strip():
-            errors.append("connection.host: required")
-        try:
-            port = int(conn.get('port', 502))
-            if not (1 <= port <= 65535):
-                raise ValueError
-        except (TypeError, ValueError):
-            errors.append("connection.port: must be 1..65535")
+        # An endpoint that declares GROUPS carries its address per group — each
+        # holds a different kind of thing and may be reached a different way. The
+        # top-level connection is then only the shorthand for a single implicit
+        # group, so it is required exactly when no group says otherwise.
+        _grouped = bool(payload.get('groups'))
+        if not _grouped:
+            protocol = str(conn.get('protocol', 'tcp')).lower()
+            if protocol not in ('tcp', 'rtu-tcp'):
+                # plain RTU shares one serial line across masters — the same
+                # one-master-per-line rule the device CRUD enforces; multi-drop
+                # RTU endpoints need the shared-bus arbiter (Tier 3) first.
+                errors.append("connection.protocol: must be 'tcp' or 'rtu-tcp'")
+            if not str(conn.get('host', '')).strip():
+                errors.append("connection.host: required")
+        if conn:
+            try:
+                port = int(conn.get('port', 502))
+                if not (1 <= port <= 65535):
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors.append("connection.port: must be 1..65535")
         if conn.get('max_connections') is not None:
             # Sockets to a master device are a scarce, shared resource — the
             # datalogger this replaces serves ten and starts refusing near five.
@@ -2529,62 +2635,46 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         template_id = str(payload.get('template', '')).strip()
         if template_id and template_registry.get(template_id) is None:
             errors.append(f"template: '{template_id}' not found")
-        # ── sources: the ordered ways of reaching this endpoint's units ──
-        srcs = payload.get('sources')
-        if srcs is not None:
-            if not isinstance(srcs, list) or not srcs:
-                errors.append("sources: must be a non-empty list")
-                srcs = []
-            seen_sid = set()
-            _SID_RE = re.compile(r'^[a-z0-9][a-z0-9_-]{0,31}$')
-            for i, r in enumerate(srcs):
-                w = f"sources[{i}]"
-                if not isinstance(r, dict):
+        # ── groups: the kinds of thing this installation holds ──
+        groups = payload.get('groups')
+        if groups is not None:
+            if not isinstance(groups, list) or not groups:
+                errors.append("groups: must be a non-empty list")
+                groups = []
+            seen_gid, seen_uid_all = set(), set()
+            _GID_RE = re.compile(r'^[a-z0-9][a-z0-9_-]{0,31}$')
+            for gi, g in enumerate(groups):
+                w = f"groups[{gi}]"
+                if not isinstance(g, dict):
                     errors.append(f"{w}: must be an object")
                     continue
-                sid = str(r.get('id', '') or '').strip().lower()
-                if not _SID_RE.match(sid):
+                gid = str(g.get('id', '') or '').strip().lower()
+                if not _GID_RE.match(gid):
                     errors.append(f"{w}.id: use a-z 0-9 - _ (1-32 chars)")
-                elif sid in seen_sid:
-                    # two sources with one name make provenance ambiguous,
-                    # which defeats the point of recording it
-                    errors.append(f"{w}.id: '{sid}' is declared twice")
-                seen_sid.add(sid)
-                proto = str(r.get('protocol', 'tcp')).lower()
-                if proto not in ('tcp', 'rtu', 'rtu-tcp', 'http', 'mqtt'):
-                    errors.append(f"{w}.protocol: must be tcp, rtu, rtu-tcp, "
-                                  f"http or mqtt")
-                if proto == 'http':
-                    if not str(r.get('url', '')).strip():
-                        errors.append(f"{w}.url: required for an http source")
-                elif proto == 'mqtt':
-                    if not str(r.get('topic', '')).strip():
-                        errors.append(f"{w}.topic: required for an mqtt source")
-                elif proto != 'rtu' and not str(r.get('host', '')).strip():
-                    errors.append(f"{w}.host: required")
-                tid = str(r.get('template', '') or template_id).strip()
-                if not tid:
-                    errors.append(f"{w}.template: required (the endpoint "
-                                  f"declares none to inherit)")
-                elif template_registry.get(tid) is None:
-                    errors.append(f"{w}.template: '{tid}' not found")
-                try:
-                    if float(r.get('stale_after_s', 0) or 0) < 0:
-                        raise ValueError
-                except (TypeError, ValueError):
-                    errors.append(f"{w}.stale_after_s: must be >= 0 "
-                                  f"(0 = never yields, right for a counter)")
-                for gname, g in (r.get('poll_groups') or {}).items():
-                    iv = g.get('interval') if isinstance(g, dict) else g
-                    try:
-                        if float(iv) < 0.05:
-                            raise ValueError
-                    except (TypeError, ValueError):
-                        errors.append(f"{w}.poll_groups.{gname}: interval must "
-                                      f"be a number >= 0.05")
+                elif gid in seen_gid:
+                    errors.append(f"{w}.id: '{gid}' is declared twice")
+                seen_gid.add(gid)
+                gunits = config._endpoint_units({'id': pid}, g)
+                if not gunits:
+                    errors.append(f"{w}.units: at least one valid unit id "
+                                  f"(0..255) is required")
+                for u in gunits:
+                    # a unit id is the address on the wire: the same one in two
+                    # groups of one endpoint would be two devices racing it
+                    if u['unit_id'] in seen_uid_all:
+                        errors.append(f"{w}.units: unit {u['unit_id']} is "
+                                      f"already used by another group")
+                    seen_uid_all.add(u['unit_id'])
+                gt = str(g.get('template', '') or template_id).strip()
+                if gt and template_registry.get(gt) is None:
+                    errors.append(f"{w}.template: '{gt}' not found")
+                _validate_sources(g.get('sources'), errors, gt, prefix=w + '.')
+        # ── sources: the ordered ways of reaching this endpoint's units ──
+        srcs = payload.get('sources')
+        _validate_sources(srcs, errors, template_id)
         probe = {'id': pid, 'units': payload.get('units')}
         units = config._endpoint_units(probe)
-        if not units:
+        if not units and not _grouped:
             errors.append("units: at least one valid unit id (0..255) is required")
         seen_uids, seen_ids = set(), set()
         for u in units:
@@ -2611,6 +2701,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             'connection': conn,
             'units': _merge_unit_overrides(pid, payload.get('units'), prev),
             **({'sources': srcs} if srcs else {}),
+            **({'groups': groups} if groups else {}),
         }
         if payload.get('aggregates') is not None:
             raw['aggregates'] = bool(payload['aggregates'])

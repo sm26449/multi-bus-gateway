@@ -1,5 +1,40 @@
 # Changelog
 
+## 3.61.0
+
+### 2026-09-12 — the plant page: group cards, per-group sources, and the editors
+
+The endpoint page now renders **one card per group**, each carrying its own
+sources, its own units and its own totals topic. A card states what the group
+IS (inverter, meter, battery), whether it polls, and where it publishes; the
+first group is marked `primary` because it owns the endpoint's headline topic
+and its untagged InfluxDB series.
+
+Everything an operator does to a plant is now a click:
+
+- **add / edit / delete a group**, with role, template and unit ids — a unit's
+  hand-written id and name survive editing the id list, so editing a group never
+  renames its devices or orphans their history
+- **enable or disable a group on its own** — its units stay visible and
+  editable, they simply stop polling
+- **add / edit / delete a source within a group**, and **reorder it with
+  arrows**, because order is the precedence
+- the last source of a group, and the last group of an endpoint, cannot be
+  removed: a unit needs a way to be read
+
+The API grew `groups[]` on `/api/endpoints/{id}`, each with its units, sources,
+aggregates and topic, and validation to match: a group needs units and a real
+template, and **two groups may not claim the same unit id** — that is one
+address on the wire, and two devices would race it.
+
+Fixed while testing: an endpoint that declares groups no longer demands a
+top-level `connection.host`. With groups the address belongs to each group, and
+the top-level connection is only the shorthand for a single implicit one.
+
+**Verified in a real browser, 25 checks** (`tools/e2e/plant_groups_e2e.mjs`)
+walking that entire path, plus the two existing suites updated to the group
+layout and passing at 22/22 and 10/10.
+
 ## 3.60.0
 
 ### 2026-09-12 — a plant is an installation, not one kind of device (P8, step 4)

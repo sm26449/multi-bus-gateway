@@ -609,3 +609,95 @@ def test_the_bundled_solar_api_template_reads_one_call_per_inverter():
     # the four things only Modbus has must NOT be claimed here
     assert not (names & {'power_factor_total', 'power_reactive_total',
                          'power_apparent_total', 'event_flags_1'})
+
+
+# ── groups: a plant holds more than one kind of thing ────────────────────────
+
+PLANT_BODY = {
+    "id": "plant", "name": "PV plant", "enabled": False,
+    "connection": {"protocol": "tcp", "host": "192.0.2.30", "port": 502},
+    "units": [1],
+    "groups": [
+        {"id": "inverters", "role": "inverter", "template": "eastron_sdm120",
+         "connection": {"protocol": "tcp", "host": "192.0.2.30"},
+         "units": [1, 2]},
+        {"id": "grid", "role": "meter", "template": "eastron_sdm630",
+         "connection": {"protocol": "tcp", "host": "192.0.2.30"},
+         "units": [{"unit_id": 240, "id": "plant-grid-meter"}]},
+    ],
+}
+
+
+@needs_tc
+def test_a_plant_materializes_every_group(tmp_path):
+    cfg, client = make_app(tmp_path)
+    r = client.post("/api/endpoints", json=PLANT_BODY)
+    assert r.status_code == 200, r.text
+    ids = {d.id for d in cfg.endpoint_devices('plant')}
+    assert ids == {'plant-u1', 'plant-u2', 'plant-grid-meter'}
+    got = client.get("/api/endpoints/plant").json()
+    groups = {g['id']: g for g in got['groups']}
+    assert set(groups) == {'inverters', 'grid'}
+    assert groups['grid']['role'] == 'meter'
+    assert [u['device_id'] for u in groups['grid']['units']] == ['plant-grid-meter']
+    assert groups['inverters']['total_units'] == 2
+
+
+@needs_tc
+def test_the_first_group_owns_the_endpoints_headline_topic(tmp_path):
+    """Every topic and Influx series that predates groups must stay put."""
+    cfg, client = make_app(tmp_path)
+    assert client.post("/api/endpoints", json=PLANT_BODY).status_code == 200
+    groups = client.get("/api/endpoints/plant").json()['groups']
+    assert groups[0]['topic'] == 'mbg/endpoints/plant'
+    assert groups[1]['topic'] == 'mbg/endpoints/plant/grid'
+
+
+@needs_tc
+def test_one_unit_id_cannot_be_claimed_by_two_groups(tmp_path):
+    """A unit id is an address on the wire: the same one twice would be two
+    devices racing each other on it."""
+    cfg, client = make_app(tmp_path)
+    bad = dict(PLANT_BODY)
+    bad['groups'] = [dict(PLANT_BODY['groups'][0]),
+                     dict(PLANT_BODY['groups'][1], units=[2])]
+    r = client.post("/api/endpoints", json=bad)
+    assert r.status_code == 422
+    assert any("already used by another group" in e
+               for e in r.json()['detail']['errors'])
+
+
+@needs_tc
+def test_a_group_needs_units_and_a_real_template(tmp_path):
+    cfg, client = make_app(tmp_path)
+    for bad_group, needle in (
+            ({"id": "g", "units": []}, "units"),
+            ({"id": "g", "units": [1], "template": "nope"}, "template"),
+            ({"id": "BAD ID", "units": [1], "template": "eastron_sdm120"}, "id")):
+        body = dict(PLANT_BODY, id="probe", groups=[bad_group])
+        r = client.post("/api/endpoints", json=body)
+        assert r.status_code == 422, bad_group
+        assert any(needle in e for e in r.json()['detail']['errors']), bad_group
+
+
+@needs_tc
+def test_a_group_carries_its_own_sources(tmp_path):
+    cfg, client = make_app(tmp_path)
+    body = dict(PLANT_BODY, groups=[
+        dict(PLANT_BODY['groups'][0], sources=[
+            {"id": "fast", "protocol": "http", "url": "http://h/x?d=${unit_id}",
+             "template": "eastron_sdm120", "poll_groups": {"realtime": 5}},
+            {"id": "full", "protocol": "tcp", "host": "192.0.2.30",
+             "template": "eastron_sdm120"},
+        ]),
+        PLANT_BODY['groups'][1]])
+    assert client.post("/api/endpoints", json=body).status_code == 200, 'create'
+    groups = {g['id']: g for g in client.get("/api/endpoints/plant").json()['groups']}
+    assert [s['id'] for s in groups['inverters']['sources']] == ['fast', 'full']
+    assert [s['id'] for s in groups['grid']['sources']] == ['default']
+    # the URL resolved per unit — on the SOURCE, which is what polls; the
+    # device-level connection stays the group's fallback identity
+    d = cfg.get_device('plant-u2')
+    fast = next(x for x in d.sources if x.id == 'fast')
+    assert fast.http['url'].endswith('d=2')
+    assert [x.id for x in d.sources] == ['fast', 'full']

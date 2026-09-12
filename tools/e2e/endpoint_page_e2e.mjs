@@ -73,13 +73,21 @@ try {
   check('two configured connections are two real ones',
         busApi.max_connections === 2 && busApi.lanes === 2,
         JSON.stringify(busApi));
-  check('nothing polled, so no floor is claimed',
-        busApi.tx_p50_s === null && busApi.floor_s === null);
+  // A refused connection is still a TRANSACTION: it is timed like any other,
+  // so "nothing measured" only holds before the first attempt. What must always
+  // hold is that a floor is claimed only when there is something to derive it
+  // from — p95 per read, times the reads a sweep needs, across its connections.
+  check('a floor is claimed only when it can be derived',
+        busApi.floor_s === null
+          ? true
+          : (busApi.tx_p95_s > 0 && busApi.reads_per_sweep > 0),
+        JSON.stringify({ p50: busApi.tx_p50_s, p95: busApi.tx_p95_s,
+                         reads: busApi.reads_per_sweep, floor: busApi.floor_s }));
 
   // ---- 4. the unit table -------------------------------------------------
-  const rows = page.locator('#plUnitsBody tr');
+  const rows = page.locator('[data-group-units] tr');
   check('three unit rows', await rows.count() === 3, String(await rows.count()));
-  const body = await page.locator('#plUnitsBody').innerText();
+  const body = await page.locator('[data-group-units]').innerText();
   check('hand-written unit id and name are shown',
         body.includes(`${ENDPOINT}-east`) && body.includes('East roof'));
   check('unit health is not a green ok',
@@ -105,9 +113,9 @@ try {
   await page.waitForTimeout(4000);
 
   // ---- 8. renaming a unit keeps the endpoint's routing ----------------------
-  await page.click(`#plUnitsBody tr[data-unit="${ENDPOINT}-u1"] button[data-action="endpointRenameUnit"]`);
+  await page.click(`[data-group-units] tr[data-unit="${ENDPOINT}-u1"] button[data-action="endpointRenameUnit"]`);
   await page.fill('#plUnitName', 'North string');
-  await page.click('#plUnitsBody button[data-action="saveEndpointUnitName"]');
+  await page.click('[data-group-units] button[data-action="saveEndpointUnitName"]');
   await page.waitForTimeout(5000);
   const after = await (await fetch(API)).json();
   check('unit rename persisted',
@@ -116,7 +124,7 @@ try {
         after.mqtt.topic_prefix === 'mbg/devices/${device_id}');
 
   // ---- 9. a unit opens into the endpoint-aware device workspace -------------
-  await page.click(`#plUnitsBody tr[data-unit="${ENDPOINT}-u2"] button[data-action="openDeviceDetail"]`);
+  await page.click(`[data-group-units] tr[data-unit="${ENDPOINT}-u2"] button[data-action="openDeviceDetail"]`);
   await page.waitForTimeout(1500);
   check('unit workspace opened',
         (await page.locator('#deviceDetailView .section-header h2').innerText())
