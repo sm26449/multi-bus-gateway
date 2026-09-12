@@ -1,21 +1,30 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
 # Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
 """Plant aggregates: a plant publishes its own output — sums for
-powers/currents/energies, averages for voltages/frequency/PF/temperatures,
-freshness-aware unit census."""
+powers/currents, averages for voltages/frequency/temperatures, COUNTERS from
+last-known values with a complete census, power factor derived as
+Σ active / Σ apparent, and a census/status that publishes even when nothing
+is fresh."""
 import time
 
-from multibus.plant_aggregator import compute_plant_aggregates, _rule_for
+import pytest
+
+from multibus.plant_aggregator import (PlantAggregator,
+                                       compute_plant_aggregates, _rule_for,
+                                       plant_bucket)
 
 
 class _Dev:
-    def __init__(self, id):
+    def __init__(self, id, enabled=True):
         self.id = id
+        self.enabled = enabled
 
 
 class _Cfg:
-    def __init__(self, units):
-        self._units = [_Dev(u) for u in units]
+    def __init__(self, units, plants=None):
+        self._units = [u if isinstance(u, _Dev) else _Dev(u) for u in units]
+        self.plants = (plants if plants is not None
+                       else [{"id": "p", "name": "P", "enabled": True}])
 
     def plant_devices(self, pid):
         return self._units
@@ -29,23 +38,54 @@ class _Reg:
         return self._stores.get(did)
 
 
+class _Mqtt:
+    connected = True
+
+    def __init__(self):
+        self.sent = {}
+
+    def publish_if_changed(self, topic, value):
+        self.sent[topic] = value
+        return True
+
+
+class _Influx:
+    connected = True
+    publish_mode = "changed"
+
+    def __init__(self):
+        self.points = []
+
+    def write_point(self, point, ts=None, bucket=None):
+        self.points.append((point, bucket))
+
+
 def _entry(name, value, ts=None, interval=15):
     return {"name": name, "value": value,
             "ts": ts if ts is not None else time.time(), "interval": interval}
 
 
+# ── rules ────────────────────────────────────────────────────────────────────
+
 def test_rules():
     assert _rule_for("power_active_total") == "sum"
     assert _rule_for("current_l1") == "sum"
-    assert _rule_for("energy_active_generated") == "sum"
+    assert _rule_for("power_dc_mppt1") == "sum"
     assert _rule_for("voltage_l1_n") == "avg"
     assert _rule_for("frequency") == "avg"
-    assert _rule_for("power_factor_total") == "avg"
     assert _rule_for("temperature_cabinet") == "avg"
+    # counters are their own class — last-known, never freshness-gated
+    assert _rule_for("energy_active_generated") == "counter"
+    assert _rule_for("energy_dc_mppt1") == "counter"
+    # a ratio is neither summable nor averageable — PF is DERIVED instead
+    assert _rule_for("power_factor_total") is None
+    assert _rule_for("power_factor_l1") is None
     assert _rule_for("operating_state") is None      # nonsense to combine
     assert _rule_for("manufacturer") is None
     assert _rule_for("event_flags_1") is None
 
+
+# ── instantaneous quantities ─────────────────────────────────────────────────
 
 def test_sum_and_avg_across_units():
     cfg = _Cfg(["u1", "u2", "u3"])
@@ -65,7 +105,7 @@ def test_stale_unit_drops_out():
     cfg = _Cfg(["u1", "u2"])
     reg = _Reg({
         "u1": {1: _entry("power_active_total", 10000, ts=now)},
-        # stale: older than 3x interval
+        # stale: older than 4x interval
         "u2": {1: _entry("power_active_total", 12000, ts=now - 120, interval=15)},
     })
     agg = compute_plant_aggregates(cfg, reg, "p", now=now)
@@ -91,6 +131,77 @@ def test_empty_plant():
     assert agg == {"units_online": 0, "units_total": 0}
 
 
+# ── counters ─────────────────────────────────────────────────────────────────
+
+def test_counters_use_last_known_values_and_survive_the_night():
+    night = time.time() - 3600
+    cfg = _Cfg(["u1", "u2"])
+    reg = _Reg({
+        "u1": {1: _entry("energy_active_generated", 1000, ts=night)},
+        "u2": {1: _entry("energy_active_generated", 2000, ts=night)},
+    })
+    agg = compute_plant_aggregates(cfg, reg, "p")
+    assert agg["energy_active_generated"] == 3000    # complete, despite stale
+    assert agg["units_online"] == 0 and agg["status"] == "offline"
+
+
+def test_counter_never_jumps_backwards_as_units_go_dark():
+    """The 2026-09-11 regression: four fresh inverters summed ~178 MWh; three
+    went dark and the plant counter dropped to the one that was left."""
+    now = time.time()
+    vals = [22_925_800, 22_096_800, 20_059_310, 112_903_704]
+    cfg = _Cfg([f"u{i}" for i in range(1, 5)])
+    reg = _Reg({f"u{i + 1}": {1: _entry("energy_active_generated", v, ts=now)}
+                for i, v in enumerate(vals)})
+    day = compute_plant_aggregates(cfg, reg, "p", now=now)
+    night = compute_plant_aggregates(cfg, reg, "p", now=now + 7200)
+    assert day["energy_active_generated"] == sum(vals)
+    assert night["energy_active_generated"] == day["energy_active_generated"]
+    assert night["units_online"] == 0
+
+
+def test_counter_withheld_when_a_unit_has_none():
+    cfg = _Cfg(["u1", "u2"])
+    reg = _Reg({
+        "u1": {1: _entry("energy_active_generated", 1000)},
+        "u2": {1: _entry("power_active_total", 5)},      # no counter of its own
+    })
+    agg = compute_plant_aggregates(cfg, reg, "p")
+    assert "energy_active_generated" not in agg        # a partial sum is a lie
+    assert agg["power_active_total"] == 5
+
+
+# ── power factor ─────────────────────────────────────────────────────────────
+
+def test_power_factor_is_a_ratio_of_sums_not_an_average():
+    cfg = _Cfg(["u1", "u2"])
+    reg = _Reg({
+        "u1": {1: _entry("power_active_total", 1000),
+               2: _entry("power_apparent_total", 1000),      # this unit: PF 1.0
+               3: _entry("power_factor_total", 100)},
+        "u2": {1: _entry("power_active_total", 0),
+               2: _entry("power_apparent_total", 1000),      # this unit: PF 0.0
+               3: _entry("power_factor_total", 0)},
+    })
+    agg = compute_plant_aggregates(cfg, reg, "p")
+    assert agg["power_factor_total"] == 0.5      # 1000/2000, not avg(100, 0)
+
+
+def test_power_factor_absent_without_apparent_power():
+    cfg = _Cfg(["u1"])
+    reg = _Reg({"u1": {1: _entry("power_active_total", 1000)}})
+    assert "power_factor_total" not in compute_plant_aggregates(cfg, reg, "p")
+
+
+def test_power_factor_absent_at_standstill():
+    cfg = _Cfg(["u1"])
+    reg = _Reg({"u1": {1: _entry("power_active_total", 0),
+                       2: _entry("power_apparent_total", 0)}})
+    assert "power_factor_total" not in compute_plant_aggregates(cfg, reg, "p")
+
+
+# ── census / status ──────────────────────────────────────────────────────────
+
 def test_plant_status_online_partial_offline():
     cfg = _Cfg(["u1", "u2"])
     fresh = {1: _entry("power_active_total", 100)}
@@ -101,3 +212,68 @@ def test_plant_status_online_partial_offline():
                                     "p")["status"] == "partial"
     assert compute_plant_aggregates(cfg, _Reg({"u1": stale, "u2": stale}),
                                     "p")["status"] == "offline"
+
+
+def test_disabled_unit_is_not_expected_to_contribute():
+    cfg = _Cfg([_Dev("u1"), _Dev("u2", enabled=False)])
+    reg = _Reg({"u1": {1: _entry("energy_active_generated", 500),
+                       2: _entry("power_active_total", 10)}})
+    agg = compute_plant_aggregates(cfg, reg, "p")
+    assert agg["units_total"] == 1 and agg["units_online"] == 1
+    assert agg["status"] == "online"      # reachable despite the disabled unit
+    assert agg["energy_active_generated"] == 500   # not held hostage by it
+
+
+# ── publishing ───────────────────────────────────────────────────────────────
+
+def test_census_publishes_even_when_nothing_is_fresh():
+    stale = {1: _entry("power_active_total", 100, ts=time.time() - 3600)}
+    cfg = _Cfg(["u1", "u2"])
+    mq = _Mqtt()
+    PlantAggregator(cfg, _Reg({"u1": stale, "u2": dict(stale)}),
+                    lambda: mq, lambda: None)._publish_all()
+    assert mq.sent["mbg/plants/p/status"] == "offline"
+    assert mq.sent["mbg/plants/p/units_online"] == 0
+    assert mq.sent["mbg/plants/p/units_total"] == 2
+    assert "mbg/plants/p/power/active/total" not in mq.sent
+
+
+def test_mqtt_leaves_use_canonical_topics():
+    cfg = _Cfg(["u1"])
+    reg = _Reg({"u1": {1: _entry("power_active_total", 1500),
+                       2: _entry("energy_active_generated", 90)}})
+    mq = _Mqtt()
+    PlantAggregator(cfg, reg, lambda: mq, lambda: None)._publish_all()
+    assert mq.sent["mbg/plants/p/power/active/total"] == 1500
+    assert mq.sent["mbg/plants/p/energy/active/generated"] == 90
+
+
+def test_aggregates_false_opts_the_plant_out():
+    cfg = _Cfg(["u1"], plants=[{"id": "p", "enabled": True, "aggregates": False}])
+    reg = _Reg({"u1": {1: _entry("power_active_total", 1500)}})
+    mq = _Mqtt()
+    PlantAggregator(cfg, reg, lambda: mq, lambda: None)._publish_all()
+    assert mq.sent == {}
+
+
+def test_plant_bucket_resolves_every_placeholder_to_the_plant():
+    assert plant_bucket({"influxdb": {"bucket": "fronius_${unit_id}"}},
+                        "fronius") == "fronius_fronius"
+    assert plant_bucket({"influxdb": {"bucket": "b_${plant_id}"}},
+                        "fronius") == "b_fronius"
+    assert plant_bucket({"influxdb": {"bucket": "flat"}}, "fronius") == "flat"
+    assert plant_bucket({}, "fronius") is None
+
+
+def test_influx_writes_the_resolved_bucket_and_only_on_change():
+    pytest.importorskip("influxdb_client")
+    cfg = _Cfg(["u1"], plants=[{"id": "p", "enabled": True,
+                                "influxdb": {"bucket": "b_${plant_id}"}}])
+    reg = _Reg({"u1": {1: _entry("power_active_total", 100)}})
+    inf = _Influx()
+    ag = PlantAggregator(cfg, reg, lambda: None, lambda: inf)
+    ag._publish_all()
+    written = len(inf.points)
+    assert written and all(b == "b_p" for _pt, b in inf.points)
+    ag._publish_all()                    # nothing changed → nothing written
+    assert len(inf.points) == written
