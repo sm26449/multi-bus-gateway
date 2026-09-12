@@ -175,6 +175,18 @@ class ModbusConfig:
     # missed turn is not a device failure: the value is simply skipped, exactly
     # as if that cycle had not come round yet.
     endpoint_wait_s: float = 10.0
+    # Breathing room between consecutive transactions on this access point.
+    # A master device is a small computer with its own job — a Fronius
+    # DataManager has to poll its RS-485 side while it answers us — and hit
+    # back-to-back it starves that side. The symptom is not a polite slowdown
+    # but collapse: measured on a production one, demanding 32 transactions a
+    # minute returned 21.6 with 6.5 % errors, while demanding 26 returned 26.
+    # The long-lived collector this replaces never had that problem because it
+    # waits a full second after every device and 200 ms between register
+    # blocks, leaving the datalogger idle about a fifth of the time ON PURPOSE.
+    # 0 (the default) keeps the old behaviour: nothing changes for a device
+    # with its bus to itself, or a gateway that does not care.
+    endpoint_min_gap_s: float = 0.0
     # Addresses this slave answers with ILLEGAL DATA ADDRESS (exception 02).
     # The batch builder never bridges a merged read across one of these (and
     # skips a selected register that sits on one), so a single unmapped address
@@ -640,6 +652,7 @@ class Config:
                     share_transport=bool(conn.get('share_transport', True)),
                     max_connections=max(1, int(conn.get('max_connections', 1) or 1)),
                     endpoint_wait_s=float(conn.get('endpoint_wait_s', 10.0)),
+                    endpoint_min_gap_s=max(0.0, float(conn.get('endpoint_min_gap_s', 0.0) or 0.0)),
                     protocol=str(conn.get('protocol', 'tcp')).lower(),
                     serial_port=conn.get('serial_port', ''),
                     baudrate=int(conn.get('baudrate', 9600)),
@@ -1265,6 +1278,7 @@ class Config:
                     share_transport=bool(m.get('share_transport', True)),
                     max_connections=max(1, int(m.get('max_connections', 1) or 1)),
                     endpoint_wait_s=float(m.get('endpoint_wait_s', 10.0)),
+                    endpoint_min_gap_s=max(0.0, float(m.get('endpoint_min_gap_s', 0.0) or 0.0)),
                 )
 
             # MQTT

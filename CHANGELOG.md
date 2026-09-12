@@ -1,5 +1,46 @@
 # Changelog
 
+## 3.55.0
+
+### 2026-09-12 — a master device needs room to breathe
+
+Our own long-lived Fronius collector waits **1.0 s after every device** and
+**200 ms between register blocks**, and forces a 300 ms pause before each
+inverter's read. Nothing overrides those defaults in production, so its 20 s
+cycle contains at least four seconds of deliberate idle. We wrote that, and we
+presumably wrote it because we had to.
+
+MBG had no such gap: the arbiter releases and the next unit takes its turn
+instantly, so four inverters hit one DataManager back-to-back with no breathing
+room. That is a plausible reason we collapse above ~26 transactions a minute
+while the older, slower collector does not fall over at all.
+
+`connection.endpoint_min_gap_s` (default `0.0`, so nothing changes for anyone)
+makes the endpoint arbiter hold the next caller until the gap has elapsed since
+the last release. It belongs to the ACCESS POINT, not the device: when two
+endpoints share one datalogger the most cautious declaration wins, so a second
+endpoint cannot quietly undo the first one's breathing room. `min_gap_s` and
+the accumulated `gap_waited_s` are reported in the endpoint's bus telemetry, so
+what it costs is visible rather than inferred.
+
+**What the simulation does and does not show.** Against a master that owes its
+RS-485 side 0.8 s after every reply (four units, 50 registers, 5 s interval):
+
+| gap | reads/min | per-transaction p50 |
+|---|---|---|
+| 0.0 s | 48.0 | 1.149 s |
+| 0.2 s | 48.0 | 0.950 s |
+| 0.5 s | 48.0 | 0.650 s |
+| 1.0 s | 45.0 | 0.351 s |
+
+In a pure queueing model the gap moves the wait from inside the transaction to
+outside it; throughput is unchanged until the gap is large enough to throttle.
+So this proves the knob works and costs nothing up to about 0.5 s — it does NOT
+prove it cures the real collapse, which would require starvation to compound
+(stale buffers, dropped frames). Modelling that would have been assuming the
+conclusion, so the model deliberately does not. The real test is the real
+datalogger, on a morning when it is not already drifting.
+
 ## 3.54.2
 
 ### 2026-09-12 — the grid meter was being read twice

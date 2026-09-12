@@ -137,3 +137,71 @@ def test_congestion_is_announced_once_per_episode():
     c._reachable = False
     c._note_reachable()
     assert c._bus_busy_logged is False
+
+
+# ── breathing room ───────────────────────────────────────────────────────────
+
+def test_by_default_turns_follow_each_other_with_no_gap():
+    """The knob must change nothing for a device that has its bus to itself."""
+    arb = _EndpointArbiter()
+    assert arb.min_gap == 0.0
+    t0 = time.monotonic()
+    for _ in range(5):
+        with arb.turn(1):
+            pass
+    assert time.monotonic() - t0 < 0.05
+
+
+def test_a_declared_gap_is_honoured_between_consecutive_turns():
+    """A master device is a small computer with its own job. A Fronius
+    DataManager has to poll its RS-485 side while it answers us, and hit
+    back-to-back it starves that side — the collector this replaces waits a
+    full second after every device for exactly this reason."""
+    arb = _EndpointArbiter()
+    arb.min_gap = 0.05
+    stamps = []
+    for _ in range(4):
+        with arb.turn(2):
+            stamps.append(time.monotonic())
+    gaps = [b - a for a, b in zip(stamps, stamps[1:])]
+    assert all(g >= 0.045 for g in gaps), gaps
+    assert arb.gap_waited_s > 0
+
+
+def test_the_gap_applies_across_callers_not_just_within_one():
+    """It is the ACCESS POINT that needs the room, so a second unit taking its
+    turn must wait too — otherwise four units simply take turns hammering it."""
+    arb = _EndpointArbiter()
+    arb.min_gap = 0.05
+    stamps, lock = [], threading.Lock()
+
+    def worker():
+        with arb.turn(3):
+            with lock:
+                stamps.append(time.monotonic())
+
+    ths = [threading.Thread(target=worker) for _ in range(4)]
+    [t.start() for t in ths]
+    [t.join() for t in ths]
+    stamps.sort()
+    assert all(b - a >= 0.045 for a, b in zip(stamps, stamps[1:])), stamps
+
+
+def test_the_most_cautious_declaration_on_an_access_point_wins():
+    """Two endpoints can share one datalogger. The second must not be able to
+    quietly undo the first one's breathing room."""
+    from multibus.modbus_client import endpoint_arbiter
+    a = endpoint_arbiter('10.9.9.9', 502, 0, 0.30)
+    b = endpoint_arbiter('10.9.9.9', 502, 0, 0.05)
+    assert a is b and a.min_gap == 0.30
+
+
+def test_the_gap_is_reported_so_an_operator_can_see_what_it_costs():
+    from multibus.modbus_client import endpoint_arbiter, endpoint_bus_stats
+    arb = endpoint_arbiter('10.9.9.8', 502, 0, 0.05)
+    for _ in range(3):
+        with arb.turn(2):
+            pass
+    bus = endpoint_bus_stats('10.9.9.8', 502)
+    assert bus['min_gap_s'] == 0.05
+    assert bus['gap_waited_s'] > 0

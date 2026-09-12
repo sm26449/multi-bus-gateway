@@ -55,6 +55,23 @@ class _EndpointArbiter:
         self._busy = False
         self.turns = 0
         self.timeouts = 0
+        # Breathing room between consecutive transactions on this access point.
+        #
+        # A master device is a small computer with its own job: a Fronius
+        # DataManager has to poll its RS-485 side while it answers us. Hit
+        # back-to-back it starves that side, and the symptom is not a polite
+        # slowdown but collapse — measured on a production one, demanding 32
+        # transactions a minute returned 21.6 with 6.5 % errors, while
+        # demanding 26 returned 26. The collector this replaces never had that
+        # problem because it waits a full second after every device and 200 ms
+        # between register blocks, leaving the datalogger idle about a fifth of
+        # the time ON PURPOSE.
+        #
+        # 0 keeps the old behaviour, so nothing changes for a device that has
+        # its bus to itself or a gateway that does not care.
+        self.min_gap = 0.0
+        self._free_at = 0.0
+        self.gap_waited_s = 0.0
         # What a turn actually COSTS on this access point. Every interval
         # decision downstream is a division by this number, so it is measured,
         # never assumed — a DataManager answers in ~0.4 s alone and ~3 s with
@@ -78,6 +95,16 @@ class _EndpointArbiter:
                     self._cv.notify_all()
                     raise TimeoutError("endpoint busy")
                 self._cv.wait(left)
+            # The turn is ours; now respect the endpoint's cooldown. Waiting
+            # HERE (holding _busy, at the head of the queue) rather than in
+            # release() keeps the gap honest when only one caller is active,
+            # and keeps it from being paid twice when many are.
+            gap = self.min_gap
+            if gap > 0:
+                left = self._free_at - time.monotonic()
+                if left > 0:
+                    self.gap_waited_s += left
+                    self._cv.wait(left)
             self._waiting.popleft()
             self._busy = True
             self.turns += 1
@@ -85,6 +112,8 @@ class _EndpointArbiter:
     def release(self, held_s: float = None) -> None:
         with self._cv:
             self._busy = False
+            if self.min_gap > 0:
+                self._free_at = time.monotonic() + self.min_gap
             if held_s is not None:
                 self.samples.append(held_s)
             self._cv.notify_all()
@@ -206,10 +235,13 @@ def endpoint_bus_stats(host: str, port: int) -> Dict[str, Any]:
         "tx_p50_s": round(sum(p50s) / len(p50s), 3) if p50s else None,
         "tx_p95_s": round(max(p95s), 3) if p95s else None,
         "samples": n, "turns": turns, "missed_turns": timeouts,
+        "min_gap_s": max((a.min_gap for a in lanes.values()), default=0.0),
+        "gap_waited_s": round(sum(a.gap_waited_s for a in lanes.values()), 1),
     }
 
 
-def endpoint_arbiter(host: str, port: int, lane: int = 0) -> _EndpointArbiter:
+def endpoint_arbiter(host: str, port: int, lane: int = 0,
+                     min_gap: float = 0.0) -> _EndpointArbiter:
     """The turnstile for one LANE — the same object for every connection that
     shares that socket, whichever device or endpoint owns them. Transactions on
     DIFFERENT lanes overlap; that overlap is the concurrency."""
@@ -218,6 +250,11 @@ def endpoint_arbiter(host: str, port: int, lane: int = 0) -> _EndpointArbiter:
         arb = _ARBITERS.get(key)
         if arb is None:
             arb = _ARBITERS[key] = _EndpointArbiter()
+        # The gap belongs to the ACCESS POINT, so the most cautious declaration
+        # among the devices sharing it wins — a second endpoint on the same
+        # datalogger cannot quietly undo the first one's breathing room.
+        if min_gap > arb.min_gap:
+            arb.min_gap = float(min_gap)
         return arb
 
 
@@ -339,7 +376,9 @@ class ModbusConnection:
         # Shared-endpoint arbiter: several devices (an endpoint's units) behind one
         # gateway must not race each other on it. None = this connection has
         # the endpoint to itself, and the gate below costs nothing.
-        self._arbiter = (endpoint_arbiter(config.host, config.port, self.lane)
+        self._arbiter = (endpoint_arbiter(
+                             config.host, config.port, self.lane,
+                             float(getattr(config, 'endpoint_min_gap_s', 0.0) or 0.0))
                          if getattr(config, 'serialize_endpoint', False)
                          and config.host else None)
         self._bus_busy_logged = False
