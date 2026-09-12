@@ -362,19 +362,46 @@ so re-adding it restores the selection.
 
 **Plant-level output** (`aggregates: true`, the default): every 10 s the
 plant publishes its units' combined values on `mbg/plants/<id>/<canonical
-topic>` — sums for powers/currents/energies, averages for voltages/
-frequency/power factor/temperatures — plus `units_online`, `units_total`
-and `status` (`online` = all units fresh, `partial`, `offline`). The same
-values go to InfluxDB under the canonical measurements, tagged
-`device=<plant id>, aggregate=plant`. A unit contributes only values
-younger than 4× its poll interval (60 s minimum). Known limitations and
-the planned fixes (counter semantics, PF, bucket substitution) are tracked
-in [fronius-migration-plan.md](fronius-migration-plan.md).
+topic>`, plus `units_online`, `units_total` and `status`. The same values go
+to InfluxDB under the canonical measurements, tagged `device=<plant id>,
+aggregate=plant`, written on change like every other sink.
+
+Three rules, because three kinds of quantity behave differently:
+
+| Quantity | Rule | Freshness |
+|---|---|---|
+| `power_*` (bar power factor), `current_*` | sum | only values younger than 4× the unit's poll interval (60 s floor); a stalled unit drops out |
+| `voltage_*`, `frequency`, `temperature_*` | average | same gate |
+| `energy_*` (counters) | sum of **last-known** values | none — but published only when EVERY expected unit has a value |
+
+A counter is never freshness-gated: a sleeping inverter still holds its
+lifetime energy, and dropping it would make the plant total jump backwards
+and poison every `increase()` downstream. An incomplete sum is withheld
+entirely, so the retained topic keeps the last COMPLETE total.
+
+`power_factor_total` is **derived** as Σ active / Σ apparent (bounded to ±1),
+never an average of ratios; `power_factor_l*` is not aggregated.
+
+`status` is `online` (every expected unit fresh), `partial`, or `offline`, and
+it publishes on every cycle — including the one where nothing is fresh, which
+is exactly what a consumer needs at nightfall. `units_total` counts the units
+EXPECTED to contribute (the enabled ones), so a disabled unit neither holds the
+counters hostage nor makes `online` unreachable.
+
+The aggregate's InfluxDB bucket resolves `${plant_id}` / `${device_id}` /
+`${unit_id}` all to the plant itself — the plant's own points belong to no
+single unit.
 
 **Device liveness leaves** (every device, plant units included): retained
-`availability` (`online`/`offline`), `runtime/status` (same verdict) and
-`runtime/last_seen` (ISO timestamp of the last successful read), published
-on change next to the device's data topics.
+`availability` (`online`/`offline`), `runtime/status` (same verdict),
+`runtime/last_seen` (ISO timestamp of the last successful read) and
+`runtime/read_errors` (cumulative failed reads), published on change next to
+the device's data topics.
+
+The verdict behind `availability` / `runtime/status` is **data freshness**, not
+socket state: a device counts as alive while its acquisition health is `ok` or
+`degraded`, and offline once it reads `down`. A transport flag survives a
+vanished endpoint; a freshness verdict does not.
 
 ### `alerts:` (opt-in)
 

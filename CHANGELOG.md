@@ -1,5 +1,51 @@
 # Changelog
 
+## 3.45.0
+
+### 2026-09-12 — one liveness verdict; plant counters that never walk backwards
+
+Migration phases P1 and P2 of
+[`docs/fronius-migration-plan.md`](docs/fronius-migration-plan.md). Code only —
+no live config, broker or container was touched.
+
+- **ONE liveness verdict** (`device_registry.client_is_live`): a device is alive
+  when its acquisition pipeline is PRODUCING, not when a socket happens to be
+  open. `client.connected` clears only on an explicit disconnect or the wedge
+  backstop, so a datalogger that went dark overnight kept reporting "online" to
+  Home Assistant, to MQTT and to the alert log while its data froze.
+  `data_health()` already owned the freshness verdict; it now drives
+  `availability`, `runtime/status`, the `dev:<id>` alert transition and the
+  plant's unit census alike (`degraded` counts as alive — slow, not gone).
+  `/api/plants` units gain `health` next to `connected`.
+- **`runtime/read_errors`** joins `runtime/status` and `runtime/last_seen`;
+  a `None` component leaves its topic untouched instead of publishing empty.
+- **`forced_reopen` is edge-triggered**: the backstop still reopens a wedged
+  link on every run of failures, but the EVENT is one per outage, re-armed by
+  the first successful read. A sleeping endpoint no longer rotates the 50-entry
+  event ring in minutes and buries what matters.
+- **Plant counters use last-known values** and publish only when EVERY expected
+  unit has one. Freshness-gating a lifetime counter made the plant total jump
+  BACKWARDS at dusk (~178 MWh → 113 MWh as three of four inverters went dark),
+  poisoning every `increase()` downstream. An incomplete sum is a lie, so the
+  leaf is withheld and the retained topic keeps the last COMPLETE total.
+- **Plant power factor is derived**, `Σ active / Σ apparent`, bounded to ±1 —
+  averaging ratios weighted a 1 kW inverter like a 20 kW one. `power_factor_l*`
+  is no longer aggregated. (Until phase P3 normalizes the Fronius templates, a
+  UNIT's power factor is still the raw SunSpec ±100 while the plant's is a true
+  fraction — do not compare the two topics.)
+- **The census always publishes**: `status` / `units_online` / `units_total` go
+  out on every cycle, including the one where nothing is fresh — precisely what
+  a consumer needs at nightfall. `units_total` now counts the units EXPECTED to
+  contribute (the enabled ones), so a disabled unit can neither hold the plant's
+  counters hostage nor make `online` unreachable.
+- **Plant InfluxDB**: the aggregate's bucket resolves its placeholders to the
+  plant (no more literal `fronius_${unit_id}` on the wire), and writes honour
+  the same change-detection contract as every other sink — a plant standing
+  still overnight no longer writes 8 640 identical points per field.
+- Fixed a test stub whose `get_stats()` answered `False`, blowing up whichever
+  5-second alert-harvester tick happened to land inside that test (an
+  intermittent "event harvest error" with no bug behind it).
+
 ## 3.44.0
 
 ### 2026-09-11 — plants publish their own output; unit workspace unified

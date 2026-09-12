@@ -252,13 +252,22 @@ A `plants:` entry is one template + one endpoint + N unit ids, expanded by
 `Config._expand_plants()` into N ordinary devices (own socket each, managed
 through the plant). On top of the units, `PlantAggregator` — a daemon
 thread started with the app — combines each plant's live stores every 10 s
-by canonical-name rule (sum for powers/currents/energies, average for
-voltages/frequency/PF/temperatures, skip for identity/status words) and
-publishes the result as a first-class entity: `mbg/plants/<id>/<canonical
+and publishes the result as a first-class entity: `mbg/plants/<id>/<canonical
 topic>` on MQTT (plus `units_online`, `units_total`, `status`) and the same
 canonical measurements in InfluxDB tagged `device=<plant id>,
 aggregate=plant`. `compute_plant_aggregates()` is pure and shared with
-`GET /api/plants`. The namespace convention is deliberate: device values
+`GET /api/plants`.
+
+Three rules, because three kinds of quantity behave differently: instantaneous
+sums (`power_*`, `current_*`) and averages (`voltage_*`, `frequency`,
+`temperature_*`) are **freshness-gated** — a stalled unit drops out rather than
+freezing the total, since its production genuinely is unknown; **counters**
+(`energy_*`) use each unit's last-known value at any age and publish only on a
+COMPLETE census, because freshness-gating a lifetime counter makes the plant
+total walk backwards at dusk and poisons every `increase()` downstream; and
+power factor is **derived** (Σ active / Σ apparent), never an average of ratios.
+Identity strings, status codes and event bitfields are skipped. The census and
+`status` publish on every cycle, including the one where nothing is fresh. The namespace convention is deliberate: device values
 live under `mbg/devices/<id>/…`, plant values under `mbg/plants/<id>/…`,
 so a consumer always knows which entity published a topic. The roadmap
 for making the aggregate counter-safe and giving plants a full UI is in
@@ -266,6 +275,12 @@ for making the aggregate counter-safe and giving plants a full UI is in
 
 ### Value flow conventions
 
+- **Liveness is data freshness, not socket state.** `device_registry.
+  client_is_live()` is the single definition used by the alert harvester, the
+  MQTT `availability` / `runtime/status` leaves and the plant unit census: a
+  client is alive while `data_health()` reads `ok` or `degraded`, dead once it
+  reads `down`. A transport flag survives a vanished endpoint, so it could
+  report "online" for hours after the data froze.
 - **Timestamps** are the *read* time, not the publish/flush time.
 - **Publish modes** per sink: `changed` (default; cache confirmed only after
   a successful publish, so nothing is lost to a failed send) or `all`. An
