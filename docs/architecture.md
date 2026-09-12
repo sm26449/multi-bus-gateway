@@ -266,7 +266,10 @@ and publishes the result as a first-class entity: `mbg/plants/<id>/<canonical
 topic>` on MQTT (plus `units_online`, `units_total`, `status`) and the same
 canonical measurements in InfluxDB tagged `device=<plant id>,
 aggregate=plant`. `compute_plant_aggregates()` is pure and shared with
-`GET /api/plants`.
+`GET /api/plants`, which also drives the plant's own page in the UI (census,
+status, aggregate grid, unit table) and the `plants` section of
+`GET /api/status`. A plant resolves like a device on the InfluxDB read path
+too, so its totals chart the way a unit's do.
 
 Three rules, because three kinds of quantity behave differently: instantaneous
 sums (`power_*`, `current_*`) and averages (`voltage_*`, `frequency`,

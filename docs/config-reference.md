@@ -350,7 +350,20 @@ plants:
       device_tag: inverter_${unit_id}
     aggregates: true             # false = no plant-level output (see below)
     write_locked: false          # applies to every unit (one endpoint, one lock)
+    http_output: { enabled: false }        # applies to every unit
+    rest_push:   { enabled: false, url: "" }   # applies to every unit
 ```
+
+A plant is ONE endpoint, so the sinks that belong to the endpoint are declared
+once: `write_locked`, `http_output` and `rest_push` sit on the plant and are
+propagated to every materialized unit. They are edited from any unit's Outputs
+tab (the switch says it applies plant-wide) or from the plant page.
+
+Editing a plant re-materializes its units only when something they are BUILT
+from changed (connection, template, unit membership, routing, the plant-level
+flags). A settings-only edit — a rename, the `aggregates` toggle, a unit's
+display name — keeps every poller running: a cosmetic save must not punch a
+hole in acquisition.
 
 `${unit_id}`, `${plant_id}` and `${device_id}` substitute per unit in the
 topic prefix, bucket, device tag and name. Each unit's register selection is

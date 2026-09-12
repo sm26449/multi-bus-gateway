@@ -1,5 +1,48 @@
 # Changelog
 
+## 3.47.0
+
+### 2026-09-12 — a plant is an entity, not a grouping
+
+Migration phase P4 of
+[`docs/fronius-migration-plan.md`](docs/fronius-migration-plan.md). Code only —
+no live config, broker or container was touched.
+
+- **The plant has its own page.** Opened from its row in the devices list:
+  status (`online` / `partial` / `offline`) and unit census, the grid of totals
+  it publishes on `mbg/plants/<id>/…` with canonical labels and units, a unit
+  table (health, last read, poll rate, errors — with rename and a way into each
+  unit), the plant-totals toggle, the per-unit probe, and an Outputs card. Until
+  now a plant was a row and a modal: four healthy unit rows said nothing about a
+  plant sitting at 2/4.
+- **An edit stops dropping what the form does not send.** A plant edit REPLACES
+  the stored entry, so `write_locked`, `aggregates`, `http_output`, `rest_push`
+  and hand-written per-unit ids/names used to vanish — a locked plant unlocked
+  itself one save after the operator locked it. Routing identity (topic prefix /
+  bucket / device tag) is now pinned on update, exactly as for a device.
+- **A settings-only edit keeps the pollers running.** Re-materializing every
+  unit on every save punched a hole in acquisition for a rename or a toggle. The
+  units are rebuilt only when something they are BUILT from changed.
+- **A plant is one endpoint, so its sinks are declared once**: `http_output` and
+  `rest_push` join the write lock at plant level and propagate to every unit.
+  Their cards now render on a plant unit's Outputs tab (they used to be hidden,
+  and the backend refused them with "not a configurable device"), each saying
+  the switch applies plant-wide. The orphan Power Quality tab — which rendered
+  on a plant unit with no way to enable the recorder — is gone.
+- **`POST /api/plants/{id}/test`** probes every unit on the shared endpoint, one
+  answer each: the only way to tell "the datalogger is deaf" from "unit 3 is not
+  configured on it".
+- **`GET /api/status` carries `plants`**, and the InfluxDB read path resolves a
+  plant id like a device id (its own aggregate series). An id that is neither a
+  device nor a plant now answers 404 instead of silently reading the primary's
+  bucket — a typo used to come back with somebody else's data.
+- **Liveness, again**: `data_health()` answers `ok` when nothing has been polled
+  YET, which is not the same as healthy. A client that has never produced a
+  reading now defers to the transport flag, so a plant of unreachable units no
+  longer shows three green units underneath an `offline` plant.
+- `tools/e2e/plant_page_e2e.mjs` drives the whole page in a real browser
+  (19 checks, green) against a throwaway instance.
+
 ## 3.46.0
 
 ### 2026-09-12 — power factor is a fraction; templates ship derived measurements

@@ -87,6 +87,28 @@ conventional status codes (401 unauthenticated, 403 forbidden, 404 not found,
 | POST | `/api/devices/{id}/rest-push/test` | Push once now and report the result | operator |
 | POST | `/api/devices/{id}/payload-sample` | Fetch one full payload from a saved MQTT/HTTP device (for the `json_path` picker) | operator |
 
+### Plants (N units of one device behind one endpoint)
+
+A plant is an entity, not a grouping: it has its own settings, its own health
+and its own output. Its units are ordinary devices, managed THROUGH the plant —
+device create/edit/delete refuses their ids.
+
+| Method | Path | Description | Role |
+|---|---|---|---|
+| GET | `/api/plants` | All plants with their units (id, health, last seen, poll rate, errors), live aggregates + `aggregate_fields` (canonical label/unit/topic per name), `status`, and the plant-level flags | viewer |
+| GET | `/api/plants/{id}` | One plant, same shape | viewer |
+| POST | `/api/plants` | Create: validate → persist → materialize N devices → seed each from the template → hot-start | admin |
+| PUT | `/api/plants/{id}` | Update. An edit that changes what the units are built from re-materializes them; an edit that only changes plant-level settings (name, `aggregates`, unit display names) keeps every poller running. Routing identity (topic prefix / bucket / tag) stays fixed, and flags the form omits (`write_locked`, `aggregates`, `http_output`, `rest_push`, per-unit ids/names) are preserved | admin |
+| DELETE | `/api/plants/{id}` | Delete the plant and stop its units (register files kept; blocked while a virtual meter sources a unit) | admin |
+| POST | `/api/plants/{id}/test` | Probe every unit on the shared endpoint, one answer each. Opens another Modbus client — dataloggers serve only a few at once | operator |
+
+The per-unit sinks (`/api/devices/{unit}/http-output`, `/rest-push`) and the
+write lock are declared once and apply to the whole plant: one endpoint, one
+declaration. `GET /api/status` carries a `plants` array alongside `devices`,
+and `?device=<plant id>` resolves on the history and energy reads (the plant's
+own aggregate series); an id that is neither a device nor a plant answers 404
+rather than silently reading the primary's bucket.
+
 ### Power quality (Janitza/Jasic PQ recorder — see [pq-recorder.md](pq-recorder.md))
 
 | Method | Path | Description | Role |
