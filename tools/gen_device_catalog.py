@@ -101,6 +101,21 @@ def _section(tpl):
                      f"Categories: {top}.")
     else:
         lines.append(_reg_table(regs))
+    calcs = tpl.get("calculated") or []
+    if calcs:
+        lines.append("")
+        lines.append("**Derived measurements** — computed from the registers "
+                     "above and seeded into every device made from this "
+                     "template, so each unit publishes them identically.")
+        lines.append("")
+        lines.append("| Name | MQTT topic | Formula | Decoded |")
+        lines.append("|---|---|---|---|")
+        for c in calcs:
+            enum = c.get("enum") or {}
+            decoded = (f"{len(enum)} states" if enum else "—")
+            lines.append("| `{n}` | `{t}` | `{e}` | {d} |".format(
+                n=c.get("name", ""), t=c.get("topic", "") or c.get("name", ""),
+                e=str(c.get("expr", "")).replace("|", "\\|"), d=decoded))
     lines.append("")
     return "\n".join(lines)
 

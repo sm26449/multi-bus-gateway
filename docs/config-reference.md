@@ -447,7 +447,7 @@ text decode) or (`scale` + `offset`) → `monotonic` filter → outputs.**
 | `register_type` | `holding` | `holding` (FC3), `input` (FC4), `coil` (FC1/FC5), `discrete` (FC2); aliases accepted (`fc4`, `ir`, `di`, …) |
 | `poll_group` | `normal` | which poll group reads it |
 | `scale` | `1.0` | **engineering = raw ÷ scale + offset** (SunSpec int+SF, transformer ratios) |
-| `scale_from` | `""` | **dynamic scale factor** (SunSpec `*_SF`): name of a sibling register whose raw value is a signed base-10 exponent — **engineering = raw × 10^SF**. Mutually exclusive with `scale`; no valid SF (missing, non-numeric, \|SF\| > 10) reads as *missing* rather than wrongly scaled; the poller prescans SF registers per batch and bridges gaps with the last good exponent |
+| `scale_from` | `""` | **dynamic scale factor** (SunSpec `*_SF`): name of a sibling register whose raw value is a signed base-10 exponent — **engineering = raw × 10^SF**. A fixed `scale` MAY accompany it and divides AFTER the exponent, as the unit conversion the exponent cannot express — SunSpec reports power factor as a PERCENTAGE, so the Fronius maps carry `scale: 100` to publish the ±1 fraction every other device does. No valid SF (missing, non-numeric, \|SF\| > 10) reads as *missing* rather than wrongly scaled; the poller prescans SF registers per batch and bridges gaps with the last good exponent |
 | `offset` | `0.0` | zero-point / unit shift, applied after scale |
 | `nan` | *(unset)* | not-available sentinel: `true` = the type's standard value (`0x8000`/`0xFFFF`/…), or a raw value, or a list; a match reads as *missing*, not data |
 | `monotonic` | `false` | cumulative counter (energy): a downward glitch is rejected so it never looks like a counter reset to consumers |
@@ -495,6 +495,42 @@ Ambiguous names like `le` are deliberately rejected (they fall back to big).
 | `write_min` / `write_max` | optional engineering-value bounds — out-of-range writes are refused (min must be ≤ max) |
 | `write_allowed` | optional list of exactly-allowed values (e.g. `[0, 1, 4]` for a mode register) — anything else is refused; renders as a dropdown |
 | `write_safe` | value to revert to when a write-lease expires (required to use `lease_ms`; raw unguarded writes cannot lease) |
+
+### `calculated:` — derived measurements a template ships
+
+A template may carry a top-level `calculated:` list next to `registers:`. Each
+entry is an ordinary calculated register (a formula over the device's own
+measurements, evaluated at a synthetic address and routed to MQTT/InfluxDB like
+any other value) — except the TEMPLATE owns it, so every device seeded from
+that template gets it without anyone retyping the formula. This is how a
+vendor's decoded status or an alarm flag ships WITH the device map instead of
+being reinvented per unit.
+
+```yaml
+calculated:
+  - name: status_text            # must not collide with a register name
+    label: Operating state
+    expr: operating_state        # same safe expression language as the UI
+    poll_group: normal           # must be one the template declares
+    topic: status/text           # MQTT leaf, relative to the device prefix
+    influxdb: false              # text has no use as an InfluxDB field
+    enum: {4: Tracking power point, 7: One or more faults exist}
+```
+
+| Key | Meaning |
+|-----|---------|
+| `name` | required; shares the device's value namespace with register names, so it may not shadow one |
+| `expr` | required; validated at template load, same whitelisted AST as user formulas |
+| `label` / `unit` / `decimals` | as for any calculated register |
+| `poll_group` | which group triggers the evaluation (default `normal`) |
+| `topic` | explicit MQTT leaf — a derived value usually belongs under an existing branch. Omit it and the value publishes under its flat name (what every pre-existing calculated register does; routing identity never shifts under an upgrade) |
+| `measurement` | explicit InfluxDB measurement |
+| `enum` | `{code: label}` — turns the computed code into text through the same decoder real registers use; unmapped codes render as `unknown (n)` |
+| `mqtt` / `influxdb` | `false` keeps the value off that sink |
+
+Existing devices are **not** re-seeded when a template gains derived
+measurements — a device's selection is a copy taken once. Carry them over with
+a migration (see `scripts/migrate_p3_fronius_pf_status.py` for the Fronius one).
 
 See also: [MANUAL.md](MANUAL.md) · [upgrade-guide.md](upgrade-guide.md) ·
 [canonical-fields.md](canonical-fields.md) · [csv-import.md](csv-import.md) ·

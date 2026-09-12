@@ -236,6 +236,16 @@ group, next to the real registers:
   above any real Modbus address, in the *same* per-device store — so it
   flows to MQTT, InfluxDB, virtual meters, Monitor and History like any
   measurement.
+- A **template may ship them**: a top-level `calculated:` block next to
+  `registers:` is seeded into every device made from that template, so a
+  vendor's decoded status or an alarm flag travels WITH the device map instead
+  of being retyped per unit (the fifth inverter of a plant would otherwise
+  speak differently from the first four). An entry may pin an explicit MQTT
+  `topic` — a derived value usually belongs under an existing branch, e.g.
+  `status/text` — and an `enum`, which turns the computed code into text
+  through the same decoder real status registers use. Without a `topic` the
+  value publishes under its flat name, which is what every pre-existing
+  calculated register does: routing identity never shifts under an upgrade.
 - Expressions are validated and evaluated through a **whitelisted AST
   walker** (never `eval()`): arithmetic, comparisons, ternary, functions
   `min/max/avg/abs/round/sqrt/pow/floor/ceil/clamp`, constants `pi/e`,

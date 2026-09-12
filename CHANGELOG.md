@@ -1,5 +1,45 @@
 # Changelog
 
+## 3.46.0
+
+### 2026-09-12 — power factor is a fraction; templates ship derived measurements
+
+Migration phase P3 of
+[`docs/fronius-migration-plan.md`](docs/fronius-migration-plan.md). Code only —
+no live config, broker or container was touched.
+
+- **A fixed `scale` may now accompany `scale_from`.** It divides AFTER the
+  dynamic exponent, as the unit conversion the exponent cannot express. SunSpec
+  reports power factor as a PERCENTAGE, so a Fronius unit published ±100 on
+  `power_factor/total` while the Janitza beside it published ±1 — one canonical
+  topic meaning two different things. The Fronius SunSpec maps (v2.1.0) carry
+  `scale: 100` and now publish the same fraction as every other device. The
+  scaling chain also rounds ONCE, at the end, with the combined decimal
+  exponent: dividing after the SF rounding re-introduced exactly the float
+  noise that rounding exists to kill (99.99 / 100 = 0.9998999999999999).
+- **Templates can ship derived measurements.** A top-level `calculated:` block
+  is seeded into every device made from the template, so a vendor's decoded
+  status or an alarm flag travels WITH the device map instead of being retyped
+  per unit — the fifth inverter added to a plant would otherwise speak
+  differently from the first four. An entry may pin an explicit MQTT `topic`
+  (a derived value usually belongs under an existing branch) and an `enum`,
+  which turns the computed code into text through the same decoder real status
+  registers use. No `topic` means the flat name, exactly as before: routing
+  identity never shifts under an upgrade.
+- **The Fronius inverter template decodes its own status**: `status/text`
+  (the reference collector's wording, verbatim, so a consumer moving over sees
+  the same words), `status/alarm` and `status/active` — the vendor's alarm and
+  producing code sets, pinned by test.
+- Saving calculated registers from the UI **preserves** `topic`, `measurement`,
+  `enum` and the per-sink flags. Rebuilding each entry from a fixed field list
+  silently re-routed a template-shipped measurement and turned its text back
+  into a bare code.
+- `scripts/migrate_p3_fronius_pf_status.py` carries both changes into devices
+  already seeded (a selection is a copy taken once). Dry run by default, backs
+  up before writing, idempotent, never overwrites a hand-edited scale, and
+  reports — rather than silently retires — a hand-made measurement the template
+  now supersedes.
+
 ## 3.45.0
 
 ### 2026-09-12 — one liveness verdict; plant counters that never walk backwards

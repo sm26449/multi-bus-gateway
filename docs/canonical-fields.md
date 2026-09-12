@@ -86,6 +86,7 @@ The canonical name a register carries becomes its **MQTT topic leaf**, its **Inf
 | `energy_active_export_l1` | `energy/active/export/l1` | Wh | L1 exported active energy |
 | `energy_active_export_l2` | `energy/active/export/l2` | Wh | L2 exported active energy |
 | `energy_active_export_l3` | `energy/active/export/l3` | Wh | L3 exported active energy |
+| `energy_active_generated` | `energy/active/generated` | Wh | Lifetime generated active energy |
 
 ## energy_reactive
 
@@ -121,5 +122,56 @@ The canonical name a register carries becomes its **MQTT topic leaf**, its **Inf
 | `serial` | `diagnostic/serial` | — | Meter serial / identification |
 | `temperature` | `diagnostic/temperature` | °C | Internal temperature |
 | `uptime` | `diagnostic/uptime` | s | Meter uptime |
+| `manufacturer` | `diagnostic/manufacturer` | — | Device manufacturer |
+| `model` | `diagnostic/model` | — | Device model name |
 
-_Total: 56 canonical fields across 12 measurements._
+## dc
+
+| InfluxDB field | MQTT topic | Unit | Description |
+|---|---|---|---|
+| `voltage_dc` | `dc/voltage` | V | DC bus voltage |
+| `current_dc` | `dc/current` | A | DC bus current |
+| `power_dc` | `dc/power` | W | DC bus power |
+
+## mppt
+
+| InfluxDB field | MQTT topic | Unit | Description |
+|---|---|---|---|
+| `mppt_modules` | `mppt/modules` | — | Number of MPPT modules/strings |
+| `voltage_dc_mppt1` | `mppt/1/voltage` | V | MPPT string 1 DC voltage |
+| `current_dc_mppt1` | `mppt/1/current` | A | MPPT string 1 DC current |
+| `power_dc_mppt1` | `mppt/1/power` | W | MPPT string 1 DC power |
+| `energy_dc_mppt1` | `mppt/1/energy` | Wh | MPPT string 1 lifetime DC energy |
+| `temperature_mppt1` | `mppt/1/temperature` | °C | MPPT string 1 temperature |
+| `voltage_dc_mppt2` | `mppt/2/voltage` | V | MPPT string 2 DC voltage |
+| `current_dc_mppt2` | `mppt/2/current` | A | MPPT string 2 DC current |
+| `power_dc_mppt2` | `mppt/2/power` | W | MPPT string 2 DC power |
+| `energy_dc_mppt2` | `mppt/2/energy` | Wh | MPPT string 2 lifetime DC energy |
+| `temperature_mppt2` | `mppt/2/temperature` | °C | MPPT string 2 temperature |
+
+## temperature
+
+| InfluxDB field | MQTT topic | Unit | Description |
+|---|---|---|---|
+| `temperature_cabinet` | `temperature/cabinet` | °C | Cabinet temperature |
+| `temperature_heatsink` | `temperature/heatsink` | °C | Heatsink temperature |
+| `temperature_transformer` | `temperature/transformer` | °C | Transformer temperature |
+| `temperature_other` | `temperature/other` | °C | Other/auxiliary temperature |
+
+## status
+
+| InfluxDB field | MQTT topic | Unit | Description |
+|---|---|---|---|
+| `operating_state` | `status/operating_state` | — | Operating state code (e.g. SunSpec St) |
+| `vendor_state` | `status/vendor_state` | — | Vendor-specific state code |
+| `event_flags_1` | `status/event_flags/1` | — | Standard event flags word 1 |
+| `event_flags_2` | `status/event_flags/2` | — | Standard event flags word 2 |
+| `vendor_event_flags_1` | `status/vendor_event_flags/1` | — | Vendor event flags word 1 |
+| `vendor_event_flags_2` | `status/vendor_event_flags/2` | — | Vendor event flags word 2 |
+| `vendor_event_flags_3` | `status/vendor_event_flags/3` | — | Vendor event flags word 3 |
+| `vendor_event_flags_4` | `status/vendor_event_flags/4` | — | Vendor event flags word 4 |
+| `status_text` | `status/text` | — | Operating state, decoded to vendor wording |
+| `status_alarm` | `status/alarm` | — | Operating state is an alarm condition (1/0) |
+| `status_active` | `status/active` | — | Device is actively producing (1/0) |
+
+_Total: 88 canonical fields across 16 measurements._

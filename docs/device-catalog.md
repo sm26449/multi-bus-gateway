@@ -254,12 +254,12 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 
 ## Fronius SunSpec inverter (int+SF, via datalogger)
 
-**id** `fronius_sunspec_inverter` · **vendor** Fronius · **model** Symo / Primo / Eco (SunSpec 103) · **version** 2.0.0 · **registers** 61
+**id** `fronius_sunspec_inverter` · **vendor** Fronius · **model** Symo / Primo / Eco (SunSpec 103) · **version** 2.1.0 · **registers** 61
 
 - **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
 - **Source / provenance:** SunSpec Information Models (int+SF); register map verified live against a production Fronius fleet (raw-frame decode parity, 2026-09-11)
 
-> Fronius inverter read THROUGH its DataManager/datalogger over Modbus TCP, in the SunSpec int + scale-factor register mode (models 1/103/160: AC block, DC block, temperatures, status/events, per-string MPPT, identity). Registers are CANONICAL: this device publishes the same topics/fields/measurements as every other MBG device (power/active/total, dc/power, mppt/1/power …); a legacy SunSpec-name tree (…/W, …/PhVphA) is available via mqtt.compat_aliases. Use this when the datalogger's Modbus TCP slave is enabled and set to 'int+SF' (the Fronius default). For SEVERAL inverters behind one datalogger, add a `plants:` entry with this template and the unit IDs (1, 2, ...) — each unit becomes its own device. CAUTION: dataloggers serve only a few concurrent Modbus clients; if another system polls the same datalogger, keep poll intervals modest (10-15 s) or reduce the number of units read in parallel. Known vendor quirk: PF is published with the generic SunSpec decode (±100); Fronius units report PF raw ±10000 with an out-of-spec scale factor, so dedicated drivers show ±1.0.
+> Fronius inverter read THROUGH its DataManager/datalogger over Modbus TCP, in the SunSpec int + scale-factor register mode (models 1/103/160: AC block, DC block, temperatures, status/events, per-string MPPT, identity). Registers are CANONICAL: this device publishes the same topics/fields/measurements as every other MBG device (power/active/total, dc/power, mppt/1/power …); a legacy SunSpec-name tree (…/W, …/PhVphA) is available via mqtt.compat_aliases. Use this when the datalogger's Modbus TCP slave is enabled and set to 'int+SF' (the Fronius default). For SEVERAL inverters behind one datalogger, add a `plants:` entry with this template and the unit IDs (1, 2, ...) — each unit becomes its own device. CAUTION: dataloggers serve only a few concurrent Modbus clients; if another system polls the same datalogger, keep poll intervals modest (10-15 s) or reduce the number of units read in parallel. Power factor is normalized to the ±1 fraction every other gateway device publishes (SunSpec reports it as a percentage, so the map carries scale: 100 on top of the dynamic scale factor). The operating state is also shipped decoded: status/text (vendor wording), status/alarm and status/active are derived measurements the template brings with it, so every unit of a plant speaks the same status without anyone retyping a formula.
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
@@ -286,7 +286,7 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 40088 / 0x9C98 | `va_sf` | VA Scale Factor | int16 | 1 | — | normal |
 | 40089 / 0x9C99 | `power_reactive_total` | Total reactive power | int16 | 1 | var | normal |
 | 40090 / 0x9C9A | `var_sf` | VAR Scale Factor | int16 | 1 | — | normal |
-| 40091 / 0x9C9B | `power_factor_total` | System power factor | int16 | 1 | — | normal |
+| 40091 / 0x9C9B | `power_factor_total` | System power factor | int16 | 100 | — | normal |
 | 40092 / 0x9C9C | `pf_sf` | PF Scale Factor | int16 | 1 | — | normal |
 | 40093 / 0x9C9D | `energy_active_generated` | Lifetime generated active energy | uint32 | 1 | Wh | normal |
 | 40095 / 0x9C9F | `wh_sf` | WH Scale Factor | int16 | 1 | — | normal |
@@ -325,14 +325,22 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 40295 / 0x9D67 | `energy_dc_mppt2` | MPPT string 2 lifetime DC energy | uint32 | 1 | Wh | normal |
 | 40299 / 0x9D6B | `temperature_mppt2` | MPPT string 2 temperature | int16 | 1 | °C | normal |
 
+**Derived measurements** — computed from the registers above and seeded into every device made from this template, so each unit publishes them identically.
+
+| Name | MQTT topic | Formula | Decoded |
+|---|---|---|---|
+| `status_text` | `status/text` | `operating_state` | 13 states |
+| `status_alarm` | `status/alarm` | `1 if (operating_state == 5 or operating_state == 7 or operating_state == 9 or operating_state == 10 or operating_state == 11 or operating_state == 13) else 0` | — |
+| `status_active` | `status/active` | `1 if (operating_state == 4 or operating_state == 5) else 0` | — |
+
 ## Fronius SunSpec meter (int+SF, via datalogger)
 
-**id** `fronius_sunspec_meter` · **vendor** Fronius · **model** Smart Meter 63A/50kA (SunSpec 203) · **version** 2.0.0 · **registers** 48
+**id** `fronius_sunspec_meter` · **vendor** Fronius · **model** Smart Meter 63A/50kA (SunSpec 203) · **version** 2.1.0 · **registers** 48
 
 - **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
 - **Source / provenance:** SunSpec Information Models (int+SF); register map verified live against a production Fronius fleet (raw-frame decode parity, 2026-09-11)
 
-> Fronius Smart Meter read THROUGH the DataManager/datalogger over Modbus TCP (SunSpec model 203, int + scale factor; full 3-phase set + per-phase import/export energies). Registers are CANONICAL (voltage/l1_n, power/active/total, energy/active/import …) — same output shape as every other MBG meter; the legacy SunSpec-name tree is available via mqtt.compat_aliases. The meter appears on the datalogger at unit ID 240 (default; 241/242 for additional meters). Use this when the meter hangs off a Fronius datalogger — for a Smart Meter wired DIRECTLY to your own RS-485 (RTU or an RTU-TCP bridge), use the separate 'Fronius Smart Meter 65A-3 (RTU)' template instead: same hardware, completely different register map. PF quirk as on the inverter template (generic ±100).
+> Fronius Smart Meter read THROUGH the DataManager/datalogger over Modbus TCP (SunSpec model 203, int + scale factor; full 3-phase set + per-phase import/export energies). Registers are CANONICAL (voltage/l1_n, power/active/total, energy/active/import …) — same output shape as every other MBG meter; the legacy SunSpec-name tree is available via mqtt.compat_aliases. The meter appears on the datalogger at unit ID 240 (default; 241/242 for additional meters). Use this when the meter hangs off a Fronius datalogger — for a Smart Meter wired DIRECTLY to your own RS-485 (RTU or an RTU-TCP bridge), use the separate 'Fronius Smart Meter 65A-3 (RTU)' template instead: same hardware, completely different register map. Power factor is normalized to the ±1 fraction every other gateway device publishes (SunSpec reports it as a percentage, so the map carries scale: 100 on top of the dynamic scale factor).
 
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
@@ -370,10 +378,10 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 40099 / 0x9CA3 | `power_reactive_l2` | L2 reactive power | int16 | 1 | var | normal |
 | 40100 / 0x9CA4 | `power_reactive_l3` | L3 reactive power | int16 | 1 | var | normal |
 | 40101 / 0x9CA5 | `var_sf` | VAR Scale Factor | int16 | 1 | — | normal |
-| 40102 / 0x9CA6 | `power_factor_total` | System power factor | int16 | 1 | — | normal |
-| 40103 / 0x9CA7 | `power_factor_l1` | L1 power factor | int16 | 1 | — | normal |
-| 40104 / 0x9CA8 | `power_factor_l2` | L2 power factor | int16 | 1 | — | normal |
-| 40105 / 0x9CA9 | `power_factor_l3` | L3 power factor | int16 | 1 | — | normal |
+| 40102 / 0x9CA6 | `power_factor_total` | System power factor | int16 | 100 | — | normal |
+| 40103 / 0x9CA7 | `power_factor_l1` | L1 power factor | int16 | 100 | — | normal |
+| 40104 / 0x9CA8 | `power_factor_l2` | L2 power factor | int16 | 100 | — | normal |
+| 40105 / 0x9CA9 | `power_factor_l3` | L3 power factor | int16 | 100 | — | normal |
 | 40106 / 0x9CAA | `pf_sf` | PF Scale Factor | int16 | 1 | — | normal |
 | 40107 / 0x9CAB | `energy_active_export` | Total exported active energy | uint32 | 1 | Wh | normal |
 | 40109 / 0x9CAD | `energy_active_export_l1` | L1 exported active energy | uint32 | 1 | Wh | normal |
