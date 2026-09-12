@@ -1,5 +1,50 @@
 # Changelog
 
+## 3.58.0
+
+### 2026-09-12 — the runtime reads a unit several ways at once (P8, step 2)
+
+A device now starts one driver per SOURCE, all feeding one store under one
+identity. Verified against the production DataManager with two sources on one
+inverter:
+
+| source | rank | latency | owns |
+|---|---|---|---|
+| `solar_api` (HTTP, 5 s) | 0 | 236 ms | 6 fields — power, frequency, AC/DC voltage and current |
+| `sunspec` (Modbus, 20 s) | 1 | 794 ms | 31 fields — per-phase, energy, event flags, scale factors |
+
+Zero handovers: each owns what it is best at. Declaring them the other way round
+correctly gives the contested fields to Modbus instead — the order is the
+operator's lever, and it is the only lever needed.
+
+- **`FieldArbiter`** (`source_arbiter.py`) decides ownership per canonical field
+  name, never per address: the two sources read `power_active_total` at Modbus
+  40083 and at JSON address 1, so by address they would never collide and both
+  would write it unopposed. A losing source is suppressed BEFORE the store, MQTT
+  and InfluxDB, so it leaves no shadow value behind, and every stored value
+  carries the `source` that produced it.
+- **`MultiSourceClient`** presents exactly the surface a single driver does
+  (`connect`, `start_polling`, `disconnect`, `get_stats`, `data_health`,
+  `write_value`, `connection`), so the registry, the API, the alert harvester
+  and the virtual meters are untouched. Counters sum, the freshest success wins,
+  health is the best source's, and writes go to the first source that can
+  perform them — a Solar API is read-only, a setpoint belongs on SunSpec.
+- **One builder for boot and runtime.** There were two device constructors and
+  they drifted invisibly until a restart brought a device back decoding with a
+  different byte order. A test used to pin the copies together;
+  `device_runtime.build_device_client` removes the second copy instead. Every
+  device goes through `MultiSourceClient`, single-source ones included, so
+  production never runs a rarely-exercised branch.
+- **Per-source registers and seeding.** A source has its own template and
+  address space, so it seeds into its own file under
+  `devices/<device>/sources/<source>/`. A device that never declared sources has
+  no such directory and falls back to its device-level file, so nothing existing
+  moves. A source polls only the groups it declares.
+- **`GET /api/devices/{id}/events`** now returns `sources` and `provenance` as
+  flat JSON: how each source is doing, and which source owns each field right
+  now. "Why does it say 1404 W" has an answer, and a Node-RED http-request node
+  can read it without unwrapping anything.
+
 ## 3.57.0
 
 ### 2026-09-12 — an endpoint declares SOURCES, not a connection (P8, step 1)

@@ -168,17 +168,24 @@ def test_byte_order_for_matches_template():
     assert reg.byte_order_for(None) == "big"
 
 
-def test_boot_and_runtime_use_the_same_resolver():
-    """Regression for the restart-asymmetry defect: both main.py (boot) and
-    api.py (runtime) must go through TemplateRegistry.byte_order_for, so a
-    device's decode order survives a restart byte-identically."""
+def test_boot_and_runtime_build_devices_the_same_way():
+    """Regression for the restart-asymmetry defect.
+
+    There used to be two device constructors — one in main.py for boot, one in
+    api.py for a device added at runtime — and they drifted, invisibly, until a
+    restart brought a device back decoding with a different byte order. The fix
+    is not a test that keeps two copies in step; it is one copy. Both callers
+    now go through device_runtime.build_device_client, which resolves the decode
+    order through the single TemplateRegistry.byte_order_for."""
     import inspect
     import main as _main
     import multibus.api as _api
-    boot_src = inspect.getsource(_main.GatewayApp.setup)
-    assert "byte_order_for(device.template)" in boot_src
-    api_src = inspect.getsource(_api.create_api)
-    assert "byte_order_for(dev_cfg.template)" in api_src
+    from multibus import device_runtime
+
+    assert "build_device_client" in inspect.getsource(_main.GatewayApp.setup)
+    assert "build_device_client" in inspect.getsource(_api.create_api)
+    # and the one builder resolves the order through the one resolver
+    assert "byte_order_for(" in inspect.getsource(device_runtime.driver_for)
 
 
 def test_catalog_energy_units_are_canonical_wh_family():

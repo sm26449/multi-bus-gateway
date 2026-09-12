@@ -1156,14 +1156,19 @@ class Config:
         return removed
 
     def save_device_registers(self, device_id: str, registers: List[Dict],
-                              poll_groups: Optional[Dict] = None) -> None:
-        """Persist a non-primary device's register selection (same schema as
-        the legacy file). Primary keeps using save_selected_registers()."""
-        if device_id == PRIMARY_DEVICE_ID:
+                              poll_groups: Optional[Dict] = None,
+                              source_id: str = "") -> None:
+        """Persist a device's register selection, or ONE SOURCE's.
+
+        A source keeps its own file because it has its own template and address
+        space; without ``source_id`` this writes the device-level file, exactly
+        as it always has. Primary keeps using save_selected_registers()."""
+        if device_id == PRIMARY_DEVICE_ID and not source_id:
             self.save_selected_registers(registers)
             return
         validate_register_identity(registers)      # audit DP-9
-        path = self.device_registers_path(device_id)
+        path = (self.source_registers_path(device_id, source_id) if source_id
+                else self.device_registers_path(device_id))
         path.parent.mkdir(parents=True, exist_ok=True)
         data = {
             "version": "1.0",
@@ -1180,7 +1185,8 @@ class Config:
                 f.flush()
                 os.fsync(f.fileno())           # durable before the rename
             os.replace(tmp, path)
-        logger.info(f"device {device_id}: saved {len(registers)} selected registers")
+        logger.info("device %s%s: saved %d selected registers", device_id,
+                    f" source {source_id}" if source_id else "", len(registers))
 
     def device_registers_path(self, device_id: str) -> Path:
         """Where a device's selected-registers file lives. Device #1 keeps the
@@ -1194,6 +1200,23 @@ class Config:
             return self.registers_path
         return (self.config_path.parent / 'devices'
                 / self._safe_device_id(device_id) / 'selected_registers.json')
+
+    def source_registers_path(self, device_id: str, source_id: str) -> Path:
+        """Where ONE SOURCE's selected registers live.
+
+        A source has its own template and therefore its own address space: the
+        SunSpec view of an inverter reads holding registers, the Solar API view
+        reads JSON paths, and merging them into one file would make neither
+        editable. So each source gets its own file under
+        ``devices/<device>/sources/<source>/``.
+
+        Nothing existing moves: a device that has never declared sources has no
+        such directory, and :meth:`load_device_registers` falls back to the
+        device-level file. Adding a second source to a live device therefore
+        leaves the first one's registers exactly where they are."""
+        return (self.config_path.parent / 'devices'
+                / self._safe_device_id(device_id) / 'sources'
+                / self._safe_device_id(source_id) / 'selected_registers.json')
 
     def save_device_poll_groups(self, device_id: str, groups: Dict[str, Dict]) -> None:
         """Update just the poll-group intervals in a device's registers file
@@ -1317,12 +1340,25 @@ class Config:
             os.replace(tmp, path)
         logger.info(f"device {device_id}: energy fields set ({len(fields)})")
 
-    def load_device_registers(self, device: DeviceConfig):
-        """Return (selected_registers, poll_groups) for a device. Device #1
-        returns the already-loaded legacy selection."""
-        if device.primary:
+    def load_device_registers(self, device: DeviceConfig, source=None):
+        """Return (selected_registers, poll_groups) for a device, or for ONE of
+        its sources.
+
+        A source's own file wins when it exists; otherwise the device-level file
+        applies, which is what makes a single-source device — every device
+        written before sources existed — behave exactly as before. A source may
+        also override the intervals: a fast partial source and a slow complete
+        one do not share a rhythm."""
+        if device.primary and source is None:
             return self.selected_registers, self.poll_groups
-        path = self.device_registers_path(device.id)
+        path = None
+        if source is not None:
+            sp = self.source_registers_path(device.id, source.id)
+            if sp.exists():
+                path = sp
+        if path is None:
+            path = (self.registers_path if device.primary
+                    else self.device_registers_path(device.id))
         if not path.exists():
             logger.info(f"device {device.id}: no selected registers yet ({path})")
             return [], dict(self.poll_groups)
@@ -1336,6 +1372,15 @@ class Config:
             for name, group in (data.get('poll_groups') or {}).items():
                 groups[name] = PollGroup(interval=group.get('interval', 5),
                                          description=group.get('description', ''))
+            # A source's declared intervals are the last word: they describe how
+            # fast THIS way of reaching the unit may be driven, which the shared
+            # device file cannot know.
+            for name, g in (getattr(source, 'poll_groups', None) or {}).items():
+                groups[name] = g
+            if source is not None and getattr(source, 'poll_groups', None):
+                # and it polls ONLY the groups it declared, so a 5 s HTTP source
+                # does not inherit a 3600 s static group it has no registers for
+                regs = [r for r in regs if r.poll_group in source.poll_groups]
             return regs, groups
         except Exception as e:  # noqa: BLE001
             logger.error(f"device {device.id}: error loading registers: {e}")

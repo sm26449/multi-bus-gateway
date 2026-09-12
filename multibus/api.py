@@ -1092,27 +1092,19 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         return None
 
     def _start_device_client(dev_cfg):
-        """Create + wire + background-start a client for a device (Modbus
-        TCP/RTU or HTTP/JSON). Returns None for disabled/unknown-protocol
-        devices."""
-        if not dev_cfg.enabled or dev_cfg.protocol not in ('tcp', 'rtu', 'rtu-tcp', 'http', 'mqtt'):
+        """Create + wire + background-start the client for a device.
+
+        Goes through the SAME builder the boot path uses
+        (device_runtime.build_device_client), so a device added at runtime and
+        the same device after a restart are byte-identical. There used to be two
+        copies of this logic and they drifted, invisibly, until a restart
+        brought a device back decoding differently."""
+        from .device_runtime import build_device_client
+        client = build_device_client(
+            config, template_registry, dev_cfg,
+            allow_nonlan=config.security.allow_nonlan_http_devices)
+        if client is None:
             return None
-        regs, groups = config.load_device_registers(dev_cfg)
-        if dev_cfg.protocol == 'http':
-            from .http_client import HttpClient
-            client = HttpClient(http_cfg=dev_cfg.http, registers=regs, poll_groups=groups,
-                                allow_nonlan=config.security.allow_nonlan_http_devices)
-        elif dev_cfg.protocol == 'mqtt':
-            from .mqtt_input import MqttInputClient
-            client = MqttInputClient(mqtt_cfg=dev_cfg.mqtt_in, registers=regs, poll_groups=groups)
-        else:
-            from .modbus_client import ModbusClient
-            # decode order from the device template (default big) — same
-            # resolver the boot path uses, so a restart is byte-identical
-            _bo = template_registry.byte_order_for(dev_cfg.template)
-            client = ModbusClient(config=dev_cfg.connection,
-                                  registers=regs, poll_groups=groups, byte_order=_bo,
-                                  device_id=dev_cfg.id)
         client.publish_callback = make_data_callback(dev_cfg)
 
         def _bg():
@@ -1916,6 +1908,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         return {
             "device_id": device_id,
             "name": (dev_cfg.name or dev_cfg.id) if dev_cfg else device_id,
+            # A unit reached several ways needs both halves of the story: how
+            # each source is doing, and which source currently owns each field.
+            # Flat JSON on purpose — a Node-RED http-request node reads this
+            # without unwrapping anything.
+            "sources": st.get('sources') or [],
+            "provenance": st.get('provenance') or {},
+            "field_handovers": st.get('field_handovers', 0),
             "events": events,
             "truncated": len(st.get('events') or []) >= 500,
             "poll_groups": st.get('poll_groups_detail') or [],

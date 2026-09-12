@@ -19,16 +19,26 @@ logger = logging.getLogger(__name__)
 
 
 def autoselect_template_registers(config: Any, template_registry: Any,
-                                  dev_cfg: Any) -> None:
-    """Seed a device with its template's registers (poll groups + intervals
-    from the template) so it polls immediately — no manual picking. Skips if
-    it already has a fitting selection or has no template."""
-    if not dev_cfg.template or dev_cfg.primary:
+                                  dev_cfg: Any, source: Any = None) -> None:
+    """Seed a device — or ONE of its sources — with its template's registers.
+
+    A source has its own template and therefore its own map: the SunSpec view of
+    an inverter reads holding registers, the Solar API view reads JSON paths.
+    Seeding per source keeps each one editable on its own terms and writes to
+    the source's own file, so adding a second way of reaching a unit never
+    disturbs the first one's selection.
+
+    With no ``source`` this behaves exactly as it always did, which is what
+    every device written before sources existed still wants.
+    """
+    template_id = (getattr(source, 'template', '') or dev_cfg.template) if source \
+        else dev_cfg.template
+    if not template_id or (dev_cfg.primary and source is None):
         return
-    tpl = template_registry.get(dev_cfg.template)
+    tpl = template_registry.get(template_id)
     if tpl is None or not tpl.registers:
         return
-    existing, _g = config.load_device_registers(dev_cfg)
+    existing, _g = config.load_device_registers(dev_cfg, source=source)
     if existing:
         # A kept file from a PREVIOUS device at this id may belong to a
         # different template — reusing it would decode against the wrong
@@ -98,14 +108,19 @@ def autoselect_template_registers(config: Any, template_registry: Any,
     } for r in chosen]
     tpg = {n: {'interval': g.get('interval', 5), 'description': g.get('description', '')}
            for n, g in (tpl.poll_groups or {}).items()} or None
-    config.save_device_registers(dev_cfg.id, reg_list, poll_groups=tpg)
+    config.save_device_registers(dev_cfg.id, reg_list, poll_groups=tpg,
+                                 source_id=getattr(source, 'id', '') if source else '')
     # Derived measurements ship WITH the map. A template that decodes its own
     # status word or derives an alarm hands every device seeded from it the
     # same output — instead of each unit of an endpoint needing the formula
     # retyped, which is exactly how two devices of one family end up speaking
     # differently.
     calcs = [c.to_dict() for c in (getattr(tpl, 'calculated', None) or [])]
-    if calcs:
+    if calcs and source is None:
+        # Derived measurements belong to the UNIT, not to one way of reaching
+        # it: a formula over `operating_state` must run once, on the merged
+        # store, whichever source delivered the word.
         config.save_calculated(dev_cfg.id, calcs)
-    logger.info(f"device {dev_cfg.id}: auto-selected {len(reg_list)} template "
-                f"registers" + (f" + {len(calcs)} derived" if calcs else ""))
+    _who = f"{dev_cfg.id}" + (f" source {source.id}" if source else "")
+    logger.info(f"device {_who}: auto-selected {len(reg_list)} template "
+                f"registers" + (f" + {len(calcs)} derived" if calcs and not source else ""))

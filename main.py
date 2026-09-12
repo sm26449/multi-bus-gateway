@@ -27,7 +27,7 @@ from pathlib import Path
 import uvicorn
 
 from multibus.config import Config
-from multibus.modbus_client import ModbusClient
+from multibus.device_runtime import build_device_client
 from multibus.mqtt_publisher import MQTTPublisher
 from multibus.influxdb_publisher import InfluxDBPublisher
 from multibus.api import create_api
@@ -149,62 +149,31 @@ class GatewayApp:
         # from the first start (one template instantiated N times).
         from multibus.device_seed import autoselect_template_registers
         for device in self.config.devices:
-            if device.endpoint_id and device.enabled and device.template:
+            if not (device.endpoint_id and device.enabled):
+                continue
+            # Seed PER SOURCE: each way of reaching a unit has its own template
+            # and therefore its own map, and they live in separate files so
+            # adding a second source never disturbs the first one's selection.
+            for src in (device.sources or []):
+                if not (src.enabled and (src.template or device.template)):
+                    continue
                 try:
                     autoselect_template_registers(
-                        self.config, self.template_registry, device)
+                        self.config, self.template_registry, device,
+                        source=src if len(device.sources) > 1 else None)
                 except Exception as e:  # noqa: BLE001 — seeding must not block boot
-                    logger.warning(f"device {device.id}: template seeding failed: {e}")
+                    logger.warning(f"device {device.id} source {src.id}: "
+                                   f"template seeding failed: {e}")
 
         for device in self.config.devices:
-            if device.primary:
-                client = ModbusClient(
-                    config=self.config.modbus,
-                    registers=self.config.selected_registers,
-                    poll_groups=self.config.poll_groups,
-                    device_id=device.id,
-                )
-                self.modbus_client = client
-            elif not device.enabled:
-                logger.info(f"Device '{device.id}' disabled — skipping")
-                client = None
-            elif device.protocol == 'http':
-                from multibus.http_client import HttpClient
-                regs, groups = self.config.load_device_registers(device)
-                client = HttpClient(
-                    http_cfg=device.http, registers=regs, poll_groups=groups,
-                    # external audit: the boot path was the ONE of three
-                    # constructors not passing this — an allowed non-LAN
-                    # device worked until the first restart, then died at
-                    # debug level
-                    allow_nonlan=self.config.security.allow_nonlan_http_devices)
-                logger.info(f"Device '{device.id}': HTTP/JSON, {len(regs)} registers, "
-                            f"{device.http.get('url', '')}")
-            elif device.protocol == 'mqtt':
-                from multibus.mqtt_input import MqttInputClient
-                regs, groups = self.config.load_device_registers(device)
-                client = MqttInputClient(mqtt_cfg=device.mqtt_in, registers=regs, poll_groups=groups)
-                logger.info(f"Device '{device.id}': MQTT input, {len(regs)} registers, "
-                            f"broker {device.mqtt_in.get('broker', '')}:{device.mqtt_in.get('port', 1883)} "
-                            f"topic {device.mqtt_in.get('topic', '')}")
-            elif device.protocol not in ('tcp', 'rtu', 'rtu-tcp'):
-                logger.warning(f"Device '{device.id}': unknown protocol "
-                               f"'{device.protocol}' — idle")
-                client = None
-            else:
-                # tcp / rtu / rtu-tcp all build a ModbusClient — its _build_client
-                # picks the transport (rtu-tcp = RTU frames over the bridge TCP
-                # socket). Without rtu-tcp here the device would go idle on every
-                # restart even though the runtime add path started it fine.
-                regs, groups = self.config.load_device_registers(device)
-                _bo = self.template_registry.byte_order_for(device.template)
-                client = ModbusClient(config=device.connection,
-                                      registers=regs, poll_groups=groups,
-                                      byte_order=_bo, device_id=device.id)
-                _where = (f"{device.connection.serial_port}" if device.protocol == 'rtu'
-                          else f"{device.connection.host}:{device.connection.port}")
-                logger.info(f"Device '{device.id}': {len(regs)} registers, "
-                            f"{device.protocol} {_where} ({_bo})")
+            client = build_device_client(
+                self.config, self.template_registry, device,
+                allow_nonlan=self.config.security.allow_nonlan_http_devices)
+            if device.primary and client is not None:
+                # The legacy flat sections still address the primary directly
+                # (writes, the vmeter source, /api/modbus); hand them the
+                # rank-0 driver rather than the facade.
+                self.modbus_client = client.primary
             self.devices.append((device, client))
 
         # Create API
