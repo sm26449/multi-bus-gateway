@@ -744,13 +744,24 @@ class Config:
                     i['bucket'] = sub(i['bucket'])
                 if i.get('device_tag'):
                     i['device_tag'] = sub(i['device_tag'])
+                # ${unit_id} / ${endpoint_id} / ${device_id} substitute in the
+                # CONNECTION too, not only in the routing identity. An HTTP
+                # master addresses its units by URL rather than by a unit id in
+                # a frame — a Fronius Solar API endpoint is
+                # `…?Scope=Device&DeviceId=${unit_id}` — so without this an
+                # endpoint could not describe an HTTP master at all, and four
+                # inverters would need four hand-written devices.
+                c = dict(conn, unit_id=uid)
+                for _k in ('url', 'host', 'serial_port'):
+                    if isinstance(c.get(_k), str) and '${' in c[_k]:
+                        c[_k] = sub(c[_k])
                 out.append((pid, {
                     'id': did,
                     'name': u['name'] or f"{p.get('name') or pid} unit {uid}",
                     'template': p.get('template', ''),
                     'enabled': bool(p.get('enabled', True)),
                     'write_locked': bool(p.get('write_locked', False)),
-                    'connection': {**conn, 'unit_id': uid},
+                    'connection': c,
                     'mqtt': m,
                     'influxdb': i,
                     # an endpoint is ONE endpoint: its sinks are declared once and

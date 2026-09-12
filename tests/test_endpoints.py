@@ -558,3 +558,54 @@ def test_an_endpoint_reports_what_its_wire_costs(tmp_path):
     # nothing has polled (the endpoint is created disabled), so nothing is claimed
     assert bus["lanes"] == 1 and bus["max_connections"] == 1
     assert bus["tx_p50_s"] is None and bus["floor_s"] is None
+
+
+# ── an endpoint can front an HTTP master ─────────────────────────────────────
+
+def test_the_connection_substitutes_the_unit_id_too(tmp_path):
+    """An HTTP master addresses its units by URL, not by a unit id inside a
+    frame — a Fronius Solar API endpoint is `…?Scope=Device&DeviceId=${unit_id}`.
+    Without substitution in the CONNECTION, an endpoint could not describe one at
+    all and four inverters would need four hand-written devices."""
+    cfg = write_config(tmp_path, extra_yaml="""
+endpoints:
+  - id: pvapi
+    connection:
+      protocol: http
+      url: "http://10.0.0.9/solar_api/v1/x.cgi?DeviceId=${unit_id}&p=${endpoint_id}"
+    units: [1, 2, 3]
+""")
+    # an http device carries its address in `http`, not in the Modbus block
+    urls = {d.id: (d.http or {}).get('url') for d in cfg.endpoint_devices('pvapi')}
+    assert urls['pvapi-u1'].endswith('DeviceId=1&p=pvapi')
+    assert urls['pvapi-u2'].endswith('DeviceId=2&p=pvapi')
+    assert urls['pvapi-u3'].endswith('DeviceId=3&p=pvapi')
+
+
+def test_a_connection_without_placeholders_is_left_alone(tmp_path):
+    """Substitution must not disturb the Modbus shape, where the unit id travels
+    in the frame and every unit shares one host."""
+    cfg = write_config(tmp_path, extra_yaml="""
+endpoints:
+  - id: plain
+    connection: { protocol: tcp, host: 192.0.2.50, port: 502 }
+    units: [1, 2]
+""")
+    devs = cfg.endpoint_devices('plain')
+    assert {d.connection.host for d in devs} == {'192.0.2.50'}
+    assert sorted(d.connection.unit_id for d in devs) == [1, 2]
+
+
+def test_the_bundled_solar_api_template_reads_one_call_per_inverter():
+    """What it can and cannot give decides what stays on Modbus."""
+    from multibus.device_template import load_template
+    t = load_template('multibus/device_templates/fronius_solar_api_inverter.json',
+                      builtin=True)
+    names = {r.name for r in t.registers}
+    # everything comes from CommonInverterData, so ONE request per inverter
+    assert all('Body.Data.' in (r.json_path or '') for r in t.registers)
+    assert {'power_active_total', 'frequency', 'voltage_ln_avg',
+            'current_total', 'voltage_dc', 'current_dc'} <= names
+    # the four things only Modbus has must NOT be claimed here
+    assert not (names & {'power_factor_total', 'power_reactive_total',
+                         'power_apparent_total', 'event_flags_1'})

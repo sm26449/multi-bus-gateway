@@ -1,5 +1,36 @@
 # Changelog
 
+## 3.56.0
+
+### 2026-09-12 — an endpoint can front an HTTP master (Solar API, phase P7)
+
+The Fronius DataManager answers its Solar API in a **54 ms median** and its
+Modbus in 1945-2376 ms, for the same data off the same box. Twenty-five HTTP
+calls over live Modbus polling caused zero overruns and left Modbus latency
+untouched: the web server answers from the cache the DataManager fills off its
+own RS-485 side, which refreshes about every 2.6 s.
+
+- **`${unit_id}` / `${endpoint_id}` / `${device_id}` now substitute in an
+  endpoint's CONNECTION**, not only in its routing identity. An HTTP master
+  addresses its units by URL rather than by a unit id inside a frame, so without
+  this an endpoint could not describe one at all and four inverters needed four
+  hand-written devices. A connection with no placeholders is untouched, so the
+  Modbus shape is unchanged.
+- **`fronius_solar_api_inverter`**, a bundled template reading ONE request per
+  inverter (`GetInverterRealtimeData.cgi?Scope=Device&DeviceId=${unit_id}
+  &DataCollection=CommonInverterData`): active power, frequency, AC voltage and
+  current, DC voltage and current at 5 s, the energy counter at 30 s. Every
+  field lands on the canonical vocabulary the Modbus side already uses.
+
+What the Solar API cannot give, and therefore stays on Modbus: power factor,
+reactive and apparent power, the SunSpec event flags, and the per-string MPPT
+block. Per-phase voltage and current live in a second collection
+(`3PInverterData`) and would cost a second request, so they stay on Modbus too.
+
+Verified end to end against the production DataManager: one endpoint definition,
+four units, all four online, and the plant aggregate live — 1048 W total,
+49.963 Hz and 234.175 V averaged, energy summed.
+
 ## Unreleased
 
 ### 2026-09-12 — design note P7: Solar API alongside Modbus
