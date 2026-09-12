@@ -1,5 +1,34 @@
 # Changelog
 
+## 3.52.0
+
+### 2026-09-12 — the cutover parity harness proves nothing is lost
+
+The shadow phase is over, so `scripts/fronius_shadow_parity.py` becomes
+`scripts/fronius_parity.py` and compares the reference collector against the
+gateway instead of the gateway against itself.
+
+- **Pairs re-pointed** to `fronius/inverter/N/` ↔ `mbg/devices/fronius-uN/` and
+  `fronius/meter/240/` ↔ `mbg/devices/fronius-meter-240/`, bridging the two
+  vocabularies with the legacy leaf map, identity for leaves spelled the same
+  on both sides, and the derived pairs P3 built for exactly this
+  (`status/text` ↔ `status`, `status/alarm` ↔ `alarm`, `status/active` ↔
+  `active`). Power factor is a normal comparison now that the templates
+  normalize it, and a collector `True` and a gateway `1` are the same fact.
+- **A coverage ledger**, because agreement on the leaves we compare says
+  nothing about the leaves we forgot. Every leaf either side publishes is
+  compared, deliberately-not-carried-over WITH THE REASON, or unaccounted —
+  and the cutover gate now requires the unaccounted bucket to be empty
+  alongside the agreement and coverage thresholds.
+- Checked against the collector's real inventory, captured off the live broker:
+  62 inverter leaves and 46 meter leaves, of which 44 and 44 are compared, 18
+  and 2 are dropped with a written reason, and **none are unaccounted**. The
+  four temperatures are in that list because the collector published a fake
+  `0.0` for registers this hardware does not implement.
+- `tests/test_fronius_parity.py` pins that inventory, so a template change that
+  silently stops publishing something fails at build time rather than at
+  cutover — and it rejects a reason too short to be one.
+
 ## 3.51.0
 
 ### 2026-09-12 — `plants` is now `endpoints`
