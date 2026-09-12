@@ -3,6 +3,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
     // Devices page: show the list, hide the detail + register-editor overlays.
     _showDevicesList() {
+        if (this._stopPlantDetail) this._stopPlantDetail();
         const list = document.getElementById('devicesListView');
         const detail = document.getElementById('deviceDetailView');
         const reg = document.getElementById('deviceRegistersView');
@@ -132,6 +133,7 @@ Object.assign(JanitzaMonitor.prototype, {
             </div>
             <div class="device-row-stats">${stats}</div>
             <div class="device-row-actions">
+                <button class="btn btn-ghost btn-sm" ${this._act('openPlantDetail', [p.id])} title="${this.t('plants.open', 'Open the plant')}"><i aria-hidden="true" class="bi bi-box-arrow-up-right"></i></button>
                 <button class="btn btn-ghost btn-sm" ${this._act('openPlantModal', [p.id])} title="${this.t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
                 <button class="btn btn-ghost btn-sm" ${this._act('deletePlantUi', [p.id])} title="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
             </div>
@@ -447,7 +449,7 @@ Object.assign(JanitzaMonitor.prototype, {
     // existing history and Home Assistant entities never break.
     async openDeviceDetail(id) {
         if (this.currentPage !== 'devices') this.navigateTo('devices');
-        this._showDevicesList();
+        this._showDevicesList();        // also stops a plant page's live tick
         await this._fetchDevices(true);
         const dev = (this._devices || []).find(d => d.id === id);
         if (!dev) { this.showToast('error', this.t('devices.notFound', 'Device not found'), id); return; }
@@ -537,7 +539,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <button class="config-main-tab" data-dtab="monitor" ${gMon}><i aria-hidden="true" class="bi bi-graph-up"></i> ${t('nav.monitor', 'Monitor')}</button>
             <button class="config-main-tab" data-dtab="history" ${gInf}><i aria-hidden="true" class="bi bi-clock-history"></i> ${t('nav.history', 'History')}</button>
             <button class="config-main-tab" data-dtab="energy" ${gInf}><i aria-hidden="true" class="bi bi-lightning-charge"></i> ${t('nav.energy', 'Energy')}</button>
-            ${d.pq_supported ? `<button class="config-main-tab" data-dtab="pq" ${gInf}><i aria-hidden="true" class="bi bi-activity"></i> ${t('nav.pq', 'Power Quality')}</button>` : ''}
+            ${d.pq_supported && !plantId ? `<button class="config-main-tab" data-dtab="pq" ${gInf}><i aria-hidden="true" class="bi bi-activity"></i> ${t('nav.pq', 'Power Quality')}</button>` : ''}
         </div>
 
         <!-- host panels for the embedded, device-scoped views -->
@@ -674,8 +676,8 @@ Object.assign(JanitzaMonitor.prototype, {
             </div>` : ''}
             ${this._sinkCardMqtt(d, primary)}
             ${this._sinkCardInflux(d, primary)}
-            ${plantId ? '' : this._sinkCardHttp(d, primary)}
-            ${plantId ? '' : this._sinkCardRest(d, primary)}
+            ${this._sinkCardHttp(d, primary)}
+            ${this._sinkCardRest(d, primary)}
             ${d.pq_supported && !plantId ? this._sinkCardPq(d, primary) : ''}
             ${this._sinkCardWriteLock(d, primary)}
             ${plantId ? '' : `
@@ -1083,9 +1085,19 @@ Object.assign(JanitzaMonitor.prototype, {
                     </div>
                     <pre id="ddvHttpPreview" class="http-feed-preview" aria-live="polite"></pre>
                 </div>
+                ${this._plantSinkNote()}
                 <p class="field-hint"><i aria-hidden="true" class="bi bi-info-circle"></i> ${this.t('devices.sink.httpNote', 'Serves the live values of this device as read-only JSON, keyed by measurement name (Solar-API style) — pull it from any HTTP client without MQTT or InfluxDB. Guarded by the same IP allowlist / auth as the UI.')}</p>
             </div>
         </div>`;
+    },
+
+    // A plant is ONE endpoint: these sinks are declared on the plant and apply
+    // to every unit, so say so next to the switch that flips them.
+    _plantSinkNote() {
+        const pid = this._devDetail?.plant_id;
+        if (!pid) return '';
+        return `<p class="field-hint"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this.t('devices.plantUnit.sinkShared',
+            'Declared on the plant — switching this applies to every unit of')} <code>${this._esc(pid)}</code>.</p>`;
     },
 
     _sinkCardRest(d, primary) {
@@ -1122,6 +1134,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <button class="btn btn-ghost btn-sm" ${this._act('testRestPush', [this._devDetail.id])}><i aria-hidden="true" class="bi bi-send"></i> ${this.t('rest.test', 'Test push')}</button>
                     <button class="btn btn-primary btn-sm" ${this._act('saveRestPush', [this._devDetail.id])}><i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}</button>
                 </div>
+                ${this._plantSinkNote()}
                 <p class="field-hint"><i aria-hidden="true" class="bi bi-info-circle"></i> ${this.t('rest.note', 'POSTs the live values of this device as JSON to the URL every interval. External URLs are allowed. Put a Bearer / API key in Headers (stored masked).')}</p>
             </div>
         </div>`;

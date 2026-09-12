@@ -20,3 +20,20 @@ Notes:
 - The script dismisses the "Connect your first device" onboarding dialog if
   the instance has no reachable device.
 - Exit code 0 = all checks passed; failures are listed on stdout.
+
+## Plant page (P4)
+
+`plant_page_e2e.mjs` validates the plant as a first-class entity: the way in
+from the devices list, the header census/status, the aggregate grid, the unit
+table (health, hand-written ids and names), the per-unit probe, the
+plant-totals toggle, a unit rename, and the plant-aware unit workspace.
+
+```bash
+cd tools/e2e
+MBG_URL=http://localhost:18080 PLANT=sunfield node plant_page_e2e.mjs
+```
+
+It writes (toggles a setting, renames a unit), so point it at an EPHEMERAL
+instance. The header of the script carries the throwaway-container line and the
+config it expects — a plant on a TEST-NET host, so the offline/degraded paths
+are the ones under test.
