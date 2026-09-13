@@ -1,5 +1,43 @@
 # Changelog
 
+## 3.69.0
+
+### 2026-09-13 — the Measurements tab: what is read, where, how often
+
+Fourth step of the audit. The picker filed every Solar API field under
+"other" while the Monitor grouped the same fields as `Power_active / Dc`,
+showed invented numeric addresses for JSON paths, a dash in every VALUE cell
+of a unit that was live, MONITORED/REALTIME badges, a delete cross on rows
+that came from the template, and five buttons in a row.
+
+- **One classification.** The category of a measurement comes from its
+  canonical name on the server (`power`, `voltage`, `current`, `energy`,
+  `frequency`, `dc`, `quality`, `site`, `temperature`, `status`), falling back
+  to the unit, then `other`. The catalog groups by it; the selection carries
+  it; the filter and the Selected tabs use the same labels.
+- **Selected first**, then **All available** — the same columns in both:
+  tick · Measurement (label + canonical name) · **Where** (the JSON path, the
+  topic, or `40071 · uint16 · ×0.1`) · **Value** (live, joined by *name*, with
+  its age) · **Interval** (the source's poll group in words: `every 2 s`) ·
+  actions. Rows are grouped under category headers.
+- **Ticking in place saves at once** in both views; every view of the
+  selection follows (counts, picker census, Selected list). Template rows
+  carry a lock — untick, don't delete; custom rows keep their delete.
+- **Read from** picker: `solar_api · HTTP · every 2 s · 6/7 ticked`, one button
+  per source with `aria-pressed`; the first source's map loads at once (it
+  used to show an empty Selected list under a picker that said 3/7 ticked).
+- **One menu** (`⋯ More`, `aria-haspopup`, arrow keys, Escape) for Import CSV,
+  Upload map, Download map, Raw JSON and Write — Write only where the map
+  declares something writable and the device is not locked; Query only for
+  Modbus sources.
+
+API: `/api/registers/all` files canonical fields under their category with a
+label; `/api/registers/selected` registers carry `category`, and `sources[]`
+carry `selected`, `catalog` and `interval_s`.
+
+Tests: `tests/test_register_categories.py`; e2e `tools/e2e/measurements_e2e.mjs`
+(24 checks); `source_registers_e2e` still green.
+
 ## 3.68.0
 
 ### 2026-09-13 — the unit page tells how the unit is read

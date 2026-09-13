@@ -1007,7 +1007,7 @@ Object.assign(JanitzaMonitor.prototype, {
             this.updateConfigTabs();
             this.renderSelectedRegistersList();
             this._wireDeviceRegTabs();
-            this.switchDeviceRegTab('available');
+            this.switchDeviceRegTab('selected');      // what is read comes first
         });
     },
 

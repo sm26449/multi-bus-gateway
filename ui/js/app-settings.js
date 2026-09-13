@@ -12,8 +12,10 @@ Object.assign(JanitzaMonitor.prototype, {
         this.selectedRegisters.forEach(reg => {
             categories.set('all', categories.get('all') + 1);
 
-            // Derive category from measurement or unit
-            let cat = (reg.influxdb_measurement || '').toLowerCase();
+            // the server names what a measurement IS (canonical name → category);
+            // older selections without it fall back to the old derivation
+            let cat = reg.category || '';
+            if (!cat) cat = (reg.influxdb_measurement || '').toLowerCase();
             if (!cat) {
                 // Fallback: derive from unit
                 const unit = (reg.unit || '').toLowerCase();
@@ -40,7 +42,7 @@ Object.assign(JanitzaMonitor.prototype, {
             .filter(cat => categories.get(cat) > 0)
             .map(cat => {
                 const count = categories.get(cat);
-                const label = cat === 'all' ? 'All' : cat.charAt(0).toUpperCase() + cat.slice(1);
+                const label = cat === 'all' ? this.t('common.all', 'All') : (this._regCatLabel ? this._regCatLabel(cat) : cat);
                 const isActive = this.configTab === cat ? 'active' : '';
                 return `<button class="config-tab ${isActive}" data-tab="${this._esc(cat)}">${this._esc(label)} <span class="count">(${count})</span></button>`;
             })

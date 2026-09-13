@@ -30,7 +30,39 @@ from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 
 from ._models import RegisterBatchQuery, RegisterQuery, SelectedRegisterUpdate
+from ..canonical_fields import CANONICAL_FIELDS
 from ..value_decode import apply_corrections
+
+# What a measurement IS, from its canonical name. One classification for the
+# whole UI — the picker, the Selected list, the Overview and the Monitor used to
+# each derive their own, so the same register read "other" in one place and
+# "Power_active" in another.
+_CANON_CATEGORY = {
+    'voltage': ('voltage', 'Voltage'), 'current': ('current', 'Current'),
+    'power_active': ('power', 'Power'), 'power_reactive': ('power', 'Power'),
+    'power_apparent': ('power', 'Power'), 'power_factor': ('power', 'Power'),
+    'frequency': ('frequency', 'Frequency'),
+    'energy_active': ('energy', 'Energy'), 'energy_reactive': ('energy', 'Energy'),
+    'energy_apparent': ('energy', 'Energy'),
+    'thd': ('quality', 'Power quality'), 'dc': ('dc', 'DC'), 'mppt': ('dc', 'DC'),
+    'site': ('site', 'Site'), 'temperature': ('temperature', 'Temperature'),
+    'status': ('status', 'Status'), 'diagnostic': ('status', 'Status'),
+}
+_UNIT_CATEGORY = {'v': 'voltage', 'a': 'current', 'w': 'power', 'kw': 'power',
+                  'var': 'power', 'kvar': 'power', 'va': 'power', 'kva': 'power',
+                  'wh': 'energy', 'kwh': 'energy', 'varh': 'energy', 'vah': 'energy',
+                  'hz': 'frequency', '°c': 'temperature', 'c': 'temperature'}
+_CATEGORY_LABEL = {v[0]: v[1] for v in _CANON_CATEGORY.values()}
+_CATEGORY_LABEL['other'] = 'Other'
+
+
+def canonical_category(name: str, unit: str = '') -> str:
+    """The category id of a measurement: from its canonical name, else from
+    its unit, else ``other``."""
+    row = CANONICAL_FIELDS.get(str(name or '').lower())
+    if row and row[0] in _CANON_CATEGORY:
+        return _CANON_CATEGORY[row[0]][0]
+    return _UNIT_CATEGORY.get(str(unit or '').strip().lower(), 'other')
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +101,8 @@ def build(ctx) -> APIRouter:
             "icon": getattr(x, "icon", ""),
             "suggested_display_precision": getattr(x, "suggested_display_precision", None),
             "register_type": getattr(x, "register_type", "holding"),
+            # what it measures, in the one vocabulary the whole UI groups by
+            "category": canonical_category(x.name, x.unit),
             "mqtt_enabled": x.mqtt_enabled,
             "mqtt_topic": x.mqtt_topic,
             "influxdb_enabled": x.influxdb_enabled,
@@ -108,8 +142,15 @@ def build(ctx) -> APIRouter:
         for cid, cmeta in ordered:
             cats[cid] = {"name": _cmeta(cmeta).get('label', cid), "entries": []}
         for x in t.registers:
-            cats.setdefault(x.category, {"name": x.category, "entries": []})
-            cats[x.category]["entries"].append({
+            # A template that names no category (or says "other") for a
+            # canonical field still knows what it is — power is power whether
+            # the vendor's map filed it or not.
+            cat = x.category
+            if not cat or cat == 'other' or cat not in t.categories:
+                canon = canonical_category(x.name, x.unit)
+                cat = canon if canon != 'other' else (x.category or 'other')
+            cats.setdefault(cat, {"name": _CATEGORY_LABEL.get(cat, cat), "entries": []})
+            cats[cat]["entries"].append({
                 "address": x.address, "name": x.name, "unit": x.unit,
                 "description": x.description or x.label,
                 "data_type": x.data_type, "access": x.access,
@@ -176,6 +217,20 @@ def build(ctx) -> APIRouter:
             return Response(status_code=304)
         return JSONResponse(_template_catalog(_tpl), headers={"ETag": etag} if etag else None)
 
+    def _sources_out(dev_cfg) -> List[Dict]:
+        out = []
+        for i, x in enumerate(dev_cfg.sources or []):
+            regs, groups = config.load_device_registers(dev_cfg, source=x)
+            used = {r.poll_group for r in regs}
+            ivals = [g.interval for n, g in groups.items() if n in used]
+            tpl = template_registry.get(x.template or dev_cfg.template) \
+                if (x.template or dev_cfg.template) else None
+            out.append({"id": x.id, "protocol": x.protocol, "template": x.template,
+                        "rank": i, "selected": len(regs),
+                        "catalog": len(tpl.registers) if tpl else None,
+                        "interval_s": min(ivals) if ivals else None})
+        return out
+
     def _source_of(dev_cfg, source_id: str):
         """Resolve a source by id, or None for the device-level map.
 
@@ -212,10 +267,10 @@ def build(ctx) -> APIRouter:
                                     for name, g in groups.items()},
                     "source": source,
                     # every way this unit can be reached, so the editor can offer
-                    # them without a second call
-                    "sources": [{"id": x.id, "protocol": x.protocol,
-                                 "template": x.template, "rank": i}
-                                for i, x in enumerate(dev_cfg.sources or [])],
+                    # them without a second call — with how much of each map is
+                    # ticked and how fast it reads, so the picker can say
+                    # "solar_api · HTTP · every 2 s · 6/7 ticked"
+                    "sources": _sources_out(dev_cfg),
                 }
         _pi, _pcfg, _pc = registry.find(device) if device else (None, None, None)
         return {
@@ -225,9 +280,7 @@ def build(ctx) -> APIRouter:
                 for name, g in config.poll_groups.items()
             },
             "source": "",
-            "sources": [{"id": x.id, "protocol": x.protocol,
-                         "template": x.template, "rank": i}
-                        for i, x in enumerate(getattr(_pcfg, 'sources', None) or [])],
+            "sources": _sources_out(_pcfg) if _pcfg is not None else [],
         }
 
     @r.post("/api/registers/selected")

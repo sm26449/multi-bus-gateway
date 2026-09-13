@@ -142,3 +142,20 @@ MBG_URL=http://localhost:18087 ENDPOINT=sunfield UNIT=sunfield-u1 \
 ```
 
 Uses the installation-safety fixture.
+
+## Measurements tab
+
+`measurements_e2e.mjs` drives the Measurements tab of a unit read several ways:
+Selected first, the picker's census (`solar_api · HTTP · every 5 s · 3/7
+ticked`), one classification (no "other" for canonical fields), "where" as a
+JSON path or a Modbus address with its type, the interval in words, a lock on
+template rows, ticking in place saved at once in both views without touching
+the other source's map, and the single keyboard-reachable menu (Write hidden
+for a JSON source). It puts the selection back at the end.
+
+```bash
+MBG_URL=http://localhost:18087 UNIT=sunfield-u1 CHROMIUM_PATH=<chrome> \
+  node measurements_e2e.mjs
+```
+
+Uses the installation-safety fixture.

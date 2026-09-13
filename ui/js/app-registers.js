@@ -14,7 +14,7 @@ Object.assign(JanitzaMonitor.prototype, {
             Object.keys(measurements).forEach(cat => {
                 const option = document.createElement('option');
                 option.value = cat;
-                option.textContent = cat.charAt(0).toUpperCase() + cat.slice(1);
+                option.textContent = this._regCatLabel(cat);
                 filter.appendChild(option);
             });
 
@@ -30,6 +30,14 @@ Object.assign(JanitzaMonitor.prototype, {
             this.selectedRegisters = data.registers || [];
             this.pollGroups = data.poll_groups || {};
             this._renderRegSourceSelector(data);
+            // The first answer for a unit read several ways is the DEVICE-level
+            // map (no source asked for yet); the picker has now chosen the first
+            // source, so fetch that source's catalog and selection instead of
+            // showing an empty list under a picker that says "3/7 ticked".
+            if (this._regSource && (data.source || '') !== this._regSource) {
+                await this.loadAllRegisters();
+                return this.loadSelectedRegisters();
+            }
 
             this.updatePollGroupsStatus();
             // Keep the dashboard's OWN list in sync when both contexts look at
@@ -46,23 +54,67 @@ Object.assign(JanitzaMonitor.prototype, {
         }
     },
 
+    // What a measurement is, in words — one vocabulary for the picker, the
+    // Selected list, the Overview and the Monitor.
+    _regCatLabel(cat) {
+        const c = String(cat || 'other');
+        const fromCatalog = ((this.allRegisters || {}).measurements || {})[c]?.name;
+        return this.t(`cat.${c}`, fromCatalog || (c.charAt(0).toUpperCase() + c.slice(1).replace(/_/g, ' ')));
+    },
+
+    // Where a value is read from, as an operator reads it: a JSON path, a topic,
+    // or a Modbus address with its shape.
+    _regWhere(reg) {
+        if (reg.json_path && !reg.topic) return `<span class="address" title="JSON">${this._esc(reg.json_path)}</span>`;
+        if (reg.topic) return `<span class="address">${this._esc(reg.topic)}</span>${reg.json_path ? ` <span class="reg-name-mono">${this._esc(reg.json_path)}</span>` : ''}`;
+        const bits = [String(reg.address)];
+        if (reg.register_type && reg.register_type !== 'holding') bits.push(this._esc(reg.register_type));
+        if (reg.data_type) bits.push(this._esc(reg.data_type));
+        if (reg.scale && reg.scale !== 1) bits.push(`×${reg.scale}`);
+        if (reg.scale_from) bits.push(`SF ${this._esc(reg.scale_from)}`);
+        return `<span class="address">${bits[0]}</span> <span class="reg-name-mono">${bits.slice(1).join(' · ')}</span>`;
+    },
+
+    _regIntervalText(reg) {
+        const g = (this.pollGroups || {})[reg.poll_group];
+        if (!g || g.interval == null) return this._esc(reg.poll_group || '—');
+        const iv = g.interval < 1 ? `${Math.round(g.interval * 1000)} ms` : `${g.interval} s`;
+        return `${this.t('registers.every', 'every')} ${iv}`;
+    },
+
+    _regValueHtml(name) {
+        const v = (this._regLive || {})[name];
+        if (!v || v.value == null) return '<span style="color:var(--text-tertiary,#8a94a0);">—</span>';
+        const num = typeof v.value === 'number'
+            ? (Number.isInteger(v.value) ? String(v.value) : Number(v.value.toFixed(3)).toString())
+            : this._esc(String(v.value));
+        const age = v.ts ? Math.max(0, Math.round(Date.now() / 1000 - v.ts)) : null;
+        return `${num} <span style="color:var(--text-secondary);">${this._esc(v.unit || '')}</span>${age != null ? ` <span class="reg-age">${age} s</span>` : ''}`;
+    },
+
+    // template-derived rows are unticked, never deleted; custom ones may go
+    _regInCatalog(reg) {
+        return this.flattenRegisters().some(r => r.address === reg.address
+            && (!reg.json_path || r.json_path === reg.json_path));
+    },
+
+    _regCategoryOrder() {
+        return Object.keys((this.allRegisters || {}).measurements || {});
+    },
+
     renderRegistersTable() {
         const tbody = document.getElementById('registersTableBody');
-        const searchQuery = document.getElementById('registerSearch').value.toLowerCase();
-        const categoryFilter = document.getElementById('categoryFilter').value;
-
-        // Flatten all registers
+        if (!tbody) return;
+        const searchQuery = (document.getElementById('registerSearch')?.value || '').toLowerCase();
+        const categoryFilter = document.getElementById('categoryFilter')?.value || '';
         const allRegs = this.flattenRegisters();
-
-        // HTTP sources key on json_path, not a Modbus address — surface that column
-        // (and let search hit it) so the view makes sense for a JSON device.
-        const http = this._regDeviceIsHttp();
+        const http = this._regDeviceIsHttp(), mqttIn = this._regDeviceIsMqtt();
         const keyHead = document.getElementById('regColKeyHead');
-        if (keyHead) keyHead.textContent = http ? this.t('registers.custom.jsonPath', 'JSON path') : 'Address';
+        if (keyHead) keyHead.textContent = this.t('registers.where', 'Where');
         const queryBtn = document.getElementById('queryRegisterBtn');
-        if (queryBtn) queryBtn.style.display = http ? 'none' : '';
+        if (queryBtn) queryBtn.style.display = (http || mqttIn) ? 'none' : '';
+        this._syncWriteMenuItem();
 
-        // Filter
         const filtered = allRegs.filter(reg => {
             const matchesSearch = !searchQuery ||
                 reg.name.toLowerCase().includes(searchQuery) ||
@@ -70,94 +122,135 @@ Object.assign(JanitzaMonitor.prototype, {
                 (reg.unit && reg.unit.toLowerCase().includes(searchQuery)) ||
                 (reg.json_path && reg.json_path.toLowerCase().includes(searchQuery)) ||
                 (reg.description && reg.description.toLowerCase().includes(searchQuery));
-
             const matchesCategory = !categoryFilter || reg.category === categoryFilter;
-
             return matchesSearch && matchesCategory;
         });
+        // grouped by what they measure, in the catalog's order; by address inside
+        const order = this._regCategoryOrder();
+        filtered.sort((a, b) => (order.indexOf(a.category) - order.indexOf(b.category)) || (a.address - b.address));
 
-        // Paginate
         const start = (this.registerSearchPage - 1) * this.registersPerPage;
         const paginated = filtered.slice(start, start + this.registersPerPage);
 
-        // Render
         tbody.innerHTML = '';
+        let lastCat = null;
         paginated.forEach(reg => {
+            if (reg.category !== lastCat) {
+                lastCat = reg.category;
+                const gh = document.createElement('tr');
+                gh.className = 'reg-group';
+                gh.innerHTML = `<td colspan="6">${this._esc(this._regCatLabel(reg.category))}</td>`;
+                tbody.appendChild(gh);
+            }
             const configuredReg = this.selectedRegisters.find(s => s.address === reg.address);
             const isConfigured = !!configuredReg;
-            const currentValue = this.currentValues[reg.address];
-
             const tr = document.createElement('tr');
             tr.dataset.address = reg.address;
-            if (isConfigured) {
-                tr.classList.add('configured');
-            }
-
-            // Build badges for monitored registers
-            let badges = '';
-            if (isConfigured) {
-                const pollClass = `poll-${this._esc(configuredReg.poll_group)}`;
-                badges = `
-                    <span class="badge configured">${this.t('lbl.monitored', "Monitored")}</span>
-                    <span class="badge ${pollClass}">${this._esc(configuredReg.poll_group)}</span>
-                `;
-            }
-
-            // Build action buttons. Query is a direct Modbus read, so it only makes
-            // sense for Modbus sources — omit it for HTTP/JSON devices.
-            const queryBtn = http ? '' :
-                `<button class="btn-action query" data-address="${reg.address}" title="Query Now">&#128269;</button>`;
-            let actions = '';
-            if (isConfigured) {
-                // Configured measurement: Query, Edit, Remove
-                actions = `
-                    ${queryBtn}
-                    <button class="btn-action edit" data-address="${reg.address}" title="Edit Config">&#9998;</button>
-                    <button class="btn-action remove" data-address="${reg.address}" title="Remove">&#10005;</button>
-                `;
-            } else {
-                // Not configured: Query, Configure (edit → adds on save), Quick Add.
-                // The pencil is on every row so "edit" is reachable everywhere, not
-                // only after a measurement is selected.
-                actions = `
-                    ${queryBtn}
-                    <button class="btn-action add" data-address="${reg.address}" title="Configure &amp; add">&#9998;</button>
-                    <button class="btn-action quick-add" data-address="${reg.address}" title="Quick Add">&#9889;</button>
-                `;
-            }
-
+            if (isConfigured) tr.classList.add('configured');
+            const label = reg.description || reg.name;
+            const queryBtnHtml = (http || mqttIn) ? '' :
+                `<button class="btn-action query" data-address="${reg.address}" title="${this.t('registers.queryNow', 'Query now')}" aria-label="${this.t('registers.queryNow', 'Query now')}">&#128269;</button>`;
             tr.innerHTML = `
-                <td class="address"${http ? ` title="${this._esc(reg.json_path || '')}"` : ''}>${http ? this._esc(reg.json_path || '—') : reg.address}</td>
+                <td class="reg-tick"><input type="checkbox" ${isConfigured ? 'checked' : ''}
+                        aria-label="${this.t('registers.readCol', 'Read')}: ${this._esc(label)}"></td>
                 <td class="description-cell">
-                    <div class="reg-description">${this._esc(reg.description || '-')}</div>
-                    ${badges ? `<div class="badges">${badges}</div>` : ''}
-                </td>
-                <td class="name-cell">
+                    <div class="reg-description">${this._esc(label)}</div>
                     <span class="reg-name-mono">${this._esc(reg.name)}</span>
                 </td>
-                <td>${this._esc(reg.unit || '-')}</td>
-                <td>${this._esc(reg.category)}${reg.subtype ? '/' + this._esc(reg.subtype) : ''}</td>
-                <td class="value">${currentValue ? currentValue.value?.toFixed(2) : '-'}</td>
-                <td class="actions-cell">${actions}</td>
-            `;
-
-            // Attach event listeners (Query is absent for HTTP sources)
+                <td>${this._regWhere(reg)}</td>
+                <td class="value num" data-reg-name="${this._esc(reg.name)}">${this._regValueHtml(reg.name)}</td>
+                <td class="reg-interval">${isConfigured ? this._regIntervalText(configuredReg) : `<span style="color:var(--text-tertiary,#8a94a0);">${this.t('registers.notRead', 'not read')}</span>`}</td>
+                <td class="actions-cell">${queryBtnHtml}
+                    <button class="btn-action edit" data-address="${reg.address}" title="${isConfigured ? this.t('registers.editConfig', 'Edit how it is published') : this.t('registers.configureAdd', 'Configure & read')}"
+                            aria-label="${isConfigured ? this.t('registers.editConfig', 'Edit how it is published') : this.t('registers.configureAdd', 'Configure & read')}">&#9998;</button>
+                </td>`;
+            tr.querySelector('input[type=checkbox]').addEventListener('change', (ev) => {
+                if (ev.target.checked) this.quickAddRegister(reg);
+                else this.removeRegisterFromTable(reg.address);
+            });
             const qb = tr.querySelector('.query');
             if (qb) qb.addEventListener('click', () => this.queryRegisterNow(reg));
-
-            if (isConfigured) {
-                tr.querySelector('.edit').addEventListener('click', () => this.editRegister(configuredReg));
-                tr.querySelector('.remove').addEventListener('click', () => this.removeRegisterFromTable(reg.address));
-            } else {
-                tr.querySelector('.add').addEventListener('click', () => this.openAddModal(reg));
-                tr.querySelector('.quick-add').addEventListener('click', () => this.quickAddRegister(reg));
-            }
-
+            tr.querySelector('.edit').addEventListener('click', () =>
+                isConfigured ? this.editRegister(configuredReg) : this.openAddModal(reg));
             tbody.appendChild(tr);
         });
-
-        // Render pagination
         this.renderPagination(filtered.length);
+        this._updateRegTabCounts();
+        this._startRegLive();
+    },
+
+    _updateRegTabCounts() {
+        const sel = document.getElementById('regTabSelCount');
+        const all = document.getElementById('regTabAllCount');
+        if (sel) sel.textContent = `(${(this.selectedRegisters || []).length})`;
+        if (all) all.textContent = `(${this.flattenRegisters().length})`;
+    },
+
+    // Write is a Modbus thing, and only where the map declares something
+    // writable and the device is not locked — a menu item that opens a form
+    // for a device that can never take a write is a trap.
+    _regCanWrite() {
+        if (this._regDeviceIsHttp() || this._regDeviceIsMqtt()) return false;
+        const id = this._regDevice || this._primaryDeviceId();
+        const dev = (this._devices || []).find(d => d.id === id);
+        if (dev?.write_locked) return false;
+        return this.flattenRegisters().some(r => /W/i.test(String(r.access || '')));
+    },
+
+    _syncWriteMenuItem() {
+        const w = document.getElementById('writeRegBtn');
+        if (w) w.hidden = !this._regCanWrite();
+    },
+
+    toggleRegMenu(open) {
+        const btn = document.getElementById('regMenuBtn'), menu = document.getElementById('regMenu');
+        if (!btn || !menu) return;
+        const willOpen = open === undefined ? menu.hidden : !!open;
+        menu.hidden = !willOpen;
+        btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+        if (willOpen) {
+            const items = [...menu.querySelectorAll('[role=menuitem]:not([hidden])')];
+            items[0]?.focus();
+            if (!menu._keys) {
+                menu._keys = true;
+                menu.addEventListener('keydown', (e) => {
+                    const its = [...menu.querySelectorAll('[role=menuitem]:not([hidden])')];
+                    const i = its.indexOf(document.activeElement);
+                    if (e.key === 'Escape') { this.toggleRegMenu(false); btn.focus(); }
+                    else if (e.key === 'ArrowDown') { e.preventDefault(); its[(i + 1) % its.length]?.focus(); }
+                    else if (e.key === 'ArrowUp') { e.preventDefault(); its[(i - 1 + its.length) % its.length]?.focus(); }
+                });
+                document.addEventListener('click', (e) => {
+                    if (!menu.hidden && !menu.contains(e.target) && e.target !== btn && !btn.contains(e.target)) this.toggleRegMenu(false);
+                });
+            }
+        }
+    },
+
+    // ── live values for the open map, by NAME: a JSON path has no address ──
+    _startRegLive() {
+        if (this._regLiveTimer) return;
+        const tick = async () => {
+            if (!this._registersVisible()) { this._stopRegLive(); return; }
+            await this._fetchRegLive();
+            this.updateRegistersValues();
+        };
+        tick();
+        this._regLiveTimer = setInterval(tick, 3000);
+    },
+
+    _stopRegLive() {
+        if (this._regLiveTimer) { clearInterval(this._regLiveTimer); this._regLiveTimer = null; }
+    },
+
+    async _fetchRegLive() {
+        try {
+            const id = this._regDeviceIdOrNull();
+            const d = await (await fetch('/api/values' + (id ? '?device=' + encodeURIComponent(id) : ''))).json();
+            const out = {};
+            Object.values(d.values || {}).forEach(v => { if (v && v.name) out[v.name] = v; });
+            this._regLive = out;
+        } catch (e) { /* a blip keeps the last values */ }
     },
 
     flattenRegisters() {
@@ -261,19 +354,10 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     updateRegistersValues() {
-        document.querySelectorAll('#registersTableBody tr').forEach(tr => {
-            const address = parseInt(tr.dataset.address);
-            if (address) {
-                const value = this.currentValues[address];
-                const valueCell = tr.querySelector('.value');
-                if (valueCell && value) {
-                    valueCell.textContent = value.value?.toFixed(2) || '-';
-                }
-            }
+        document.querySelectorAll('#deviceRegistersView [data-reg-name]').forEach(td => {
+            td.innerHTML = this._regValueHtml(td.dataset.regName);
         });
     },
-
-    // ============ Register Actions ============
 
     async queryRegisterNow(reg) {
         try {
@@ -420,7 +504,14 @@ Object.assign(JanitzaMonitor.prototype, {
         this.selectedRegisters.push(newReg);
         this.saveSelectedRegistersQuiet();
         this.showToast('success', this.t('toast.added', 'Added'), `${defaults.label} · ${defaults.pollGroup}`);
+        this._afterSelectionChange();
+    },
+
+    // a tick or an untick is saved at once; every view of the selection follows
+    _afterSelectionChange() {
         this.renderRegistersTable();
+        if (this.updateConfigTabs) this.updateConfigTabs();
+        this.renderSelectedRegistersList();
     },
 
     removeRegisterFromTable(address) {
@@ -429,7 +520,7 @@ Object.assign(JanitzaMonitor.prototype, {
             this.selectedRegisters = this.selectedRegisters.filter(r => r.address !== address);
             this.saveSelectedRegistersQuiet();
             this.showToast('info', this.t('toast.removed', 'Removed'), `${reg.name} ${this.t('toast.fromConfig', 'removed from configuration')}`);
-            this.renderRegistersTable();
+            this._afterSelectionChange();
         }
     },
 
@@ -444,6 +535,8 @@ Object.assign(JanitzaMonitor.prototype, {
             if (!response.ok) {
                 throw new Error('Save failed');
             }
+            // the selection census on the source picker follows the save
+            this.loadSelectedRegisters?.();
         } catch (error) {
             this.showToast('error', this.t('toast.saveFailed', 'Save Failed'), error.message);
         }
@@ -456,7 +549,14 @@ Object.assign(JanitzaMonitor.prototype, {
     // reads by address, so it works whether or not it exists in the map).
     // Is the device currently open in the Measurements view an HTTP/JSON source?
     // HTTP measurements are keyed by json_path, not a Modbus address.
+    _regSourceProto() {
+        const src = (this._regSources || []).find(x => x.id === this._regSource);
+        return src ? String(src.protocol || '').toLowerCase() : null;
+    },
+
     _regDeviceIsHttp() {
+        const sp = this._regSourceProto();
+        if (sp) return sp === 'http';
         const id = this._regDevice || this._primaryDeviceId();
         const dev = (this._devices || []).find(d => d.id === id);
         return dev?.protocol === 'http';
@@ -464,6 +564,8 @@ Object.assign(JanitzaMonitor.prototype, {
 
     // MQTT-input measurements key on a subscribe topic + json_path into the payload.
     _regDeviceIsMqtt() {
+        const sp = this._regSourceProto();
+        if (sp) return sp === 'mqtt';
         const id = this._regDevice || this._primaryDeviceId();
         const dev = (this._devices || []).find(d => d.id === id);
         return dev?.protocol === 'mqtt';
@@ -1002,114 +1104,96 @@ Object.assign(JanitzaMonitor.prototype, {
 
     renderSelectedRegistersList() {
         const container = document.getElementById('selectedRegistersList');
-
-        // Filter registers by tab (category) and search
+        if (!container) return;
+        const t = this.t.bind(this);
         let filtered = this.selectedRegisters.filter(reg => {
-            // Tab filter (by category)
-            if (this.configTab !== 'all' && reg._category !== this.configTab) {
-                return false;
-            }
-            // Search filter
+            if (this.configTab !== 'all' && (reg.category || reg._category) !== this.configTab) return false;
             if (this.configSearch) {
-                const searchStr = `${reg.address} ${reg.label} ${reg.name} ${reg.description || ''} ${reg.unit || ''} ${reg.poll_group}`.toLowerCase();
-                if (!searchStr.includes(this.configSearch)) {
-                    return false;
-                }
+                const searchStr = `${reg.address} ${reg.label} ${reg.name} ${reg.description || ''} ${reg.unit || ''} ${reg.poll_group} ${reg.json_path || ''}`.toLowerCase();
+                if (!searchStr.includes(this.configSearch)) return false;
             }
             return true;
         });
-
-        // Update register count
         const countEl = document.getElementById('registerCount');
         if (countEl) {
-            const total = this.selectedRegisters.length;
-            const shown = filtered.length;
-            countEl.textContent = shown === total
-                ? `${total} measurement${total !== 1 ? 's' : ''}`
-                : `${shown} of ${total} measurements`;
+            const total = this.selectedRegisters.length, shown = filtered.length;
+            countEl.textContent = shown === total ? `${total} measurement${total !== 1 ? 's' : ''}` : `${shown} of ${total} measurements`;
         }
-
+        this._updateRegTabCounts();
         if (filtered.length === 0) {
             container.innerHTML = `<div class="empty-state">${this.selectedRegisters.length === 0
-                ? 'No measurements selected.'
-                : 'No measurements match the current filter.'}</div>`;
+                ? t('registers.noneSelected', 'Nothing is read yet — tick measurements under "All available".')
+                : t('registers.noneMatch', 'No measurements match the current filter.')}</div>`;
             return;
         }
-
-        // HTTP sources key on json_path; the numeric address is an internal key,
-        // so surface the json_path column instead — clearer for the user.
-        const http = this._regDeviceIsHttp();
-
-        // Create compact table
+        // grouped by what they measure, in the catalog's order
+        const order = this._regCategoryOrder();
+        const catOf = r => r.category || r._category || 'other';
+        filtered = [...filtered].sort((a, b) => {
+            const ia = order.indexOf(catOf(a)), ib = order.indexOf(catOf(b));
+            return ((ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib)) || (a.address - b.address);
+        });
         container.innerHTML = `
-            <table class="selected-registers-table">
-                <thead>
-                    <tr>
-                        <th>${http ? 'JSON path' : 'Addr'}</th>
-                        <th>${this.t('lbl.label', "Label")}</th>
-                        <th>${this.t('lbl.unit', "Unit")}</th>
-                        <th>${this.t('lbl.poll', "Poll")}</th>
-                        <th class="center">MQTT</th>
-                        <th class="center">${this.t('lbl.influx', "Influx")}</th>
-                        <th>${this.t('lbl.actions', "Actions")}</th>
-                    </tr>
-                </thead>
+            <table class="selected-registers-table reg-table">
+                <thead><tr>
+                    <th class="reg-tick"><span class="sr-only">${t('registers.readCol', 'Read')}</span></th>
+                    <th>${t('registers.measurement', 'Measurement')}</th>
+                    <th>${t('registers.where', 'Where')}</th>
+                    <th class="num">${t('lbl.value', 'Value')}</th>
+                    <th>${t('registers.interval', 'Interval')}</th>
+                    <th class="center">MQTT</th>
+                    <th class="center">${t('lbl.influx', 'Influx')}</th>
+                    <th>${t('lbl.actions', 'Actions')}</th>
+                </tr></thead>
                 <tbody id="selectedRegistersBody"></tbody>
-            </table>
-        `;
-
+            </table>`;
         const tbody = document.getElementById('selectedRegistersBody');
-
+        let lastCat = null;
         filtered.forEach(reg => {
+            const cat = catOf(reg);
+            if (cat !== lastCat) {
+                lastCat = cat;
+                const gh = document.createElement('tr');
+                gh.className = 'reg-group';
+                gh.innerHTML = `<td colspan="8">${this._esc(this._regCatLabel(cat))}</td>`;
+                tbody.appendChild(gh);
+            }
             const tr = document.createElement('tr');
-
-            // MQTT tooltip
-            const mqttTooltip = reg.mqtt_enabled && reg.mqtt_topic
-                ? `Topic: ${reg.mqtt_topic}`
-                : (reg.mqtt_enabled ? 'Enabled' : 'Disabled');
-
-            // InfluxDB tooltip
+            tr.dataset.address = reg.address;
+            const mqttTooltip = reg.mqtt_enabled && reg.mqtt_topic ? `Topic: ${reg.mqtt_topic}` : (reg.mqtt_enabled ? 'Enabled' : 'Disabled');
             let influxTooltip = 'Disabled';
             if (reg.influxdb_enabled) {
                 influxTooltip = reg.influxdb_measurement || 'Enabled';
-                if (reg.influxdb_tags && Object.keys(reg.influxdb_tags).length > 0) {
-                    influxTooltip += ` [${Object.entries(reg.influxdb_tags).map(([k,v]) => `${k}=${v}`).join(', ')}]`;
+                if (reg.influxdb_tags && Object.keys(reg.influxdb_tags).length) {
+                    influxTooltip += ` [${Object.entries(reg.influxdb_tags).map(([k, v]) => `${k}=${v}`).join(', ')}]`;
                 }
             }
-
+            const custom = !this._regInCatalog(reg);
             tr.innerHTML = `
-                <td class="addr-cell"${http ? ` title="${this._esc(reg.json_path || '')}"` : ''}>${http ? this._esc(reg.json_path || '—') : reg.address}</td>
+                <td class="reg-tick"><input type="checkbox" checked aria-label="${t('registers.readCol', 'Read')}: ${this._esc(reg.label || reg.name)}"></td>
                 <td class="label-cell">
-                    <span class="reg-label">${this._esc(reg.label)}</span>
+                    <span class="reg-label">${this._esc(reg.label || reg.description || reg.name)}</span>
                     <span class="reg-name">${this._esc(reg.name)}</span>
                 </td>
-                <td class="unit-cell">${this._esc(reg.unit || '-')}</td>
-                <td><span class="badge poll-${reg.poll_group}">${this._esc(reg.poll_group)}</span></td>
-                <td class="center">
-                    <span class="status-icon ${reg.mqtt_enabled ? 'active' : ''}" title="${this._esc(mqttTooltip)}">
-                        ${reg.mqtt_enabled ? '&#10003;' : '&#10005;'}
-                    </span>
-                </td>
-                <td class="center">
-                    <span class="status-icon ${reg.influxdb_enabled ? 'active' : ''}" title="${this._esc(influxTooltip)}">
-                        ${reg.influxdb_enabled ? '&#10003;' : '&#10005;'}
-                    </span>
-                </td>
+                <td>${this._regWhere(reg)}</td>
+                <td class="value num" data-reg-name="${this._esc(reg.name)}">${this._regValueHtml(reg.name)}</td>
+                <td class="reg-interval">${this._regIntervalText(reg)}</td>
+                <td class="center"><span class="status-icon ${reg.mqtt_enabled ? 'active' : ''}" title="${this._esc(mqttTooltip)}">${reg.mqtt_enabled ? '&#10003;' : '&#10005;'}</span></td>
+                <td class="center"><span class="status-icon ${reg.influxdb_enabled ? 'active' : ''}" title="${this._esc(influxTooltip)}">${reg.influxdb_enabled ? '&#10003;' : '&#10005;'}</span></td>
                 <td class="actions-cell">
-                    <button class="btn-action edit" title="Edit">&#9998;</button>
-                    <button class="btn-action remove" title="Remove">&#10006;</button>
-                </td>
-            `;
-
+                    <button class="btn-action edit" title="${t('registers.editConfig', 'Edit how it is published')}" aria-label="${t('registers.editConfig', 'Edit how it is published')}">&#9998;</button>
+                    ${custom
+                        ? `<button class="btn-action remove" title="${t('common.delete', 'Delete')}" aria-label="${t('common.delete', 'Delete')}">&#10006;</button>`
+                        : `<span class="reg-lock" title="${t('registers.fromTemplate', 'From the template — untick it instead of deleting')}" aria-label="${t('registers.fromTemplate', 'From the template — untick it instead of deleting')}"><i aria-hidden="true" class="bi bi-lock"></i></span>`}
+                </td>`;
+            tr.querySelector('input[type=checkbox]').addEventListener('change', () => this.removeRegisterFromTable(reg.address));
             tr.querySelector('.edit').addEventListener('click', () => this.editRegister(reg));
-            tr.querySelector('.remove').addEventListener('click', () => this.removeRegister(reg.address));
-
+            tr.querySelector('.remove')?.addEventListener('click', () => this.removeRegisterFromTable(reg.address));
             tbody.appendChild(tr);
         });
+        this._startRegLive();
     },
 
-    // Delegated-action entry (dashboard table rows): look the register up by
-    // address at CLICK time, matching the old inline handler's late binding.
     editRegisterByAddress(address) {
         // dashboard context: the widget list is the DASH device's own — the
         // shared modal must read/save that list, not the Measurements page's.
@@ -1266,20 +1350,21 @@ Object.assign(JanitzaMonitor.prototype, {
         const host = document.getElementById('regSourceBar');
         if (!host) return;
         const srcs = (data && data.sources) || [];
+        this._regSources = srcs;
         // one way of being read is not a choice: say nothing rather than show a
         // dropdown with a single entry
         if (srcs.length < 2) { host.innerHTML = ''; this._regSource = ''; return; }
         if (!srcs.some(s => s.id === this._regSource)) this._regSource = srcs[0].id;
         const t = (k, d) => this.t(k, d);
+        const PROTO = { http: 'HTTP', tcp: 'Modbus TCP', 'rtu-tcp': 'Modbus RTU/TCP', rtu: 'Modbus RTU', mqtt: 'MQTT' };
         host.innerHTML = `
-            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;" role="group" aria-label="${t('registers.sourceLabel', 'Read from')}">
               <span style="color:var(--text-secondary);font-size:12.5px;">
-                <i aria-hidden="true" class="bi bi-diagram-2"></i>
-                ${t('registers.sourceLabel', 'Editing the map read over')}</span>
+                <i aria-hidden="true" class="bi bi-diagram-2"></i> ${t('registers.sourceLabel', 'Read from')}</span>
               ${srcs.map(x => `
-                <button class="btn btn-sm ${x.id === this._regSource ? 'btn-primary' : 'btn-ghost'}"
+                <button class="btn btn-sm ${x.id === this._regSource ? 'btn-primary' : 'btn-ghost'}" aria-pressed="${x.id === this._regSource}"
                         onclick="app.setRegSource('${this._esc(x.id)}')">
-                  ${this._esc(x.id)} <span style="opacity:.7;">(${this._esc(x.protocol)})</span>
+                  ${this._esc(x.id)} <span style="opacity:.75;">· ${PROTO[x.protocol] || this._esc(x.protocol)}${x.interval_s != null ? ` · ${t('registers.every', 'every')} ${x.interval_s} s` : ''}${x.selected != null ? ` · ${x.selected}${x.catalog != null ? '/' + x.catalog : ''} ${t('registers.ticked', 'ticked')}` : ''}</span>
                 </button>`).join('')}
               <span class="field-hint" style="margin:0;">${t('registers.sourceHint',
                 'Each source has its own map and its own intervals. Ticking a field here changes only what THIS source reads.')}</span>
@@ -1368,7 +1453,7 @@ Object.assign(JanitzaMonitor.prototype, {
         this.updateConfigTabs();
         this.renderSelectedRegistersList();
         this._wireDeviceRegTabs();
-        this.switchDeviceRegTab('available');   // land on Available, as requested
+        this.switchDeviceRegTab('selected');    // what is read comes first
     },
 
     _wireDeviceRegTabs() {

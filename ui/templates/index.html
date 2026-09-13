@@ -401,21 +401,24 @@
                         <h2><button class="btn btn-ghost btn-sm" onclick="app.closeDeviceRegisters()" aria-label="Back"><i aria-hidden="true" class="bi bi-arrow-left"></i></button>
                             <i aria-hidden="true" class="bi bi-list-check"></i> <span id="deviceRegistersTitle" data-i18n="registers.configured">Measurements</span></h2>
                         <div class="header-actions">
-                            <button class="btn btn-ghost btn-sm" onclick="app.uploadDeviceMap()" data-i18n-title="tip.upload" title="Upload a measurement map (device template) and assign it to this device">
-                                <i aria-hidden="true" class="bi bi-upload"></i> <span data-i18n="registers.uploadMap">Upload map</span>
-                            </button>
-                            <button class="btn btn-ghost btn-sm" onclick="app.openCsvImport()" data-i18n-title="tip.importCsv" title="Import a register map from a CSV (vendor/community list) and assign it to this device">
-                                <i aria-hidden="true" class="bi bi-filetype-csv"></i> <span data-i18n="registers.importCsv">Import CSV</span>
-                            </button>
-                            <button class="btn btn-ghost btn-sm" onclick="app.downloadRegisterMap()" data-i18n-title="tip.downloadMap" title="Download this device's full measurement map (JSON)">
-                                <i aria-hidden="true" class="bi bi-download"></i> <span data-i18n="registers.downloadMap">Download map</span>
-                            </button>
-                            <button class="btn btn-ghost btn-sm" id="writeRegBtn" onclick="app.openWriteModal()" data-i18n-title="tip.write" title="Write a value to this device (Modbus FC5/FC6/FC16)">
-                                <i aria-hidden="true" class="bi bi-pencil-square"></i> <span data-i18n="write.button">Write</span>
-                            </button>
-                            <button class="btn btn-ghost btn-sm" id="rawConfigBtn">
-                                <i aria-hidden="true" class="bi bi-code-slash"></i> Raw JSON
-                            </button>
+                            <!-- import / export / raw / write live behind one menu: five
+                                 rarely-used buttons in a row taught nothing -->
+                            <div class="reg-menu">
+                                <button class="btn btn-ghost btn-sm" id="regMenuBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="regMenu" onclick="app.toggleRegMenu()">
+                                    <i aria-hidden="true" class="bi bi-three-dots"></i> <span data-i18n="registers.more">More</span></button>
+                                <div id="regMenu" role="menu" hidden>
+                                    <button role="menuitem" class="btn btn-ghost btn-sm" onclick="app.toggleRegMenu(false);app.openCsvImport()" data-i18n-title="tip.importCsv" title="Import a register map from a CSV (vendor/community list) and assign it to this device">
+                                        <i aria-hidden="true" class="bi bi-filetype-csv"></i> <span data-i18n="registers.importCsv">Import CSV</span></button>
+                                    <button role="menuitem" class="btn btn-ghost btn-sm" onclick="app.toggleRegMenu(false);app.uploadDeviceMap()" data-i18n-title="tip.upload" title="Upload a measurement map (device template) and assign it to this device">
+                                        <i aria-hidden="true" class="bi bi-upload"></i> <span data-i18n="registers.uploadMap">Upload map</span></button>
+                                    <button role="menuitem" class="btn btn-ghost btn-sm" onclick="app.toggleRegMenu(false);app.downloadRegisterMap()" data-i18n-title="tip.downloadMap" title="Download this device's full measurement map (JSON)">
+                                        <i aria-hidden="true" class="bi bi-download"></i> <span data-i18n="registers.downloadMap">Download map</span></button>
+                                    <button role="menuitem" class="btn btn-ghost btn-sm" id="rawConfigBtn">
+                                        <i aria-hidden="true" class="bi bi-code-slash"></i> Raw JSON</button>
+                                    <button role="menuitem" class="btn btn-ghost btn-sm" id="writeRegBtn" onclick="app.toggleRegMenu(false);app.openWriteModal()" data-i18n-title="tip.write" title="Write a value to this device (Modbus FC5/FC6/FC16)">
+                                        <i aria-hidden="true" class="bi bi-pencil-square"></i> <span data-i18n="write.button">Write</span></button>
+                                </div>
+                            </div>
                             <button class="btn btn-primary btn-sm" id="saveRegistersBtn">
                                 <i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span>
                             </button>
@@ -426,14 +429,14 @@
                          unit is reached more than one way) -->
                     <div id="regSourceBar"></div>
 
-                    <!-- Available / Selected tabs -->
+                    <!-- Selected (what is read) first; the whole catalog second -->
                     <div class="config-main-tabs" id="deviceRegTabs">
-                        <button class="config-main-tab active" data-regtab="available"><i aria-hidden="true" class="bi bi-list-ul"></i> <span data-i18n="registers.available">Available</span></button>
-                        <button class="config-main-tab" data-regtab="selected"><i aria-hidden="true" class="bi bi-list-check"></i> <span data-i18n="registers.selectedTab">Selected</span></button>
+                        <button class="config-main-tab active" data-regtab="selected"><i aria-hidden="true" class="bi bi-list-check"></i> <span data-i18n="registers.selectedTab">Selected</span> <span class="count" id="regTabSelCount"></span></button>
+                        <button class="config-main-tab" data-regtab="available"><i aria-hidden="true" class="bi bi-list-ul"></i> <span data-i18n="registers.available">All available</span> <span class="count" id="regTabAllCount"></span></button>
                     </div>
 
-                    <!-- Available: the full register catalog for this device -->
-                    <div class="reg-pane" data-regpane="available">
+                    <!-- All available: the full catalog for this source, ticked in place -->
+                    <div class="reg-pane" data-regpane="available" style="display:none;">
                         <div class="config-toolbar">
                             <input type="text" id="registerSearch" class="input" data-i18n-placeholder="ph.searchMeasurements" placeholder="Search measurements...">
                             <select id="categoryFilter" class="input" aria-label="Category filter">
@@ -447,15 +450,14 @@
                             </button>
                         </div>
                         <div class="table-container">
-                            <table class="data-table">
+                            <table class="data-table reg-table">
                                 <thead>
                                     <tr>
-                                        <th scope="col" id="regColKeyHead" data-i18n="lbl.address">Address</th>
-                                        <th scope="col" data-i18n="lbl.description">Description</th>
-                                        <th scope="col" data-i18n="lbl.name">Name</th>
-                                        <th scope="col" data-i18n="lbl.unit">Unit</th>
-                                        <th scope="col" data-i18n="lbl.category">Category</th>
-                                        <th scope="col" data-i18n="lbl.value">Value</th>
+                                        <th scope="col" class="reg-tick"><span class="sr-only" data-i18n="registers.readCol">Read</span></th>
+                                        <th scope="col" data-i18n="registers.measurement">Measurement</th>
+                                        <th scope="col" id="regColKeyHead" data-i18n="registers.where">Where</th>
+                                        <th scope="col" class="num" data-i18n="lbl.value">Value</th>
+                                        <th scope="col" data-i18n="registers.interval">Interval</th>
                                         <th scope="col" data-i18n="lbl.actions">Actions</th>
                                     </tr>
                                 </thead>
@@ -466,7 +468,7 @@
                     </div>
 
                     <!-- Selected: the registers actually polled + routed -->
-                    <div class="reg-pane" data-regpane="selected" style="display:none;">
+                    <div class="reg-pane" data-regpane="selected">
                         <div class="config-toolbar">
                             <input type="text" id="configSearch" class="input" data-i18n-placeholder="ph.searchSelected" placeholder="Search selected...">
                             <div class="config-tabs" id="configTabs"></div>
