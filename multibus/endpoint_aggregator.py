@@ -57,7 +57,13 @@ logger = logging.getLogger(__name__)
 # Monotonic counters — combined from last-known values, never freshness-gated.
 _COUNTER_PREFIXES = ("energy_",)
 _SUM_PREFIXES = ("power_", "current_")
-_AVG_PREFIXES = ("voltage_", "frequency", "temperature_")
+# Site ratios (autonomy, self-consumption) are averaged rather than summed: two
+# installations that are each 100 % autonomous are not 200 % autonomous. A site
+# group holds ONE unit, where averaging is simply passthrough — but the rule has
+# to be right for the day someone groups two sites together, and "no rule at
+# all" silently dropped them, which is how they went missing the first time.
+_AVG_PREFIXES = ("voltage_", "frequency", "temperature_",
+                 "autonomy", "self_consumption")
 # Names that would be nonsense to combine: identity strings, status codes, event
 # bitfields, plumbing — plus power factor, which is DERIVED from the summed
 # powers instead (a ratio is neither summable nor meaningfully averageable).
@@ -171,6 +177,35 @@ def compute_endpoint_aggregates(config, registry, endpoint_id: str,
     return out
 
 
+def aggregate_topic(endpoint: Dict, endpoint_id: str, group_id: str = "") -> str:
+    """Where one group's totals are published.
+
+    The default keeps every topic that exists today byte-identical:
+    ``mbg/endpoints/<id>`` for the first group, with later groups under their own
+    name. An installation may override the root — one gateway can front several
+    SITES, and `pv/` on two of them would be two installations writing the same
+    topics. ``${endpoint_id}`` and ``${group_id}`` substitute, so one pattern can
+    serve them all.
+
+    A trailing slash is trimmed and an empty override falls back, because a root
+    of "" would publish to a topic starting with "/" that no broker layout wants.
+    """
+    mqtt = (endpoint.get('mqtt') or {})
+    pat = str(mqtt.get('aggregate_prefix', '') or '').strip().strip('/')
+    if not pat:
+        base = f"mbg/endpoints/{endpoint_id}"
+        return f"{base}/{group_id}" if group_id else base
+    out = (pat.replace('${endpoint_id}', endpoint_id)
+              .replace('${group_id}', group_id or '')
+              .replace('${id}', endpoint_id))
+    if '${group_id}' not in pat and group_id:
+        out = f"{out}/{group_id}"
+    # The first group has no name, so a pattern that places ${group_id} mid-path
+    # collapses to an empty segment. "pv//summary" is a DIFFERENT topic from
+    # "pv/summary" to a broker, and subscribers to the latter would never see it.
+    return '/'.join(seg for seg in out.split('/') if seg)
+
+
 def endpoint_bucket(endpoint: Dict, endpoint_id: str) -> Optional[str]:
     """The InfluxDB bucket for an endpoint's OWN points. The endpoint's units resolve
     ``${unit_id}`` / ``${device_id}`` per unit; the aggregate belongs to no unit,
@@ -251,14 +286,15 @@ class EndpointAggregator(threading.Thread):
                 # fresh: that cycle still carries status=offline and
                 # units_online=0, which is precisely what a consumer needs at
                 # nightfall.
-                self._publish_mqtt(pid, agg, sub)
+                self._publish_mqtt(pid, agg, sub, p)
                 self._publish_influx(p, pid, agg, sub)
 
-    def _publish_mqtt(self, pid: str, agg: Dict[str, Any], sub: str = ""):
+    def _publish_mqtt(self, pid: str, agg: Dict[str, Any], sub: str = "",
+                      endpoint: Optional[Dict] = None):
         mqtt = self._get_mqtt()
         if mqtt is None or not getattr(mqtt, "connected", False):
             return
-        base = f"mbg/endpoints/{pid}" + (f"/{sub}" if sub else "")
+        base = aggregate_topic(endpoint or {}, pid, sub)
         for name, val in agg.items():
             leaf = name if name in _META else (mqtt_topic_for(name) or name)
             # publish_if_changed keeps the change-detection semantics every

@@ -1,0 +1,171 @@
+{
+  "device_template": {
+    "id": "fronius_solar_api_site",
+    "name": "Fronius installation (Solar API site totals)",
+    "manufacturer": "Fronius",
+    "description": "The whole INSTALLATION in one call \u2014 GetPowerFlowRealtimeData.fcgi \u2014 not a device on a bus.\n\nMeasured on a production DataManager 2026-09-13: 89 ms per call, and the values behind it refresh every 2.5-3.3 s. Polling faster than about 2 s returns the same number twice; the datalogger polls its own RS-485 side on its own rhythm and we cannot outrun it.\n\nWhat makes this worth a source of its own: house load, autonomy and self-consumption are NOT derivable from the inverters. Nothing in an inverter's register map knows what the house consumed. Sum the inverters and you get generation; you still cannot say how much of it stayed on site.\n\nGrid and battery power ship UNTICKED. A meter wired at the grid connection reports the same flow first-hand and faster (measured: 1.1 s against 2.5 s here), so taking it from the site view would be a slower second copy. Tick them only when there is no such meter.\n\nSign convention follows the source: grid negative while exporting, battery negative while charging. Flipping it would make our number disagree with the inverter's own display.\n\nThe URL carries no ${unit_id}: an installation is one thing, so this group holds exactly one unit.",
+    "protocol": {
+      "transports": [
+        "http"
+      ],
+      "byte_order": "big"
+    },
+    "poll_groups": {
+      "realtime": {
+        "interval": 2,
+        "description": "power flow and ratios (source refreshes ~2.5 s)"
+      },
+      "normal": {
+        "interval": 30,
+        "description": "energy counters"
+      }
+    },
+    "registers": [
+      {
+        "address": 1,
+        "name": "power_pv",
+        "label": "PV generation",
+        "unit": "W",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.Site.P_PV",
+        "description": "The number the whole installation is judged by, and the DataManager computes it itself.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 2,
+        "name": "power_load",
+        "label": "House load",
+        "unit": "W",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.Site.P_Load",
+        "description": "Not derivable from the inverters: nothing in their register maps knows what the house drew.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 3,
+        "name": "power_grid",
+        "label": "Grid power",
+        "unit": "W",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.Site.P_Grid",
+        "description": "OFF by default: a meter wired on the grid connection reports this faster and first-hand. Tick it only when there is no such meter."
+      },
+      {
+        "address": 4,
+        "name": "power_battery",
+        "label": "Battery power",
+        "unit": "W",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.Site.P_Akku",
+        "description": "OFF by default: null on an installation without storage, and a battery reports itself better."
+      },
+      {
+        "address": 5,
+        "name": "autonomy",
+        "label": "Autonomy",
+        "unit": "%",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.Site.rel_Autonomy",
+        "description": "Computed on the datalogger from generation and load together; we cannot derive it from either alone.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 6,
+        "name": "self_consumption",
+        "label": "Self-consumption",
+        "unit": "%",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.Site.rel_SelfConsumption",
+        "description": "Same: a site-level ratio, not a device reading.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 7,
+        "name": "energy_today",
+        "label": "Energy today",
+        "unit": "Wh",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "normal",
+        "json_path": "Body.Data.Site.E_Day",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 8,
+        "name": "energy_year",
+        "label": "Energy this year",
+        "unit": "Wh",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "normal",
+        "json_path": "Body.Data.Site.E_Year",
+        "description": "OFF by default: a slow counter most installations read from the daily total instead."
+      },
+      {
+        "address": 9,
+        "name": "energy_lifetime",
+        "label": "Energy lifetime",
+        "unit": "Wh",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "normal",
+        "json_path": "Body.Data.Site.E_Total",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      }
+    ]
+  }
+}

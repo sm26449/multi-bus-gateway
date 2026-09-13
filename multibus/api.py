@@ -2409,7 +2409,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         """One entry per unit group, with its units, its sources and its own
         total. The FIRST group owns the endpoint's headline aggregate, which is
         what keeps every topic and series that predates groups unchanged."""
-        from .endpoint_aggregator import compute_endpoint_aggregates
+        from .endpoint_aggregator import (aggregate_topic,
+                                          compute_endpoint_aggregates)
         out = []
         for i, g in enumerate(config._endpoint_groups(p)):
             gid = g['id']
@@ -2431,8 +2432,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'total_units': len(mine),
                 # the bare endpoint path belongs to the first group; the others
                 # publish under their own name
-                'topic': (f"mbg/endpoints/{pid}" if i == 0
-                          else f"mbg/endpoints/{pid}/{gid}"),
+                'topic': aggregate_topic(p, pid, '' if i == 0 else gid),
             })
         return out
 

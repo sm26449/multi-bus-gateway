@@ -359,3 +359,58 @@ endpoints:
     one = compute_endpoint_aggregates(cfg, reg, 'legacy', now=now, group_id='units')
     assert whole['power_active_total'] == one['power_active_total'] == 350
     assert whole['units_total'] == one['units_total'] == 2
+
+
+# ── where the totals land ────────────────────────────────────────────────────
+
+def test_the_default_topic_is_byte_identical_to_what_existed_before_groups():
+    """Every consumer written against mbg/endpoints/... must keep working."""
+    from multibus.endpoint_aggregator import aggregate_topic
+    assert aggregate_topic({}, 'fronius') == 'mbg/endpoints/fronius'
+    assert aggregate_topic({}, 'fronius', 'grid') == 'mbg/endpoints/fronius/grid'
+
+
+def test_an_installation_can_own_its_topic_root():
+    """One gateway can front several SITES. Two of them publishing under `pv/`
+    would be two installations writing the same topics."""
+    from multibus.endpoint_aggregator import aggregate_topic
+    ep = {'mqtt': {'aggregate_prefix': 'pv'}}
+    assert aggregate_topic(ep, 'fronius') == 'pv'
+    assert aggregate_topic(ep, 'fronius', 'inverters') == 'pv/inverters'
+
+
+def test_the_root_can_place_the_group_itself():
+    """So a site can read pv/inverters/summary rather than pv/summary/inverters."""
+    from multibus.endpoint_aggregator import aggregate_topic
+    ep = {'mqtt': {'aggregate_prefix': 'pv/${group_id}/summary'}}
+    assert aggregate_topic(ep, 'f', 'inverters') == 'pv/inverters/summary'
+    # with no group (the first one) the placeholder simply collapses
+    assert aggregate_topic(ep, 'f') == 'pv/summary'
+
+
+def test_several_sites_stay_apart():
+    from multibus.endpoint_aggregator import aggregate_topic
+    ep = {'mqtt': {'aggregate_prefix': 'sites/${endpoint_id}'}}
+    assert aggregate_topic(ep, 'roof', 'inverters') == 'sites/roof/inverters'
+    assert aggregate_topic(ep, 'barn', 'inverters') == 'sites/barn/inverters'
+
+
+def test_a_blank_or_sloppy_root_never_produces_a_leading_slash():
+    """A root of "" would publish to "/pv/..." which no broker layout wants."""
+    from multibus.endpoint_aggregator import aggregate_topic
+    assert aggregate_topic({'mqtt': {'aggregate_prefix': ''}}, 'f') == 'mbg/endpoints/f'
+    assert aggregate_topic({'mqtt': {'aggregate_prefix': '  /pv/  '}}, 'f') == 'pv'
+    assert not aggregate_topic({'mqtt': {'aggregate_prefix': '/pv/'}}, 'f', 'g').startswith('/')
+
+
+def test_site_ratios_are_averaged_not_dropped():
+    """They match no power/voltage/energy prefix, so with no rule of their own
+    they were silently skipped — the aggregate simply had no autonomy in it, and
+    nothing said why. Averaged, because two installations that are each 100 %
+    autonomous are not 200 % autonomous."""
+    from multibus.endpoint_aggregator import _rule_for
+    assert _rule_for('autonomy') == 'avg'
+    assert _rule_for('self_consumption') == 'avg'
+    # and the things that genuinely must not be combined still are not
+    assert _rule_for('power_factor_total') is None
+    assert _rule_for('serial') is None

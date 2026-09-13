@@ -1,5 +1,56 @@
 # Changelog
 
+## 3.64.0
+
+### 2026-09-13 — the installation itself is a source, and topics have a root
+
+**Measured first, on the production DataManager in daylight.** How fast a value
+can honestly be read is a property of the source, so it was measured before
+anything was designed:
+
+| data | refreshes at source | useful poll |
+|---|---|---|
+| inverter power (per unit and site) | 2.5 – 3.3 s | 2 s |
+| grid meter, all 37 fields | 1.1 s | 1 s |
+
+Sampling twice a second for 40 s returned 62 samples and 17 distinct values: the
+datalogger polls its own RS-485 side on its own rhythm and we cannot outrun it.
+So a 1 s poll is real for the meter and **not** for the inverters — asking for it
+there returns the same number two or three times.
+
+**`fronius_solar_api_site`** reads `GetPowerFlowRealtimeData.fcgi`, one 89 ms
+call describing the whole installation: PV generation, house load, grid flow,
+battery, autonomy, self-consumption and the day/year/lifetime counters. House
+load, autonomy and self-consumption are **not derivable** from the inverters —
+nothing in an inverter's register map knows what the house consumed — so this is
+data MBG simply could not produce before.
+
+Its curated defaults say what a user should tick. Grid and battery power ship
+UNTICKED: a meter wired at the grid connection reports the same flow first-hand
+and faster (1.1 s against 2.5 s), so taking it from the site view would be a
+slower second copy. Sign convention follows the source — grid negative while
+exporting — because flipping it would make our number disagree with the
+inverter's own display.
+
+**Nine site concepts joined the canonical dictionary** (`power_pv`,
+`power_grid`, `power_load`, `power_battery`, `energy_today/year/lifetime`,
+`autonomy`, `self_consumption`) rather than being invented inside one template,
+so any vendor's site view lands on the same names.
+
+**Topics have a configurable root.** `mqtt.aggregate_prefix` on an installation,
+with `${endpoint_id}` and `${group_id}`, so a tree can read `pv/inverters/summary`
+instead of `mbg/endpoints/fronius/inverters` — and two sites on one gateway no
+longer collide. The default is byte-identical to what exists today.
+
+Two defects found by building it, both silent failures:
+
+- A ratio matched no aggregation rule, so `autonomy` and `self_consumption` were
+  dropped from the totals with nothing said. They are averaged now: two
+  installations that are each 100 % autonomous are not 200 % autonomous.
+- A topic pattern placing `${group_id}` mid-path collapsed to `pv//summary` for
+  the first group, which is a DIFFERENT topic to a broker — subscribers to
+  `pv/summary` would never have seen it.
+
 ## 3.63.0
 
 ### 2026-09-12 — Solar API is a way of reading, not an afterthought

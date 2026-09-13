@@ -86,6 +86,27 @@ CANONICAL_FIELDS: Dict[str, Tuple[str, str, str, str]] = {
     'thd_current_l1': ('thd', '%', 'thd/current/l1', 'L1 current THD'),
     'thd_current_l2': ('thd', '%', 'thd/current/l2', 'L2 current THD'),
     'thd_current_l3': ('thd', '%', 'thd/current/l3', 'L3 current THD'),
+    # ── Site / installation totals (measurement: site) ────────────────────────
+    #
+    # These describe a whole INSTALLATION, not a device on a bus: how much it is
+    # generating, what the house is drawing, which way the grid is flowing. A
+    # Fronius DataManager computes them itself and serves them in one call
+    # (GetPowerFlowRealtimeData), and they are NOT derivable from the per-unit
+    # readings alone — nothing in an inverter's register map knows what the
+    # house consumed.
+    #
+    # Sign convention follows the source: grid power is NEGATIVE while
+    # exporting, battery power negative while charging. Flipping it here would
+    # make our number disagree with the inverter's own display.
+    'power_pv':          ('site', 'W', 'site/power/pv', 'Total PV generation across the installation'),
+    'power_grid':        ('site', 'W', 'site/power/grid', 'Grid power (negative = exporting)'),
+    'power_load':        ('site', 'W', 'site/power/load', 'House load (negative = consuming)'),
+    'power_battery':     ('site', 'W', 'site/power/battery', 'Battery power (negative = charging)'),
+    'energy_today':      ('site', 'Wh', 'site/energy/today', 'Energy generated today'),
+    'energy_year':       ('site', 'Wh', 'site/energy/year', 'Energy generated this year'),
+    'energy_lifetime':   ('site', 'Wh', 'site/energy/lifetime', 'Energy generated since commissioning'),
+    'autonomy':          ('site', '%', 'site/autonomy', 'Share of the load covered without the grid'),
+    'self_consumption':  ('site', '%', 'site/self_consumption', 'Share of generation consumed on site'),
     # ── Diagnostics (measurement: diagnostic) ─────────────────────────────────
     'model_id':     ('diagnostic', '', 'diagnostic/model_id', 'Meter model identification code'),
     'firmware_rev': ('diagnostic', '', 'diagnostic/firmware_rev', 'Firmware / revision code'),
