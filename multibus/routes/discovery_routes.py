@@ -207,7 +207,17 @@ def build(ctx) -> APIRouter:
             raise HTTPException(status_code=400, detail="invalid host")
         if not (1 <= int(port) <= 65535):
             raise HTTPException(status_code=400, detail="invalid port")
-        _ip = _require_lan_host(host)   # SSRF egress guard (raises 400 if not LAN)
+        # SSRF egress guard (raises 400 if not LAN) — the same operator opt-out
+        # the HTTP devices honour lets a lab reach a simulator on loopback
+        if config.security.allow_nonlan_http_devices:
+            from .. import discovery
+            _e = discovery.lan_host_error(host, True)
+            if _e:
+                raise HTTPException(status_code=400, detail=_e)
+            import socket
+            _ip = sorted({i[4][0] for i in socket.getaddrinfo(host, None)})[0]
+        else:
+            _ip = _require_lan_host(host)
 
         def _fetch(path):
             import urllib.request

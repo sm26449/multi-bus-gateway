@@ -1,5 +1,44 @@
 # Changelog
 
+## 3.70.0
+
+### 2026-09-13 — the Add Installation wizard asks what the operator knows
+
+Fifth step of the audit. The wizard forced a Modbus host on a Solar-API-only
+installation and tested Modbus alone; step 2 offered all fifteen templates to
+an inverter group and asked for unit ids the datalogger knows; step 3 took
+intervals as `normal=20, slow=120`; the review named `mbg/endpoints/…` while
+the groups would publish elsewhere.
+
+- **Step 1 — the installation.** Name (the id follows it), **how the
+  datalogger is reached** — Solar API, Modbus TCP, or both (recommended) — its
+  address, the Modbus port only when Modbus is in play, and **where it
+  publishes** (`pv` → `pv/inverters/N/…`, `pv/site/…`). **Test** checks exactly
+  what was ticked and says so in words; the Solar API check *is* the
+  discovery.
+- **Step 2 — what it holds.** What the datalogger reported, as ticks:
+  Inverters (n, with their ids), Site totals, Grid meter (unticked on purpose —
+  grid data is better read from the meter itself). Templates follow from role
+  × transport; a group added by hand sees only templates for its kind and its
+  way of being read. Manual fallback when the datalogger does not answer.
+- **Step 3 — how often.** Labelled numbers per way of reading: Solar API
+  `power, voltages, currents every 2 s · energy counters every 30 s`; Modbus
+  `the complete reading every 20 s · counters and static data every 120 s`;
+  the measured floor beside it when the datalogger is slow; one field for how
+  long Solar API stays authoritative before Modbus takes its fields back.
+- **Step 4 — review.** Group, units (ids), read via (source and interval),
+  the real topics and the totals topic, the device ids; create lands on the
+  installation page.
+- A group nothing can read is not created; a bundled template is used only
+  when the gateway has it; no Modbus fallback host is invented for a
+  Solar-API-only installation.
+
+`GET /api/fronius/discover` honours `security.allow_nonlan_http_devices`, so a
+lab stand-in on loopback can be discovered (tools/e2e/fake_solar_api.mjs).
+
+Tests: e2e `tools/e2e/plant_wizard_e2e.mjs` rewritten against the stand-in
+(26 checks).
+
 ## 3.69.0
 
 ### 2026-09-13 — the Measurements tab: what is read, where, how often

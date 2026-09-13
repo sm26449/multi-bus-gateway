@@ -101,6 +101,23 @@ MBG_URL=http://localhost:18088 DEVICE=pv-u1 \
 Config it expects: auth off, one endpoint whose group declares TWO sources
 (`solar_api` over HTTP, `sunspec` over Modbus) on units 1 and 2.
 
+## Add Installation wizard (against a stand-in datalogger)
+
+`plant_wizard_e2e.mjs` now drives the wizard against `fake_solar_api.mjs`, a
+Solar API stand-in on loopback (3 inverters, 1 meter): the segmented choice of
+how the datalogger is reached, Test in words, what was found as ticks, the
+filtered template list for a group by hand, labelled intervals, the review's
+topics, and that what was created matches the review.
+
+```bash
+FAKE_PORT=18099 node fake_solar_api.mjs &
+MBG_URL=http://localhost:18086 FAKE=127.0.0.1:18099 CHROMIUM_PATH=<chrome> \
+  node plant_wizard_e2e.mjs
+```
+
+Config it expects: auth off, no endpoints, `security.allow_nonlan_http_devices:
+true` (loopback is otherwise refused by the discovery guard).
+
 ## Installation safety
 
 `installation_safety_e2e.mjs` guards the three ways the installation page could
