@@ -294,6 +294,10 @@ class EndpointAggregator(threading.Thread):
                 # published bare is a property of the default pattern, decided
                 # inside aggregate_topic, not guessed here.
                 sub, first = gid, (gi == 0)
+                if int(agg.get("units_total") or 0) < 2:
+                    # A total of one unit is that unit, published twice under
+                    # another name. The unit's own topics already carry it.
+                    continue
                 if log:
                     fields = sum(1 for k in agg if k not in _META)
                     energy = sum(1 for k in agg if k.startswith("energy_"))

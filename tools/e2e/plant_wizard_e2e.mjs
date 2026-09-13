@@ -146,9 +146,9 @@ try {
         (g.inverters.sources || []).map(s => s.id).join(',') === 'solar_api,modbus',
         (g.inverters.sources || []).map(s => s.id).join(','));
   check('the meter group is its own', g.grid.total_units === 1 && g.grid.role === 'meter');
-  check('the first group owns the headline topic',
+  check('the first group owns the headline topic, a group of one has none',
         g.inverters.topic === 'mbg/endpoints/sunfield'
-        && g.grid.topic === 'mbg/endpoints/sunfield/grid');
+        && g.grid.topic === null);
   check('the wizard closed on success',
         !(await page.locator('#plantWizardModal').isVisible()));
 

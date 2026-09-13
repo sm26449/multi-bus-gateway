@@ -61,12 +61,13 @@ try {
         (await page.locator('#plStatusWord').innerText()).trim() === 'offline');
   check('census reads 0/3', (await page.locator('#plCensus').innerText()).startsWith('0/3'));
 
-  // ---- 3. the aggregate grid says why it is empty ------------------------
+  // ---- 3. the group total says why it is empty ---------------------------
   check('no totals yet, and it says why',
-        (await page.locator('#plAggGrid').innerText()).toLowerCase().includes('nothing is fresh'));
+        (await page.locator('[data-group-totals]').innerText()).toLowerCase().includes('nothing is fresh'));
 
-  // ---- 3b. what the wire costs, measured ----------------------------------
-  const busLine = await page.locator('#plBus').innerText();
+  // ---- 3b. what the wire costs, measured — under "How it is read" ----------
+  await page.evaluate(() => document.querySelectorAll('details[data-group-details]').forEach(d => d.open = true));
+  const busLine = (await page.locator('#plBus').count()) ? await page.locator('#plBus').innerText() : '';
   check('the access point states what it costs',
         /no transactions measured yet|per read/i.test(busLine), busLine.slice(0, 70));
   const busApi = (await (await fetch(API)).json()).bus;
@@ -95,7 +96,7 @@ try {
 
   // ---- 5. the output destinations are stated, and live under mbg/ --------
   const pageText = await page.locator('[data-endpoint-page]').innerText();
-  check('output namespace is mbg/endpoints/<id>', pageText.includes(`mbg/endpoints/${ENDPOINT}/`));
+  check('the totals namespace is mbg/endpoints/<id>', pageText.includes(`mbg/endpoints/${ENDPOINT}/`));
 
   // ---- 6. per-unit probe -------------------------------------------------
   await page.click('[data-endpoint-page] button[data-action="testEndpointUi"]');

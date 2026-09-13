@@ -650,7 +650,10 @@ def test_the_first_group_owns_the_endpoints_headline_topic(tmp_path):
     assert client.post("/api/endpoints", json=PLANT_BODY).status_code == 200
     groups = client.get("/api/endpoints/plant").json()['groups']
     assert groups[0]['topic'] == 'mbg/endpoints/plant'
-    assert groups[1]['topic'] == 'mbg/endpoints/plant/grid'
+    # a group of ONE unit has no total — it would be that unit republished
+    # under another name — so it promises no topic either
+    assert groups[1]['total_units'] == 1 and groups[1]['topic'] is None
+    assert groups[1]['aggregates'] == {}
 
 
 @needs_tc

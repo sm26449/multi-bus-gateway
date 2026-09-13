@@ -239,13 +239,25 @@ def test_census_publishes_even_when_nothing_is_fresh():
 
 
 def test_mqtt_leaves_use_canonical_topics():
-    cfg = _Cfg(["u1"])
-    reg = _Reg({"u1": {1: _entry("power_active_total", 1500),
-                       2: _entry("energy_active_generated", 90)}})
+    cfg = _Cfg(["u1", "u2"])
+    reg = _Reg({"u1": {1: _entry("power_active_total", 1000),
+                       2: _entry("energy_active_generated", 40)},
+                "u2": {1: _entry("power_active_total", 500),
+                       2: _entry("energy_active_generated", 50)}})
     mq = _Mqtt()
     EndpointAggregator(cfg, reg, lambda: mq, lambda: None)._publish_all()
     assert mq.sent["mbg/endpoints/p/power/active/total"] == 1500
     assert mq.sent["mbg/endpoints/p/energy/active/generated"] == 90
+
+
+def test_a_group_of_one_unit_publishes_no_total():
+    """A total of one unit is that unit again under another name; its own
+    topics already carry it (UI audit 1.6: pv/site/summary duplicated pv/site)."""
+    cfg = _Cfg(["u1"])
+    reg = _Reg({"u1": {1: _entry("power_active_total", 1500)}})
+    mq = _Mqtt()
+    EndpointAggregator(cfg, reg, lambda: mq, lambda: None)._publish_all()
+    assert mq.sent == {}
 
 
 def test_aggregates_false_opts_the_endpoint_out():
@@ -272,9 +284,10 @@ def test_endpoint_bucket_resolves_every_placeholder_to_the_endpoint():
 
 def test_influx_writes_the_resolved_bucket_and_only_on_change():
     pytest.importorskip("influxdb_client")
-    cfg = _Cfg(["u1"], endpoints=[{"id": "p", "enabled": True,
-                                "influxdb": {"bucket": "b_${endpoint_id}"}}])
-    reg = _Reg({"u1": {1: _entry("power_active_total", 100)}})
+    cfg = _Cfg(["u1", "u2"], endpoints=[{"id": "p", "enabled": True,
+                                      "influxdb": {"bucket": "b_${endpoint_id}"}}])
+    reg = _Reg({"u1": {1: _entry("power_active_total", 100)},
+                "u2": {1: _entry("power_active_total", 100)}})
     inf = _Influx()
     ag = EndpointAggregator(cfg, reg, lambda: None, lambda: inf)
     ag._publish_all()

@@ -63,14 +63,94 @@ Object.assign(JanitzaMonitor.prototype, {
         const dot = view.querySelector('#plStatusDot');
         if (dot) dot.style.setProperty('--dot', this._endpointStatusColor(p));
         set('#plStatusWord', this._esc(this._endpointStatusWord(p)));
-        set('#plCensus', `${p.online_units}/${p.total_units} ${this.t('endpoints.online', 'online')}`);
-        set('#plAggGrid', this._endpointAggGridHtml(p));
-        set('#plBus', this._endpointBusHtml(p));
-        // never redraw while a unit is being renamed or a source saved
+        set('#plCensus', this._endpointCensusText(p));
+        set('#plHeadline', this._endpointHeadlineHtml(p));
+        set('#plReadVia', this._endpointReadViaHtml(p));
+        // never redraw while a unit is being renamed or a source saved; and a
+        // "How it is read" the operator opened stays open across the tick
         if (!view.querySelector('[data-renaming]')
             && !view.querySelector('[data-src-busy]')) {
+            const open = new Set([...view.querySelectorAll('details[data-group-details][open]')]
+                .map(d => d.getAttribute('data-group-details')));
             set('#plGroups', this._endpointGroupsHtml(p));
+            open.forEach(gid => {
+                const d = view.querySelector(`details[data-group-details="${CSS.escape(gid)}"]`);
+                if (d) d.open = true;
+            });
         }
+    },
+
+    _endpointCensusText(p) {
+        return `${p.online_units}/${p.total_units} ${this.t('endpoints.answering', 'units answering')}`;
+    },
+
+    // The four numbers an operator looks for first. Only what the installation
+    // actually measures: the site's balance when the datalogger gives one, the
+    // inverters' sum otherwise — a missing figure is shown as missing, never
+    // invented from something else.
+    _endpointHeadlineHtml(p) {
+        const h = p.headline || {};
+        const t = (k, d) => this.t(k, d);
+        const big = (label, v, unit) => `<div style="min-width:120px;">
+            <div style="color:var(--text-secondary);font-size:11.5px;">${label}</div>
+            <div style="font-weight:700;font-size:22px;letter-spacing:-.3px;font-variant-numeric:tabular-nums;">${
+                v == null ? '<span style="color:var(--text-tertiary,#8a94a0);font-weight:400;">—</span>' : this._endpointValue(v, unit)}</div>
+        </div>`;
+        const site = h.energy_today != null || h.autonomy != null || h.self_consumption != null;
+        return big(t('endpoints.head.now', 'Producing now'), h.power_now, 'W')
+            + (site ? big(t('endpoints.head.today', 'Today'), h.energy_today, 'Wh')
+                    + big(t('endpoints.head.autonomy', 'Autonomy'), h.autonomy, '%')
+                    + big(t('endpoints.head.selfUse', 'Self-consumption'), h.self_consumption, '%')
+               : '');
+    },
+
+    // Every way the installation is read, each with what it costs right now.
+    _endpointReadViaHtml(p) {
+        const t = (k, d) => this.t(k, d);
+        const rows = p.read_via || [];
+        if (!rows.length) return '';
+        const hc = { ok: 'var(--success,#22c55e)', degraded: 'var(--warning,#f59e0b)',
+                     down: 'var(--danger,#ef4444)', idle: 'var(--text-secondary,#8a94a0)' };
+        const proto = { http: 'HTTP', tcp: 'Modbus TCP', 'rtu-tcp': 'Modbus RTU/TCP',
+                        rtu: 'Modbus RTU', mqtt: 'MQTT' };
+        return `<div style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px;">${t('endpoints.readVia', 'Read via')}</div>`
+            + rows.map(r => {
+                const where = r.protocol === 'http' ? '' : ` ${this._esc(r.address || '')}`;
+                const bits = [
+                    `${proto[r.protocol] || this._esc(r.protocol)}${where}`,
+                    r.interval_s != null ? `${t('endpoints.every', 'every')} ${r.interval_s} s` : null,
+                    r.latency_ms != null ? `~${Math.round(r.latency_ms)} ms` : null,
+                    r.fail_pct_5m != null ? `${r.fail_pct_5m} % ${t('endpoints.failed5m', 'failed (5 min)')}` : null,
+                    `${r.units_ok}/${r.units_total} ${t('endpoints.units', 'units')}`,
+                ].filter(Boolean);
+                return `<div style="display:flex;gap:8px;align-items:baseline;font-size:12.5px;padding:2px 0;flex-wrap:wrap;" data-read-via="${this._esc(r.id)}">
+                    <span class="status-dot" style="--dot:${hc[r.status] || hc.idle}" aria-hidden="true"></span>
+                    <b>${this._esc(r.id)}</b>
+                    <span style="color:var(--text-secondary);">${this._esc(r.status || 'idle')}</span>
+                    <span>${bits.join(' · ')}</span>
+                </div>`;
+            }).join('');
+    },
+
+    // Where the units publish — the REAL per-group paths, not the endpoint
+    // default no group may be using.
+    // a per-unit topic pattern, shown as the path an operator will see
+    _topicShown(pattern, p) {
+        return String(pattern || '').replace(/\$\{unit_id\}/g, 'N')
+            .replace(/\$\{device_id\}/g, '<unit>').replace(/\$\{endpoint_id\}/g, p.id);
+    },
+
+    _endpointPublishHtml(p) {
+        const t = (k, d) => this.t(k, d);
+        const groups = p.groups || [];
+        const rows = groups.length ? groups.map(g => ({
+            label: this._groupLabel(g), topic: (g.outputs || {}).topic_prefix || (p.mqtt || {}).topic_prefix || '',
+            bucket: (g.outputs || {}).bucket || (p.influxdb || {}).bucket || '',
+        })) : [{ label: '', topic: (p.mqtt || {}).topic_prefix || '', bucket: (p.influxdb || {}).bucket || '' }];
+        const mq = rows.map(r => `${r.label ? this._esc(r.label) + ' ' : ''}<code style="font-size:11px;">${this._esc(this._topicShown(r.topic, p))}/…</code>`).join(' · ');
+        const buckets = [...new Set(rows.map(r => r.bucket).filter(Boolean))];
+        return `<span style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;margin-right:8px;">${t('endpoints.publishesTo', 'Publishes to')}</span>
+            <span style="font-size:12.5px;">${mq}${buckets.length ? ` → InfluxDB <code style="font-size:11px;">${this._esc(buckets.join(', '))}</code>` : ''}</span>`;
     },
 
     // What this access point costs, measured on its own wire.
@@ -120,6 +200,28 @@ Object.assign(JanitzaMonitor.prototype, {
     // in what it means to add them up — so each group carries its own units,
     // its own sources and its own total.
 
+    _ROLE_ICON: { inverter: 'bi-sun', meter: 'bi-speedometer2', site: 'bi-house',
+                  battery: 'bi-battery-half', sensor: 'bi-thermometer-half' },
+    // what a row shows at a glance, by what the unit IS (mirrors the server)
+    _ROLE_LIVE: {
+        inverter: ['power_active_total', 'voltage_ln_avg', 'voltage_dc'],
+        meter: ['power_active_total', 'energy_active_import', 'energy_active_export'],
+        site: ['power_pv', 'power_load', 'power_grid', 'autonomy', 'self_consumption', 'energy_today'],
+        battery: ['power_active_total', 'voltage_dc'],
+    },
+    _liveLabel(name) {
+        const d = { power_active_total: 'Power', voltage_ln_avg: 'AC voltage', voltage_dc: 'DC voltage',
+                    energy_active_import: 'Imported', energy_active_export: 'Exported',
+                    power_pv: 'PV', power_load: 'Load', power_grid: 'Grid', autonomy: 'Autonomy',
+                    self_consumption: 'Self-consumption', energy_today: 'Today' }[name] || name;
+        return this.t(`endpoints.live.${name}`, d);
+    },
+    _groupLabel(g) {
+        const d = { inverter: 'Inverters', meter: 'Grid meter', site: 'Site totals',
+                    battery: 'Battery', sensor: 'Sensors' }[g.role];
+        return d ? this.t(`endpoints.role.${g.role}`, d) : g.id;
+    },
+
     _endpointGroupsHtml(p) {
         const t = (k, d) => this.t(k, d);
         const groups = p.groups || [];
@@ -129,50 +231,64 @@ Object.assign(JanitzaMonitor.prototype, {
                     'No group yet. Add one to say what this installation holds.')}</span>
             </div></div>`;
         }
-        return groups.map((g, gi) => {
-            const roleIcon = { inverter: 'bi-sun', meter: 'bi-speedometer2',
-                               battery: 'bi-battery-half' }[g.role] || 'bi-cpu';
+        return groups.map(g => {
             const off = g.enabled === false;
+            const label = this._groupLabel(g);
+            const nSrc = (g.sources || []).length;
+            const cols = this._ROLE_LIVE[g.role] || ['power_active_total'];
+            const hasTotal = g.aggregates && Object.keys(g.aggregates).some(k => !['units_online', 'units_total', 'status'].includes(k));
+            const modbusHere = (g.sources || []).some(sx => sx.protocol !== 'http' && sx.protocol !== 'mqtt');
             return `
             <div class="settings-card" data-group="${this._esc(g.id)}" ${off ? 'style="opacity:.62;"' : ''}>
               <div class="settings-card-header">
-                <h3><i aria-hidden="true" class="bi ${roleIcon}"></i> ${this._esc(g.id)}
-                  ${g.role ? `<span class="dev-chip">${this._esc(g.role)}</span>` : ''}
-                  <span class="dev-chip">${g.online_units}/${g.total_units} ${t('endpoints.online', 'online')}</span>
+                <h3><i aria-hidden="true" class="bi ${this._ROLE_ICON[g.role] || 'bi-cpu'}"></i> ${this._esc(label)}
+                  ${label !== g.id ? `<span class="dev-chip">${this._esc(g.id)}</span>` : ''}
+                  <span class="dev-chip">${g.online_units}/${g.total_units} ${t('endpoints.answeringShort', 'answering')}</span>
                   ${off ? `<span class="sink-pill warn">${t('devices.disabled', 'disabled')}</span>` : ''}
-                  ${gi === 0 ? `<span class="dev-chip" title="${t('endpoints.groupPrimaryHint',
-                      'The first group owns the endpoint\'s headline topic and its untagged InfluxDB series — which is what keeps everything that predates groups unchanged.')}">${t('endpoints.groupPrimary', 'primary')}</span>` : ''}
                 </h3>
                 <div class="header-actions">
-                  <label class="switch-label" title="${t('endpoints.groupToggleHint', 'Stop polling this group. Its units stay visible and editable.')}">
+                  <label class="switch-label" title="${t('endpoints.groupToggleHint', 'Stop reading this group. Its units stay visible and editable.')}">
                     <input type="checkbox" ${off ? '' : 'checked'}
                            onchange="app.toggleGroup('${this._esc(p.id)}','${this._esc(g.id)}',this)">
-                    <span>${t('endpoints.groupOn', 'Poll')}</span></label>
-                  <button class="btn btn-ghost btn-sm" ${this._act('openGroupModal', [p.id, g.id])}><i aria-hidden="true" class="bi bi-pencil"></i></button>
-                  <button class="btn btn-ghost btn-sm" ${(p.groups || []).length < 2 ? 'disabled' : ''}
+                    <span>${t('endpoints.groupOn', 'Read')}</span></label>
+                  <button class="btn btn-ghost btn-sm" ${this._act('openSourceModal', [p.id, '', g.id])}
+                          title="${t('endpoints.srcAdd', 'Add source')}" aria-label="${t('endpoints.srcAdd', 'Add source')}"><i aria-hidden="true" class="bi bi-plus-lg"></i></button>
+                  <button class="btn btn-ghost btn-sm" ${this._act('openGroupModal', [p.id, g.id])}
+                          title="${t('common.edit', 'Edit')}" aria-label="${t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
+                  <button class="btn btn-ghost btn-sm" ${groups.length < 2 ? 'disabled' : ''}
                           ${this._act('deleteGroup', [p.id, g.id])}
-                          title="${(p.groups || []).length < 2 ? t('endpoints.groupLast', 'An endpoint needs at least one group') : t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
+                          title="${groups.length < 2 ? t('endpoints.groupLast', 'An installation needs at least one group') : t('common.delete', 'Delete')}"
+                          aria-label="${t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
                 </div>
               </div>
               <div class="settings-card-body">
-                <div style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;">${t('endpoints.sources', 'Sources')}</div>
-                <div data-group-sources="${this._esc(g.id)}">${this._endpointSourcesHtml({ ...p, sources: g.sources }, g.id)}</div>
-                <div style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;margin:16px 0 6px;">${t('endpoints.unitsTitle', 'Units')}</div>
                 <div style="overflow-x:auto;"><table class="data-table" style="width:100%;">
                   <thead><tr>
                     <th>${t('endpoints.unitId', 'Unit')}</th>
-                    <th>${t('endpoints.deviceId', 'Device')}</th>
                     <th>${t('devices.wizard.name', 'Name')}</th>
+                    ${cols.map(c => `<th style="text-align:right;">${this._esc(this._liveLabel(c))}</th>`).join('')}
                     <th>${t('endpoints.health', 'Health')}</th>
                     <th>${t('devices.overview.lastRead', 'Last read')}</th>
-                    <th>${t('dashboard.pollRate', 'Poll rate')}</th>
-                    <th>${t('endpoints.errors', 'Errors')}</th>
+                    <th>${t('endpoints.readVia', 'Read via')}</th>
                     <th></th>
                   </tr></thead>
-                  <tbody data-group-units="${this._esc(g.id)}">${this._endpointUnitRowsHtml({ ...p, units: g.units })}</tbody>
+                  <tbody data-group-units="${this._esc(g.id)}">${this._endpointUnitRowsHtml({ ...p, units: g.units }, cols)}</tbody>
                 </table></div>
-                <p class="field-hint" style="margin-top:10px;"><i aria-hidden="true" class="bi bi-broadcast"></i>
-                  ${t('endpoints.groupTopic', 'Totals for this group publish on')} <code>${this._esc(g.topic || '')}/…</code></p>
+                ${hasTotal ? `<div data-group-totals="${this._esc(g.id)}" style="margin-top:14px;">
+                    <div style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;">
+                      ${t('endpoints.groupTotal', 'Group total')} <span style="text-transform:none;letter-spacing:0;">→ <code style="font-size:11px;">${this._esc(g.topic || '')}/…</code></span></div>
+                    ${this._endpointAggGridHtml({ aggregates: g.aggregates, aggregate_fields: g.aggregate_fields })}
+                  </div>` : (g.total_units > 1 ? `<div data-group-totals="${this._esc(g.id)}" style="margin-top:14px;">
+                    <div style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;">
+                      ${t('endpoints.groupTotal', 'Group total')} <span style="text-transform:none;letter-spacing:0;">→ <code style="font-size:11px;">${this._esc(g.topic || '')}/…</code></span></div>
+                    ${this._endpointAggGridHtml({ aggregates: {}, aggregate_fields: {} })}
+                  </div>` : '')}
+                <details data-group-details="${this._esc(g.id)}" style="margin-top:14px;">
+                  <summary style="cursor:pointer;font-size:12.5px;color:var(--text-secondary);">
+                    ${t('endpoints.howRead', 'How it is read')} · ${nSrc} ${nSrc === 1 ? t('endpoints.srcOne', 'source') : t('endpoints.srcMany', 'sources')}</summary>
+                  <div style="margin-top:10px;" data-group-sources="${this._esc(g.id)}">${this._endpointSourcesHtml({ ...p, sources: g.sources }, g.id)}</div>
+                  ${modbusHere && (p.bus || {}).samples ? `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;font-size:12px;" id="plBus">${this._endpointBusHtml(p)}</div>` : ''}
+                </details>
               </div>
             </div>`;
         }).join('');
@@ -269,14 +385,14 @@ Object.assign(JanitzaMonitor.prototype, {
                 : s.units_ok ? 'var(--warning,#f59e0b)' : 'var(--danger,#ef4444)';
             const groups = Object.entries(s.poll_groups || {})
                 .map(([k, v]) => `${this._esc(k)} ${v}s`).join(' · ') || '—';
-            const fails = s.failed_reads
-                ? ` <span style="color:var(--danger,#ef4444);">${s.failed_reads} failed</span>` : '';
+            const fails = s.fail_pct_5m
+                ? ` <span style="color:var(--danger,#ef4444);">${s.fail_pct_5m} % ${t('endpoints.failed5m', 'failed (5 min)')}</span>` : '';
             return `
             <tr data-src-row="${this._esc(s.id)}" style="border-top:1px solid var(--border,#2a3038);">
               <td style="padding:8px 10px 8px 0;white-space:nowrap;">
                 <span class="status-dot" style="--dot:${dot};background:var(--dot);width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:7px;"></span>
                 <b>${this._esc(s.id)}</b>
-                <span class="dev-chip" style="margin-left:6px;">${t('endpoints.srcRank', 'rank')} ${s.rank}</span>
+                <span class="dev-chip" style="margin-left:6px;" title="${t('endpoints.srcOrderHint', 'Order of precedence: the first source offering a field supplies it.')}">#${s.rank + 1}</span>
                 ${s.enabled === false ? `<span class="sink-pill warn" style="margin-left:6px;">${t('devices.disabled', 'disabled')}</span>` : ''}
               </td>
               <td style="padding:8px 10px 8px 0;">${this._esc(s.protocol)}</td>
@@ -284,13 +400,13 @@ Object.assign(JanitzaMonitor.prototype, {
               <td style="padding:8px 10px 8px 0;font-size:12px;">${this._esc(s.template || '—')}</td>
               <td style="padding:8px 10px 8px 0;font-size:12px;white-space:nowrap;">${groups}</td>
               <td style="padding:8px 10px 8px 0;font-size:12px;white-space:nowrap;"
-                  title="${t('endpoints.srcStaleHint', 'How long this source stays authoritative before a lower-ranked one may fill the field. 0 never yields.')}">${s.stale_after_s ? s.stale_after_s + 's' : '∞'}</td>
+                  title="${t('endpoints.srcStaleHint', 'How long this source stays authoritative before a later one may fill the field. Never, for a counter.')}">${s.stale_after_s ? s.stale_after_s + ' s' : t('endpoints.never', 'never')}</td>
               <td style="padding:8px 10px 8px 0;font-variant-numeric:tabular-nums;white-space:nowrap;">
-                ${s.units_ok}/${s.units_total} ${t('endpoints.online', 'online')}${fails}
+                ${s.units_ok}/${s.units_total} ${t('endpoints.answeringShort', 'answering')}${fails}
                 ${s.latency_ms != null ? ` · ${s.latency_ms} ms` : ''}
               </td>
               <td style="padding:8px 10px 8px 0;font-variant-numeric:tabular-nums;white-space:nowrap;"
-                  title="${t('endpoints.srcOwnsHint', 'How many fields this source is authoritative for right now. Zero means a higher-ranked source already supplies everything it offers.')}">
+                  title="${t('endpoints.srcOwnsHint', 'How many fields this source supplies right now. Zero means an earlier source already supplies everything it offers.')}">
                 ${s.fields_owned} ${t('endpoints.srcFields', 'fields')}</td>
               <td style="padding:8px 0;white-space:nowrap;text-align:right;">
                 <button class="btn btn-ghost btn-sm" ${i === 0 ? 'disabled' : ''}
@@ -313,9 +429,9 @@ Object.assign(JanitzaMonitor.prototype, {
               <td style="padding-right:10px;">${t('endpoints.srcAddress', 'address')}</td>
               <td style="padding-right:10px;">${t('devices.wizard.template', 'template')}</td>
               <td style="padding-right:10px;">${t('endpoints.srcGroups', 'intervals')}</td>
-              <td style="padding-right:10px;">${t('endpoints.srcStale', 'yields after')}</td>
+              <td style="padding-right:10px;">${t('endpoints.srcStale', 'stale after')}</td>
               <td style="padding-right:10px;">${t('endpoints.srcLive', 'live')}</td>
-              <td style="padding-right:10px;">${t('endpoints.srcOwns', 'owns')}</td>
+              <td style="padding-right:10px;">${t('endpoints.srcOwns', 'provides')}</td>
               <td style="text-align:right;"><button class="btn btn-ghost btn-sm"
                   ${this._act('openSourceModal', [p.id, '', groupId || ''])}
                   title="${t('endpoints.srcAdd', 'Add source')}"><i aria-hidden="true" class="bi bi-plus-lg"></i></button></td></tr>
@@ -649,50 +765,67 @@ Object.assign(JanitzaMonitor.prototype, {
             .sort((a, b) => ((meta[a] || {}).topic || a).localeCompare((meta[b] || {}).topic || b));
         if (!names.length) {
             return `<span class="field-hint">${this.t('endpoints.noAggregates',
-                'Nothing is fresh right now — the endpoint publishes its census and status, and resumes totals when a unit reports.')}</span>`;
+                'Nothing is fresh right now — the total publishes its census and status, and resumes when a unit reports.')}</span>`;
         }
-        return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px 22px;">`
+        return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 22px;">`
             + names.map(n => {
                 const m = meta[n] || {};
                 return `<div>
                     <div style="color:var(--text-secondary);font-size:11.5px;" title="${this._esc(m.topic || n)}">${this._esc(m.label || n)}</div>
-                    <div style="font-weight:600;font-size:14px;">${this._endpointValue(p.aggregates[n], m.unit || '')}</div>
+                    <div style="font-weight:600;font-size:14px;font-variant-numeric:tabular-nums;">${this._endpointValue(p.aggregates[n], m.unit || '')}</div>
                 </div>`;
             }).join('') + `</div>`;
     },
 
-    _endpointUnitRowsHtml(p) {
+    _endpointUnitRowsHtml(p, cols = ['power_active_total']) {
         const hc = { ok: 'var(--success,#22c55e)', degraded: 'var(--warning,#f59e0b)',
                      down: 'var(--danger,#ef4444)', idle: 'var(--text-secondary,#8a94a0)' };
         const t = this.t.bind(this);
+        const meta = p.fields || {};
         return (p.units || []).map(u => {
-            const age = u.staleness_age_s != null ? `${u.staleness_age_s}s` : '—';
+            const age = u.staleness_age_s != null ? `${u.staleness_age_s} s` : '—';
+            const live = u.live || {};
+            const via = Object.entries(u.sources || {}).map(([sid, st]) =>
+                `<span class="dev-chip" title="${this._esc(sid)}: ${this._esc(st)}"><span class="status-dot" style="--dot:${hc[st] || hc.idle};width:7px;height:7px;margin-right:4px;" aria-hidden="true"></span>${this._esc(sid)}&nbsp;<span style="color:var(--text-secondary);">${this._esc(st)}</span></span>`).join(' ');
             return `<tr data-unit="${this._esc(u.device_id)}">
-                <td><span class="status-dot" style="--dot:${hc[u.health] || hc.idle}"
-                          title="${this._esc(u.health || 'idle')}"></span> ${u.unit_id}</td>
-                <td><span class="dev-chip">${this._esc(u.device_id)}</span></td>
+                <td style="white-space:nowrap;">${u.unit_id} <span class="dev-chip">${this._esc(u.device_id)}</span></td>
                 <td data-unit-name>${this._esc(u.name || '')}</td>
-                <td>${this._esc(u.health || 'idle')}</td>
+                ${cols.map(c => `<td style="text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;">${
+                    live[c] == null ? '<span style="color:var(--text-tertiary,#8a94a0);">—</span>'
+                                    : this._endpointValue(live[c], (meta[c] || {}).unit || '')}</td>`).join('')}
+                <td style="white-space:nowrap;"><span class="status-dot" style="--dot:${hc[u.health] || hc.idle}" aria-hidden="true"></span> ${this._esc(u.health || 'idle')}</td>
                 <td title="${this._esc(u.last_seen || '')}">${age}</td>
-                <td>${u.poll_rate != null ? u.poll_rate + '/s' : '—'}</td>
-                <td>${u.failed_reads ?? '—'}</td>
+                <td>${via || '—'}</td>
                 <td style="text-align:right;white-space:nowrap;">
                     <button class="btn btn-ghost btn-sm" ${this._act('endpointRenameUnit', [u.device_id])}
-                            title="${t('endpoints.renameUnit', 'Rename this unit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
+                            title="${t('endpoints.renameUnit', 'Rename this unit')}" aria-label="${t('endpoints.renameUnit', 'Rename this unit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
                     <button class="btn btn-ghost btn-sm" ${this._act('openDeviceDetail', [u.device_id])}
-                            title="${t('endpoints.openUnit', 'Open this unit')}"><i aria-hidden="true" class="bi bi-box-arrow-up-right"></i></button>
+                            title="${t('endpoints.openUnit', 'Open this unit')}" aria-label="${t('endpoints.openUnit', 'Open this unit')}"><i aria-hidden="true" class="bi bi-box-arrow-up-right"></i></button>
                 </td>
             </tr>`;
-        }).join('') || `<tr><td colspan="8"><span class="field-hint">${this.t('endpoints.noUnits', 'No units materialized.')}</span></td></tr>`;
+        }).join('') || `<tr><td colspan="${5 + cols.length}"><span class="field-hint">${this.t('endpoints.noUnits', 'No units materialized.')}</span></td></tr>`;
     },
 
+    // The page, in the operator's order: is it producing and healthy — every
+    // unit — how it is read — where it publishes. Nothing about the fallback
+    // connection or the endpoint default topic that no group uses.
     _endpointDetailHtml(p) {
         const t = this.t.bind(this);
-        const conn = p.connection || {};
-        const proto = (conn.protocol || 'tcp') === 'rtu-tcp' ? 'RTU/TCP' : 'TCP';
         const mq = p.mqtt || {}, ix = p.influxdb || {};
+        const groups = p.groups || [];
         const fact = (label, val) => `<div><div style="color:var(--text-secondary);font-size:11.5px;">${label}</div>
             <div style="font-weight:600;font-size:13.5px;word-break:break-all;">${val}</div></div>`;
+        const outRows = groups.length ? groups.map(g => `<tr>
+                <td style="padding:4px 14px 4px 0;white-space:nowrap;">${this._esc(this._groupLabel(g))}</td>
+                <td style="padding:4px 14px 4px 0;"><code style="font-size:11px;">${this._esc(this._topicShown((g.outputs || {}).topic_prefix || mq.topic_prefix || '—', p))}/…</code></td>
+                <td style="padding:4px 14px 4px 0;"><code style="font-size:11px;">${this._esc((g.outputs || {}).bucket || ix.bucket || '—')}</code>
+                    <span style="color:var(--text-secondary);font-size:11.5px;">· ${this._esc((g.outputs || {}).device_tag || ix.device_tag || '—')}</span></td>
+                <td style="padding:4px 0;"><code style="font-size:11px;">${g.topic ? this._esc(g.topic) + '/…' : '<span style="color:var(--text-tertiary);">—</span>'}</code></td>
+            </tr>`).join('')
+            : `<tr><td style="padding:4px 14px 4px 0;"></td>
+                <td style="padding:4px 14px 4px 0;"><code style="font-size:11px;">${this._esc(this._topicShown(mq.topic_prefix || '—', p))}/…</code></td>
+                <td style="padding:4px 14px 4px 0;"><code style="font-size:11px;">${this._esc(ix.bucket || '—')}</code> <span style="color:var(--text-secondary);font-size:11.5px;">· ${this._esc(ix.device_tag || '—')}</span></td>
+                <td style="padding:4px 0;"><code style="font-size:11px;">mbg/endpoints/${this._esc(p.id)}/…</code></td></tr>`;
         return `
         <div data-endpoint-page="${this._esc(p.id)}">
         <div class="section-header">
@@ -709,45 +842,25 @@ Object.assign(JanitzaMonitor.prototype, {
 
         <div class="settings-card">
             <div class="settings-card-body">
-                <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-                    <span class="status-dot" id="plStatusDot" style="width:12px;height:12px;border-radius:50%;--dot:${this._endpointStatusColor(p)};background:var(--dot);box-shadow:0 0 0 3px color-mix(in srgb, var(--dot) 16%, transparent);"></span>
-                    <span style="font-weight:600;font-size:15px;" id="plStatusWord">${this._esc(this._endpointStatusWord(p))}</span>
-                    <span class="dev-chip" id="plCensus">${p.online_units}/${p.total_units} ${t('endpoints.online', 'online')}</span>
-                    ${p.write_locked ? `<span class="sink-pill warn">${t('devices.writeLock.locked', 'locked')}</span>` : ''}
+                <div style="display:flex;flex-wrap:wrap;gap:18px 36px;align-items:flex-start;">
+                    <div style="min-width:170px;">
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <span class="status-dot" id="plStatusDot" style="width:12px;height:12px;border-radius:50%;--dot:${this._endpointStatusColor(p)};background:var(--dot);box-shadow:0 0 0 3px color-mix(in srgb, var(--dot) 16%, transparent);" aria-hidden="true"></span>
+                            <span style="font-weight:600;font-size:15px;" id="plStatusWord">${this._esc(this._endpointStatusWord(p))}</span>
+                            ${p.write_locked ? `<span class="sink-pill warn">${t('devices.writeLock.locked', 'locked')}</span>` : ''}
+                        </div>
+                        <div class="dev-chip" id="plCensus" style="margin-top:8px;">${this._endpointCensusText(p)}</div>
+                    </div>
+                    <div id="plHeadline" style="display:flex;gap:18px 36px;flex-wrap:wrap;">${this._endpointHeadlineHtml(p)}</div>
                 </div>
-                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px;font-size:12px;"
-                     id="plBus">${this._endpointBusHtml(p)}</div>
-                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px 24px;">
-                    ${fact(t('endpoints.endpoint', 'Endpoint'), `${proto}<br><span style="font-weight:400;font-size:12px;color:var(--text-secondary);">${this._esc(conn.host || '')}:${conn.port || 502}</span>`)}
-                    ${fact(t('devices.overview.template', 'Template'), this._esc(p.template || '—'))}
-                    ${fact(t('endpoints.unitsTitle', 'Units'), (p.units || []).length)}
-                    ${fact('MQTT', `<code style="font-size:11px;">mbg/endpoints/${this._esc(p.id)}/…</code>`)}
-                    ${fact('InfluxDB', `<code style="font-size:11px;">${this._esc(ix.bucket || '—')}</code>`)}
-                </div>
+                <div id="plReadVia" style="margin-top:16px;">${this._endpointReadViaHtml(p)}</div>
+                <div id="plPublish" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline;">${this._endpointPublishHtml(p)}</div>
             </div>
         </div>
         <div id="plTestOut"></div>
 
-        <div class="settings-card">
-            <div class="settings-card-header">
-                <h3><i aria-hidden="true" class="bi bi-bounding-box"></i> ${t('endpoints.output', 'Endpoint output')}</h3>
-                <label class="switch-label">
-                    <input type="checkbox" id="plAggEnabled" ${p.aggregates_enabled !== false ? 'checked' : ''}
-                           onchange="app.toggleEndpointAggregates('${this._esc(p.id)}', this)">
-                    <span>${t('endpoints.aggEnable', 'Publish endpoint totals')}</span>
-                </label>
-            </div>
-            <div class="settings-card-body">
-                <div id="plAggGrid">${this._endpointAggGridHtml(p)}</div>
-                <p class="field-hint" style="margin-top:14px;"><i aria-hidden="true" class="bi bi-info-circle"></i>
-                    ${t('endpoints.aggNote', 'Sums for powers and currents, averages for voltages, frequency and temperatures, and a complete-census sum for energy counters — a unit that stops reporting drops out of a total but never out of a counter. Published on')}
-                    <code>mbg/endpoints/${this._esc(p.id)}/…</code>
-                    ${t('endpoints.aggNote2', 'and into InfluxDB tagged')} <code>aggregate=endpoint</code>.</p>
-            </div>
-        </div>
-
         <div class="section-header" style="margin-top:18px;">
-            <h3 style="margin:0;"><i aria-hidden="true" class="bi bi-collection"></i> ${t('endpoints.groups', 'Groups')}</h3>
+            <h3 style="margin:0;"><i aria-hidden="true" class="bi bi-collection"></i> ${t('endpoints.holds', 'What it holds')}</h3>
             <div class="header-actions">
                 <button class="btn btn-secondary btn-sm" ${this._act('openGroupModal', [p.id, ''])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('endpoints.groupAdd', 'Add group')}</button>
             </div>
@@ -756,19 +869,30 @@ Object.assign(JanitzaMonitor.prototype, {
 
         <div class="settings-card">
             <div class="settings-card-header">
-                <h3><i aria-hidden="true" class="bi bi-signpost-split"></i> ${t('devices.detail.outputs', 'Outputs')}</h3>
+                <h3><i aria-hidden="true" class="bi bi-signpost-split"></i> ${t('endpoints.whereItPublishes', 'Where it publishes')}</h3>
+                <label class="switch-label">
+                    <input type="checkbox" id="plAggEnabled" ${p.aggregates_enabled !== false ? 'checked' : ''}
+                           onchange="app.toggleEndpointAggregates('${this._esc(p.id)}', this)">
+                    <span>${t('endpoints.aggEnable', 'Publish group totals')}</span>
+                </label>
             </div>
             <div class="settings-card-body">
-                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px 24px;">
-                    ${fact(t('devices.wizard.topicPrefix', 'MQTT topic prefix'), `<code style="font-size:11px;">${this._esc(mq.topic_prefix || '—')}</code>`)}
-                    ${fact(t('devices.wizard.bucket', 'InfluxDB bucket'), `<code style="font-size:11px;">${this._esc(ix.bucket || '—')}</code>`)}
-                    ${fact(t('devices.wizard.deviceTag', 'Influx device tag'), `<code style="font-size:11px;">${this._esc(ix.device_tag || '—')}</code>`)}
+                <div style="overflow-x:auto;"><table style="font-size:13px;">
+                    <tr style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;">
+                        <td style="padding-right:14px;">${t('endpoints.group', 'Group')}</td>
+                        <td style="padding-right:14px;">${t('endpoints.unitTopics', 'Unit topics')}</td>
+                        <td style="padding-right:14px;">InfluxDB · ${t('devices.wizard.deviceTag', 'device tag')}</td>
+                        <td>${t('endpoints.totalsTopic', 'Totals')}</td>
+                    </tr>
+                    ${outRows}
+                </table></div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px 24px;margin-top:14px;">
                     ${fact(t('endpoints.haDiscovery', 'Home Assistant discovery'), mq.ha_discovery ? t('common.on', 'on') : t('common.off', 'off'))}
                     ${fact(t('devices.sink.httpTitle', 'HTTP / JSON output'), p.http_output_enabled ? t('common.on', 'on') : t('common.off', 'off'))}
                     ${fact(t('devices.sink.restTitle', 'REST push'), (p.rest_push || {}).enabled ? t('common.on', 'on') : t('common.off', 'off'))}
                 </div>
                 <p class="field-hint" style="margin-top:14px;"><i aria-hidden="true" class="bi bi-lock"></i>
-                    ${t('endpoints.routingFixed', 'Routing identity is fixed after creation — changing it would re-route every unit and orphan their history and Home Assistant entities. The per-unit sinks are edited on any unit’s Outputs tab and apply to the whole endpoint.')}</p>
+                    ${t('endpoints.routingFixed', 'Topics and buckets are fixed after creation — changing them would re-route every unit and orphan their history and Home Assistant entities. Home Assistant, HTTP and REST outputs are switched on any unit’s Outputs tab and apply to the whole installation.')}</p>
             </div>
         </div>
         </div>`;
@@ -793,8 +917,8 @@ Object.assign(JanitzaMonitor.prototype, {
             return;
         }
         this.showToast('success', this.t('endpoints.saved', 'Endpoint saved'),
-            el.checked ? this.t('endpoints.aggOn', 'Endpoint totals are published')
-                       : this.t('endpoints.aggOff', 'Endpoint totals are off'));
+            el.checked ? this.t('endpoints.aggOn', 'Group totals are published')
+                       : this.t('endpoints.aggOff', 'Group totals are off'));
         this._refreshEndpointDetail(id);
     },
 

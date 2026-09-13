@@ -1,5 +1,46 @@
 # Changelog
 
+## 3.67.0
+
+### 2026-09-13 — the installation page, in the operator's order
+
+The audit's second step. The page used to open with the fallback connection
+(`TCP :502`, `Template —`, "no transactions measured yet") and a total summed
+across groups; what an operator wants first was below the fold. It now reads
+top to bottom: **is it producing** — **is every unit fine** — **how it is
+read** — **where it publishes**.
+
+- **Header**: status + census, then four numbers — producing now, today,
+  autonomy, self-consumption — from the site group when the datalogger gives
+  one, else the inverters' sum and a dash for the rest; nothing invented. Then
+  **Read via**: every way the installation is read, each with its protocol,
+  interval, latency, **failure rate over the last five minutes** (not a counter
+  since boot) and units answering. Then the real per-group topics it publishes
+  on.
+- **Group cards** named by what they hold (Inverters, Grid meter, Site totals),
+  with the unit table showing what matters for that kind of unit — power, AC
+  and DC voltage for an inverter; power, imported, exported for a meter — plus
+  health as a word, last read, and each source's verdict for that unit ("read
+  fine over HTTP, Modbus side down" in one row). The group total sits under
+  the table with its topic. **How it is read** (the sources table, the bus
+  telemetry) is folded and stays open across the live tick.
+- **Gone**: the cross-group "Endpoint output" total (inverter generation plus
+  a meter's import describes nothing), the fallback-connection header, the
+  endpoint default topic no group used, `rank / primary / owns / yields after`
+  (now `#1`, `provides`, `stale after`). A group of ONE unit publishes no total
+  — it was that unit republished under another name (`pv/site/summary`
+  duplicated `pv/site`).
+- Every icon button carries an `aria-label`; status dots are decorative next to
+  their word; tables scroll inside their card on a phone.
+
+API: `GET /api/endpoints/{id}` gains `headline`, `read_via`, `fields`,
+`units[].live`, `units[].sources`, `groups[].outputs`, `groups[].aggregate_fields`;
+per-source `reads_5m` / `failed_5m` / `fail_pct_5m` / `interval_s`; a grouped
+installation's `aggregates` is empty. Romanian strings for the whole page.
+
+Tests: `tests/test_endpoint_page_model.py`; e2e suites adjusted
+(`endpoint_page`, `plant_groups`, `plant_wizard`), all green.
+
 ## 3.66.0
 
 ### 2026-09-13 — the installation page cannot lie or destroy

@@ -25,7 +25,7 @@ import os
 import re
 import threading
 import time
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 from datetime import datetime
 from contextlib import asynccontextmanager
 
@@ -2333,11 +2333,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             for row in (st.get('sources') or []):
                 agg = live.setdefault(row['id'], {
                     'units_ok': 0, 'units_total': 0, 'reads': 0, 'failed': 0,
-                    'latency_ms': [], 'owns': 0})
+                    'reads_5m': 0, 'failed_5m': 0, 'latency_ms': [], 'owns': 0})
                 agg['units_total'] += 1
                 agg['units_ok'] += 1 if row.get('connected') else 0
                 agg['reads'] += int(row.get('successful_reads') or 0)
                 agg['failed'] += int(row.get('failed_reads') or 0)
+                agg['reads_5m'] += int(row.get('reads_5m') or 0)
+                agg['failed_5m'] += int(row.get('failed_5m') or 0)
                 if row.get('last_latency_ms') is not None:
                     agg['latency_ms'].append(row['last_latency_ms'])
             for _f, prov in (st.get('provenance') or {}).items():
@@ -2350,6 +2352,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             sid = str(r.get('id') or f'source{rank + 1}')
             agg = live.get(sid) or {}
             lat = agg.get('latency_ms') or []
+            pg = {k: (v.get('interval') if isinstance(v, dict) else v)
+                  for k, v in (r.get('poll_groups') or {}).items()}
+            ivals = [float(v) for v in pg.values() if isinstance(v, (int, float))]
+            r5 = agg.get('reads_5m') or 0
             out.append({
                 'id': sid, 'rank': rank,
                 'enabled': bool(r.get('enabled', True)),
@@ -2359,8 +2365,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'address': (r.get('url')
                             or (r.get('serial_port') if r.get('protocol') == 'rtu'
                                 else f"{r.get('host', '')}:{r.get('port', 502)}")),
-                'poll_groups': {k: (v.get('interval') if isinstance(v, dict) else v)
-                                for k, v in (r.get('poll_groups') or {}).items()},
+                'poll_groups': pg,
+                # the fastest rhythm this source reads at — what "every N s"
+                # means to an operator; None when it inherits the template's
+                'interval_s': min(ivals) if ivals else None,
                 'timeout': r.get('timeout'),
                 'stale_after_s': float(r.get('stale_after_s', 0) or 0),
                 # live
@@ -2368,6 +2376,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'units_total': agg.get('units_total', 0),
                 'successful_reads': agg.get('reads', 0),
                 'failed_reads': agg.get('failed', 0),
+                # the last five minutes, not since boot: a counter that grew
+                # for a week says nothing about whether the source is fine NOW
+                'reads_5m': r5,
+                'failed_5m': agg.get('failed_5m') or 0,
+                'fail_pct_5m': (round(100.0 * (agg.get('failed_5m') or 0) / r5, 1)
+                                if r5 else None),
                 'latency_ms': round(sum(lat) / len(lat), 1) if lat else None,
                 # how many fields this source is currently authoritative for —
                 # the number that tells an operator whether it earns its place
@@ -2410,6 +2424,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         """One entry per unit group, with its units, its sources and its own
         total. The FIRST group owns the endpoint's headline aggregate, which is
         what keeps every topic and series that predates groups unchanged."""
+        from .canonical_fields import field_meta
         from .endpoint_aggregator import (aggregate_topic,
                                           compute_endpoint_aggregates)
         out = []
@@ -2421,6 +2436,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             except Exception:  # noqa: BLE001 — a total must not break the page
                 agg = {}
             mine = [u for u in units if u.get('group_id') == gid]
+            # a total of one unit is that unit again under another name — the
+            # aggregator does not publish it, so the page must not promise it
+            one = len(mine) < 2
+            gm = dict(p.get('mqtt') or {}, **(g.get('mqtt') or {}))
+            gx = dict(p.get('influxdb') or {}, **(g.get('influxdb') or {}))
             out.append({
                 'id': gid,
                 'role': g.get('role', '') or '',
@@ -2428,28 +2448,75 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'template': g.get('template', '') or p.get('template', ''),
                 'units': mine,
                 'sources': _endpoint_sources(p, pid, g, gid),
-                'aggregates': agg,
+                'aggregates': {} if one else agg,
+                'aggregate_fields': {} if one else {
+                    k: m for k, m in ((k, field_meta(k)) for k in agg) if m},
                 'online_units': sum(1 for u in mine if u['connected']),
                 'total_units': len(mine),
                 # the bare endpoint path belongs to the first group; the others
                 # publish under their own name
-                'topic': aggregate_topic(p, pid, gid, i == 0),
+                'topic': None if one else aggregate_topic(p, pid, gid, i == 0),
+                # where THIS group's units publish — the page states the real
+                # paths, not the endpoint default no group may be using
+                'outputs': {'topic_prefix': gm.get('topic_prefix', ''),
+                            'bucket': gx.get('bucket', ''),
+                            'device_tag': gx.get('device_tag', '')},
             })
+        return out
+
+    # What a unit row shows at a glance, by what the unit IS. An inverter is
+    # judged by its power and its two voltages, a meter by power and the two
+    # energy directions, the site by the balance the datalogger computes.
+    _ROLE_LIVE = {
+        'inverter': ('power_active_total', 'voltage_ln_avg', 'voltage_dc'),
+        'meter': ('power_active_total', 'energy_active_import', 'energy_active_export'),
+        'site': ('power_pv', 'power_load', 'power_grid', 'autonomy',
+                 'self_consumption', 'energy_today'),
+        'battery': ('power_active_total', 'voltage_dc'),
+    }
+    _LIVE_FALLBACK = {'voltage_ln_avg': ('voltage_l1',)}
+
+    def _unit_live(dev, names, now: float = None) -> Dict[str, Any]:
+        """``{field: value}`` for the named canonical fields of one unit, FRESH
+        values only — the same freshness rule the aggregator applies, so a row
+        never shows a number the total has already dropped."""
+        now = now if now is not None else time.time()
+        store = registry.store_for(dev.id) or {}
+        by_name = {}
+        for entry in list(store.values()):
+            n, v, ts = entry.get('name'), entry.get('value'), entry.get('ts')
+            if not n or not isinstance(v, (int, float)) or isinstance(v, bool):
+                continue
+            interval = float(entry.get('interval') or 30)
+            if ts is not None and (now - ts) <= max(4 * interval, 60.0):
+                by_name[n] = v
+        out = {}
+        for n in names:
+            for cand in (n,) + _LIVE_FALLBACK.get(n, ()):
+                if cand in by_name:
+                    out[n] = by_name[cand]
+                    break
         return out
 
     def _endpoint_entry(p: Dict) -> Dict:
         pid = p.get('id')
         units = []
+        now = time.time()
         for dev in config.endpoint_devices(pid):
             _i, _cfg, client = registry.find(dev.id)
-            st = {}
+            st, src_verdicts = {}, {}
             if client is not None:
                 try:
                     st = client.get_stats() or {}
                 except Exception:  # noqa: BLE001 — a stats blip must not 500 the list
                     st = {}
+                try:
+                    src_verdicts = dict(client.data_health().get('sources') or {})
+                except Exception:  # noqa: BLE001
+                    src_verdicts = {}
             _seen = st.get('last_success_ts')
             _groups = st.get('poll_groups_detail') or []
+            role = getattr(dev, 'role', '') or ''
             units.append({
                 'unit_id': dev.connection.unit_id,
                 'device_id': dev.id,
@@ -2473,14 +2540,77 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'cycle_s': (max((g.get('cycle_s') or 0) for g in _groups)
                             if _groups else None),
                 'overruns': sum(int(g.get('overruns') or 0) for g in _groups),
+                # what the unit shows at a glance, and each source's verdict
+                # for it — "read fine over HTTP, Modbus side dead" in one row
+                'live': _unit_live(dev, _ROLE_LIVE.get(role, ('power_active_total',)), now),
+                'sources': src_verdicts,
             })
         from .canonical_fields import field_meta
         from .endpoint_aggregator import compute_endpoint_aggregates
-        try:
-            agg = compute_endpoint_aggregates(config, registry, pid)
-        except Exception:  # noqa: BLE001 — aggregates must never break the list
-            agg = {}
+        grouped = bool(p.get('groups'))
+        agg = {}
+        if not grouped:
+            # a flat endpoint IS one group, so its total is meaningful; a
+            # grouped installation has no whole-installation sum — inverter
+            # generation added to a meter's import describes nothing
+            try:
+                agg = compute_endpoint_aggregates(config, registry, pid)
+            except Exception:  # noqa: BLE001 — aggregates must never break the list
+                agg = {}
+        groups = _endpoint_group_entries(p, pid, units)
         bus = _endpoint_bus(p, units)
+        # the four numbers at the top: the site's balance when the datalogger
+        # gives one, else the inverters' sum and nothing invented for the rest
+        headline = {'power_now': None, 'energy_today': None,
+                    'autonomy': None, 'self_consumption': None}
+        site = next((u for u in units if u.get('role') == 'site'
+                     and (u.get('live') or {}).get('power_pv') is not None), None)
+        if site is not None:
+            lv = site['live']
+            headline.update({'power_now': lv.get('power_pv'),
+                             'energy_today': lv.get('energy_today'),
+                             'autonomy': lv.get('autonomy'),
+                             'self_consumption': lv.get('self_consumption')})
+        else:
+            # the inverters' fresh powers, summed — the same values their rows
+            # show, so the top number and the rows can never disagree
+            pw = [(u.get('live') or {}).get('power_active_total') for u in units
+                  if u.get('role') == 'inverter']
+            pw = [x for x in pw if isinstance(x, (int, float))]
+            if pw:
+                headline['power_now'] = round(sum(pw), 3)
+            elif not grouped and isinstance(agg.get('power_active_total'), (int, float)):
+                headline['power_now'] = agg['power_active_total']
+        # every distinct way the installation is read, rolled up across groups
+        read_via: Dict[tuple, Dict] = {}
+        for g in groups:
+            for sx in g.get('sources') or []:
+                key = (sx['id'], sx['protocol'], sx.get('address') or '')
+                r = read_via.setdefault(key, {
+                    'id': sx['id'], 'protocol': sx['protocol'],
+                    'address': sx.get('address') or '', 'interval_s': None,
+                    'units_ok': 0, 'units_total': 0, 'reads_5m': 0, 'failed_5m': 0,
+                    '_lat': [], 'groups': []})
+                r['groups'].append(g['id'])
+                r['units_ok'] += sx.get('units_ok') or 0
+                r['units_total'] += sx.get('units_total') or 0
+                r['reads_5m'] += sx.get('reads_5m') or 0
+                r['failed_5m'] += sx.get('failed_5m') or 0
+                if sx.get('latency_ms') is not None:
+                    r['_lat'].append(sx['latency_ms'])
+                iv = sx.get('interval_s')
+                if iv is not None and (r['interval_s'] is None or iv < r['interval_s']):
+                    r['interval_s'] = iv
+        for r in read_via.values():
+            lat = r.pop('_lat')
+            r['latency_ms'] = round(sum(lat) / len(lat), 1) if lat else None
+            r['fail_pct_5m'] = (round(100.0 * r['failed_5m'] / r['reads_5m'], 1)
+                                if r['reads_5m'] else None)
+            r['status'] = ('down' if not r['units_ok'] else
+                           'ok' if r['units_ok'] == r['units_total'] else 'degraded') \
+                if r['units_total'] else 'idle'
+        live_names = {n for u in units for n in (u.get('live') or {})}
+        online = sum(1 for u in units if u['connected'])
         return {'id': pid, 'name': p.get('name') or pid,
                 'template': p.get('template', ''),
                 'enabled': bool(p.get('enabled', True)),
@@ -2505,9 +2635,15 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 # inverters and the meter at its grid connection. Each group
                 # carries its own units, sources and total, because adding a
                 # meter's power to the inverters' would describe nothing.
-                'groups': _endpoint_group_entries(p, pid, units),
-                'status': agg.get('status', 'offline' if units else ''),
-                'online_units': sum(1 for u in units if u['connected']),
+                'groups': groups,
+                'headline': headline,
+                'read_via': list(read_via.values()),
+                # label/unit per live field name, so a row can say "DC voltage
+                # 636 V" without re-deriving the vocabulary client-side
+                'fields': {n: m for n, m in ((n, field_meta(n)) for n in live_names) if m},
+                'status': ('' if not units else 'online' if online == len(units)
+                           else 'offline' if online == 0 else 'partial'),
+                'online_units': online,
                 'total_units': len(units)}
 
     def _merge_unit_overrides(pid: str, units, prev: Dict = None):

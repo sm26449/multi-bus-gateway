@@ -43,6 +43,11 @@ try {
   await page.waitForTimeout(1200);
   await page.locator('.endpoint-row button[data-action="openEndpointDetail"]').first().click();
   await page.waitForTimeout(1500);
+  // "How it is read" is folded by default; the operator opens it — and it stays
+  // open across the page's live tick
+  const openHow = () => page.evaluate(() =>
+    document.querySelectorAll('details[data-group-details]').forEach(d => d.open = true));
+  await openHow();
 
   // ---- 1. the plant shows a card per group ------------------------------
   const cards = page.locator('[data-group]');
@@ -53,11 +58,13 @@ try {
   // ---- 2. each card states what it is and where it publishes ------------
   const inv = await page.locator('[data-group="inverters"]').innerText();
   const grid = await page.locator('[data-group="grid"]').innerText();
-  check('the group states its role', /inverter/.test(inv) && /meter/.test(grid));
+  check('the group states its role', /inverter/i.test(inv) && /meter/i.test(grid));
   check('the first group owns the headline topic',
         inv.includes(`mbg/endpoints/${EP}/`) && !inv.includes(`mbg/endpoints/${EP}/grid`));
-  check('a later group publishes under its own name',
-        grid.includes(`mbg/endpoints/${EP}/grid/`));
+  // a group of ONE unit is that unit — it promises no total and no topic
+  check('a group of one unit promises no total',
+        !grid.includes(`mbg/endpoints/${EP}/grid/`)
+        && (await api()).groups.find(g => g.id === 'grid').topic === null);
   check('the meter unit kept its hand-written id', grid.includes(`${EP}-meter-240`));
   check('the inverter group lists its units',
         inv.includes(`${EP}-u1`) && inv.includes(`${EP}-u2`));
@@ -80,6 +87,7 @@ try {
   check('re-enabling works too', (await api()).groups.find(g => g.id === 'grid').enabled === true);
 
   // ---- 4. adding a source to one group only -----------------------------
+  await openHow();
   await page.locator('[data-group="inverters"] button[data-action="openSourceModal"]').first().click();
   await page.waitForTimeout(900);
   await page.fill('#srcId', 'solar_api');
@@ -103,6 +111,7 @@ try {
   // ---- 5. order is precedence, and the arrows change it ----------------
   await page.waitForTimeout(1000);
   const before = (await api()).groups.find(g => g.id === 'inverters').sources.map(s => s.id);
+  await openHow();
   await page.locator('[data-group="inverters"] [data-src-row="solar_api"] button[data-action="moveSource"]').first().click();
   await page.waitForTimeout(3000);
   const after = (await api()).groups.find(g => g.id === 'inverters').sources.map(s => s.id);
@@ -114,12 +123,14 @@ try {
 
   // ---- 6. a source can be removed, the last one cannot -----------------
   page.once('dialog', dlg => dlg.accept());
+  await openHow();
   await page.locator('[data-group="inverters"] [data-src-row="solar_api"] button[data-action="deleteSource"]').first().click();
   await page.waitForTimeout(3000);
   check('a source can be removed',
         !(await api()).groups.find(g => g.id === 'inverters').sources.map(s => s.id).includes('solar_api'));
   // the grid group has exactly one source; whatever it is called, removing it
   // must be refused — a unit needs a way to be read
+  await openHow();
   const lastDel = page.locator('[data-group="grid"] [data-src-row] button[data-action="deleteSource"]').first();
   check('the last source cannot be removed', await lastDel.isDisabled());
 

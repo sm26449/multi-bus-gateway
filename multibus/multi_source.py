@@ -43,6 +43,10 @@ class MultiSourceClient:
         self.device_id = device_id
         self.parts = parts
         self.arbiter = FieldArbiter()
+        # Per-source (monotonic, ok, failed) snapshots, taken on the stats path
+        # (the harvester runs it every few seconds). A since-boot counter says
+        # nothing about NOW; the difference across the last five minutes does.
+        self._rate_hist: Dict[str, deque] = {}
         self._publish_callback: Optional[Callable] = None
         self._lock = threading.Lock()
         # A source changing state is an EVENT, not just a number. The whole
@@ -291,6 +295,31 @@ class MultiSourceClient:
     def connected(self) -> bool:
         return any(bool(getattr(drv, 'connected', False)) for _s, drv in self.parts)
 
+    WINDOW_S = 300.0
+    _WINDOW_STEP_S = 5.0
+
+    def _window(self, source_id: str, ok, failed, now: float = None):
+        """(reads, failed) over the last ``WINDOW_S`` seconds for one source.
+
+        Snapshots the cumulative counters at most every ``_WINDOW_STEP_S`` and
+        reports the difference to the oldest snapshot inside the window. Until a
+        full window has passed the difference covers what there is — honest,
+        and never a counter since boot dressed up as a rate.
+        """
+        if not isinstance(ok, (int, float)) or not isinstance(failed, (int, float)):
+            return None, None
+        now = time.monotonic() if now is None else now
+        hist = self._rate_hist.setdefault(source_id, deque(maxlen=int(
+            self.WINDOW_S / self._WINDOW_STEP_S) + 2))
+        if not hist or now - hist[-1][0] >= self._WINDOW_STEP_S:
+            hist.append((now, ok, failed))
+        # keep ONE sample at or beyond the window's edge as the baseline, so
+        # the difference always spans the whole window once it has one
+        while len(hist) > 1 and now - hist[1][0] >= self.WINDOW_S:
+            hist.popleft()
+        t0, ok0, f0 = hist[0]
+        return int(max(0, ok - ok0 + failed - f0)), int(max(0, failed - f0))
+
     def get_stats(self) -> Dict:
         """One unit's statistics, with every source's contribution kept legible.
 
@@ -307,6 +336,8 @@ class MultiSourceClient:
                 st = drv.get_stats() or {}
             except Exception:  # noqa: BLE001
                 st = {}
+            reads_5m, failed_5m = self._window(src.id, st.get('successful_reads'),
+                                               st.get('failed_reads'))
             per_source.append({
                 'id': src.id, 'rank': rank, 'protocol': src.protocol,
                 'template': src.template,
@@ -314,6 +345,8 @@ class MultiSourceClient:
                 'connected': bool(st.get('connected')),
                 'successful_reads': st.get('successful_reads'),
                 'failed_reads': st.get('failed_reads'),
+                'reads_5m': reads_5m,
+                'failed_5m': failed_5m,
                 'last_latency_ms': st.get('last_latency_ms'),
                 'last_success_ts': st.get('last_success_ts'),
                 'staleness_age_s': st.get('staleness_age_s'),
