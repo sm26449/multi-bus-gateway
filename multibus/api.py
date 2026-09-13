@@ -1083,13 +1083,19 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     def _write_rule(dev_cfg, address: int, rtype: str):
         """The TemplateRegister governing writes to (address, register_type) on
         this device, or None. Carries writable + bounds + safe value. A register
-        absent here (or not writable) cannot be written — the safety allowlist."""
-        tpl = template_registry.get(dev_cfg.template) if dev_cfg.template else None
-        if tpl is None:
-            return None
-        for r in tpl.registers:
-            if r.address == address and (r.register_type or 'holding') == rtype:
-                return r
+        absent here (or not writable) cannot be written — the safety allowlist.
+        A unit read through sources carries its maps on the Modbus SOURCE, so
+        those templates are consulted too."""
+        tids = [dev_cfg.template] if dev_cfg.template else []
+        tids += [s.template for s in (dev_cfg.sources or [])
+                 if s.template and str(s.protocol or 'tcp').lower() in ('tcp', 'rtu-tcp', 'rtu')]
+        for tid in tids:
+            tpl = template_registry.get(tid)
+            if tpl is None:
+                continue
+            for r in tpl.registers:
+                if r.address == address and (r.register_type or 'holding') == rtype:
+                    return r
         return None
 
     def _start_device_client(dev_cfg):
@@ -1459,6 +1465,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     # /api/serial-ports, /api/bridge/adapters → routes/commissioning.py
 
+    _late_hooks: Dict[str, Any] = {}
+
     def _sync_device_discovery():
         """Rebuild the MQTT discovery hooks from the current non-primary
         devices and publish them now (so HA sees a device the moment it is
@@ -1495,6 +1503,14 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     h()
                 except Exception as e:  # noqa: BLE001
                     logger.warning(f"device discovery publish failed: {e}")
+        # the controller's command topics follow the same lifecycle (the
+        # function is defined further down; at boot it runs itself once)
+        fn = _late_hooks.get('power_limit_commands')
+        if fn is not None:
+            try:
+                fn()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("power-limit command topics: %s", e)
 
     def _push_readback_to_store(device_id, address, value):
         """Write-then-refresh: push a just-written register's read-back value into
@@ -1530,6 +1546,15 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         rule = _write_rule(dev_cfg, register.address, 'holding')
         if rule is None or not rule.writable:
             logger.warning("MQTT write REJECTED (not writable): device=%s addr=%s", device_id, register.address)
+            return
+        if getattr(register, 'name', '') == 'power_limit_pct':
+            # WMaxLimPct alone does nothing (WMaxLim_Ena must travel with it):
+            # the slider is the power-limit action, with its own verification
+            try:
+                _code, res = _power_limit_action(dev_cfg, client, float(payload), who='ha', ip='mqtt', via='ha')
+                _publish_pl_result(dev_cfg, res, 'power_limit')
+            except (TypeError, ValueError):
+                logger.warning("HA power limit REJECTED (non-numeric %r): device=%s", payload, device_id)
             return
         enum_map = getattr(register, 'enum', None)
         if enum_map:                                   # select: label → code
@@ -1585,6 +1610,228 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     if mqtt_publisher:
         mqtt_publisher.set_command_write_handler(_mqtt_write_command)
+
+    # ── the active power limit (SunSpec model 123) ──────────────────────────
+    #
+    # The gateway applies a limit safely and consigns it; it never decides to
+    # limit on its own. A controller (over-voltage protection in Node-RED, a
+    # schedule) speaks over the API, over MQTT or through the HA number entity —
+    # all three land here, so every write is audited the same way.
+    from .power_limit import REVERT_DEFAULT_S, apply_power_limit, parse_command
+    _pl_last_sf: Dict[str, int] = {}
+    _pl_lock = threading.Lock()
+
+    def _modbus_driver_of(client):
+        """The Modbus driver behind a client: the client itself, or the first
+        Modbus source of a unit read several ways. None when nothing can write."""
+        if client is None:
+            return None
+        if hasattr(client, 'connection') and hasattr(client.connection, 'read_registers'):
+            return client
+        for src, drv in getattr(client, 'parts', []) or []:
+            if str(getattr(src, 'protocol', 'tcp')).lower() in ('tcp', 'rtu-tcp', 'rtu') \
+                    and hasattr(drv, 'connection'):
+                return drv
+        return None
+
+    def _power_limit_action(dev_cfg, client, limit_pct, *, revert_s=REVERT_DEFAULT_S,
+                            ramp_s=0, lease_s=0, who='?', ip='?', via='api'):
+        """Apply a limit to ONE unit with every gate, then audit — whichever
+        channel asked. Returns (http_status, result)."""
+        if not config.security.allow_writes:
+            return 403, {'status': 'rejected', 'reason': 'Modbus writes are disabled — set security.allow_writes=true to enable'}
+        if dev_cfg.write_locked:
+            return 403, {'status': 'rejected', 'reason': f"device '{dev_cfg.id}' is write-locked"}
+        drv = _modbus_driver_of(client)
+        if drv is None:
+            return 409, {'status': 'rejected', 'reason': 'no Modbus source is running for this unit — the Solar API cannot write'}
+        if not _write_rate_ok(f'{via}:{dev_cfg.id}'):
+            return 429, {'status': 'rejected', 'reason': 'write rate limit exceeded'}
+        try:
+            lease_s = int(lease_s or 0)
+        except (TypeError, ValueError):
+            lease_s = 0
+        with _pl_lock:                       # one command at a time per gateway: the datalogger is shared
+            res = apply_power_limit(drv.connection, limit_pct, revert_s=revert_s, ramp_s=ramp_s,
+                                    last_good_sf=_pl_last_sf.get(dev_cfg.id))
+            if res.get('sf') in (-2, -1, 0) and res.get('status') in ('success', 'mismatch', 'unverified'):
+                _pl_last_sf[dev_cfg.id] = res['sf']
+        ok = res.get('status') == 'success'
+        msg = (f"power limit {res.get('before_pct')} → {res.get('limit_pct')} % · {res['status']}"
+               + (f" · {res['reason']}" if res.get('reason') else '')
+               + f" · via {via} by {who}")
+        logger.warning("POWER LIMIT %s: device=%s %s", res['status'].upper(), dev_cfg.id, msg)
+        try:
+            drv.connection.record_event('info' if ok else 'warn' if res['status'] in ('unverified', 'mismatch') else 'error',
+                                        'power_limit', msg)
+        except Exception:  # noqa: BLE001
+            pass
+        audit_log.append(user=who, ip=ip, action="power limit", target=dev_cfg.id,
+                         status=res['status'],
+                         detail={k: res.get(k) for k in ('limit_pct', 'revert_s', 'ramp_s', 'before_pct',
+                                                         'after_pct', 'enabled', 'sf', 'ms', 'reason', 'written')}
+                         | {'via': via, 'lease_s': lease_s})
+        if res.get('status') in ('success', 'mismatch') and res.get('after_pct') is not None:
+            # the read-back reaches the unit's live store at once, not at the next sweep
+            regs, _g = config.load_device_registers(dev_cfg)
+            for src in (dev_cfg.sources or []):
+                regs += config.load_device_registers(dev_cfg, source=src)[0]
+            for r in regs:
+                if r.name == 'power_limit_pct':
+                    _push_readback_to_store(dev_cfg.id, r.address, res['after_pct'])
+                elif r.name == 'power_limit_enabled':
+                    _push_readback_to_store(dev_cfg.id, r.address, 1 if res.get('enabled') else 0)
+        # the dead-man: a controller that dies leaves the plant throttled only
+        # until this lease expires — then the gateway restores 100 % itself
+        if ok and lease_s > 0 and float(limit_pct) < 100.0:
+            def _revert(is_current, _dev=dev_cfg.id):
+                if not is_current():
+                    return
+                _i, _c, c = _find_device(_dev)
+                if _c is None or c is None:
+                    raise RuntimeError(f"device {_dev} not running; cannot restore 100 %")
+                st, r = _power_limit_action(_c, c, 100.0, revert_s=0, who='lease', ip='-', via='lease-revert')
+                if r.get('status') not in ('success', 'mismatch'):
+                    raise RuntimeError(f"lease-revert failed: {r.get('reason')}")
+            _lease_mgr.arm(dev_cfg.id, 'holding', 40233, lease_s * 1000, _revert,
+                           meta={'device': dev_cfg.id, 'register_type': 'holding', 'address': 40233,
+                                 'data_type': 'uint16', 'scale': 1.0, 'offset': 0.0, 'safe_value': 100,
+                                 'lease_ms': lease_s * 1000, 'action': 'power_limit'})
+        elif ok:
+            _lease_mgr.clear(dev_cfg.id, 'holding', 40233)
+        code = 200 if res['status'] in ('success', 'mismatch', 'unverified') else 422 if res['status'] == 'rejected' else 502
+        return code, res
+
+    def _pl_args(payload: Dict):
+        try:
+            return (float(payload.get('limit_pct')),
+                    int(payload.get('revert_s', REVERT_DEFAULT_S) if payload.get('revert_s') is not None else REVERT_DEFAULT_S),
+                    int(payload.get('ramp_s', 0) or 0), int(payload.get('lease_s', 0) or 0))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail={"errors": ["limit_pct must be a number; revert_s, ramp_s, lease_s whole seconds"]})
+
+    def _pl_gate(request: Request):
+        if not config.security.allow_writes:
+            raise HTTPException(status_code=403, detail={"errors": [
+                "Modbus writes are disabled — set security.allow_writes=true to enable"]})
+        if not (auth_state.enabled or _api_key):
+            raise HTTPException(status_code=403, detail={"errors": [
+                "writes require authentication — enable login (ui.auth) or set an API_KEY"]})
+        who = getattr(request.state, "user", None) or ("api-key" if _api_key else "anon")
+        return who, (request.client.host if request.client else "?")
+
+    @app.post("/api/devices/{device_id}/actions/power_limit")
+    def device_power_limit(device_id: str, request: Request, payload: Dict = Body(...)):
+        """Limit one inverter's active power (SunSpec model 123): verifies the
+        model and scale factor, writes WMaxLimPct…WMaxLim_Ena in one frame,
+        reads back and says whether it took. `limit_pct` (0..100), `revert_s`
+        (the inverter drops the limit by itself after this; default 600),
+        `ramp_s`, and `lease_s` (the gateway restores 100 % itself if the
+        caller does not renew within this). 100 % restores and clears the
+        enable bit. Audited whichever channel asks."""
+        who, ip = _pl_gate(request)
+        _i, dev_cfg, client = _find_device(device_id)
+        if dev_cfg is None:
+            raise HTTPException(status_code=404, detail="device not found")
+        limit, revert, ramp, lease = _pl_args(payload)
+        code, res = _power_limit_action(dev_cfg, client, limit, revert_s=revert, ramp_s=ramp,
+                                        lease_s=lease, who=who, ip=ip, via='api')
+        return JSONResponse({'device': device_id, **res}, status_code=code)
+
+    @app.post("/api/endpoints/{endpoint_id}/groups/{group_id}/actions/power_limit")
+    def group_power_limit(endpoint_id: str, group_id: str, request: Request, payload: Dict = Body(...)):
+        """The same limit on every unit of a group (the inverters of an
+        installation), one result per unit. Units are done in order; a unit
+        that refuses does not stop the others."""
+        who, ip = _pl_gate(request)
+        if config.get_raw_endpoint(endpoint_id) is None:
+            raise HTTPException(status_code=404, detail="endpoint not found")
+        limit, revert, ramp, lease = _pl_args(payload)
+        results = []
+        for dev in config.endpoint_devices(endpoint_id):
+            if (getattr(dev, 'group_id', '') or 'units') != group_id:
+                continue
+            _i, _c, client = registry.find(dev.id)
+            code, res = _power_limit_action(dev, client, limit, revert_s=revert, ramp_s=ramp,
+                                            lease_s=lease, who=who, ip=ip, via='api')
+            results.append({'device': dev.id, 'unit_id': dev.connection.unit_id, 'http_status': code, **res})
+        if not results:
+            raise HTTPException(status_code=404, detail="group has no units")
+        return {'endpoint': endpoint_id, 'group': group_id, 'limit_pct': limit,
+                'ok': all(r.get('status') == 'success' for r in results), 'units': results}
+
+    def _publish_pl_result(dev_cfg, res: Dict, command: str) -> None:
+        if not mqtt_publisher or not getattr(mqtt_publisher, 'connected', False):
+            return
+        try:
+            mqtt_publisher.client.publish(f"{dev_cfg.mqtt_topic_prefix}/cmd/result",
+                                          json.dumps({'command': command, 'device': dev_cfg.id, **res}, default=str),
+                                          qos=1, retain=False)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _mqtt_power_limit(device_ids, command: str, payload: str) -> None:
+        """A controller's command over MQTT. The broker is not a trusted
+        caller: the same gates as the API, plus mqtt.allow_write_entities."""
+        if not (config.security.allow_writes and config.mqtt.allow_write_entities):
+            logger.warning("MQTT %s ignored: writes over MQTT are off "
+                           "(security.allow_writes + mqtt.allow_write_entities)", command)
+            return
+        try:
+            cmd = parse_command(payload) if command != 'restore' else {'limit_pct': 100.0, 'revert_s': 0, 'ramp_s': 0, 'source': 'mqtt'}
+        except ValueError as e:
+            for did in device_ids:
+                _i, d, _c = _find_device(did)
+                if d is not None:
+                    _publish_pl_result(d, {'status': 'rejected', 'reason': str(e)}, command)
+            return
+        for did in device_ids:
+            _i, d, c = _find_device(did)
+            if d is None:
+                continue
+            _code, res = _power_limit_action(d, c, cmd['limit_pct'], revert_s=cmd['revert_s'], ramp_s=cmd['ramp_s'],
+                                             who=cmd.get('source') or 'mqtt', ip='mqtt', via='mqtt')
+            _publish_pl_result(d, res, command)
+
+    def _sync_power_limit_commands() -> None:
+        """Subscribe `<unit prefix>/cmd/power_limit` and `…/cmd/restore` for
+        every inverter unit that has a Modbus source, and the group-wide
+        `<group prefix>/cmd/power_limit` for its group."""
+        if not mqtt_publisher or not hasattr(mqtt_publisher, 'register_command'):
+            return
+        mqtt_publisher.unregister_commands('')          # rebuild from scratch
+        for p in config.endpoints:
+            pid = p.get('id')
+            by_group: Dict[str, list] = {}
+            for dev in config.endpoint_devices(pid):
+                if (getattr(dev, 'role', '') or '') != 'inverter':
+                    continue
+                if not any(str(s.protocol or 'tcp').lower() in ('tcp', 'rtu-tcp', 'rtu') for s in (dev.sources or [])):
+                    continue
+                by_group.setdefault(getattr(dev, 'group_id', '') or 'units', []).append(dev)
+                mqtt_publisher.register_command(f"{dev.mqtt_topic_prefix}/cmd/power_limit",
+                                                lambda payload, ids=(dev.id,): _mqtt_power_limit(ids, 'power_limit', payload))
+                mqtt_publisher.register_command(f"{dev.mqtt_topic_prefix}/cmd/restore",
+                                                lambda payload, ids=(dev.id,): _mqtt_power_limit(ids, 'restore', payload))
+            for gid, devs in by_group.items():
+                ids = tuple(d.id for d in devs)
+                prefixes = {d.mqtt_topic_prefix.rsplit('/', 1)[0] for d in devs}
+                gp = prefixes.pop() if len(prefixes) == 1 else f"mbg/endpoints/{pid}/{gid}"
+                mqtt_publisher.register_command(f"{gp}/cmd/power_limit",
+                                                lambda payload, ids=ids: _mqtt_power_limit(ids, 'power_limit', payload))
+                mqtt_publisher.register_command(f"{gp}/cmd/restore",
+                                                lambda payload, ids=ids: _mqtt_power_limit(ids, 'restore', payload))
+
+    app.state.power_limit = _power_limit_action
+    app.state.lease_manager = _lease_mgr
+    app.state.mqtt_power_limit = _mqtt_power_limit
+    app.state.mqtt_write_command = _mqtt_write_command
+    app.state.sync_power_limit_commands = _sync_power_limit_commands
+    _late_hooks['power_limit_commands'] = _sync_power_limit_commands
+    try:
+        _sync_power_limit_commands()                # boot: the topics exist from the first second
+    except Exception as e:  # noqa: BLE001
+        logger.warning("power-limit command topics at boot: %s", e)
 
     def _apply_routing_defaults(raw: Dict) -> Dict:
         """Fill missing topic prefix / bucket from the configured {device}
@@ -2535,7 +2782,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # judged by its power and its two voltages, a meter by power and the two
     # energy directions, the site by the balance the datalogger computes.
     _ROLE_LIVE = {
-        'inverter': ('power_active_total', 'voltage_ln_avg', 'voltage_dc'),
+        'inverter': ('power_active_total', 'voltage_ln_avg', 'voltage_dc', 'power_limit_pct'),
         'meter': ('power_active_total', 'energy_active_import', 'energy_active_export'),
         'site': ('power_pv', 'power_load', 'power_grid', 'autonomy',
                  'self_consumption', 'energy_today'),

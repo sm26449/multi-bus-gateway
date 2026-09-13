@@ -111,6 +111,15 @@ CANONICAL_FIELDS: Dict[str, Tuple[str, str, str, str]] = {
     'energy_lifetime':   ('site', 'Wh', 'energy/lifetime', 'Energy generated since commissioning'),
     'autonomy':          ('site', '%', 'autonomy', 'Share of the load covered without the grid'),
     'self_consumption':  ('site', '%', 'self_consumption', 'Share of generation consumed on site'),
+    # ── Controls (measurement: controls) — SunSpec model 123 read back ──────────
+    # What the inverter is currently TOLD, as distinct from what it does. A
+    # controller (over-voltage protection, a schedule) writes these through the
+    # power-limit action; the leaves let it verify the command took.
+    'power_limit_pct':      ('controls', '%', 'controls/power_limit_pct', 'Active power limit'),
+    'power_limit_enabled':  ('controls', '', 'controls/power_limit_enabled', 'Power limit enabled'),
+    'power_limit_revert_s': ('controls', 's', 'controls/power_limit_revert_s', 'Power limit reverts after'),
+    'power_limit_ramp_s':   ('controls', 's', 'controls/power_limit_ramp_s', 'Power limit ramp time'),
+    'controls_connected':   ('controls', '', 'controls/connected', 'Inverter connected (model 123)'),
     # ── Diagnostics (measurement: diagnostic) ─────────────────────────────────
     'model_id':     ('diagnostic', '', 'diagnostic/model_id', 'Meter model identification code'),
     'firmware_rev': ('diagnostic', '', 'diagnostic/firmware_rev', 'Firmware / revision code'),

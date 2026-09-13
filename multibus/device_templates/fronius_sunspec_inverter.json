@@ -24,6 +24,10 @@
       "static": {
         "interval": 3600,
         "description": "Identity strings"
+      },
+      "controls": {
+        "interval": 20,
+        "description": "Immediate controls (model 123): the limit the inverter is told — a second read, 40232..40251"
       }
     },
     "categories": {
@@ -53,14 +57,93 @@
       },
       "identity": {
         "label": "Device identity",
-        "order": 7
+        "order": 8
       },
       "sf": {
         "label": "SunSpec scale factors",
-        "order": 8
+        "order": 9
+      },
+      "controls": {
+        "label": "Controls (model 123)",
+        "order": 7
       }
     },
     "registers": [
+      {
+        "address": 40004,
+        "name": "manufacturer",
+        "label": "Device manufacturer",
+        "unit": "",
+        "data_type": "string:16",
+        "register_type": "holding",
+        "category": "identity",
+        "poll_group": "static",
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40020,
+        "name": "model",
+        "label": "Device model name",
+        "unit": "",
+        "data_type": "string:16",
+        "register_type": "holding",
+        "category": "identity",
+        "poll_group": "static",
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40052,
+        "name": "serial",
+        "label": "Meter serial / identification",
+        "unit": "",
+        "data_type": "string:16",
+        "register_type": "holding",
+        "category": "identity",
+        "poll_group": "static",
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
       {
         "address": 40071,
         "name": "current_total",
@@ -1062,6 +1145,169 @@
         }
       },
       {
+        "address": 40232,
+        "name": "controls_connected",
+        "label": "Connected (model 123)",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "controls",
+        "poll_group": "controls",
+        "description": "1 = the inverter accepts immediate controls",
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40233,
+        "name": "power_limit_pct",
+        "label": "Active power limit",
+        "unit": "%",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "controls",
+        "poll_group": "controls",
+        "scale_from": "wmaxlimpct_sf",
+        "nan": true,
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 100,
+        "write_safe": 100,
+        "description": "WMaxLimPct — set through the power-limit action, never as a bare register write (WMaxLim_Ena must travel with it)",
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40235,
+        "name": "power_limit_revert_s",
+        "label": "Power limit reverts after",
+        "unit": "s",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "controls",
+        "poll_group": "controls",
+        "description": "WMaxLimPct_RvrtTms — the inverter drops the limit on its own after this many seconds",
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40236,
+        "name": "power_limit_ramp_s",
+        "label": "Power limit ramp time",
+        "unit": "s",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "controls",
+        "poll_group": "controls",
+        "description": "WMaxLimPct_RmpTms",
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40237,
+        "name": "power_limit_enabled",
+        "label": "Power limit enabled",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "controls",
+        "poll_group": "controls",
+        "description": "WMaxLim_Ena — 1 while a limit is active",
+        "defaults": {
+          "mqtt": {
+            "enabled": true,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40251,
+        "name": "wmaxlimpct_sf",
+        "label": "WMaxLimPct Scale Factor",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "holding",
+        "category": "sf",
+        "poll_group": "controls",
+        "nan": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": false,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": false,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
         "address": 40255,
         "name": "dca_mppt_sf",
         "label": "DCA MPPT Scale Factor",
@@ -1429,81 +1675,6 @@
         "category": "mppt",
         "poll_group": "normal",
         "nan": true
-      },
-      {
-        "address": 40004,
-        "name": "manufacturer",
-        "label": "Device manufacturer",
-        "unit": "",
-        "data_type": "string:16",
-        "register_type": "holding",
-        "category": "identity",
-        "poll_group": "static",
-        "defaults": {
-          "mqtt": {
-            "enabled": true,
-            "topic": ""
-          },
-          "influxdb": {
-            "enabled": true,
-            "measurement": "",
-            "tags": {}
-          },
-          "ui": {
-            "show_on_dashboard": false,
-            "widget": "value"
-          }
-        }
-      },
-      {
-        "address": 40020,
-        "name": "model",
-        "label": "Device model name",
-        "unit": "",
-        "data_type": "string:16",
-        "register_type": "holding",
-        "category": "identity",
-        "poll_group": "static",
-        "defaults": {
-          "mqtt": {
-            "enabled": true,
-            "topic": ""
-          },
-          "influxdb": {
-            "enabled": true,
-            "measurement": "",
-            "tags": {}
-          },
-          "ui": {
-            "show_on_dashboard": false,
-            "widget": "value"
-          }
-        }
-      },
-      {
-        "address": 40052,
-        "name": "serial",
-        "label": "Meter serial / identification",
-        "unit": "",
-        "data_type": "string:16",
-        "register_type": "holding",
-        "category": "identity",
-        "poll_group": "static",
-        "defaults": {
-          "mqtt": {
-            "enabled": true,
-            "topic": ""
-          },
-          "influxdb": {
-            "enabled": true,
-            "measurement": "",
-            "tags": {}
-          },
-          "ui": {
-            "show_on_dashboard": false,
-            "widget": "value"
-          }
-        }
       }
     ],
     "canonical": true,

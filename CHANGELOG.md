@@ -1,5 +1,44 @@
 # Changelog
 
+## 3.72.0
+
+### 2026-09-13 — the active power limit (SunSpec model 123)
+
+The gateway now applies a power limit safely and consigns it. It never
+decides to limit on its own: that is a controller's policy (over-voltage
+protection, a schedule) — Node-RED keeps it, and speaks to the gateway.
+
+- **Read back.** The `fronius_sunspec_inverter` template gains the model-123
+  block — `power_limit_pct`, `power_limit_enabled`, `power_limit_revert_s`,
+  `power_limit_ramp_s`, `controls_connected` — in its own poll group
+  `controls` (one read, 40232..40251), published as `…/controls/*`. The
+  installation page shows the limit per inverter.
+- **The action.** `POST /api/devices/{id}/actions/power_limit`
+  `{limit_pct, revert_s=600, ramp_s=0, lease_s=0}` and
+  `POST /api/endpoints/{id}/groups/{gid}/actions/power_limit` (every unit,
+  one result each): verifies model 123 and the scale factor (only {-2,-1,0},
+  and the same as last time), writes WMaxLimPct…WMaxLim_Ena in ONE frame,
+  clears the enable bit at 100 %, settles, reads back, and answers `success`
+  / `mismatch` / `unverified` / `rejected` / `error` with before → after.
+  `revert_s` is the inverter's own revert (default 600 s — a dead controller
+  never leaves the plant throttled); `lease_s` is the gateway's dead-man that
+  restores 100 % itself.
+- **Every channel, one path, one audit.** MQTT `<unit>/cmd/power_limit`
+  (a number or `{limit_pct, revert_s, ramp_s, source}`; the legacy
+  `revert_timeout`/`ramp_time` are accepted), `<unit>/cmd/restore`, the
+  group-wide `<group>/cmd/power_limit`, results on `<unit>/cmd/result`; the
+  HA number entity for `power_limit_pct` is the action too, never a bare
+  register write. Each write lands in the audit log (who, channel, unit,
+  before → after, verdict) and in the unit's Logs.
+- **UI.** *Limit…* on the inverter card: limit, reverts after, ramp, scope
+  (the group or one unit), a confirmation, and the result in words per unit.
+- Gates unchanged: `security.allow_writes`, `write_locked` per unit, login
+  or API key, the rate limit; MQTT/HA additionally need
+  `mqtt.allow_write_entities`.
+
+Tests: `tests/test_power_limit.py` (the sequence), `tests/test_power_limit_api.py`
+(every channel); e2e `tools/e2e/power_limit_e2e.mjs`.
+
 ## 3.71.0
 
 ### 2026-09-13 — the last three audit findings

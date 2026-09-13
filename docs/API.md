@@ -96,6 +96,8 @@ device create/edit/delete refuses their ids.
 
 | Method | Path | Description | Role |
 |---|---|---|---|
+| POST | `/api/devices/{id}/actions/power_limit` | Limit an inverter's active power (SunSpec model 123). Body `{limit_pct: 0..100, revert_s: 600, ramp_s: 0, lease_s: 0}`. Verifies the model and scale factor, writes WMaxLimPct…WMaxLim_Ena in one frame (100 % clears the enable bit), reads back. Answers `{status: success|mismatch|unverified|rejected|error, before_pct, after_pct, enabled, sf, ms, reason}` — 200 for the first three, 422 rejected, 502 error, 403 gates, 409 no Modbus source. Audited | admin |
+| POST | `/api/endpoints/{id}/groups/{gid}/actions/power_limit` | The same on every unit of a group; `{ok, units: [{device, unit_id, status, …}]}` | admin |
 | GET | `/api/registers/all?device=&source=` | The catalog of the map being edited, grouped by category — a template register with no category (or `other`) whose name is canonical is filed under its canonical category (`power`, `voltage`, `current`, `energy`, `frequency`, `dc`, `quality`, `site`, `temperature`, `status`), each with a `name` label | viewer |
 | GET | `/api/registers/selected?device=&source=` | The selection of one source's map; every register carries `category` (canonical name → unit → `other`); `sources[]` carry `selected`, `catalog` (template size) and `interval_s` (fastest group the selection uses) | viewer |
 | GET | `/api/devices` (installation units) | Besides the device fields, a unit of an installation carries `endpoint_name`, `group_id`, `role`, `live` (glance values by role, fresh only), `fields` (label/unit per live name) and `read_via[]` — every source that reads it: `id`, `protocol`, `address` (with the unit id; URL redacted for viewers), `template`, `interval_s`, `timeout_s`, `stale_after_s`, `registers` (selected from it), `provides` (fields it supplies now), `status`, `latency_ms`, `reads_5m`, `failed_5m`, `fail_pct_5m`. `selected_registers` is the union across sources | viewer |
@@ -326,3 +328,21 @@ Scrape metrics:
 ```bash
 curl -s http://gateway:8080/metrics | grep gateway_device_up
 ```
+
+
+## MQTT commands (installations)
+
+With `security.allow_writes` and `mqtt.allow_write_entities` on, every inverter
+unit that has a Modbus source subscribes:
+
+| Topic | Payload | Effect |
+|-------|---------|--------|
+| `<unit prefix>/cmd/power_limit` | a number, or `{"limit_pct": 60, "revert_s": 600, "ramp_s": 0, "source": "ov"}` (`revert_timeout` / `ramp_time` accepted) | the power-limit action on that unit |
+| `<unit prefix>/cmd/restore` | anything | 100 %, enable bit cleared |
+| `<group prefix>/cmd/power_limit`, `…/cmd/restore` | as above | every inverter of the group |
+| `<unit prefix>/cmd/result` | `{command, device, status, before_pct, after_pct, enabled, sf, ms, reason}` (not retained) | the outcome, one per unit |
+
+The read-back is published continuously as `<unit prefix>/controls/power_limit_pct`,
+`…/controls/power_limit_enabled`, `…/controls/power_limit_revert_s`,
+`…/controls/power_limit_ramp_s`, `…/controls/connected`. Retained commands are
+never executed (a replay is not an order).

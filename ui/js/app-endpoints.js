@@ -204,7 +204,7 @@ Object.assign(JanitzaMonitor.prototype, {
                   battery: 'bi-battery-half', sensor: 'bi-thermometer-half' },
     // what a row shows at a glance, by what the unit IS (mirrors the server)
     _ROLE_LIVE: {
-        inverter: ['power_active_total', 'voltage_ln_avg', 'voltage_dc'],
+        inverter: ['power_active_total', 'voltage_ln_avg', 'voltage_dc', 'power_limit_pct'],
         meter: ['power_active_total', 'energy_active_import', 'energy_active_export'],
         site: ['power_pv', 'power_load', 'power_grid', 'autonomy', 'self_consumption', 'energy_today'],
         battery: ['power_active_total', 'voltage_dc'],
@@ -212,7 +212,7 @@ Object.assign(JanitzaMonitor.prototype, {
     _liveLabel(name) {
         const d = { power_active_total: 'Power', voltage_ln_avg: 'AC voltage', voltage_dc: 'DC voltage',
                     energy_active_import: 'Imported', energy_active_export: 'Exported',
-                    power_pv: 'PV', power_load: 'Load', power_grid: 'Grid', autonomy: 'Autonomy',
+                    power_limit_pct: 'Limit', power_pv: 'PV', power_load: 'Load', power_grid: 'Grid', autonomy: 'Autonomy',
                     self_consumption: 'Self-consumption', energy_today: 'Today' }[name] || name;
         return this.t(`endpoints.live.${name}`, d);
     },
@@ -251,6 +251,8 @@ Object.assign(JanitzaMonitor.prototype, {
                     <input type="checkbox" ${off ? '' : 'checked'}
                            onchange="app.toggleGroup('${this._esc(p.id)}','${this._esc(g.id)}',this)">
                     <span>${t('endpoints.groupOn', 'Read')}</span></label>
+                  ${g.role === 'inverter' && (g.sources || []).some(sx => sx.protocol !== 'http' && sx.protocol !== 'mqtt') ? `<button class="btn btn-secondary btn-sm" ${this._act('openPowerLimitModal', [p.id, g.id, ''])}
+                          title="${t('endpoints.limitHint', 'Limit the active power of the inverters (SunSpec model 123)')}"><i aria-hidden="true" class="bi bi-speedometer"></i> ${t('endpoints.limit', 'Limit…')}</button>` : ''}
                   <button class="btn btn-ghost btn-sm" ${this._act('openSourceModal', [p.id, '', g.id])}
                           title="${t('endpoints.srcAdd', 'Add source')}" aria-label="${t('endpoints.srcAdd', 'Add source')}"><i aria-hidden="true" class="bi bi-plus-lg"></i></button>
                   <button class="btn btn-ghost btn-sm" ${this._act('openGroupModal', [p.id, g.id])}
@@ -584,7 +586,7 @@ Object.assign(JanitzaMonitor.prototype, {
         document.getElementById('endpointFeedback').textContent = '';
         const save = document.querySelector('#endpointModal [data-endpoint-save]')
             || document.querySelector('#endpointModal .btn-primary');
-        if (save) save.setAttribute('onclick', `app.saveSource('${this._esc(endpointId)}')`);
+        if (save) { save.innerHTML = `<i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}`; save.setAttribute('onclick', `app.saveSource('${this._esc(endpointId)}')`); }
         this.openModal('endpointModal');
     },
 
@@ -646,6 +648,73 @@ Object.assign(JanitzaMonitor.prototype, {
         }
     },
 
+    // ── the active power limit ──────────────────────────────────────────────
+    //
+    // The gateway applies a limit safely and consigns it; it never decides to
+    // limit on its own — that is a controller's policy. This dialog is the
+    // operator's hand on the same action the controller uses.
+    async openPowerLimitModal(endpointId, groupId, deviceId) {
+        const p = this._endpointDetail;
+        if (!p || p.id !== endpointId) return;
+        const t = (k, d) => this.t(k, d);
+        const g = (p.groups || []).find(x => x.id === groupId) || {};
+        const units = (g.units || []);
+        const cur = units.map(u => `${this._esc(u.name || u.device_id)}: ${(u.live || {}).power_limit_pct != null ? u.live.power_limit_pct + ' %' : '—'}`).join(' · ');
+        document.getElementById('endpointModalTitle').textContent = t('endpoints.limitTitle', 'Limit active power');
+        document.getElementById('endpointModalBody').innerHTML = `
+            <p class="field-hint" style="margin:0 0 12px;">${t('endpoints.limitIntro',
+                'Writes WMaxLimPct and WMaxLim_Ena (SunSpec model 123) in one frame, reads back and says whether it took. 100 % restores. The inverter drops the limit by itself after the revert time unless it is renewed — a controller that dies never leaves the plant throttled.')}</p>
+            <div class="field-hint" style="margin:0 0 12px;">${t('endpoints.limitNow', 'Now')}: ${cur || '—'}</div>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label" for="plmPct">${t('endpoints.limitPct', 'Limit (%)')}</label>
+                    <input id="plmPct" class="input" type="number" min="0" max="100" step="1" value="100"></div>
+                <div class="form-group"><label class="form-label" for="plmRevert">${t('endpoints.limitRevert', 'Reverts after (s)')}</label>
+                    <input id="plmRevert" class="input" type="number" min="0" max="65535" step="1" value="600">
+                    <div class="field-hint">${t('endpoints.limitRevertHint', '0 = the inverter keeps it until told otherwise')}</div></div>
+                <div class="form-group"><label class="form-label" for="plmRamp">${t('endpoints.limitRamp', 'Ramp (s)')}</label>
+                    <input id="plmRamp" class="input" type="number" min="0" max="65535" step="1" value="0"></div>
+                <div class="form-group flex-2"><label class="form-label" for="plmScope">${t('endpoints.limitScope', 'Apply to')}</label>
+                    <select id="plmScope" class="input">
+                        <option value="">${t('endpoints.limitAll', 'every inverter of the group')} (${units.length})</option>
+                        ${units.map(u => `<option value="${this._esc(u.device_id)}" ${u.device_id === deviceId ? 'selected' : ''}>${this._esc(u.name || u.device_id)}</option>`).join('')}
+                    </select></div>
+            </div>
+            <div id="plmOut" role="status" aria-live="polite" style="margin-top:8px;font-size:12.5px;"></div>`;
+        document.getElementById('endpointFeedback').textContent = '';
+        const save = document.querySelector('#endpointModal [data-endpoint-save]');
+        if (save) { save.setAttribute('onclick', `app.applyPowerLimit('${this._esc(endpointId)}','${this._esc(groupId)}')`); save.innerHTML = `<i aria-hidden="true" class="bi bi-speedometer"></i> ${t('endpoints.limitApply', 'Apply')}`; }
+        this.openModal('endpointModal');
+    },
+
+    async applyPowerLimit(endpointId, groupId) {
+        const t = (k, d) => this.t(k, d);
+        const v = id => (document.getElementById(id) || {}).value;
+        const fb = document.getElementById('endpointFeedback'), out = document.getElementById('plmOut');
+        const pct = parseFloat(v('plmPct'));
+        if (!(pct >= 0 && pct <= 100)) { fb.textContent = t('endpoints.limitBad', 'Limit: 0..100 %'); return; }
+        const body = { limit_pct: pct, revert_s: parseInt(v('plmRevert'), 10) || 0, ramp_s: parseInt(v('plmRamp'), 10) || 0 };
+        const one = v('plmScope');
+        if (!confirm(`${t('endpoints.limitConfirm', 'Write this limit to')} ${one || t('endpoints.limitAll', 'every inverter of the group')}: ${pct} %?`)) return;
+        fb.textContent = ''; out.innerHTML = t('common.loading', 'Loading…');
+        const url = one ? `/api/devices/${encodeURIComponent(one)}/actions/power_limit`
+                        : `/api/endpoints/${encodeURIComponent(endpointId)}/groups/${encodeURIComponent(groupId)}/actions/power_limit`;
+        let d = {};
+        try {
+            const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            d = await r.json().catch(() => ({}));
+            if (r.status === 403 || r.status === 404) { fb.textContent = (d.detail?.errors || [d.detail || d.reason || r.statusText]).join(' · '); out.innerHTML = ''; return; }
+        } catch (e) { fb.textContent = e.message; out.innerHTML = ''; return; }
+        const rows = one ? [{ device: one, ...d }] : (d.units || []);
+        const word = r => ({ success: t('endpoints.limitOk', 'applied'), mismatch: t('endpoints.limitMismatch', 'applied, but the inverter holds another value'),
+                             unverified: t('endpoints.limitUnverified', 'written, read-back silent'), rejected: t('endpoints.limitRejected', 'refused'),
+                             error: t('endpoints.limitError', 'failed') }[r.status] || r.status);
+        out.innerHTML = rows.map(r => `<div style="display:flex;gap:8px;align-items:baseline;padding:2px 0;">
+            <span class="status-dot" style="--dot:${r.status === 'success' ? 'var(--success,#22c55e)' : r.status === 'error' || r.status === 'rejected' ? 'var(--danger,#ef4444)' : 'var(--warning,#f59e0b)'}" aria-hidden="true"></span>
+            <span class="dev-chip">${this._esc(r.device)}</span>
+            <span><b>${word(r)}</b>${r.before_pct != null ? ` · ${r.before_pct} → ${r.after_pct ?? '?'} %` : ''}${r.ms != null ? ` · ${Math.round(r.ms)} ms` : ''}${r.reason ? ` · ${this._esc(r.reason)}` : ''}</span></div>`).join('');
+        this._refreshEndpointDetail(endpointId);
+    },
+
     // ── the group editor ────────────────────────────────────────────────────
     //
     // A group answers one question: WHAT does this installation hold, and which
@@ -703,7 +772,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 ${t('endpoints.groupOnLong', 'Read this group')}</label>`;
         document.getElementById('endpointFeedback').textContent = '';
         const save = document.querySelector('#endpointModal [data-endpoint-save]');
-        if (save) save.setAttribute('onclick', `app.saveGroup('${this._esc(endpointId)}')`);
+        if (save) { save.innerHTML = `<i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}`; save.setAttribute('onclick', `app.saveGroup('${this._esc(endpointId)}')`); }
         this.openModal('endpointModal');
     },
 
@@ -1181,7 +1250,7 @@ Object.assign(JanitzaMonitor.prototype, {
         // the modal shell is shared with the source editor, which repoints this
         // button — reclaim it, or Save would still be saving a source
         const _save = document.querySelector('#endpointModal [data-endpoint-save]');
-        if (_save) _save.setAttribute('onclick', 'app.saveEndpoint()');
+        if (_save) { _save.setAttribute('onclick', 'app.saveEndpoint()'); _save.innerHTML = `<i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}`; }
         this.openModal('endpointModal');
     },
 

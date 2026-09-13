@@ -44,7 +44,12 @@
     "mppt/2/temperature": "mppt/string2/Tmp",
     "diagnostic/manufacturer": "manufacturer",
     "diagnostic/model": "model",
-    "diagnostic/serial": "serial_number"
+    "diagnostic/serial": "serial_number",
+    "controls/connected": "Conn",
+    "controls/power_limit_pct": "WMaxLimPct",
+    "controls/power_limit_revert_s": "WMaxLimPct_RvrtTms",
+    "controls/power_limit_ramp_s": "WMaxLimPct_RmpTms",
+    "controls/power_limit_enabled": "WMaxLim_Ena"
   },
   "fronius_sunspec_meter": {
     "current/total": "A",

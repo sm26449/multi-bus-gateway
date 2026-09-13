@@ -176,3 +176,15 @@ MBG_URL=http://localhost:18087 UNIT=sunfield-u1 CHROMIUM_PATH=<chrome> \
 ```
 
 Uses the installation-safety fixture.
+
+## Power limit
+
+`power_limit_e2e.mjs` drives the operator's hand on the power-limit action:
+the *Limit…* button on the inverter card only, the dialog (limit, reverts
+after — 600 s by default —, ramp, scope), the confirmation, and the outcome
+in words per unit. Against the safety fixture (writes off) the honest outcome
+is a refusal, which must be shown.
+
+```bash
+MBG_URL=http://localhost:18087 ENDPOINT=sunfield CHROMIUM_PATH=<chrome> node power_limit_e2e.mjs
+```

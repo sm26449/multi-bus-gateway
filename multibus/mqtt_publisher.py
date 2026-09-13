@@ -21,7 +21,7 @@ import time
 import json
 import queue
 import threading
-from typing import Dict, Any, Optional, List
+from typing import Any, Callable, Dict, List, Optional
 
 import paho.mqtt.client as mqtt
 
@@ -177,6 +177,8 @@ class MQTTPublisher:
         # built while publishing discovery, plus the gated executor the on_message
         # callback hands a command to. Empty + no-op unless allow_write_entities.
         self._command_map: Dict[str, tuple] = {}
+        # plain command topics (a controller's `…/cmd/power_limit`): topic → fn(payload)
+        self._topic_handlers: Dict[str, Callable] = {}
         self._write_handler = None
         # Commands execute on a dedicated worker, NOT on paho's network thread:
         # the handler does blocking Modbus I/O under the connection lock shared
@@ -292,6 +294,13 @@ class MQTTPublisher:
             except Exception:
                 pass
 
+            # plain command topics survive a reconnect like the HA ones do
+            for _topic in list(self._topic_handlers):
+                try:
+                    self.client.publish(_topic, "", retain=True)
+                    self.client.subscribe(_topic)
+                except Exception:  # noqa: BLE001
+                    pass
             # Re-publish HA discovery on reconnect (primary + any registered
             # hooks: non-primary devices, virtual meters)
             if self.config.ha_discovery_enabled:
@@ -816,6 +825,29 @@ class MQTTPublisher:
             if self._publish(topic, payload, retain=True):
                 self._runtime_last[topic] = payload
 
+    def register_command(self, topic: str, fn: Callable) -> None:
+        """Subscribe a plain command topic and hand its payloads to ``fn`` on
+        the command worker — the same thread, queue and retained-replay guard
+        the HA write entities use, so a controller's command and an operator's
+        HA slider are treated exactly alike."""
+        self._topic_handlers[topic] = fn
+        self._start_command_worker()
+        if self.client is not None and self.connected:
+            try:
+                self.client.publish(topic, "", retain=True)   # never replay a stale command
+                self.client.subscribe(topic)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def unregister_commands(self, prefix: str) -> None:
+        for topic in [t for t in self._topic_handlers if t.startswith(prefix)]:
+            self._topic_handlers.pop(topic, None)
+            if self.client is not None and self.connected:
+                try:
+                    self.client.unsubscribe(topic)
+                except Exception:  # noqa: BLE001
+                    pass
+
     def set_command_write_handler(self, fn) -> None:
         """Install the gated executor for HA write commands. ``fn(device_id,
         register, payload_str)`` performs the fully-validated write (re-checks
@@ -841,7 +873,10 @@ class MQTTPublisher:
             except queue.Empty:
                 continue
             try:
-                self._write_handler(device_id, register, payload)
+                if callable(register):                  # a plain command topic
+                    register(payload)
+                else:
+                    self._write_handler(device_id, register, payload)
             except Exception as e:  # noqa: BLE001
                 logger.warning("MQTT command for %s addr=%s failed: %s", device_id,
                                getattr(register, "address", "?"), e)
@@ -855,7 +890,8 @@ class MQTTPublisher:
         paho's network thread. Never raises into the paho loop."""
         try:
             entry = self._command_map.get(message.topic)
-            if entry is None or self._write_handler is None:
+            fn = self._topic_handlers.get(message.topic)
+            if fn is None and (entry is None or self._write_handler is None):
                 return
             # a RETAINED delivery is the broker replaying the past, not an
             # operator acting now — never actuate hardware from it (external
@@ -865,8 +901,11 @@ class MQTTPublisher:
                     logger.warning("MQTT command on %s ignored: retained "
                                    "message (stale write replay)", message.topic)
                 return
-            device_id, register = entry
             payload = message.payload.decode("utf-8", "replace").strip()
+            if fn is not None:
+                self._command_queue.put_nowait((None, fn, payload))
+                return
+            device_id, register = entry
             self._command_queue.put_nowait((device_id, register, payload))
         except queue.Full:
             self.commands_dropped += 1

@@ -372,7 +372,7 @@ def test_the_mppt_block_polls_on_its_own_cadence():
     what a slow master charges for."""
     t = _tpl(INV)
     groups = {g: t.poll_groups[g]["interval"] for g in t.poll_groups}
-    assert groups == {"normal": 5, "slow": 30, "static": 3600}
+    assert groups == {"normal": 5, "slow": 30, "static": 3600, "controls": 20}
     for r in t.registers:
         if not r.defaults:
             continue
@@ -380,6 +380,10 @@ def test_the_mppt_block_polls_on_its_own_cadence():
             assert r.poll_group == "slow", r.name
         elif r.category == "identity":
             assert r.poll_group == "static", r.name
+        elif r.category == "controls" or r.name == "wmaxlimpct_sf":
+            # model 123 sits between the AC block and the MPPT block; read on
+            # its own so a controller's read-back never rides the AC sweep
+            assert r.poll_group == "controls", r.name
         else:
             assert r.poll_group == "normal", r.name
 
@@ -397,7 +401,7 @@ def test_every_curated_group_costs_exactly_one_transaction():
     for r in t.registers:
         if r.defaults:
             by.setdefault(r.poll_group or "normal", []).append(r)
-    assert set(by) == {"normal", "slow", "static"}
+    assert set(by) == {"normal", "slow", "static", "controls"}
     for g, rs in by.items():
         sel = [SelectedRegister(address=r.address, name=r.name, label=r.label,
                                 unit=r.unit, data_type=r.data_type, poll_group=g,

@@ -47,6 +47,7 @@ _CANON_CATEGORY = {
     'thd': ('quality', 'Power quality'), 'dc': ('dc', 'DC'), 'mppt': ('dc', 'DC'),
     'site': ('site', 'Site'), 'temperature': ('temperature', 'Temperature'),
     'status': ('status', 'Status'), 'diagnostic': ('status', 'Status'),
+    'controls': ('controls', 'Controls'),
 }
 _UNIT_CATEGORY = {'v': 'voltage', 'a': 'current', 'w': 'power', 'kw': 'power',
                   'var': 'power', 'kvar': 'power', 'va': 'power', 'kva': 'power',
