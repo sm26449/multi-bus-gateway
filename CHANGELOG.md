@@ -11,9 +11,9 @@ protection, a schedule) — Node-RED keeps it, and speaks to the gateway.
 - **Read back.** The `fronius_sunspec_inverter` template gains the model-123
   block — `power_limit_pct`, `power_limit_enabled`, `power_limit_revert_s`,
   `power_limit_ramp_s`, `controls_connected` — in its own poll group
-  `controls` (one read, 40231..40250, every 300 s — the action reads back at
-  once; the sweep only catches drift, and every transaction on this datalogger
-  is dear), published as `…/controls/*`. The installation page shows the limit
+  `controls` (one read, 40231..40250, once an hour — every power-limit write
+  sweeps it at once, so the read-back reaches MQTT in seconds; every
+  transaction on this datalogger is dear), published as `…/controls/*`. The installation page shows the limit
   per inverter.
 - **The action.** `POST /api/devices/{id}/actions/power_limit`
   `{limit_pct, revert_s=600, ramp_s=0, lease_s=0}` and

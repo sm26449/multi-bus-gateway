@@ -884,6 +884,10 @@ class RegisterPoller(threading.Thread):
 
         self.running = False
         self._stop_event = threading.Event()
+        # set to sweep NOW instead of at the next cadence tick — a write's
+        # read-back should reach the outputs in seconds, not at the next hour
+        self._kick = threading.Event()
+        self._in_wait = False
 
         # Poll rate tracking
         self.poll_count = 0
@@ -1239,8 +1243,18 @@ class RegisterPoller(threading.Thread):
                                  f'{self.poll_group_name}: back inside its '
                                  f'{self.interval:.0f}s interval '
                                  f'({elapsed:.1f}s)')
+                if self._kick.is_set():          # asked for during the sweep
+                    self._kick.clear()
+                    continue
+                self._in_wait = True
                 self._stop_event.wait(
                     max(self.interval * 0.1, 0.05, self.interval - elapsed))
+                self._in_wait = False
+                # poll_now() wakes this wait through the stop event; a real
+                # stop() cleared `running` first, so it is never mistaken for a kick
+                if self._kick.is_set() and self.running:
+                    self._kick.clear()
+                    self._stop_event.clear()
         finally:
             # Close the loop we created so its FDs don't leak — every register
             # reload spawns fresh poller threads, each with a fresh event loop.
@@ -1255,6 +1269,12 @@ class RegisterPoller(threading.Thread):
     def stop(self):
         self.running = False
         self._stop_event.set()
+
+    def poll_now(self) -> None:
+        """Sweep at the next opportunity instead of at the cadence tick."""
+        self._kick.set()
+        if self._in_wait:                      # wake the cadence wait now
+            self._stop_event.set()
 
 
 class ModbusClient:
@@ -1401,6 +1421,17 @@ class ModbusClient:
         if raw_data:
             return self.parser.parse_value(raw_data, data_type)
         return None
+
+    def poll_now(self, group: str = None) -> int:
+        """Make the named poll group (or every group) sweep at once. Returns
+        how many pollers were kicked. Used after a write, so the read-back
+        reaches MQTT/InfluxDB in seconds rather than at the next cadence."""
+        n = 0
+        for p in self.pollers:
+            if p.running and (group is None or p.poll_group_name == group):
+                p.poll_now()
+                n += 1
+        return n
 
     def write_value(self, address: int, register_type: str, data_type: str,
                     value, scale: float = 1.0, offset: float = 0.0,

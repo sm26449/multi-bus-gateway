@@ -26,8 +26,8 @@
         "description": "Identity strings"
       },
       "controls": {
-        "interval": 300,
-        "description": "Immediate controls (model 123): the limit the inverter is told — a second read, 40231..40250. Rare on purpose: the power-limit action reads back at once; this only catches drift, and every transaction on this datalogger is dear"
+        "interval": 3600,
+        "description": "Immediate controls (model 123): the limit the inverter is told — a second read, 40231..40250. Once an hour on purpose: every power-limit write sweeps it at once, and every transaction on this datalogger is dear"
       }
     },
     "categories": {

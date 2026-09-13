@@ -1672,6 +1672,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                                                          'after_pct', 'enabled', 'sf', 'ms', 'reason', 'written')}
                          | {'via': via, 'lease_s': lease_s})
         if res.get('status') in ('success', 'mismatch') and res.get('after_pct') is not None:
+            # the controls sweep runs now, so the read-back reaches MQTT and
+            # InfluxDB in seconds — the periodic read is once an hour
+            try:
+                if hasattr(drv, 'poll_now'):
+                    drv.poll_now('controls')
+            except Exception:  # noqa: BLE001
+                pass
             # the read-back reaches the unit's live store at once, not at the next sweep
             regs, _g = config.load_device_registers(dev_cfg)
             for src in (dev_cfg.sources or []):
