@@ -94,3 +94,39 @@ def test_a_client_that_has_read_before_trusts_the_freshness_verdict():
     assert client_is_live(_Warm("ok")) is True
     assert client_is_live(_Warm("degraded")) is True
     assert client_is_live(_Warm("down")) is False
+
+
+class _Empty:
+    """A client with nothing selected to read — its data_health() says so."""
+    connected = True
+
+    def data_health(self, stale_threshold_s=30):
+        return {"status": "idle", "last_success_ts": None, "connected": True}
+
+
+def test_a_client_with_nothing_to_read_is_idle_not_live():
+    """UI audit 4.1: a unit polling nothing wore a green light for hours. It
+    is neither healthy nor broken — it is idle, grey, and not counted online."""
+    assert client_health(_Empty()) == "idle"
+    assert client_is_live(_Empty()) is False
+
+
+def test_an_idle_source_does_not_vote_on_the_unit():
+    from multibus.multi_source import MultiSourceClient
+    from multibus.config import SourceConfig
+
+    class _Drv:
+        def __init__(self, status, connected=True):
+            self._s, self.connected = status, connected
+
+        def data_health(self, *a, **kw):
+            return {"status": self._s, "last_success_ts": 1.0, "connected": self.connected}
+
+    def unit(*statuses):
+        parts = [(SourceConfig(id=f"s{i}"), _Drv(s)) for i, s in enumerate(statuses)]
+        return MultiSourceClient("u", parts).data_health()
+
+    assert unit("idle", "ok")["status"] == "ok"           # the empty source is silent
+    assert unit("idle", "down")["status"] == "down"
+    assert unit("idle", "idle")["status"] == "idle"       # nothing reads → idle
+    assert unit("idle", "idle")["sources"] == {"s0": "idle", "s1": "idle"}

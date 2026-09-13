@@ -263,7 +263,7 @@ class MqttInputClient:
 
     def data_health(self, stale_threshold_s: float = 30) -> Dict:
         if not self.registers:
-            return {"status": "ok", "stale": False, "staleness_age_s": None}
+            return {"status": "idle", "stale": False, "staleness_age_s": None}
         if self.last_msg_mono is None:
             return {"status": "ok" if self.connected else "down",
                     "stale": False, "staleness_age_s": None}

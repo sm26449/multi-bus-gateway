@@ -75,9 +75,9 @@ def test_data_health_disconnected_is_degraded():
     assert _mc([_Poller(0.25)], connected=False, last_success=time.time()).data_health(30)["status"] == "degraded"
 
 
-def test_data_health_no_registers_is_ok():
+def test_data_health_no_registers_is_idle():
     mc = _mc([_Poller(0.25)], registers=[], last_success=None)
-    assert mc.data_health(30)["status"] == "ok"
+    assert mc.data_health(30)["status"] == "idle"     # nothing to read → never green
 
 
 def test_data_health_slow_only_group_no_false_positive():
@@ -366,3 +366,11 @@ def test_influx_unit_heuristic_precedence():
     assert m("", "power_factor_total") == "power_factor"     # empty unit → would be 'janitza'
     assert m("kVAh", "energy_apparent") == "energy_apparent"  # 'va' substring → would be power_apparent
     assert m("", "serial") == "diagnostic"                    # diagnostics keep their measurement
+
+
+def test_data_health_selected_but_not_running_is_not_idle():
+    """Registers ARE selected but no poller runs (first connect refused, or
+    the client was never started): the unit is not idle — it defers to the
+    connection gate downstream, which paints it degraded, never grey."""
+    mc = _mc([], last_success=None)          # registers selected, no poller
+    assert mc.data_health(30)["status"] == "ok"

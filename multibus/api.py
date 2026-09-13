@@ -18,6 +18,7 @@
 
 import asyncio
 import hmac
+import dataclasses
 import json
 import logging
 import os
@@ -2597,6 +2598,18 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         if not existing_id and (config.get_raw_endpoint(pid) is not None
                                 or registry.has(pid)):
             errors.append(f"id: '{pid}' already exists")
+        prev = config.get_raw_endpoint(existing_id) if existing_id else None
+        if prev is not None:
+            # An edit REPLACES the stored entry. A form that does not speak of
+            # groups or sources — the settings dialog of an installation — keeps
+            # the stored ones: taken literally, that same form flattened a plant
+            # to one Modbus group, dropped every source and renamed its site
+            # unit, on a save meant to change the name.
+            if 'groups' not in payload and prev.get('groups'):
+                payload = {**payload, 'groups': prev['groups']}
+                payload.pop('units', None)          # units live in the groups
+            if 'sources' not in payload and prev.get('sources'):
+                payload = {**payload, 'sources': prev['sources']}
         conn = payload.get('connection', {}) or {}
         # An endpoint that declares GROUPS carries its address per group — each
         # holds a different kind of thing and may be reached a different way. The
@@ -2692,7 +2705,6 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                               f"existing device")
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors})
-        prev = config.get_raw_endpoint(existing_id) if existing_id else None
         raw = {
             'id': pid,
             'name': str(payload.get('name', '') or pid),
@@ -2763,31 +2775,93 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             raise HTTPException(status_code=404, detail="endpoint not found")
         return _endpoint_entry(p)
 
+    def _source_probe(dev, src, address_of) -> Dict:
+        """Probe ONE unit over ONE of its sources, the way that source reads it.
+
+        An HTTP source is asked for its document and judged by how many of the
+        unit's selected paths it carries; a Modbus source gets one FC3 read on
+        its own connection; a pushed input (MQTT) cannot be probed — we say so
+        rather than pretend."""
+        proto = str(src.protocol or 'tcp').lower()
+        if proto == 'http':
+            from .http_client import HttpClient
+            from .redact import redact_url
+            regs, _g = config.load_device_registers(dev, source=src)
+            hc = HttpClient(dict(src.http or {}), regs, {},
+                            allow_nonlan=config.security.allow_nonlan_http_devices)
+            t0 = time.perf_counter()
+            res = hc.test_read()
+            res.setdefault('latency_ms', round((time.perf_counter() - t0) * 1000, 1))
+            res['where'] = redact_url(hc.url)
+            return res
+        if proto in ('tcp', 'rtu-tcp', 'rtu'):
+            conn = dataclasses.asdict(src.connection)
+            conn['protocol'] = proto
+            timeout = float(conn.get('timeout', 3) or 3)
+            res = _modbus_probe(conn, dev.connection.unit_id, timeout,
+                                address_of(src))
+            res['where'] = (conn.get('serial_port') if proto == 'rtu'
+                            else f"{conn.get('host', '')}:{conn.get('port', 502)}")
+            return res
+        return {'ok': None, 'message': 'not probed — this source is pushed to '
+                                       'the gateway, it cannot be asked',
+                'where': str((src.mqtt_in or {}).get('topic', ''))}
+
     @app.post("/api/endpoints/{endpoint_id}/test")
     def test_endpoint(endpoint_id: str):
-        """Probe every unit of an endpoint on its shared endpoint.
+        """Probe every unit of an endpoint over EVERY source it is read through.
 
-        One endpoint is one physical endpoint, so a per-unit answer is the only
-        way to tell "the datalogger is deaf" from "unit 3 is not configured on
-        it". CAUTION: a probe opens ANOTHER Modbus client on that endpoint, and
-        dataloggers serve only a few at once — this is an operator-triggered
-        check, never a background poll."""
+        One answer per (source, unit): only that tells "the datalogger is deaf"
+        from "unit 3 is not configured on it" from "Modbus is fine but the Solar
+        API is off". Before sources existed this probed the endpoint's top-level
+        Modbus connection alone, which a grouped installation does not have — so
+        an installation reading perfectly over HTTP reported every unit blocked.
+        CAUTION: a Modbus probe opens ANOTHER client on that endpoint, and
+        dataloggers serve only a few at once — operator-triggered, never a
+        background poll."""
         p = config.get_raw_endpoint(endpoint_id)
         if p is None:
             raise HTTPException(status_code=404, detail="endpoint not found")
         conn = dict(p.get('connection', {}) or {})
         timeout = float(conn.get('timeout', 3) or 3)
-        units = []
+        rows = []
         for dev in config.endpoint_devices(endpoint_id):
-            regs, _g = config.load_device_registers(dev)
-            # a real address beats address 0 — some gateways answer 0 blindly
-            address = regs[0].address if regs else 0
-            res = _modbus_probe(conn, dev.connection.unit_id, timeout, address)
-            units.append({'unit_id': dev.connection.unit_id,
-                          'device_id': dev.id, **res})
+            def address_of(src=None, _dev=dev):
+                regs, _g = config.load_device_registers(_dev, source=src)
+                # a real address beats address 0 — some gateways answer 0 blindly
+                return regs[0].address if regs else 0
+            srcs = [s for s in (dev.sources or []) if getattr(s, 'enabled', True)]
+            if not srcs:
+                res = _modbus_probe(conn, dev.connection.unit_id, timeout, address_of())
+                rows.append({'source': 'default', 'protocol': conn.get('protocol', 'tcp'),
+                             'unit_id': dev.connection.unit_id, 'device_id': dev.id,
+                             'where': f"{conn.get('host', '')}:{conn.get('port', 502)}",
+                             **res})
+                continue
+            for src in srcs:
+                res = _source_probe(dev, src, address_of)
+                rows.append({'source': src.id, 'protocol': src.protocol,
+                             'unit_id': dev.connection.unit_id, 'device_id': dev.id,
+                             **res})
+        # one line per source: how many of its units answered
+        summary, order = {}, []
+        for r in rows:
+            k = r['source']
+            if k not in summary:
+                order.append(k)
+                summary[k] = {'id': k, 'protocol': r['protocol'], 'answered': 0,
+                              'probed': 0, 'total': 0, 'where': r.get('where', '')}
+            summary[k]['total'] += 1
+            if r.get('ok') is not None:
+                summary[k]['probed'] += 1
+                summary[k]['answered'] += 1 if r['ok'] else 0
+        for v in summary.values():
+            v['ok'] = (v['answered'] == v['probed']) if v['probed'] else None
+        probed = [r for r in rows if r.get('ok') is not None]
         return {'endpoint': endpoint_id,
-                'ok': bool(units) and all(u.get('ok') for u in units),
-                'units': units}
+                'ok': bool(probed) and all(r['ok'] for r in probed),
+                'units': rows,
+                'sources': [summary[k] for k in order]}
 
     @app.post("/api/endpoints")
     @_serialized_mutation

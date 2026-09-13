@@ -526,7 +526,11 @@ class HttpClient:
         }
 
     def data_health(self, stale_threshold_s: float = 30) -> Dict:
-        if not self.registers or not self.pollers:
+        if not self.registers:
+            return {"status": "idle", "stale": False, "staleness_age_s": None}
+        if not self.pollers:
+            # selected but not running: not idle — the connection gate downstream
+            # turns this into degraded
             return {"status": "ok", "stale": False, "staleness_age_s": None}
         last_mono = self.last_success_mono
         if last_mono is None:

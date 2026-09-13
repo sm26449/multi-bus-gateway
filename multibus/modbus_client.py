@@ -1636,12 +1636,21 @@ class ModbusClient:
         Staleness uses the connection's last successful read (driven by the
         FASTEST poll group). The effective threshold is raised to >= 3x the
         fastest poll interval so a slow-only config can't false-positive. Returns
-        ``ok`` when nothing is configured to poll, and stays ``ok`` on cold start
-        until a read has actually failed (avoids a false 'down' right after boot)."""
+        ``idle`` when nothing is configured to poll, and stays ``ok`` on cold
+        start until a read has actually failed (avoids a false 'down' right
+        after boot)."""
         last = self.connection.last_success_ts
         last_mono = self.connection.last_success_mono   # step-immune staleness
         connected = self.connected
-        if not self.registers or not self.pollers:
+        if not self.registers:
+            # Nothing is being asked of the wire, so nothing can be healthy: a
+            # unit with an empty selection showed a green light for hours.
+            return {"status": "idle", "stale": False, "staleness_age_s": None,
+                    "last_success_ts": last, "connected": connected}
+        if not self.pollers:
+            # Something IS selected but no poller runs — the first connect was
+            # refused, or the client was never started. That is not idle: the
+            # caller's connection gate turns this ``ok`` into degraded.
             return {"status": "ok", "stale": False, "staleness_age_s": None,
                     "last_success_ts": last, "connected": connected}
         fastest = min((p.interval for p in self.pollers if p.running),

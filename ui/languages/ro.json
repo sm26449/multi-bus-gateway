@@ -1149,7 +1149,7 @@
   "endpoints.routingFixed": "Identitatea de rutare e fixată după creare — schimbarea ar re-ruta fiecare unitate și ar orfaniza istoricul și entitățile Home Assistant. Sink-urile per unitate se editează în tabul Ieșiri al oricărei unități și se aplică întregii endpointe.",
   "endpoints.routingLocked": "Identitatea de rutare e fixată după creare — schimbarea ar re-ruta fiecare unitate și ar orfaniza istoricul și entitățile Home Assistant.",
   "endpoints.unitsKeep": "Numele per unitate se păstrează — redenumește o unitate din pagina endpointei.",
-  "endpoints.testHint": "Testează fiecare unitate pe punctul de acces comun. Deschide încă un client Modbus — dataloggerele suportă doar câțiva simultan.",
+  "endpoints.testHint": "Întreabă fiecare unitate pe fiecare cale prin care este citită — Solar API prin URL, Modbus printr-o citire pe propria conexiune. O probă Modbus deschide încă un client pe datalogger; acestea suportă doar câțiva simultan.",
   "endpoints.testNone": "Nicio unitate de testat.",
   "endpoints.saveFail": "Salvarea a eșuat",
   "endpoints.haDiscovery": "Descoperire Home Assistant",
@@ -1159,5 +1159,13 @@
   "plant.wizard.step2": "Ce conține",
   "plant.wizard.step3": "Cum se citește",
   "plant.wizard.step4": "Verificare",
-  "plant.wizard.create": "Creează instalația"
+  "plant.wizard.create": "Creează instalația",
+  "endpoints.titleEditInstallation": "Editează instalația",
+  "endpoints.groupedIntro": "Numele și ieșirile întregii instalații. Unitățile, felul în care sunt citite și unde publică se editează pe cardul fiecărui grup.",
+  "endpoints.pollingEnabled": "Citire activă",
+  "endpoints.testOk": "a răspuns",
+  "endpoints.testFail": "fără răspuns",
+  "endpoints.testSkipped": "netestat",
+  "endpoints.testAnswered": "au răspuns",
+  "endpoints.testResult": "Rezultatul testului"
 }

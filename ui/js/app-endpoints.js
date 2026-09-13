@@ -701,7 +701,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <span class="dev-chip">${this._esc(p.id)}</span></h2>
             <div class="header-actions">
                 <button class="btn btn-secondary btn-sm" ${this._act('testEndpointUi', [p.id], { el: true })}
-                        title="${t('endpoints.testHint', 'Probes every unit on the shared endpoint. Opens another Modbus client — dataloggers serve only a few at once.')}"><i aria-hidden="true" class="bi bi-activity"></i> ${t('endpoints.test', 'Test units')}</button>
+                        title="${t('endpoints.testHint', 'Asks every unit over every way it is read — the Solar API by URL, Modbus by one read on its own connection. A Modbus probe opens one more client on the datalogger; they serve only a few at once.')}"><i aria-hidden="true" class="bi bi-activity"></i> ${t('endpoints.test', 'Test units')}</button>
                 <button class="btn btn-secondary btn-sm" ${this._act('openEndpointModal', [p.id])}><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('common.edit', 'Edit')}</button>
                 <button class="btn btn-ghost btn-sm" ${this._act('deleteEndpointUi', [p.id])}><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>
             </div>
@@ -726,6 +726,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 </div>
             </div>
         </div>
+        <div id="plTestOut"></div>
 
         <div class="settings-card">
             <div class="settings-card-header">
@@ -752,7 +753,6 @@ Object.assign(JanitzaMonitor.prototype, {
             </div>
         </div>
         <div id="plGroups">${this._endpointGroupsHtml(p)}</div>
-        <div id="plTestOut" style="margin:10px 0;"></div>
 
         <div class="settings-card">
             <div class="settings-card-header">
@@ -872,13 +872,42 @@ Object.assign(JanitzaMonitor.prototype, {
         } catch (e) { d = { units: [] }; }
         if (el) { el.disabled = false; }
         if (!out) return;
-        const rows = (d.units || []).map(u => `
-            <div style="display:flex;gap:8px;align-items:center;font-size:12.5px;">
-                <span class="status-dot" style="--dot:${u.ok ? 'var(--success,#22c55e)' : 'var(--danger,#ef4444)'}"></span>
-                <span class="dev-chip">${this._esc(u.device_id)}</span>
-                <span>${this._esc(u.message || (u.ok ? 'ok' : 'no answer'))}</span>
-            </div>`).join('');
-        out.innerHTML = rows || `<span class="field-hint">${this.t('endpoints.testNone', 'No units to probe.')}</span>`;
+        const rows = d.units || [];
+        if (!rows.length) {
+            out.innerHTML = `<span class="field-hint">${this.t('endpoints.testNone', 'No units to probe.')}</span>`;
+            return;
+        }
+        // A verdict is a WORD first and a colour second — the dot alone says
+        // nothing to a screen reader or to a colour-blind operator.
+        const word = u => u.ok == null ? this.t('endpoints.testSkipped', 'not probed')
+            : u.ok ? this.t('endpoints.testOk', 'answered') : this.t('endpoints.testFail', 'no answer');
+        const color = u => u.ok == null ? 'var(--text-secondary,#8a94a0)'
+            : u.ok ? 'var(--success,#22c55e)' : 'var(--danger,#ef4444)';
+        const sources = (d.sources || []).length ? d.sources
+            : [{ id: 'default', protocol: '', probed: rows.length, answered: rows.filter(u => u.ok).length }];
+        const perSource = sources.map(s => {
+            const mine = rows.filter(u => (u.source || 'default') === s.id);
+            const census = s.probed
+                ? `${s.answered}/${s.probed} ${this.t('endpoints.testAnswered', 'answered')}`
+                : this.t('endpoints.testSkipped', 'not probed');
+            return `<div style="margin-bottom:10px;" data-test-source="${this._esc(s.id)}">
+                <div style="font-weight:600;font-size:13px;margin-bottom:4px;">${this._esc(s.id)}
+                    ${s.protocol ? `<span class="dev-chip">${this._esc(s.protocol)}</span>` : ''}
+                    <span style="font-weight:400;color:var(--text-secondary);">· ${census}</span></div>
+                ${mine.map(u => `<div style="display:flex;gap:8px;align-items:baseline;font-size:12.5px;padding:2px 0 2px 6px;">
+                    <span class="status-dot" style="--dot:${color(u)}" aria-hidden="true"></span>
+                    <span class="dev-chip">${this._esc(u.device_id)}</span>
+                    <span><b>${word(u)}</b>${u.latency_ms != null && !/\d\s*ms/.test(u.message || '') ? ` · ${u.latency_ms} ms` : ''}${u.message ? ` · ${this._esc(u.message)}` : ''}</span>
+                </div>`).join('')}
+            </div>`;
+        }).join('');
+        const when = new Date().toLocaleTimeString();
+        out.innerHTML = `<div class="settings-card" role="status" aria-live="polite"><div class="settings-card-body">
+            <h3 style="margin:0 0 10px;font-size:14px;"><i aria-hidden="true" class="bi bi-activity"></i>
+                ${this.t('endpoints.testResult', 'Test result')} <span style="font-weight:400;color:var(--text-secondary);">· ${when}</span></h3>
+            ${perSource}
+            <button class="btn btn-ghost btn-sm" onclick="document.getElementById('plTestOut').innerHTML=''">${this.t('common.close', 'Close')}</button>
+        </div></div>`;
     },
 
     // ── add / edit dialog ───────────────────────────────────────────────────
@@ -896,12 +925,55 @@ Object.assign(JanitzaMonitor.prototype, {
         // every other one an operator put in config.yaml (timeouts, retry
         // budgets, illegal-register lists) on the first unrelated edit.
         this._endpointEditConn = { ...conn };
+        // A grouped installation keeps its units, its ways of being read and
+        // its topics on the group cards. This dialog then owns the name and the
+        // output switches — the flat form, sent as-is, once flattened a plant
+        // to one Modbus group and dropped every source on a rename.
+        const grouped = !!(p && (p.groups || []).length);
+        this._endpointEditGrouped = grouped;
         const units = (p?.units || []).map(u => u.unit_id).join(', ');
         const lock = editId ? 'disabled' : '';
         const tplOptions = ['<option value="">—</option>'].concat(templates.map(t =>
             `<option value="${this._esc(t.id)}" ${p?.template === t.id ? 'selected' : ''}>${this._esc(t.name || t.id)}</option>`)).join('');
-        document.getElementById('endpointModalTitle').textContent = editId
-            ? this.t('endpoints.titleEdit', 'Edit Endpoint') : this.t('endpoints.titleAdd', 'Add Endpoint');
+        document.getElementById('endpointModalTitle').textContent = grouped
+            ? this.t('endpoints.titleEditInstallation', 'Edit installation')
+            : editId ? this.t('endpoints.titleEdit', 'Edit Endpoint') : this.t('endpoints.titleAdd', 'Add Endpoint');
+        const sinkToggles = `
+            <div class="form-row" style="gap:20px;flex-wrap:wrap;">
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                    <input type="checkbox" id="plMqttEnabled" ${p ? ((p.mqtt || {}).enabled !== false ? 'checked' : '') : 'checked'}>
+                    ${this.t('endpoints.mqttEnabled', 'Publish units to MQTT')}</label>
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                    <input type="checkbox" id="plInfluxEnabled" ${p ? ((p.influxdb || {}).enabled !== false ? 'checked' : '') : 'checked'}>
+                    ${this.t('endpoints.influxEnabled', 'Write units to InfluxDB')}</label>
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                    <input type="checkbox" id="plHaDisc" ${p ? ((p.mqtt || {}).ha_discovery ? 'checked' : '') : ''}>
+                    ${this.t('devices.wizard.haDiscovery', 'Publish Home Assistant MQTT discovery for this device')}</label>
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                    <input type="checkbox" id="plAggregates" ${p ? (p.aggregates_enabled !== false ? 'checked' : '') : 'checked'}>
+                    ${this.t('endpoints.aggEnable', 'Publish endpoint totals')}</label>
+            </div>
+            <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                <input type="checkbox" id="plEnabled" ${p ? (p.enabled ? 'checked' : '') : 'checked'}>
+                ${editId ? this.t('endpoints.pollingEnabled', 'Polling enabled')
+                         : this.t('devices.wizard.enabled', 'Start polling immediately after saving')}</label>`;
+        if (grouped) {
+            document.getElementById('endpointModalBody').innerHTML = `
+            <p class="field-hint" style="margin:0 0 12px;">${this.t('endpoints.groupedIntro',
+                'The name and the outputs of the whole installation. Its units, how they are read and where they publish are edited on each group card.')}</p>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label" for="plId">${this.t('endpoints.id', 'Endpoint ID')}</label>
+                    <input id="plId" class="input" value="${this._esc(p.id)}" disabled></div>
+                <div class="form-group flex-2"><label class="form-label" for="plName">${this.t('endpoints.name', 'Name')}</label>
+                    <input id="plName" class="input" value="${this._esc(p.name || '')}" placeholder="${this._esc(p.id)}"></div>
+            </div>
+            ${sinkToggles}`;
+            document.getElementById('endpointFeedback').textContent = '';
+            const _save = document.querySelector('#endpointModal [data-endpoint-save]');
+            if (_save) _save.setAttribute('onclick', 'app.saveEndpoint()');
+            this.openModal('endpointModal');
+            return;
+        }
         document.getElementById('endpointModalBody').innerHTML = `
             <p class="field-hint" style="margin:0 0 12px;">${this.t('endpoints.intro',
                 'One template + one endpoint + several unit IDs. Each unit becomes its own device (own socket, independent failure) named <endpoint>-u<unit>.')}</p>
@@ -945,23 +1017,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="field-hint" style="margin:-4px 0 8px;">${editId
                 ? this.t('endpoints.routingLocked', 'Routing identity is fixed after creation — changing it would re-route every unit and orphan their history and Home Assistant entities.')
                 : this.t('endpoints.subHint', 'Use ${unit_id} / ${endpoint_id} in the topic prefix, bucket and tag — substituted per unit.')}</div>
-            <div class="form-row" style="gap:20px;flex-wrap:wrap;">
-                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                    <input type="checkbox" id="plMqttEnabled" ${p ? ((p.mqtt || {}).enabled !== false ? 'checked' : '') : 'checked'}>
-                    ${this.t('endpoints.mqttEnabled', 'Publish units to MQTT')}</label>
-                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                    <input type="checkbox" id="plInfluxEnabled" ${p ? ((p.influxdb || {}).enabled !== false ? 'checked' : '') : 'checked'}>
-                    ${this.t('endpoints.influxEnabled', 'Write units to InfluxDB')}</label>
-                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                    <input type="checkbox" id="plHaDisc" ${p ? ((p.mqtt || {}).ha_discovery ? 'checked' : '') : ''}>
-                    ${this.t('devices.wizard.haDiscovery', 'Publish Home Assistant MQTT discovery for this device')}</label>
-                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                    <input type="checkbox" id="plAggregates" ${p ? (p.aggregates_enabled !== false ? 'checked' : '') : 'checked'}>
-                    ${this.t('endpoints.aggEnable', 'Publish endpoint totals')}</label>
-            </div>
-            <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                <input type="checkbox" id="plEnabled" ${p ? (p.enabled ? 'checked' : '') : 'checked'}>
-                ${this.t('devices.wizard.enabled', 'Start polling immediately after saving')}</label>`;
+            ${sinkToggles}`;
         document.getElementById('endpointFeedback').textContent = '';
         // the modal shell is shared with the source editor, which repoints this
         // button — reclaim it, or Save would still be saving a source
@@ -989,27 +1045,38 @@ Object.assign(JanitzaMonitor.prototype, {
 
     async saveEndpoint() {
         const fb = document.getElementById('endpointFeedback');
-        const units = this._parseUnitList(document.getElementById('plUnits').value);
-        if (!units || !units.length) {
-            fb.textContent = this.t('endpoints.badUnits', 'Unit IDs: use numbers, commas and ranges (e.g. 1, 2, 5-8).');
-            return;
-        }
         const editing = !!this._endpointEditId;
+        const grouped = editing && this._endpointEditGrouped;
+        let units = [];
+        if (!grouped) {
+            units = this._parseUnitList(document.getElementById('plUnits').value);
+            if (!units || !units.length) {
+                fb.textContent = this.t('endpoints.badUnits', 'Unit IDs: use numbers, commas and ranges (e.g. 1, 2, 5-8).');
+                return;
+            }
+        }
         const body = {
             id: (this._endpointEditId || document.getElementById('plId').value || '').trim().toLowerCase(),
             name: document.getElementById('plName').value.trim(),
             enabled: document.getElementById('plEnabled').checked,
-            connection: {
+            aggregates: !!document.getElementById('plAggregates')?.checked,
+        };
+        if (grouped) {
+            // the stored connection block travels back untouched; units, sources
+            // and topics live on the groups, which the server keeps when the
+            // payload does not speak of them
+            body.connection = { ...(this._endpointEditConn || {}) };
+        } else {
+            body.connection = {
                 ...(this._endpointEditConn || {}),
                 protocol: document.getElementById('plProto').value,
                 host: document.getElementById('plHost').value.trim(),
                 port: parseInt(document.getElementById('plPort').value, 10) || 502,
                 max_connections: Math.min(8, Math.max(1,
                     parseInt(document.getElementById('plLanes')?.value, 10) || 1)),
-            },
-            units,
-            aggregates: !!document.getElementById('plAggregates')?.checked,
-        };
+            };
+            body.units = units;
+        }
         body.mqtt = {
             enabled: !!document.getElementById('plMqttEnabled')?.checked,
             ha_discovery: !!document.getElementById('plHaDisc')?.checked,

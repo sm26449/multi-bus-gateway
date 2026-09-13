@@ -720,6 +720,10 @@
     background: var(--dot, var(--text-tertiary));
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--dot, transparent) 16%, transparent);
 }
+/* Any dot handed a colour inline paints it. The installation page's unit rows
+   and its probe results set --dot exactly as the device rows do — without this
+   they stayed the neutral grey whatever the health said. */
+.status-dot[style*="--dot"] { background: var(--dot, var(--text-tertiary)); }
 .device-row-main { flex: 1 1 260px; min-width: 0; }
 .device-row-title { font-weight: 600; font-size: 13.5px; }
 .device-row-sub, .device-row-routing {

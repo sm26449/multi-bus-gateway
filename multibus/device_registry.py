@@ -172,7 +172,7 @@ def client_is_live(client) -> bool:
         health = client.data_health()
     except Exception:  # noqa: BLE001 — liveness must never break the caller
         return bool(getattr(client, 'connected', False))
-    if health.get('status') == 'down':
+    if health.get('status') in ('down', 'idle'):
         return False
     if health.get('last_success_ts') is None:
         return bool(getattr(client, 'connected', False))
@@ -181,7 +181,8 @@ def client_is_live(client) -> bool:
 
 def client_health(client) -> str:
     """``client``'s acquisition-health word (``ok`` / ``degraded`` / ``down``),
-    or ``idle`` when there is no client to ask.
+    or ``idle`` when there is no client to ask — or when the client has
+    nothing selected to read, which its own ``data_health()`` reports.
 
     A device that is not connected can never read ``ok``: the status dot must
     not contradict the connection text, and ``data_health()`` answers ``ok`` on

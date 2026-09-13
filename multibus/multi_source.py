@@ -225,9 +225,19 @@ class MultiSourceClient:
         if not parts:
             return {"status": "down", "stale": True, "staleness_age_s": None,
                     "last_success_ts": None, "connected": False, "sources": {}}
+        # A source with nothing selected to read is idle: it is not broken, it
+        # is not delivering either, so it does not vote. A unit whose every
+        # source is idle is idle itself — never green.
+        voting = [(s, h) for s, h in parts if h.get('status') != 'idle']
+        if not voting:
+            out = dict(parts[0][1])
+            out.update({'status': 'idle',
+                        'sources': {src.id: 'idle' for src, _h in parts},
+                        'sources_down': []})
+            return out
         order = {"ok": 0, "degraded": 1, "down": 2}
-        best = min(parts, key=lambda p: order.get(p[1].get('status'), 3))[1]
-        worst = max(order.get(h.get('status'), 3) for _s, h in parts)
+        best = min(voting, key=lambda p: order.get(p[1].get('status'), 3))[1]
+        worst = max(order.get(h.get('status'), 3) for _s, h in voting)
         status = best.get('status', 'down')
         if status == 'ok' and worst > 0:
             status = 'degraded'

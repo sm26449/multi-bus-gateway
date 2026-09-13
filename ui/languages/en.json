@@ -1149,7 +1149,7 @@
   "endpoints.routingFixed": "Routing identity is fixed after creation — changing it would re-route every unit and orphan their history and Home Assistant entities. The per-unit sinks are edited on any unit’s Outputs tab and apply to the whole endpoint.",
   "endpoints.routingLocked": "Routing identity is fixed after creation — changing it would re-route every unit and orphan their history and Home Assistant entities.",
   "endpoints.unitsKeep": "Per-unit names are kept — rename a unit on the endpoint page.",
-  "endpoints.testHint": "Probes every unit on the shared endpoint. Opens another Modbus client — dataloggers serve only a few at once.",
+  "endpoints.testHint": "Asks every unit over every way it is read — the Solar API by URL, Modbus by one read on its own connection. A Modbus probe opens one more client on the datalogger; they serve only a few at once.",
   "endpoints.testNone": "No units to probe.",
   "endpoints.saveFail": "Save failed",
   "endpoints.haDiscovery": "Home Assistant discovery",
@@ -1159,5 +1159,13 @@
   "plant.wizard.step2": "What it holds",
   "plant.wizard.step3": "How it is read",
   "plant.wizard.step4": "Review",
-  "plant.wizard.create": "Create installation"
+  "plant.wizard.create": "Create installation",
+  "endpoints.titleEditInstallation": "Edit installation",
+  "endpoints.groupedIntro": "The name and the outputs of the whole installation. Its units, how they are read and where they publish are edited on each group card.",
+  "endpoints.pollingEnabled": "Polling enabled",
+  "endpoints.testOk": "answered",
+  "endpoints.testFail": "no answer",
+  "endpoints.testSkipped": "not probed",
+  "endpoints.testAnswered": "answered",
+  "endpoints.testResult": "Test result"
 }

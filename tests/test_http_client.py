@@ -35,8 +35,8 @@ def test_http_client_stats_shape():
     for k in ("connected", "successful_reads", "failed_reads", "staleness_age_s",
               "poll_rate", "total_registers"):
         assert k in s
-    # no registers/pollers → health is idle-ok, never a false 'down'
-    assert c.data_health()["status"] == "ok"
+    # no registers/pollers → idle: not a false 'down', and never a green light
+    assert c.data_health()["status"] == "idle"
 
 
 # ── P1: allow_nonlan redirects refuse downgrade + strip auth cross-host ───────

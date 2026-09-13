@@ -1,5 +1,46 @@
 # Changelog
 
+## 3.66.0
+
+### 2026-09-13 — the installation page cannot lie or destroy
+
+The UI audit (`docs/ui-audit-installations.md`) found three things on the
+installation page that were worse than confusing. This release closes them
+before any of the page is redesigned.
+
+**Edit → Save flattened the installation.** The Edit dialog sent the flat
+shape it was born with — `units`, `connection`, no `groups` — and the server
+took it literally: groups collapsed to one Modbus group, every source vanished,
+the site unit was reborn as `pv-u0`. Two guards now: the server keeps the
+stored `groups` and `sources` whenever an edit does not mention them (an edit
+that sends them still replaces them), and the dialog of a grouped installation
+edits only what it shows — the name and the output switches. Units, sources and
+topics stay on the group cards where they are edited.
+
+**Test units probed a Modbus host nobody declared.** It used the endpoint's
+top-level connection, which a grouped installation does not have, and answered
+"blocked: host required" for units that were being read fine over HTTP. It now
+asks every unit over every source it is read through — the Solar API by URL
+(judged by how many of the unit's paths the document carries), Modbus by one
+read on the source's own connection; a pushed input says "not probed" rather
+than pretending. The result appears under the header where the button is, one
+block per source, and every verdict is a word ("answered", "no answer") with
+the colour as a second cue, so it reads the same to a screen reader.
+
+**A unit with nothing to read was green.** `data_health()` answered `ok` when
+no register was selected. It is `idle` now — grey, named so, and not counted
+online — in every driver; a source with nothing selected does not vote on its
+unit's verdict. A unit that HAS a selection but whose poller never started
+stays on the degraded path, as before: not idle, not green.
+
+`GET /api/endpoints/{id}` unit health may now read `idle`; `POST
+/api/endpoints/{id}/test` rows carry `source`, `protocol`, `where` and a
+per-source `sources[]` census (`answered`/`probed`/`total`).
+
+Tests: `tests/test_endpoint_edit_guard.py`, `tests/test_endpoint_test_probe.py`,
+idle cases in `test_liveness.py`/`test_new_features.py`;
+`tools/e2e/installation_safety_e2e.mjs` (22 checks).
+
 ## 3.65.0
 
 ### 2026-09-13 — ticking fields per source

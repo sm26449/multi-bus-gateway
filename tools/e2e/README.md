@@ -100,3 +100,28 @@ MBG_URL=http://localhost:18088 DEVICE=pv-u1 \
 
 Config it expects: auth off, one endpoint whose group declares TWO sources
 (`solar_api` over HTTP, `sunspec` over Modbus) on units 1 and 2.
+
+## Installation safety
+
+`installation_safety_e2e.mjs` guards the three ways the installation page could
+lie or destroy: Edit → Save on a grouped installation keeps every group and
+source (the dialog shows only the name and the output switches), Test units asks
+every source and says its verdict in words, and a unit with nothing selected is
+idle — grey, named so, not counted online.
+
+```bash
+MBG_URL=http://localhost:18087 ENDPOINT=sunfield CHROMIUM_PATH=<chrome> \
+  node installation_safety_e2e.mjs
+```
+
+Config it expects (see the script header): auth off; one grouped endpoint with
+`inverters` (units 1, 2; an HTTP and a Modbus source), `grid` (unit 240) and
+`spare` (unit 7, no template) on hosts that REFUSE. It renames the installation
+and puts the name back.
+
+## UI sweep
+
+`ui_sweep.mjs` is not a test: it walks every page, every unit tab, every modal
+and both wizards, screenshots each (light, dark, phone width) and reports raw
+i18n keys, horizontal overflow and console errors to `/tmp/audit/report.json`.
+It is the regression walk behind `docs/ui-audit-installations.md`.
