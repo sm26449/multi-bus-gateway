@@ -206,6 +206,12 @@ def aggregate_topic(endpoint: Dict, endpoint_id: str, group_id: str = "") -> str
     return '/'.join(seg for seg in out.split('/') if seg)
 
 
+def _safe_bucket(name: str) -> str:
+    """A bucket name that cannot collide with another device's by accident."""
+    out = "".join(c if (c.isalnum() or c in "-_") else "_" for c in str(name))
+    return out or "mbg"
+
+
 def endpoint_bucket(endpoint: Dict, endpoint_id: str) -> Optional[str]:
     """The InfluxDB bucket for an endpoint's OWN points. The endpoint's units resolve
     ``${unit_id}`` / ``${device_id}`` per unit; the aggregate belongs to no unit,
@@ -213,7 +219,12 @@ def endpoint_bucket(endpoint: Dict, endpoint_id: str) -> Optional[str]:
     name instead of a literal ``fronius_${unit_id}`` on the wire."""
     bucket = (endpoint.get("influxdb") or {}).get("bucket") or None
     if not bucket:
-        return None
+        # No bucket declared. Returning None hands the write to the publisher's
+        # global default, which is whatever the PRIMARY device uses — so an
+        # installation that forgot to name a bucket would pour its totals into
+        # an unrelated device's series. Name it after the installation instead:
+        # findable, obviously separate, and wrong in a way nobody can miss.
+        return _safe_bucket(endpoint_id)
     return (str(bucket).replace("${endpoint_id}", endpoint_id)
                        .replace("${device_id}", endpoint_id)
                        .replace("${unit_id}", endpoint_id))
@@ -235,6 +246,7 @@ class EndpointAggregator(threading.Thread):
         # change-detection contract as every other sink, so an endpoint standing
         # still overnight does not write 8 640 identical points per field
         self._influx_last: Dict[str, Dict[str, Any]] = {}
+        self._ensured: set = set()
 
     def stop(self):
         self._stop.set()
@@ -306,12 +318,31 @@ class EndpointAggregator(threading.Thread):
         influx = self._get_influx()
         if influx is None or not getattr(influx, "connected", False):
             return
+        ix = endpoint.get("influxdb") or {}
+        # An installation that has switched InfluxDB off means it: the units
+        # stopped writing, and its totals must stop too. They did not, and with
+        # no bucket of their own they landed in the GLOBAL default — which on
+        # this system is the Janitza's bucket, so a Fronius test endpoint was
+        # quietly writing into the grid meter's series.
+        if not bool(ix.get("enabled", True)):
+            return
         from .canonical_fields import measurement_for
         try:
             from influxdb_client import Point, WritePrecision
         except Exception:  # noqa: BLE001 — influx client optional in tests
             return
         bucket = endpoint_bucket(endpoint, pid)
+        # A derived name may be a bucket nobody has created, and a write to a
+        # missing bucket is simply lost. Ensure it once, then remember — this
+        # runs on every aggregate cycle.
+        if bucket and bucket not in self._ensured:
+            try:
+                fn = getattr(influx, 'ensure_bucket', None)
+                if callable(fn):
+                    fn(bucket)
+            except Exception as e:  # noqa: BLE001 — a totals write must not
+                logger.debug("ensure_bucket(%s): %s", bucket, e)
+            self._ensured.add(bucket)
         changed_only = getattr(influx, "publish_mode", "changed") == "changed"
         # change detection is per GROUP: two groups carry the same field names
         # and one shared memo would hide the second group's every value

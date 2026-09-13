@@ -262,7 +262,12 @@ def test_endpoint_bucket_resolves_every_placeholder_to_the_endpoint():
     assert endpoint_bucket({"influxdb": {"bucket": "b_${endpoint_id}"}},
                         "fronius") == "b_fronius"
     assert endpoint_bucket({"influxdb": {"bucket": "flat"}}, "fronius") == "flat"
-    assert endpoint_bucket({}, "fronius") is None
+    # An endpoint that names no bucket used to return None, which handed the
+    # write to the publisher's GLOBAL default — on a real system the PRIMARY
+    # device's bucket, so a Fronius endpoint's totals were found sitting in the
+    # Janitza's series. It gets its own name now, and the aggregator ensures
+    # that bucket exists before writing to it.
+    assert endpoint_bucket({}, "fronius") == "fronius"
 
 
 def test_influx_writes_the_resolved_bucket_and_only_on_change():
@@ -414,3 +419,36 @@ def test_site_ratios_are_averaged_not_dropped():
     # and the things that genuinely must not be combined still are not
     assert _rule_for('power_factor_total') is None
     assert _rule_for('serial') is None
+
+
+# ── where the totals are stored ──────────────────────────────────────────────
+
+def test_an_endpoint_with_influx_off_writes_nothing():
+    """It said no. The units obeyed and the totals did not — and with no bucket
+    of their own they landed in the publisher's GLOBAL default, which on a real
+    system is another device's bucket entirely."""
+    from multibus.endpoint_aggregator import EndpointAggregator
+
+    class _Influx:
+        connected, publish_mode = True, "changed"
+        def __init__(self): self.points = []
+        def write_point(self, p, ts=None, bucket=None): self.points.append(bucket)
+
+    ix = _Influx()
+    agg = EndpointAggregator.__new__(EndpointAggregator)
+    agg._get_influx = lambda: ix
+    agg._influx_last = {}
+    agg._publish_influx({"influxdb": {"enabled": False}}, "test", {"power_active_total": 1.0})
+    assert ix.points == []
+
+
+def test_an_endpoint_that_names_no_bucket_gets_its_own_not_someone_elses():
+    """Falling through to the global default put a Fronius test endpoint's
+    totals into the Janitza's bucket."""
+    from multibus.endpoint_aggregator import endpoint_bucket
+    assert endpoint_bucket({}, 'fronius') == 'fronius'
+    assert endpoint_bucket({'influxdb': {}}, 'pv-test') == 'pv-test'
+    # an explicit bucket still wins, placeholders and all
+    assert endpoint_bucket({'influxdb': {'bucket': 'x_${endpoint_id}'}}, 'roof') == 'x_roof'
+    # and a name that could never be a bucket is made into one
+    assert endpoint_bucket({}, 'pv/roof #1') == 'pv_roof__1'

@@ -311,3 +311,36 @@ endpoints:
     regs, _g = cfg.load_device_registers(dev, source=dev.sources[0])
     assert regs, 'a single-source group must still be seeded'
     assert {'power_active_total', 'frequency'} <= {r.name for r in regs}
+
+
+def test_a_group_can_route_its_own_units(tmp_path):
+    """An installation's inverters, its grid meter and its site totals are
+    different kinds of thing and belong on different branches. One pattern
+    forced on all of them is what produces `pv/units/240` where `pv/meter/grid`
+    was meant."""
+    from tests.test_devices import write_config
+    cfg = write_config(tmp_path, extra_yaml="""
+endpoints:
+  - id: pv
+    mqtt: { topic_prefix: "pv/units/${unit_id}" }
+    influxdb: { bucket: pv }
+    groups:
+      - id: inverters
+        template: fronius_sunspec_inverter
+        connection: { protocol: tcp, host: 192.0.2.1 }
+        units: [1, 2]
+        mqtt: { topic_prefix: "pv/inverters/${unit_id}" }
+      - id: grid
+        template: fronius_sunspec_meter
+        connection: { protocol: tcp, host: 192.0.2.1 }
+        units: [{ unit_id: 240, id: pv-meter }]
+        mqtt: { topic_prefix: "pv/meter/grid" }
+        influxdb: { bucket: pv_meter }
+""")
+    d = {x.id: x for x in cfg.endpoint_devices('pv')}
+    assert d['pv-u1'].mqtt_topic_prefix == 'pv/inverters/1'
+    assert d['pv-u2'].mqtt_topic_prefix == 'pv/inverters/2'
+    assert d['pv-meter'].mqtt_topic_prefix == 'pv/meter/grid'
+    # a group that overrides nothing keeps the installation's own routing
+    assert d['pv-u1'].influxdb_bucket == 'pv'
+    assert d['pv-meter'].influxdb_bucket == 'pv_meter'

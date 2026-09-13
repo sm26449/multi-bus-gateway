@@ -920,10 +920,15 @@ class Config:
                                     .replace('${endpoint_id}', pid)
                                     .replace('${device_id}', did))
 
-                  m = dict(mqtt_cfg)
+                    # A group may override the routing its endpoint declares. An
+                  # installation's inverters, its grid meter and its site
+                  # totals are different kinds of thing and belong on different
+                  # branches: forcing one pattern on all of them is what
+                  # produces `pv/units/240` where `pv/meter/grid` was meant.
+                  m = dict(mqtt_cfg, **(grp.get('mqtt') or {}))
                   if m.get('topic_prefix'):
                       m['topic_prefix'] = sub(m['topic_prefix'])
-                  i = dict(influx_cfg)
+                  i = dict(influx_cfg, **(grp.get('influxdb') or {}))
                   if i.get('bucket'):
                       i['bucket'] = sub(i['bucket'])
                   if i.get('device_tag'):
