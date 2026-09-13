@@ -120,6 +120,8 @@ CANONICAL_FIELDS: Dict[str, Tuple[str, str, str, str]] = {
     'power_limit_revert_s': ('controls', 's', 'controls/power_limit_revert_s', 'Power limit reverts after'),
     'power_limit_ramp_s':   ('controls', 's', 'controls/power_limit_ramp_s', 'Power limit ramp time'),
     'controls_connected':   ('controls', '', 'controls/connected', 'Inverter connected (model 123)'),
+    'controls_model_id':    ('controls', '', 'controls/model_id', 'SunSpec model id of the controls block (123)'),
+    'power_limit_win_s':    ('controls', 's', 'controls/power_limit_win_s', 'Power limit window'),
     # ── Diagnostics (measurement: diagnostic) ─────────────────────────────────
     'model_id':     ('diagnostic', '', 'diagnostic/model_id', 'Meter model identification code'),
     'firmware_rev': ('diagnostic', '', 'diagnostic/firmware_rev', 'Firmware / revision code'),

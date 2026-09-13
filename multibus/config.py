@@ -287,6 +287,9 @@ class DeviceConfig:
     # together would be meaningless, so the aggregator needs to tell them apart.
     group_id: str = ""
     role: str = ""
+    # command bindings: [{name, from_template, enabled, faces, confirm, lease_s,
+    # …or a full inline recipe}] — a template preset is offered, a binding enables it
+    commands: List[Dict[str, Any]] = field(default_factory=list)
 
     serial: Dict[str, Any] = field(default_factory=dict)   # rtu params (reserved)
     http: Dict[str, Any] = field(default_factory=dict)     # http input: url, timeout, headers, verify_tls
@@ -791,6 +794,7 @@ class Config:
                 sources=sources,
                 group_id=str(d.get('group_id', '') or ''),
                 role=str(d.get('role', '') or ''),
+                commands=[dict(c) for c in (d.get('commands') or []) if isinstance(c, dict)],
                 serial=_serial_from_conn(conn),
                 http=_http_from_conn(conn),
                 mqtt_in=_mqtt_in_from_conn(conn),
@@ -964,6 +968,8 @@ class Config:
                                   and bool(grp.get('enabled', True))),
                       'group_id': gid,
                       'role': grole,
+                      # the group's command bindings apply to every unit of it
+                      'commands': list(grp.get('commands') or p.get('commands') or []),
                       'write_locked': bool(p.get('write_locked', False)),
                       'connection': c,
                       # declared once on the endpoint, resolved per unit

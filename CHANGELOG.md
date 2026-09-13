@@ -1,5 +1,55 @@
 # Changelog
 
+## 3.73.0
+
+### 2026-09-13 — commands: the universal write path
+
+The hard-wired power limit of 3.72.0 becomes the first *command preset*. A
+controller says **what** it wants (`power_limit = 60 %`); the device's
+template says **how** that is said to this device; the gateway applies it
+safely, verifies and consigns it — and never decides *when*. Design in
+[docs/commands-design.md](docs/commands-design.md).
+
+- **Engine** (`multibus/commands.py`, vendor-blind). A command declares its
+  parameters (bounds, defaults, units, legacy aliases), a guard (the recipe
+  applies only when e.g. `controls_model_id == 123` and the scale factor is
+  plausible), the registers it writes with tiny expressions
+  (`${value}`, `if ${value} < 100 then 1 else 0`), a settle time, the
+  read-back it verifies, its `safe` parameters, and the poll group to sweep
+  after. Consecutive holding registers travel in one FC16 frame; the scale
+  factor is read, never assumed. Verdicts: `success`, `mismatch`,
+  `unverified`, `rejected`, `error`, `dry_run`. Unknown parameter names are
+  refused, never ignored.
+- **Templates and bindings.** `fronius_sunspec_inverter` ships
+  `commands.power_limit` and `commands.restore` (an alias: `power_limit`
+  100 %, revert 0). A preset is *offered* by the template and *enabled* by a
+  binding on the group or device (`commands: [{name: power_limit}]`, with
+  optional `faces`, `confirm`, `lease_s`); an inline recipe with `writes` is
+  validated like a template's. Nothing unbound runs.
+- **Faces.** API: `GET /api/devices/{id}/commands`, `POST …/commands/{name}`,
+  `…/dry-run`, the group route, `GET /api/commands/history`. MQTT:
+  `<unit|group prefix>/cmd/<name>` (a number or an object; `source` names the
+  caller), `…/cmd/result`, and the retained `…/cmd/<name>/state`. Home
+  Assistant: the number entity of a register a command writes first runs
+  the command. The 3.72.0 routes and topics keep working as aliases
+  (`limit_pct` → `value`). One gate set everywhere: `allow_writes`,
+  write-lock, authentication, rate limit, `mqtt.allow_write_entities` for
+  the broker; every run audited as `action: command` with parameters, frames,
+  before/after and the face it came through.
+- **Lease.** `lease_s` arms the gateway's dead-man: when it expires
+  unrenewed, the command's `safe` parameters are run (100 %, enable cleared).
+  A write of the safe value clears the lease.
+- **UI.** The inverter card's *Limit…* becomes *Commands…*: one dialog built
+  from the command's declared parameters, a scope (group or one unit), *Test*
+  (dry run: the exact registers, nothing written) and *Run* with
+  confirmation, verdicts in words per unit. The group editor gains *Commands
+  this group accepts*. The unit page gains a *Commands* tab: each command
+  with its parameters, Run / Test, the last result, and the recent history.
+- **Removed.** `multibus/power_limit.py`; `tests/test_power_limit*.py`
+  became `tests/test_commands.py` / `tests/test_commands_api.py` /
+  `tests/test_poller_kick.py`.
+
+
 ## 3.72.0
 
 ### 2026-09-13 — the active power limit (SunSpec model 123)

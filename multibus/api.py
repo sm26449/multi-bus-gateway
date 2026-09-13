@@ -1282,6 +1282,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 if template_registry and dev_cfg.template else None)
         entry['pq_supported'] = template_supports_pq(_tpl, dev_cfg.template)
         entry['pq_recorder'] = dict(dev_cfg.pq_recorder or {})
+        try:
+            _cmds = _commands_for(dev_cfg)
+        except Exception:  # noqa: BLE001 — a bad recipe must not hide the device
+            _cmds = []
+        entry['commands'] = [c['def'].name for c in _cmds if c['enabled']]
+        entry['commands_offered'] = [c['def'].name for c in _cmds]
         # full connection block for the device detail editor
         c = dev_cfg.connection
         _url = dev_cfg.http.get('url', '') if dev_cfg.protocol == 'http' else ''
@@ -1505,7 +1511,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     logger.warning(f"device discovery publish failed: {e}")
         # the controller's command topics follow the same lifecycle (the
         # function is defined further down; at boot it runs itself once)
-        fn = _late_hooks.get('power_limit_commands')
+        fn = _late_hooks.get('command_topics')
         if fn is not None:
             try:
                 fn()
@@ -1547,14 +1553,17 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         if rule is None or not rule.writable:
             logger.warning("MQTT write REJECTED (not writable): device=%s addr=%s", device_id, register.address)
             return
-        if getattr(register, 'name', '') == 'power_limit_pct':
-            # WMaxLimPct alone does nothing (WMaxLim_Ena must travel with it):
-            # the slider is the power-limit action, with its own verification
+        cm = next((c for c in _commands_for(dev_cfg) if c['enabled'] and c['faces'].get('ha', True)
+                   and c['def'].writes and c['def'].writes[0].get('register') == getattr(register, 'name', '')
+                   and c['def'].value_param is not None), None)
+        if cm is not None:
+            # a register that a command writes first (WMaxLimPct) is written
+            # THROUGH the command — alone it would do nothing, or harm
             try:
-                _code, res = _power_limit_action(dev_cfg, client, float(payload), who='ha', ip='mqtt', via='ha')
-                _publish_pl_result(dev_cfg, res, 'power_limit')
+                _run_named_command(dev_cfg, client, cm['def'].name, {'value': float(payload)},
+                                   who='ha', ip='mqtt', via='ha')
             except (TypeError, ValueError):
-                logger.warning("HA power limit REJECTED (non-numeric %r): device=%s", payload, device_id)
+                logger.warning("HA command REJECTED (non-numeric %r): device=%s", payload, device_id)
             return
         enum_map = getattr(register, 'enum', None)
         if enum_map:                                   # select: label → code
@@ -1611,15 +1620,16 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     if mqtt_publisher:
         mqtt_publisher.set_command_write_handler(_mqtt_write_command)
 
-    # ── the active power limit (SunSpec model 123) ──────────────────────────
+    # ── commands: the universal write path (docs/commands-design.md) ─────────
     #
-    # The gateway applies a limit safely and consigns it; it never decides to
-    # limit on its own. A controller (over-voltage protection in Node-RED, a
-    # schedule) speaks over the API, over MQTT or through the HA number entity —
-    # all three land here, so every write is audited the same way.
-    from .power_limit import REVERT_DEFAULT_S, WRITE_BASE, apply_power_limit, parse_command
-    _pl_last_sf: Dict[str, int] = {}
-    _pl_lock = threading.Lock()
+    # A controller says WHAT it wants; the device's template says HOW that is
+    # said to this device; the engine (multibus/commands.py) is vendor-blind.
+    # Every face — API, MQTT, HA — lands here, with the same gates, the same
+    # verification, the same audit. The gateway never decides WHEN.
+    from .commands import (CommandDef, normalize_params, parse_command_def,
+                           parse_payload, run_command)
+    _cmd_lock = threading.Lock()          # one command at a time: the datalogger is shared
+    _cmd_last: Dict[str, Dict] = {}       # (device:command) → last result, for the UI and the state topic
 
     def _modbus_driver_of(client):
         """The Modbus driver behind a client: the client itself, or the first
@@ -1634,211 +1644,343 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 return drv
         return None
 
-    def _power_limit_action(dev_cfg, client, limit_pct, *, revert_s=REVERT_DEFAULT_S,
-                            ramp_s=0, lease_s=0, who='?', ip='?', via='api'):
-        """Apply a limit to ONE unit with every gate, then audit — whichever
-        channel asked. Returns (http_status, result)."""
-        if not config.security.allow_writes:
+    def _modbus_template_of(dev_cfg):
+        """The template whose registers a command writes: the Modbus source's,
+        else the device's own."""
+        for s in (dev_cfg.sources or []):
+            if str(s.protocol or 'tcp').lower() in ('tcp', 'rtu-tcp', 'rtu') and s.template:
+                return template_registry.get(s.template)
+        return template_registry.get(dev_cfg.template) if dev_cfg.template else None
+
+    def _commands_for(dev_cfg) -> List[Dict]:
+        """What this device offers: the template's presets, each enabled only by
+        a binding on the device (or its group), plus inline recipes declared
+        on the device. Order: as declared in the template, then inline ones."""
+        tpl = _modbus_template_of(dev_cfg)
+        presets = dict((tpl.commands or {}) if tpl else {})
+        bindings = {str(b.get('name', '')): b for b in (dev_cfg.commands or []) if isinstance(b, dict)}
+        out = []
+        for name, raw in presets.items():
+            b = bindings.get(name) or {}
+            out.append({'def': parse_command_def(name, raw), 'from_template': True,
+                        'enabled': bool(b) and bool(b.get('enabled', True)),
+                        'faces': dict(b.get('faces') or {'api': True, 'mqtt': True, 'ha': True}),
+                        'confirm': bool(b.get('confirm', raw.get('confirm', True))),
+                        'lease_s': int(b.get('lease_s', 0) or 0)})
+        for name, b in bindings.items():
+            if name in presets or not b.get('writes'):
+                continue
+            out.append({'def': parse_command_def(name, b), 'from_template': False,
+                        'enabled': bool(b.get('enabled', True)),
+                        'faces': dict(b.get('faces') or {'api': True, 'mqtt': True, 'ha': True}),
+                        'confirm': bool(b.get('confirm', True)), 'lease_s': int(b.get('lease_s', 0) or 0)})
+        return out
+
+    def _group_cmd_prefix(pid: str, gid: str, devs) -> str:
+        """Where a group is told something: the units' common parent topic
+        (`pv/inverters` for `pv/inverters/1`), else a path of the gateway's."""
+        prefixes = {d.mqtt_topic_prefix.rsplit('/', 1)[0] for d in devs}
+        # only when the units sit at `<parent>/<unit id>` is the parent theirs
+        # alone; `pv/${device_id}` shares its parent with every other group
+        if len(prefixes) == 1 and all(d.mqtt_topic_prefix == f"{next(iter(prefixes))}/{d.connection.unit_id}" for d in devs):
+            return prefixes.pop()
+        return f"mbg/endpoints/{pid}/{gid}"
+
+    def _group_commands(pid: str, gid: str) -> List[Dict]:
+        first = next((d for d in config.endpoint_devices(pid)
+                      if (getattr(d, 'group_id', '') or 'units') == gid), None)
+        if first is None:
+            return []
+        bindings = {str(b.get('name', '')): b for b in (first.commands or []) if isinstance(b, dict)}
+        out = []
+        for c in _commands_for(first):
+            d = c['def'].to_dict()
+            out.append({'name': d['name'], 'label': d['label'], 'params': d['params'],
+                        'alias': d.get('alias'), 'enabled': c['enabled'], 'confirm': c['confirm'],
+                        'from_template': c['from_template'], 'binding': bindings.get(d['name'])})
+        return out
+
+    def _command_entry(dev_cfg, c: Dict) -> Dict:
+        d = c['def'].to_dict()
+        d.update({'enabled': c['enabled'], 'from_template': c['from_template'], 'faces': c['faces'],
+                  'confirm': c['confirm'], 'lease_s': c['lease_s'],
+                  'mqtt_topic': f"{dev_cfg.mqtt_topic_prefix}/cmd/{c['def'].name}",
+                  'last': _cmd_last.get(f"{dev_cfg.id}:{c['def'].name}")})
+        return d
+
+    def _find_command(dev_cfg, name: str):
+        return next((c for c in _commands_for(dev_cfg) if c['def'].name == name), None)
+
+    def _run_named_command(dev_cfg, client, name: str, params: Dict, *, who='?', ip='?',
+                           via='api', dry_run=False, lease_s=None):
+        """Run one command on one unit with every gate, then record it —
+        whichever face asked. Returns (http_status, result)."""
+        c = _find_command(dev_cfg, name)
+        if c is None:
+            return 404, {'status': 'rejected', 'reason': f"device '{dev_cfg.id}' offers no command '{name}'"}
+        cmd: CommandDef = c['def']
+        if cmd.alias:
+            # an alias is another command with its parameters filled in
+            target = cmd.alias.get('command')
+            merged = dict(cmd.alias.get('params') or {})
+            merged.update({k: v for k, v in (params or {}).items() if k == 'source'})
+            return _run_named_command(dev_cfg, client, target, merged, who=who, ip=ip, via=via,
+                                      dry_run=dry_run, lease_s=lease_s)
+        if not c['enabled']:
+            return 403, {'status': 'rejected', 'reason': f"command '{name}' is not enabled on '{dev_cfg.id}'"}
+        face = via.split('-')[0]                   # api | mqtt | ha; the lease is the gateway's own
+        if face in ('api', 'mqtt', 'ha') and not c['faces'].get(face, True):
+            return 403, {'status': 'rejected', 'reason': f"command '{name}' does not accept the {face} face on '{dev_cfg.id}'"}
+        if not config.security.allow_writes and not dry_run:
             return 403, {'status': 'rejected', 'reason': 'Modbus writes are disabled — set security.allow_writes=true to enable'}
-        if dev_cfg.write_locked:
+        if dev_cfg.write_locked and not dry_run:
             return 403, {'status': 'rejected', 'reason': f"device '{dev_cfg.id}' is write-locked"}
+        try:
+            norm = normalize_params(cmd, params or {})
+        except ValueError as e:
+            return 422, {'status': 'rejected', 'reason': str(e)}
         drv = _modbus_driver_of(client)
         if drv is None:
-            return 409, {'status': 'rejected', 'reason': 'no Modbus source is running for this unit — the Solar API cannot write'}
-        if not _write_rate_ok(f'{via}:{dev_cfg.id}'):
+            return 409, {'status': 'rejected', 'reason': 'no Modbus source is running for this unit — nothing can write'}
+        tpl = _modbus_template_of(dev_cfg)
+        regs = {r.name: r for r in (tpl.registers if tpl else [])}
+        if not dry_run and not _write_rate_ok(f'{via}:{dev_cfg.id}'):
             return 429, {'status': 'rejected', 'reason': 'write rate limit exceeded'}
         try:
-            lease_s = int(lease_s or 0)
-        except (TypeError, ValueError):
-            lease_s = 0
-        with _pl_lock:                       # one command at a time per gateway: the datalogger is shared
-            res = apply_power_limit(drv.connection, limit_pct, revert_s=revert_s, ramp_s=ramp_s,
-                                    last_good_sf=_pl_last_sf.get(dev_cfg.id))
-            if res.get('sf') in (-2, -1, 0) and res.get('status') in ('success', 'mismatch', 'unverified'):
-                _pl_last_sf[dev_cfg.id] = res['sf']
-        ok = res.get('status') == 'success'
-        msg = (f"power limit {res.get('before_pct')} → {res.get('limit_pct')} % · {res['status']}"
-               + (f" · {res['reason']}" if res.get('reason') else '')
-               + f" · via {via} by {who}")
-        logger.warning("POWER LIMIT %s: device=%s %s", res['status'].upper(), dev_cfg.id, msg)
+            with _cmd_lock:
+                res = run_command(cmd, norm, drv.connection, regs,
+                                  byte_order=getattr(drv, 'byte_order', 'big'), dry_run=dry_run)
+        except ValueError as e:                       # a bad definition — the operator's to fix
+            return 422, {'status': 'rejected', 'reason': f"command definition: {e}"}
+        res.update({'device': dev_cfg.id, 'via': via, 'by': who, 'ts': round(time.time(), 3)})
+        if dry_run:
+            return 200, res
+        ok = res['status'] == 'success'
+        summary = (f"{cmd.name} {norm} · {res['status']}"
+                   + (f" · {res['reason']}" if res.get('reason') else '')
+                   + f" · via {via} by {who}")
+        logger.warning("COMMAND %s: device=%s %s", res['status'].upper(), dev_cfg.id, summary)
         try:
             drv.connection.record_event('info' if ok else 'warn' if res['status'] in ('unverified', 'mismatch') else 'error',
-                                        'power_limit', msg)
+                                        'command', summary)
         except Exception:  # noqa: BLE001
             pass
-        audit_log.append(user=who, ip=ip, action="power limit", target=dev_cfg.id,
+        audit_log.append(user=who, ip=ip, action="command", target=f"{dev_cfg.id} {cmd.name}",
                          status=res['status'],
-                         detail={k: res.get(k) for k in ('limit_pct', 'revert_s', 'ramp_s', 'before_pct',
-                                                         'after_pct', 'enabled', 'sf', 'ms', 'reason', 'written')}
-                         | {'via': via, 'lease_s': lease_s})
-        if res.get('status') in ('success', 'mismatch') and res.get('after_pct') is not None:
-            # the controls sweep runs now, so the read-back reaches MQTT and
-            # InfluxDB in seconds — the periodic read is once an hour
+                         detail={'params': norm, 'via': via, 'frames': res.get('frames'),
+                                 'before': res.get('before'), 'after': res.get('after'),
+                                 'reason': res.get('reason'), 'ms': res.get('ms')})
+        _cmd_last[f"{dev_cfg.id}:{cmd.name}"] = {k: res.get(k) for k in ('status', 'params', 'before', 'after', 'reason', 'ms', 'via', 'by', 'ts')}
+        if res['status'] in ('success', 'mismatch'):
+            # the read-back reaches the live store at once, and the group that
+            # carries it is swept now so MQTT/InfluxDB/HA follow in seconds
+            for n, v in (res.get('after') or {}).items():
+                r = regs.get(n)
+                if r is not None and v is not None:
+                    _push_readback_to_store(dev_cfg.id, int(r.address), v)
             try:
-                if hasattr(drv, 'poll_now'):
-                    drv.poll_now('controls')
+                if cmd.readback_group and hasattr(drv, 'poll_now'):
+                    drv.poll_now(cmd.readback_group)
             except Exception:  # noqa: BLE001
                 pass
-            # the read-back reaches the unit's live store at once, not at the next sweep
-            regs, _g = config.load_device_registers(dev_cfg)
-            for src in (dev_cfg.sources or []):
-                regs += config.load_device_registers(dev_cfg, source=src)[0]
-            for r in regs:
-                if r.name == 'power_limit_pct':
-                    _push_readback_to_store(dev_cfg.id, r.address, res['after_pct'])
-                elif r.name == 'power_limit_enabled':
-                    _push_readback_to_store(dev_cfg.id, r.address, 1 if res.get('enabled') else 0)
-        # the dead-man: a controller that dies leaves the plant throttled only
-        # until this lease expires — then the gateway restores 100 % itself
-        if ok and lease_s > 0 and float(limit_pct) < 100.0:
-            def _revert(is_current, _dev=dev_cfg.id):
+        _publish_command_result(dev_cfg, cmd.name, res)
+        # the dead-man: a controller that dies leaves the device where it put
+        # it only until this lease expires — then the gateway runs `safe`
+        lease = int(lease_s if lease_s is not None else c['lease_s'] or 0)
+        vp = cmd.value_param
+        safe_keys = [vp.name] if (vp is not None and cmd.safe and vp.name in cmd.safe) else list((cmd.safe or {}).keys())
+        is_safe = bool(cmd.safe) and all(norm.get(k) == cmd.safe[k] for k in safe_keys)
+        if ok and lease > 0 and cmd.safe and not is_safe:
+            def _revert(is_current, _dev=dev_cfg.id, _name=cmd.name, _safe=dict(cmd.safe)):
                 if not is_current():
                     return
-                _i, _c, c = _find_device(_dev)
-                if _c is None or c is None:
-                    raise RuntimeError(f"device {_dev} not running; cannot restore 100 %")
-                st, r = _power_limit_action(_c, c, 100.0, revert_s=0, who='lease', ip='-', via='lease-revert')
+                _i, _c, cl = _find_device(_dev)
+                if _c is None or cl is None:
+                    raise RuntimeError(f"device {_dev} not running; cannot run {_name} safe")
+                st, r = _run_named_command(_c, cl, _name, _safe, who='lease', ip='-', via='lease-revert')
                 if r.get('status') not in ('success', 'mismatch'):
                     raise RuntimeError(f"lease-revert failed: {r.get('reason')}")
-            _lease_mgr.arm(dev_cfg.id, 'holding', WRITE_BASE, lease_s * 1000, _revert,
-                           meta={'device': dev_cfg.id, 'register_type': 'holding', 'address': WRITE_BASE,
-                                 'data_type': 'uint16', 'scale': 1.0, 'offset': 0.0, 'safe_value': 100,
-                                 'lease_ms': lease_s * 1000, 'action': 'power_limit'})
-        elif ok:
-            _lease_mgr.clear(dev_cfg.id, 'holding', WRITE_BASE)
+            first = regs.get(cmd.writes[0]['register']) if cmd.writes else None
+            addr = int(first.address) if first is not None else 0
+            _lease_mgr.arm(dev_cfg.id, 'holding', addr, lease * 1000, _revert,
+                           meta={'device': dev_cfg.id, 'register_type': 'holding', 'address': addr,
+                                 'data_type': 'uint16', 'scale': 1.0, 'offset': 0.0,
+                                 'safe_value': cmd.safe.get('value'), 'lease_ms': lease * 1000,
+                                 'command': cmd.name})
+        elif ok and is_safe and cmd.writes:
+            first = regs.get(cmd.writes[0]['register'])
+            if first is not None:
+                _lease_mgr.clear(dev_cfg.id, 'holding', int(first.address))
         code = 200 if res['status'] in ('success', 'mismatch', 'unverified') else 422 if res['status'] == 'rejected' else 502
         return code, res
 
-    def _pl_args(payload: Dict):
+    def _publish_command_result(dev_cfg, name: str, res: Dict) -> None:
+        if not mqtt_publisher or not getattr(mqtt_publisher, 'connected', False):
+            return
         try:
-            return (float(payload.get('limit_pct')),
-                    int(payload.get('revert_s', REVERT_DEFAULT_S) if payload.get('revert_s') is not None else REVERT_DEFAULT_S),
-                    int(payload.get('ramp_s', 0) or 0), int(payload.get('lease_s', 0) or 0))
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=422, detail={"errors": ["limit_pct must be a number; revert_s, ramp_s, lease_s whole seconds"]})
+            body = json.dumps({'command': name, **res}, default=str)
+            mqtt_publisher.client.publish(f"{dev_cfg.mqtt_topic_prefix}/cmd/result", body, qos=1, retain=False)
+            # the last applied command, retained: a controller that restarts
+            # learns what the device was told without asking the wire
+            mqtt_publisher.client.publish(f"{dev_cfg.mqtt_topic_prefix}/cmd/{name}/state",
+                                          json.dumps({k: res.get(k) for k in ('status', 'params', 'after', 'ts', 'via', 'by')}, default=str),
+                                          qos=1, retain=True)
+        except Exception:  # noqa: BLE001
+            pass
 
-    def _pl_gate(request: Request):
-        if not config.security.allow_writes:
+    def _cmd_gate(request: Request, dry_run=False):
+        if not dry_run and not config.security.allow_writes:
             raise HTTPException(status_code=403, detail={"errors": [
                 "Modbus writes are disabled — set security.allow_writes=true to enable"]})
-        if not (auth_state.enabled or _api_key):
+        if not dry_run and not (auth_state.enabled or _api_key):
             raise HTTPException(status_code=403, detail={"errors": [
                 "writes require authentication — enable login (ui.auth) or set an API_KEY"]})
         who = getattr(request.state, "user", None) or ("api-key" if _api_key else "anon")
         return who, (request.client.host if request.client else "?")
 
-    @app.post("/api/devices/{device_id}/actions/power_limit")
-    def device_power_limit(device_id: str, request: Request, payload: Dict = Body(...)):
-        """Limit one inverter's active power (SunSpec model 123): verifies the
-        model and scale factor, writes WMaxLimPct…WMaxLim_Ena in one frame,
-        reads back and says whether it took. `limit_pct` (0..100), `revert_s`
-        (the inverter drops the limit by itself after this; default 600),
-        `ramp_s`, and `lease_s` (the gateway restores 100 % itself if the
-        caller does not renew within this). 100 % restores and clears the
-        enable bit. Audited whichever channel asks."""
-        who, ip = _pl_gate(request)
+    @app.get("/api/devices/{device_id}/commands")
+    def list_device_commands(device_id: str):
+        """What this device can be told: each command's parameters (bounds,
+        defaults, units), faces, whether it is enabled, its last result. A
+        controller discovers this instead of hard-coding registers."""
+        _i, dev_cfg, _c = _find_device(device_id)
+        if dev_cfg is None:
+            raise HTTPException(status_code=404, detail="device not found")
+        return {'device': device_id, 'commands': [_command_entry(dev_cfg, c) for c in _commands_for(dev_cfg)]}
+
+    @app.post("/api/devices/{device_id}/commands/{name}")
+    def run_device_command(device_id: str, name: str, request: Request, payload: Dict = Body(default={})):
+        """Run a command on one unit. Body: its parameters (a bare number is
+        `value`). Answers the result with its verdict: 200 success / mismatch /
+        unverified, 422 rejected, 502 error, 403 gates, 404 unknown, 409 no
+        Modbus source. Audited."""
+        who, ip = _cmd_gate(request)
         _i, dev_cfg, client = _find_device(device_id)
         if dev_cfg is None:
             raise HTTPException(status_code=404, detail="device not found")
-        limit, revert, ramp, lease = _pl_args(payload)
-        code, res = _power_limit_action(dev_cfg, client, limit, revert_s=revert, ramp_s=ramp,
-                                        lease_s=lease, who=who, ip=ip, via='api')
-        return JSONResponse({'device': device_id, **res}, status_code=code)
+        params = dict(payload or {})
+        lease = params.pop('lease_s', None)
+        code, res = _run_named_command(dev_cfg, client, name, params, who=who, ip=ip, via='api', lease_s=lease)
+        return JSONResponse(res, status_code=code)
 
-    @app.post("/api/endpoints/{endpoint_id}/groups/{group_id}/actions/power_limit")
-    def group_power_limit(endpoint_id: str, group_id: str, request: Request, payload: Dict = Body(...)):
-        """The same limit on every unit of a group (the inverters of an
-        installation), one result per unit. Units are done in order; a unit
-        that refuses does not stop the others."""
-        who, ip = _pl_gate(request)
+    @app.post("/api/devices/{device_id}/commands/{name}/dry-run")
+    def dry_run_device_command(device_id: str, name: str, request: Request, payload: Dict = Body(default={})):
+        """The guard's current readings and the exact frames a run would write
+        — nothing on the wire beyond the reads."""
+        who, ip = _cmd_gate(request, dry_run=True)
+        _i, dev_cfg, client = _find_device(device_id)
+        if dev_cfg is None:
+            raise HTTPException(status_code=404, detail="device not found")
+        code, res = _run_named_command(dev_cfg, client, name, payload or {}, who=who, ip=ip, via='api', dry_run=True)
+        return JSONResponse(res, status_code=code)
+
+    @app.post("/api/endpoints/{endpoint_id}/groups/{group_id}/commands/{name}")
+    def run_group_command(endpoint_id: str, group_id: str, name: str, request: Request, payload: Dict = Body(default={})):
+        """The same command on every unit of a group, one result each; a unit
+        that refuses does not stop the others, and nothing is rolled back."""
+        who, ip = _cmd_gate(request)
         if config.get_raw_endpoint(endpoint_id) is None:
             raise HTTPException(status_code=404, detail="endpoint not found")
-        limit, revert, ramp, lease = _pl_args(payload)
         results = []
         for dev in config.endpoint_devices(endpoint_id):
             if (getattr(dev, 'group_id', '') or 'units') != group_id:
                 continue
             _i, _c, client = registry.find(dev.id)
-            code, res = _power_limit_action(dev, client, limit, revert_s=revert, ramp_s=ramp,
-                                            lease_s=lease, who=who, ip=ip, via='api')
+            code, res = _run_named_command(dev, client, name, dict(payload or {}), who=who, ip=ip, via='api')
             results.append({'device': dev.id, 'unit_id': dev.connection.unit_id, 'http_status': code, **res})
         if not results:
             raise HTTPException(status_code=404, detail="group has no units")
-        return {'endpoint': endpoint_id, 'group': group_id, 'limit_pct': limit,
+        return {'endpoint': endpoint_id, 'group': group_id, 'command': name,
                 'ok': all(r.get('status') == 'success' for r in results), 'units': results}
 
-    def _publish_pl_result(dev_cfg, res: Dict, command: str) -> None:
-        if not mqtt_publisher or not getattr(mqtt_publisher, 'connected', False):
-            return
+    @app.get("/api/commands/history")
+    def command_history(device: str = "", limit: int = 100):
+        """Past invocations, from the audit log (newest first)."""
+        rows = []
         try:
-            mqtt_publisher.client.publish(f"{dev_cfg.mqtt_topic_prefix}/cmd/result",
-                                          json.dumps({'command': command, 'device': dev_cfg.id, **res}, default=str),
-                                          qos=1, retain=False)
+            for rec in audit_log.recent(limit=max(limit * 10, 500), q='"command"'):
+                if rec.get('action') != 'command':
+                    continue
+                if device and not str(rec.get('target', '')).startswith(device + ' '):
+                    continue
+                d = rec.get('detail')
+                if isinstance(d, str):
+                    try:
+                        rec = {**rec, 'detail': json.loads(d)}
+                    except ValueError:
+                        pass
+                rows.append(rec)
+                if len(rows) >= limit:
+                    break
         except Exception:  # noqa: BLE001
             pass
+        return {'history': rows}
 
-    def _mqtt_power_limit(device_ids, command: str, payload: str) -> None:
+    # the 3.72.0 routes stay as aliases of the power_limit command
+    @app.post("/api/devices/{device_id}/actions/power_limit")
+    def device_power_limit(device_id: str, request: Request, payload: Dict = Body(...)):
+        return run_device_command(device_id, 'power_limit', request, payload)
+
+    @app.post("/api/endpoints/{endpoint_id}/groups/{group_id}/actions/power_limit")
+    def group_power_limit(endpoint_id: str, group_id: str, request: Request, payload: Dict = Body(...)):
+        return run_group_command(endpoint_id, group_id, 'power_limit', request, payload)
+
+    def _mqtt_command(device_ids, name: str, payload: str) -> None:
         """A controller's command over MQTT. The broker is not a trusted
         caller: the same gates as the API, plus mqtt.allow_write_entities."""
         if not (config.security.allow_writes and config.mqtt.allow_write_entities):
-            logger.warning("MQTT %s ignored: writes over MQTT are off "
-                           "(security.allow_writes + mqtt.allow_write_entities)", command)
-            return
-        try:
-            cmd = parse_command(payload) if command != 'restore' else {'limit_pct': 100.0, 'revert_s': 0, 'ramp_s': 0, 'source': 'mqtt'}
-        except ValueError as e:
-            for did in device_ids:
-                _i, d, _c = _find_device(did)
-                if d is not None:
-                    _publish_pl_result(d, {'status': 'rejected', 'reason': str(e)}, command)
+            logger.warning("MQTT command %s ignored: writes over MQTT are off "
+                           "(security.allow_writes + mqtt.allow_write_entities)", name)
             return
         for did in device_ids:
             _i, d, c = _find_device(did)
             if d is None:
                 continue
-            _code, res = _power_limit_action(d, c, cmd['limit_pct'], revert_s=cmd['revert_s'], ramp_s=cmd['ramp_s'],
-                                             who=cmd.get('source') or 'mqtt', ip='mqtt', via='mqtt')
-            _publish_pl_result(d, res, command)
+            cm = _find_command(d, name)
+            if cm is None:
+                continue
+            try:
+                params = parse_payload(cm['def'], payload) if str(payload).strip() else {}
+            except ValueError as e:
+                _publish_command_result(d, name, {'status': 'rejected', 'reason': str(e), 'device': d.id, 'via': 'mqtt'})
+                continue
+            who = str(params.pop('source', '') or 'mqtt')[:64]
+            _run_named_command(d, c, name, params, who=who, ip='mqtt', via='mqtt')
 
-    def _sync_power_limit_commands() -> None:
-        """Subscribe `<unit prefix>/cmd/power_limit` and `…/cmd/restore` for
-        every inverter unit that has a Modbus source, and the group-wide
-        `<group prefix>/cmd/power_limit` for its group."""
+    def _sync_command_topics() -> None:
+        """Subscribe `<unit prefix>/cmd/<name>` for every enabled command with
+        an MQTT face, and `<group prefix>/cmd/<name>` for its group."""
         if not mqtt_publisher or not hasattr(mqtt_publisher, 'register_command'):
             return
         mqtt_publisher.unregister_commands('')          # rebuild from scratch
         for p in config.endpoints:
             pid = p.get('id')
-            by_group: Dict[str, list] = {}
+            by_group: Dict[str, Dict[str, list]] = {}
             for dev in config.endpoint_devices(pid):
-                if (getattr(dev, 'role', '') or '') != 'inverter':
-                    continue
-                if not any(str(s.protocol or 'tcp').lower() in ('tcp', 'rtu-tcp', 'rtu') for s in (dev.sources or [])):
-                    continue
-                by_group.setdefault(getattr(dev, 'group_id', '') or 'units', []).append(dev)
-                mqtt_publisher.register_command(f"{dev.mqtt_topic_prefix}/cmd/power_limit",
-                                                lambda payload, ids=(dev.id,): _mqtt_power_limit(ids, 'power_limit', payload))
-                mqtt_publisher.register_command(f"{dev.mqtt_topic_prefix}/cmd/restore",
-                                                lambda payload, ids=(dev.id,): _mqtt_power_limit(ids, 'restore', payload))
-            for gid, devs in by_group.items():
-                ids = tuple(d.id for d in devs)
-                prefixes = {d.mqtt_topic_prefix.rsplit('/', 1)[0] for d in devs}
-                gp = prefixes.pop() if len(prefixes) == 1 else f"mbg/endpoints/{pid}/{gid}"
-                mqtt_publisher.register_command(f"{gp}/cmd/power_limit",
-                                                lambda payload, ids=ids: _mqtt_power_limit(ids, 'power_limit', payload))
-                mqtt_publisher.register_command(f"{gp}/cmd/restore",
-                                                lambda payload, ids=ids: _mqtt_power_limit(ids, 'restore', payload))
+                for c in _commands_for(dev):
+                    if not c['enabled'] or not c['faces'].get('mqtt', True):
+                        continue
+                    name = c['def'].name
+                    mqtt_publisher.register_command(f"{dev.mqtt_topic_prefix}/cmd/{name}",
+                                                    lambda payload, ids=(dev.id,), n=name: _mqtt_command(ids, n, payload))
+                    by_group.setdefault(getattr(dev, 'group_id', '') or 'units', {}).setdefault(name, []).append(dev)
+            for gid, cmds in by_group.items():
+                for name, devs in cmds.items():
+                    gp = _group_cmd_prefix(pid, gid, devs)
+                    mqtt_publisher.register_command(f"{gp}/cmd/{name}",
+                                                    lambda payload, ids=tuple(d.id for d in devs), n=name: _mqtt_command(ids, n, payload))
 
-    app.state.power_limit = _power_limit_action
+    app.state.commands_for = _commands_for
+    app.state.run_command = _run_named_command
     app.state.lease_manager = _lease_mgr
-    app.state.mqtt_power_limit = _mqtt_power_limit
+    app.state.mqtt_command = _mqtt_command
     app.state.mqtt_write_command = _mqtt_write_command
-    app.state.sync_power_limit_commands = _sync_power_limit_commands
-    _late_hooks['power_limit_commands'] = _sync_power_limit_commands
+    app.state.sync_command_topics = _sync_command_topics
+    _late_hooks['command_topics'] = _sync_command_topics
     try:
-        _sync_power_limit_commands()                # boot: the topics exist from the first second
+        _sync_command_topics()                       # boot: the topics exist from the first second
     except Exception as e:  # noqa: BLE001
-        logger.warning("power-limit command topics at boot: %s", e)
+        logger.warning("command topics at boot: %s", e)
 
     def _apply_routing_defaults(raw: Dict) -> Dict:
         """Fill missing topic prefix / bucket from the configured {device}
@@ -2769,6 +2911,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'template': g.get('template', '') or p.get('template', ''),
                 'units': mine,
                 'sources': _endpoint_sources(p, pid, g, gid),
+                # what the group's units can be told — the template's presets,
+                # each enabled by a binding on the group (raw binding kept so
+                # the editor round-trips faces / lease untouched)
+                'commands': _group_commands(pid, gid),
+                'cmd_topic_prefix': _group_cmd_prefix(pid, gid, [d for d in config.endpoint_devices(pid)
+                                                                 if (getattr(d, 'group_id', '') or 'units') == gid]),
                 'aggregates': {} if one else agg,
                 'aggregate_fields': {} if one else {
                     k: m for k, m in ((k, field_meta(k)) for k in agg) if m},
@@ -2989,6 +3137,41 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 out.append(u)                      # no override → stays bare
         return out
 
+    def _validate_commands(cmds, errors, prefix: str = ""):
+        """Bindings: `{name}` enables a template preset; one that carries
+        `writes` is an inline recipe and must parse as a command."""
+        if cmds is None:
+            return
+        if not isinstance(cmds, list):
+            errors.append(f"{prefix}commands: must be a list")
+            return
+        seen = set()
+        for i, b in enumerate(cmds):
+            w = f"{prefix}commands[{i}]"
+            if not isinstance(b, dict):
+                errors.append(f"{w}: must be an object")
+                continue
+            name = str(b.get('name', '') or '')
+            if not re.match(r'^[a-z][a-z0-9_]{0,31}$', name):
+                errors.append(f"{w}.name: use a-z 0-9 _ (1-32 chars, starts with a letter)")
+            elif name in seen:
+                errors.append(f"{w}.name: '{name}' is declared twice")
+            seen.add(name)
+            for k in ('enabled', 'confirm'):
+                if k in b and not isinstance(b[k], bool):
+                    errors.append(f"{w}.{k}: must be true or false")
+            if 'faces' in b and (not isinstance(b['faces'], dict)
+                                 or set(b['faces']) - {'api', 'mqtt', 'ha'}
+                                 or not all(isinstance(v, bool) for v in b['faces'].values())):
+                errors.append(f"{w}.faces: an object of api / mqtt / ha → true|false")
+            if 'lease_s' in b and not (isinstance(b['lease_s'], int) and 0 <= b['lease_s'] <= 86400):
+                errors.append(f"{w}.lease_s: 0..86400 seconds")
+            if b.get('writes') is not None:
+                try:
+                    parse_command_def(name or 'x', b)
+                except (ValueError, TypeError, KeyError) as e:
+                    errors.append(f"{w}: {e}")
+
     def _validate_sources(srcs, errors, inherit_template: str, prefix: str = ""):
         """Validate one ordered source list. Shared by an endpoint's flat form
         and by every group, so a rule written once applies everywhere."""
@@ -3156,9 +3339,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 if gt and template_registry.get(gt) is None:
                     errors.append(f"{w}.template: '{gt}' not found")
                 _validate_sources(g.get('sources'), errors, gt, prefix=w + '.')
+                _validate_commands(g.get('commands'), errors, prefix=w + '.')
         # ── sources: the ordered ways of reaching this endpoint's units ──
         srcs = payload.get('sources')
         _validate_sources(srcs, errors, template_id)
+        _validate_commands(payload.get('commands'), errors)
         probe = {'id': pid, 'units': payload.get('units')}
         units = config._endpoint_units(probe)
         if not units and not _grouped:
@@ -3188,6 +3373,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             'units': _merge_unit_overrides(pid, payload.get('units'), prev),
             **({'sources': srcs} if srcs else {}),
             **({'groups': groups} if groups else {}),
+            **({'commands': payload['commands']} if payload.get('commands') else {}),
         }
         if payload.get('aggregates') is not None:
             raw['aggregates'] = bool(payload['aggregates'])

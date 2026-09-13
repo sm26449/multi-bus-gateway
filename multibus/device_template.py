@@ -250,6 +250,9 @@ class DeviceTemplate:
     # on-device PQ event recorder family ("jasic" = Janitza UMG web firmware);
     # empty = the device has none. Gates the PQ recorder feature + UI tab.
     pq_recorder: str = ""
+    # command presets: what a controller may ask of this kind of device and
+    # how it is said (docs/commands-design.md) — offered, enabled per device
+    commands: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     registers: List[TemplateRegister] = field(default_factory=list)
     # derived measurements the template ships with (seeded into each device's
     # `calculated` list) — see TemplateCalculated
@@ -272,6 +275,7 @@ class DeviceTemplate:
             'categories': self.categories,
             'canonical': self.canonical,
             **({'pq_recorder': self.pq_recorder} if self.pq_recorder else {}),
+            **({'commands': self.commands} if self.commands else {}),
             'registers': [r.to_dict() for r in self.registers],
             **({'calculated': [c.to_dict() for c in self.calculated]}
                if self.calculated else {}),
@@ -285,6 +289,7 @@ class DeviceTemplate:
             'builtin': self.builtin, 'registers': len(self.registers),
             'categories': len(self.categories),
             'transport': template_transport(self),   # 'modbus' | 'http'
+            'commands': sorted(self.commands.keys()),
         }
 
 
@@ -533,6 +538,7 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         categories=t.get('categories', {}) or {},
         canonical=bool(t.get('canonical', False)),
         pq_recorder=str(t.get('pq_recorder', '') or ''),
+        commands=dict(t.get('commands') or {}),
         registers=regs, calculated=calcs, builtin=builtin, path=path,
     )
 

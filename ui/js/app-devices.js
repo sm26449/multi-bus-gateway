@@ -489,6 +489,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 selected_registers: dev.selected_registers ?? 0,
                 pq_supported: dev.pq_supported === true,
                 write_locked: dev.write_locked === true,
+                commands: dev.commands || [],
+                commands_offered: dev.commands_offered || [],
             },
             sinks: dev.sinks || {},
             entry: dev,                 // full live entry for the Overview tab
@@ -559,6 +561,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <button class="config-main-tab" data-dtab="outputs"><i aria-hidden="true" class="bi bi-signpost-split"></i> ${t('devices.detail.outputs', 'Outputs')}</button>
             <button class="config-main-tab" data-dtab="measurements"><i aria-hidden="true" class="bi bi-list-check"></i> ${t('devices.registers', 'Measurements')} (${d.selected_registers})</button>
             <button class="config-main-tab" data-dtab="calculated"><i aria-hidden="true" class="bi bi-calculator"></i> ${t('calc.tab', 'Calculated')}</button>
+            ${(d.commands_offered || []).length ? `<button class="config-main-tab" data-dtab="commands"><i aria-hidden="true" class="bi bi-send"></i> ${t('commands.tab', 'Commands')} (${(d.commands || []).length})</button>` : ''}
             <button class="config-main-tab" data-dtab="logs"><i aria-hidden="true" class="bi bi-journal-text"></i> ${t('devices.tab.logs', 'Logs')}</button>
             <button class="config-main-tab" data-dtab="monitor" ${gMon}><i aria-hidden="true" class="bi bi-graph-up"></i> ${t('nav.monitor', 'Monitor')}</button>
             <button class="config-main-tab" data-dtab="history" ${gInf}><i aria-hidden="true" class="bi bi-clock-history"></i> ${t('nav.history', 'History')}</button>
@@ -578,6 +581,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
         <!-- ── Logs — what this device's acquisition has been doing ── -->
         <div data-dpanel="logs" hidden><div class="dev-log-host"></div></div>
+        <div data-dpanel="commands" hidden><div class="dev-cmd-host"></div></div>
 
         <!-- ── Overview (read-only) ── -->
         <div data-dpanel="overview">${this._deviceOverviewHtml(d, s.entry || {})}</div>
@@ -851,6 +855,86 @@ Object.assign(JanitzaMonitor.prototype, {
         if (this._devLogTimer) { clearInterval(this._devLogTimer); this._devLogTimer = null; }
     },
 
+    // ── Commands tab ─────────────────────────────────────────────────────────
+    //
+    // What this unit can be told, from its template: one card per command with
+    // its parameters, Run and Test, the last result, and the recent history
+    // from the audit log. The same commands a controller runs over MQTT.
+    async _initDeviceCommands(id) {
+        const t = (k, d) => this.t(k, d);
+        const host = document.querySelector('#deviceDetailView [data-dpanel="commands"] .dev-cmd-host');
+        if (!host) return;
+        host.innerHTML = `<div class="field-hint">${t('common.loading', 'Loading…')}</div>`;
+        let cmds = [], hist = [];
+        try {
+            const r = await fetch(`/api/devices/${encodeURIComponent(id)}/commands`);
+            cmds = (await r.json()).commands || [];
+            hist = ((await (await fetch(`/api/commands/history?device=${encodeURIComponent(id)}&limit=10`)).json()).history) || [];
+        } catch (e) { host.innerHTML = `<div class="field-hint">${this._esc(e.message)}</div>`; return; }
+        this._devCmds = cmds;
+        const fmtTs = ts => ts ? new Date((typeof ts === 'number' ? ts * 1000 : ts)).toLocaleString() : '';
+        host.innerHTML = `
+        <div class="settings-card">
+            <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-send"></i> ${t('commands.tab', 'Commands')}</h3></div>
+            <div class="settings-card-body">
+                <p class="field-hint" style="margin:0 0 12px;">${t('commands.unitIntro',
+                    'What this unit can be told. Each command writes the registers its template declares, in one frame, then reads back and says whether it took. The same commands are accepted over MQTT and from Home Assistant; every run is audited.')}</p>
+                ${cmds.length ? '' : `<div class="field-hint">${t('commands.none', 'This unit\'s template declares no commands.')}</div>`}
+                ${cmds.map(c => `
+                <div class="cmd-card" data-cmd="${this._esc(c.name)}" style="border:1px solid var(--border,#e5e7eb);border-radius:8px;padding:12px;margin-bottom:12px;${c.enabled ? '' : 'opacity:.75;'}">
+                    <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:8px;">
+                        <b>${this._esc(c.label || c.name)}</b> <span class="dev-chip">${this._esc(c.name)}</span>
+                        ${c.alias ? `<span class="field-hint">= ${this._esc(c.alias.command)} ${this._esc(Object.entries(c.alias.params || {}).map(([k, v]) => `${k} ${v}`).join(', '))}</span>` : ''}
+                        ${c.enabled ? '' : `<span class="sink-pill warn">${t('commands.notEnabled', 'not enabled on this unit')}</span>`}
+                        <span class="field-hint" style="margin-left:auto;">MQTT <code>${this._esc(c.mqtt_topic || '')}</code></span>
+                    </div>
+                    ${c.enabled ? '' : `<div class="field-hint" style="margin-bottom:8px;">${t('commands.enableHint', 'Tick it under Commands in the group editor of the installation.')}</div>`}
+                    ${c.writes && c.writes.length ? `<div class="field-hint" style="margin-bottom:8px;">${t('commands.writes', 'Writes')}: ${c.writes.map(w => `<code>${this._esc(w.register)}</code>`).join(', ')}${c.guard && c.guard.length ? ` · ${t('commands.guarded', 'only if')} ${c.guard.map(g => `<code>${this._cmdGuardText(g)}</code>`).join(', ')}` : ''}${c.verify && c.verify.length ? ` · ${t('commands.verifies', 'verifies')} ${c.verify.map(g => `<code>${this._esc(g.read)}</code>`).join(', ')}` : ''}</div>` : ''}
+                    ${this._cmdFormHtml(c, `dcmd_${c.name}`)}
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <button type="button" class="btn btn-primary btn-sm" ${c.enabled ? '' : 'disabled'} onclick="app.runDeviceCommand('${this._esc(id)}','${this._esc(c.name)}',false)"><i aria-hidden="true" class="bi bi-send"></i> ${t('commands.run', 'Run')}</button>
+                        <button type="button" class="btn btn-ghost btn-sm" ${c.enabled ? '' : 'disabled'} onclick="app.runDeviceCommand('${this._esc(id)}','${this._esc(c.name)}',true)"
+                                title="${t('commands.testHint', 'Reads the device and shows what would be written — nothing is written.')}"><i aria-hidden="true" class="bi bi-eye"></i> ${t('commands.test', 'Test')}</button>
+                        <span class="field-hint">${c.last ? `${t('commands.last', 'Last')}: ${this._cmdVerdict(c.last.status)} · ${fmtTs(c.last.ts)} · ${this._esc(c.last.via || '')} ${this._esc(c.last.by || '')}` : t('commands.neverRun', 'Never run since start')}</span>
+                    </div>
+                    <div class="cmd-out" role="status" aria-live="polite" style="margin-top:8px;font-size:12.5px;"></div>
+                </div>`).join('')}
+            </div>
+        </div>
+        <div class="settings-card">
+            <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-clock-history"></i> ${t('commands.history', 'Recent commands')}</h3></div>
+            <div class="settings-card-body">
+                ${hist.length ? `<div class="table-wrap"><table class="table"><thead><tr>
+                    <th>${t('commands.h.when', 'When')}</th><th>${t('commands.h.command', 'Command')}</th><th>${t('commands.h.params', 'Parameters')}</th>
+                    <th>${t('commands.h.result', 'Result')}</th><th>${t('commands.h.by', 'By')}</th></tr></thead><tbody>
+                    ${hist.map(h => { const d = h.detail || {}; return `<tr>
+                        <td>${this._esc(fmtTs(h.ts || h.time || h.timestamp))}</td>
+                        <td><code>${this._esc(String(h.target || '').split(' ').pop())}</code></td>
+                        <td>${this._esc(Object.entries(d.params || {}).map(([k, v]) => `${k} = ${v}`).join(', '))}</td>
+                        <td><span class="status-dot" style="--dot:${this._cmdDot(h.status)}" aria-hidden="true"></span> ${this._cmdVerdict(h.status)}${d.reason ? ` · ${this._esc(d.reason)}` : ''}</td>
+                        <td>${this._esc(h.user || '')} <span class="field-hint">${this._esc(d.via || '')}</span></td></tr>`; }).join('')}
+                </tbody></table></div>`
+                : `<div class="field-hint">${t('commands.noHistory', 'Nothing yet. Every command — from this page, the API, MQTT or Home Assistant — is recorded here.')}</div>`}
+            </div>
+        </div>`;
+    },
+
+    async runDeviceCommand(id, name, dryRun) {
+        const t = (k, d) => this.t(k, d);
+        const cmd = (this._devCmds || []).find(c => c.name === name);
+        const card = document.querySelector(`#deviceDetailView .cmd-card[data-cmd="${name}"]`);
+        const out = card?.querySelector('.cmd-out');
+        if (!cmd || !out) return;
+        const read = this._cmdReadParams(cmd, `dcmd_${name}`);
+        if (read.error) { out.innerHTML = `<span class="text-danger">${this._esc(read.error)}</span>`; return; }
+        const said = Object.entries(read.params).map(([k, v]) => `${k} = ${v}`).join(', ') || '—';
+        if (!dryRun && cmd.confirm !== false && !confirm(`${t('commands.confirm', 'Run')} ${cmd.label || cmd.name} (${said}) ${t('commands.on', 'on')} ${id}?`)) return;
+        out.innerHTML = t('common.loading', 'Loading…');
+        const r = await this._postCommand(`/api/devices/${encodeURIComponent(id)}/commands/${encodeURIComponent(name)}${dryRun ? '/dry-run' : ''}`, read.params, id);
+        out.innerHTML = r._gate ? `<span class="text-danger">${this._esc(r._gate)}</span>` : this._cmdResultHtml(r, false);
+        if (!dryRun && !r._gate) this._initDeviceCommands(id);
+    },
+
     _initDeviceLogs(id) {
         const host = document.querySelector('#deviceDetailView [data-dpanel="logs"] .dev-log-host');
         if (!host) return;
@@ -971,6 +1055,7 @@ Object.assign(JanitzaMonitor.prototype, {
         }
         else if (name === 'calculated') this._initCalculated(id);
         else if (name === 'logs') this._initDeviceLogs(id);
+        else if (name === 'commands') this._initDeviceCommands(id);
         else if (name === 'measurements') this._embedRegisters(id);
         else if (name === 'monitor') this._embedWsPage('monitor', () => this.initMonitorPage());
         else if (name === 'history') this._embedWsPage('history', () => this.initHistoryPage());

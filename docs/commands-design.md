@@ -1,7 +1,9 @@
 # Commands — a universal write path for a gateway (design, 2026-09-13)
 
-**Status: proposal, to be agreed before code.** Supersedes the hard-wired
-power-limit action of 3.72.0, which becomes the first *command preset*.
+**Status: agreed 2026-09-13; phase 1 shipped in 3.73.0** (engine, template
+presets, bindings, API / MQTT / HA faces, UI). Supersedes the hard-wired
+power-limit action of 3.72.0, which became the first *command preset*.
+Phases 2–4 (§9) are open.
 
 ## 1. The principle
 

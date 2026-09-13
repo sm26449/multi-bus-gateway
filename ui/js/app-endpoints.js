@@ -251,8 +251,8 @@ Object.assign(JanitzaMonitor.prototype, {
                     <input type="checkbox" ${off ? '' : 'checked'}
                            onchange="app.toggleGroup('${this._esc(p.id)}','${this._esc(g.id)}',this)">
                     <span>${t('endpoints.groupOn', 'Read')}</span></label>
-                  ${g.role === 'inverter' && (g.sources || []).some(sx => sx.protocol !== 'http' && sx.protocol !== 'mqtt') ? `<button class="btn btn-secondary btn-sm" ${this._act('openPowerLimitModal', [p.id, g.id, ''])}
-                          title="${t('endpoints.limitHint', 'Limit the active power of the inverters (SunSpec model 123)')}"><i aria-hidden="true" class="bi bi-speedometer"></i> ${t('endpoints.limit', 'Limit…')}</button>` : ''}
+                  ${(g.commands || []).some(c => c.enabled) ? `<button class="btn btn-secondary btn-sm" ${this._act('openCommandModal', [p.id, g.id, '', ''])}
+                          title="${t('commands.groupHint', 'Tell the units of this group something — a power limit, a restore. Every command is verified and audited.')}"><i aria-hidden="true" class="bi bi-send"></i> ${t('commands.button', 'Commands…')}</button>` : ''}
                   <button class="btn btn-ghost btn-sm" ${this._act('openSourceModal', [p.id, '', g.id])}
                           title="${t('endpoints.srcAdd', 'Add source')}" aria-label="${t('endpoints.srcAdd', 'Add source')}"><i aria-hidden="true" class="bi bi-plus-lg"></i></button>
                   <button class="btn btn-ghost btn-sm" ${this._act('openGroupModal', [p.id, g.id])}
@@ -326,6 +326,8 @@ Object.assign(JanitzaMonitor.prototype, {
             ...over,
         };
         if (g.template) out.template = g.template;
+        const cmds = (g.commands || []).filter(c => c.binding).map(c => c.binding);
+        if (cmds.length) out.commands = cmds;
         const srcs = (g.sources || []).map(s => this._rawSource({ sources: g.sources }, s.id));
         if (srcs.length === 1 && srcs[0].id === 'default') {
             const s = srcs[0];
@@ -648,71 +650,177 @@ Object.assign(JanitzaMonitor.prototype, {
         }
     },
 
-    // ── the active power limit ──────────────────────────────────────────────
+    // ── commands ────────────────────────────────────────────────────────────
     //
-    // The gateway applies a limit safely and consigns it; it never decides to
-    // limit on its own — that is a controller's policy. This dialog is the
-    // operator's hand on the same action the controller uses.
-    async openPowerLimitModal(endpointId, groupId, deviceId) {
+    // A command is WHAT a controller wants ("power limit 60 %"); the device's
+    // template says HOW that is said to this device. The gateway applies it
+    // safely, verifies and consigns it; it never decides WHEN — that is a
+    // controller's policy. This dialog is the operator's hand on the same
+    // command the controller uses over MQTT or the API.
+
+    // the form for a command's parameters, from their declaration: bounds,
+    // default, unit, allowed values. ids are `${prefix}_${param}`.
+    _cmdFormHtml(cmd, prefix) {
+        const t = (k, d) => this.t(k, d);
+        const params = Object.entries(cmd.params || {});
+        if (!params.length) return `<p class="field-hint" style="margin:0 0 8px;">${t('commands.noParams', 'This command takes no parameters.')}</p>`;
+        return `<div class="form-row">${params.map(([name, p]) => {
+            const id = `${prefix}_${name}`;
+            const label = `${this._esc(p.label || name)}${p.unit ? ` (${this._esc(p.unit)})` : ''}`;
+            const bounds = p.min != null && p.max != null ? `${p.min}..${p.max}` : p.min != null ? `≥ ${p.min}` : p.max != null ? `≤ ${p.max}` : '';
+            // no default → the field starts empty: a limit of "0" nobody typed must never be one click away
+            const dflt = p.default != null ? p.default : '';
+            const field = p.allowed
+                ? `<select id="${id}" class="input">${p.allowed.map(v => `<option value="${v}" ${v == dflt ? 'selected' : ''}>${v}</option>`).join('')}</select>`
+                : `<input id="${id}" class="input" type="number" ${p.min != null ? `min="${p.min}"` : ''} ${p.max != null ? `max="${p.max}"` : ''} step="any" value="${dflt}" placeholder="${bounds}" ${p.required ? 'required aria-required="true"' : ''}>`;
+            return `<div class="form-group"><label class="form-label" for="${id}">${label}${p.required ? ' *' : ''}</label>${field}
+                ${bounds ? `<div class="field-hint">${bounds}${p.default != null ? ` · ${t('commands.default', 'default')} ${p.default}` : ''}</div>` : ''}</div>`;
+        }).join('')}</div>`;
+    },
+
+    // the parameters as typed; null + a message when one is out of its bounds
+    _cmdReadParams(cmd, prefix) {
+        const t = (k, d) => this.t(k, d);
+        const out = {};
+        for (const [name, p] of Object.entries(cmd.params || {})) {
+            const el = document.getElementById(`${prefix}_${name}`);
+            if (!el) continue;
+            const raw = String(el.value).trim();
+            if (raw === '') { if (p.required) return { error: `${p.label || name}: ${t('commands.required', 'required')}` }; continue; }
+            const v = Number(raw);
+            if (!Number.isFinite(v)) return { error: `${p.label || name}: ${t('commands.notNumber', 'must be a number')}` };
+            if (p.min != null && v < p.min) return { error: `${p.label || name}: ${t('commands.below', 'below the minimum')} ${p.min}` };
+            if (p.max != null && v > p.max) return { error: `${p.label || name}: ${t('commands.above', 'above the maximum')} ${p.max}` };
+            out[name] = v;
+        }
+        return { params: out };
+    },
+
+    // a guard clause in words: `controls_model_id = 123`, `wmaxlimpct_sf in [-2, -1, 0]`
+    _cmdGuardText(g) {
+        const reg = this._esc(g.read || g.register || '');
+        if (g.in) return `${reg} ${this.t('commands.in', 'in')} [${g.in.join(', ')}]`;
+        if (g.expect != null) return `${reg} = ${this._esc(String(g.expect))}${g.tolerance ? ` ±${g.tolerance}` : ''}`;
+        return reg;
+    },
+
+    _cmdVerdict(status) {
+        const t = (k, d) => this.t(k, d);
+        return { success: t('commands.v.success', 'applied and verified'),
+                 mismatch: t('commands.v.mismatch', 'written, but the device holds another value'),
+                 unverified: t('commands.v.unverified', 'written, read-back silent'),
+                 rejected: t('commands.v.rejected', 'refused'),
+                 error: t('commands.v.error', 'failed'),
+                 dry_run: t('commands.v.dryRun', 'would write') }[status] || status;
+    },
+
+    _cmdDot(status) {
+        return status === 'success' || status === 'dry_run' ? 'var(--success,#22c55e)'
+             : status === 'error' || status === 'rejected' ? 'var(--danger,#ef4444)' : 'var(--warning,#f59e0b)';
+    },
+
+    // one result in words: verdict, before → after of the verified fields, ms, reason
+    _cmdResultHtml(r, withDevice = true) {
+        const t = (k, d) => this.t(k, d);
+        const after = r.after || {}, before = r.before || {};
+        const delta = Object.keys(after).filter(k => k in before).slice(0, 2)
+            .map(k => `${this._esc(k)} ${before[k]} → ${after[k]}`).join(', ');
+        const frames = r.status === 'dry_run' && r.frames ? r.frames.map(f =>
+            `${t('commands.frame', 'registers')} ${f.address}…${f.address + f.words.length - 1} = [${f.words.join(', ')}]`).join('; ') : '';
+        return `<div class="cmd-result" style="display:flex;gap:8px;align-items:baseline;padding:2px 0;">
+            <span class="status-dot" style="--dot:${this._cmdDot(r.status)}" aria-hidden="true"></span>
+            ${withDevice && r.device ? `<span class="dev-chip">${this._esc(r.device)}</span>` : ''}
+            <span><b>${this._cmdVerdict(r.status)}</b>${delta ? ` · ${delta}` : ''}${frames ? ` · ${frames}` : ''}${r.ms != null ? ` · ${Math.round(r.ms)} ms` : ''}${r.reason ? ` · ${this._esc(r.reason)}` : ''}</span></div>`;
+    },
+
+    async openCommandModal(endpointId, groupId, deviceId, name) {
         const p = this._endpointDetail;
         if (!p || p.id !== endpointId) return;
         const t = (k, d) => this.t(k, d);
         const g = (p.groups || []).find(x => x.id === groupId) || {};
         const units = (g.units || []);
-        const cur = units.map(u => `${this._esc(u.name || u.device_id)}: ${(u.live || {}).power_limit_pct != null ? u.live.power_limit_pct + ' %' : '—'}`).join(' · ');
-        document.getElementById('endpointModalTitle').textContent = t('endpoints.limitTitle', 'Limit active power');
+        const cmds = (g.commands || []).filter(c => c.enabled);
+        if (!cmds.length) return;
+        const cmd = cmds.find(c => c.name === name) || cmds[0];
+        this._cmdCtx = { endpointId, groupId, cmds };
+        document.getElementById('endpointModalTitle').textContent = t('commands.title', 'Command');
         document.getElementById('endpointModalBody').innerHTML = `
-            <p class="field-hint" style="margin:0 0 12px;">${t('endpoints.limitIntro',
-                'Writes WMaxLimPct and WMaxLim_Ena (SunSpec model 123) in one frame, reads back and says whether it took. 100 % restores. The inverter drops the limit by itself after the revert time unless it is renewed — a controller that dies never leaves the plant throttled.')}</p>
-            <div class="field-hint" style="margin:0 0 12px;">${t('endpoints.limitNow', 'Now')}: ${cur || '—'}</div>
+            <p class="field-hint" style="margin:0 0 12px;">${t('commands.intro',
+                'The gateway writes the registers the template declares for this command, reads back and says whether it took. Test shows the exact registers without writing.')}</p>
             <div class="form-row">
-                <div class="form-group"><label class="form-label" for="plmPct">${t('endpoints.limitPct', 'Limit (%)')}</label>
-                    <input id="plmPct" class="input" type="number" min="0" max="100" step="1" value="100"></div>
-                <div class="form-group"><label class="form-label" for="plmRevert">${t('endpoints.limitRevert', 'Reverts after (s)')}</label>
-                    <input id="plmRevert" class="input" type="number" min="0" max="65535" step="1" value="600">
-                    <div class="field-hint">${t('endpoints.limitRevertHint', '0 = the inverter keeps it until told otherwise')}</div></div>
-                <div class="form-group"><label class="form-label" for="plmRamp">${t('endpoints.limitRamp', 'Ramp (s)')}</label>
-                    <input id="plmRamp" class="input" type="number" min="0" max="65535" step="1" value="0"></div>
-                <div class="form-group flex-2"><label class="form-label" for="plmScope">${t('endpoints.limitScope', 'Apply to')}</label>
-                    <select id="plmScope" class="input">
-                        <option value="">${t('endpoints.limitAll', 'every inverter of the group')} (${units.length})</option>
+                <div class="form-group"><label class="form-label" for="cmdName">${t('commands.which', 'Command')}</label>
+                    <select id="cmdName" class="input" onchange="app._cmdPick()">${cmds.map(c =>
+                        `<option value="${this._esc(c.name)}" ${c.name === cmd.name ? 'selected' : ''}>${this._esc(c.label || c.name)}</option>`).join('')}</select></div>
+                <div class="form-group flex-2"><label class="form-label" for="cmdScope">${t('commands.scope', 'Apply to')}</label>
+                    <select id="cmdScope" class="input">
+                        <option value="">${t('commands.everyUnit', 'every unit of the group')} (${units.length})</option>
                         ${units.map(u => `<option value="${this._esc(u.device_id)}" ${u.device_id === deviceId ? 'selected' : ''}>${this._esc(u.name || u.device_id)}</option>`).join('')}
                     </select></div>
             </div>
-            <div id="plmOut" role="status" aria-live="polite" style="margin-top:8px;font-size:12.5px;"></div>`;
+            <div id="cmdParams">${this._cmdFormHtml(cmd, 'cmdP')}</div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <button type="button" class="btn btn-ghost btn-sm" onclick="app.runCommand(true)"
+                        title="${t('commands.testHint', 'Reads the device and shows what would be written — nothing is written.')}"><i aria-hidden="true" class="bi bi-eye"></i> ${t('commands.test', 'Test')}</button>
+                <span class="field-hint">${t('commands.mqttAt', 'Over MQTT')}: <code id="cmdTopic">${this._esc(g.cmd_topic_prefix || '')}/cmd/${this._esc(cmd.name)}</code></span>
+            </div>
+            <div id="cmdOut" role="status" aria-live="polite" style="margin-top:8px;font-size:12.5px;"></div>`;
         document.getElementById('endpointFeedback').textContent = '';
         const save = document.querySelector('#endpointModal [data-endpoint-save]');
-        if (save) { save.setAttribute('onclick', `app.applyPowerLimit('${this._esc(endpointId)}','${this._esc(groupId)}')`); save.innerHTML = `<i aria-hidden="true" class="bi bi-speedometer"></i> ${t('endpoints.limitApply', 'Apply')}`; }
+        if (save) { save.setAttribute('onclick', 'app.runCommand(false)'); save.innerHTML = `<i aria-hidden="true" class="bi bi-send"></i> ${t('commands.run', 'Run')}`; }
         this.openModal('endpointModal');
     },
 
-    async applyPowerLimit(endpointId, groupId) {
+    _cmdPick() {
+        const ctx = this._cmdCtx || {};
+        const cmd = (ctx.cmds || []).find(c => c.name === document.getElementById('cmdName')?.value);
+        if (!cmd) return;
+        document.getElementById('cmdParams').innerHTML = this._cmdFormHtml(cmd, 'cmdP');
+        const tp = document.getElementById('cmdTopic');
+        if (tp) tp.textContent = tp.textContent.replace(/\/cmd\/.*$/, `/cmd/${cmd.name}`);
+        document.getElementById('cmdOut').innerHTML = '';
+    },
+
+    async runCommand(dryRun) {
         const t = (k, d) => this.t(k, d);
-        const v = id => (document.getElementById(id) || {}).value;
-        const fb = document.getElementById('endpointFeedback'), out = document.getElementById('plmOut');
-        const pct = parseFloat(v('plmPct'));
-        if (!(pct >= 0 && pct <= 100)) { fb.textContent = t('endpoints.limitBad', 'Limit: 0..100 %'); return; }
-        const body = { limit_pct: pct, revert_s: parseInt(v('plmRevert'), 10) || 0, ramp_s: parseInt(v('plmRamp'), 10) || 0 };
-        const one = v('plmScope');
-        if (!confirm(`${t('endpoints.limitConfirm', 'Write this limit to')} ${one || t('endpoints.limitAll', 'every inverter of the group')}: ${pct} %?`)) return;
+        const ctx = this._cmdCtx || {};
+        const cmd = (ctx.cmds || []).find(c => c.name === document.getElementById('cmdName')?.value);
+        const fb = document.getElementById('endpointFeedback'), out = document.getElementById('cmdOut');
+        if (!cmd) return;
+        const read = this._cmdReadParams(cmd, 'cmdP');
+        if (read.error) { fb.textContent = read.error; return; }
+        const one = document.getElementById('cmdScope').value;
+        const g = (this._endpointDetail?.groups || []).find(x => x.id === ctx.groupId) || {};
+        const targets = one ? [one] : (g.units || []).map(u => u.device_id);
+        const said = Object.entries(read.params).map(([k, v]) => `${k} = ${v}`).join(', ') || '—';
+        if (!dryRun && cmd.confirm !== false
+            && !confirm(`${t('commands.confirm', 'Run')} ${cmd.label || cmd.name} (${said}) ${t('commands.on', 'on')} ${one || t('commands.everyUnit', 'every unit of the group')}?`)) return;
         fb.textContent = ''; out.innerHTML = t('common.loading', 'Loading…');
-        const url = one ? `/api/devices/${encodeURIComponent(one)}/actions/power_limit`
-                        : `/api/endpoints/${encodeURIComponent(endpointId)}/groups/${encodeURIComponent(groupId)}/actions/power_limit`;
-        let d = {};
+        const rows = [];
+        if (dryRun || one) {
+            for (const dev of targets) {
+                const url = `/api/devices/${encodeURIComponent(dev)}/commands/${encodeURIComponent(cmd.name)}${dryRun ? '/dry-run' : ''}`;
+                rows.push(await this._postCommand(url, read.params, dev));
+            }
+        } else {
+            const url = `/api/endpoints/${encodeURIComponent(ctx.endpointId)}/groups/${encodeURIComponent(ctx.groupId)}/commands/${encodeURIComponent(cmd.name)}`;
+            const r = await this._postCommand(url, read.params, '');
+            rows.push(...(r.units || [r]));
+        }
+        const gate = rows.find(r => r._gate);
+        if (gate) { fb.textContent = gate._gate; out.innerHTML = ''; return; }
+        out.innerHTML = rows.map(r => this._cmdResultHtml(r)).join('');
+        if (!dryRun) this._refreshEndpointDetail(ctx.endpointId);
+    },
+
+    // POST a command; a gate (403/404) comes back as `_gate` text for the feedback line
+    async _postCommand(url, params, device) {
         try {
-            const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-            d = await r.json().catch(() => ({}));
-            if (r.status === 403 || r.status === 404) { fb.textContent = (d.detail?.errors || [d.detail || d.reason || r.statusText]).join(' · '); out.innerHTML = ''; return; }
-        } catch (e) { fb.textContent = e.message; out.innerHTML = ''; return; }
-        const rows = one ? [{ device: one, ...d }] : (d.units || []);
-        const word = r => ({ success: t('endpoints.limitOk', 'applied'), mismatch: t('endpoints.limitMismatch', 'applied, but the inverter holds another value'),
-                             unverified: t('endpoints.limitUnverified', 'written, read-back silent'), rejected: t('endpoints.limitRejected', 'refused'),
-                             error: t('endpoints.limitError', 'failed') }[r.status] || r.status);
-        out.innerHTML = rows.map(r => `<div style="display:flex;gap:8px;align-items:baseline;padding:2px 0;">
-            <span class="status-dot" style="--dot:${r.status === 'success' ? 'var(--success,#22c55e)' : r.status === 'error' || r.status === 'rejected' ? 'var(--danger,#ef4444)' : 'var(--warning,#f59e0b)'}" aria-hidden="true"></span>
-            <span class="dev-chip">${this._esc(r.device)}</span>
-            <span><b>${word(r)}</b>${r.before_pct != null ? ` · ${r.before_pct} → ${r.after_pct ?? '?'} %` : ''}${r.ms != null ? ` · ${Math.round(r.ms)} ms` : ''}${r.reason ? ` · ${this._esc(r.reason)}` : ''}</span></div>`).join('');
-        this._refreshEndpointDetail(endpointId);
+            const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params) });
+            const d = await r.json().catch(() => ({}));
+            if (r.status === 403 || r.status === 404 || r.status === 401)
+                return { device, _gate: (d.detail?.errors || [d.detail || d.reason || r.statusText]).join(' · ') };
+            return { device, ...d };
+        } catch (e) { return { device, status: 'error', reason: e.message }; }
     },
 
     // ── the group editor ────────────────────────────────────────────────────
@@ -769,7 +877,14 @@ Object.assign(JanitzaMonitor.prototype, {
             </div>`}
             <label class="form-label" style="display:flex;align-items:center;gap:8px;">
                 <input type="checkbox" id="grpEnabled" ${g?.enabled !== false ? 'checked' : ''}>
-                ${t('endpoints.groupOnLong', 'Read this group')}</label>`;
+                ${t('endpoints.groupOnLong', 'Read this group')}</label>
+            ${g && (g.commands || []).length ? `<fieldset class="form-group" style="margin-top:12px;border:0;padding:0;">
+                <legend class="form-label">${t('commands.groupAccepts', 'Commands this group accepts')}</legend>
+                <div class="field-hint" style="margin:0 0 6px;">${t('commands.groupAcceptsHint', 'Offered by the template of the Modbus source. A ticked command can be run from this page, over MQTT and from Home Assistant; an unticked one is refused everywhere.')}</div>
+                ${g.commands.map(c => `<label class="form-label" style="display:flex;align-items:center;gap:8px;font-weight:normal;">
+                    <input type="checkbox" data-grp-cmd="${this._esc(c.name)}" ${c.enabled ? 'checked' : ''}>
+                    ${this._esc(c.label || c.name)} <span class="dev-chip">${this._esc(c.name)}</span></label>`).join('')}
+            </fieldset>` : ''}`;
         document.getElementById('endpointFeedback').textContent = '';
         const save = document.querySelector('#endpointModal [data-endpoint-save]');
         if (save) { save.innerHTML = `<i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}`; save.setAttribute('onclick', `app.saveGroup('${this._esc(endpointId)}')`); }
@@ -808,6 +923,14 @@ Object.assign(JanitzaMonitor.prototype, {
             const raw = this._rawGroup(p, id);
             if (raw.sources) out.sources = raw.sources;
             else if (raw.connection) out.connection = raw.connection;
+            // the ticked commands, each keeping its stored binding (faces, lease)
+            const ticked = [...document.querySelectorAll('#endpointModal [data-grp-cmd]')];
+            if (ticked.length) {
+                out.commands = ticked.filter(x => x.checked).map(x => {
+                    const c = (prev.commands || []).find(y => y.name === x.dataset.grpCmd) || {};
+                    return c.binding ? { ...c.binding, enabled: true } : { name: x.dataset.grpCmd };
+                });
+            } else if (raw.commands) out.commands = raw.commands;
         } else {
             const proto = v('grpProto') || 'tcp';
             const addr = (v('grpAddr') || '').trim();

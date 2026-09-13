@@ -1145,6 +1145,32 @@
         }
       },
       {
+        "address": 40227,
+        "name": "controls_model_id",
+        "label": "SunSpec model id (123)",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "controls",
+        "poll_group": "controls",
+        "description": "Header of the Immediate Controls block — a command checks it is 123 before writing",
+        "defaults": {
+          "mqtt": {
+            "enabled": false,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": false,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
         "address": 40231,
         "name": "controls_connected",
         "label": "Connected (model 123)",
@@ -1194,6 +1220,32 @@
           },
           "influxdb": {
             "enabled": true,
+            "measurement": "",
+            "tags": {}
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 40233,
+        "name": "power_limit_win_s",
+        "label": "Power limit window",
+        "unit": "s",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "controls",
+        "poll_group": "controls",
+        "description": "WMaxLimPct_WinTms — written 0 with the limit",
+        "defaults": {
+          "mqtt": {
+            "enabled": false,
+            "topic": ""
+          },
+          "influxdb": {
+            "enabled": false,
             "measurement": "",
             "tags": {}
           },
@@ -1718,6 +1770,117 @@
         "topic": "status/active",
         "measurement": "status"
       }
-    ]
+    ],
+    "commands": {
+      "power_limit": {
+        "label": "Active power limit",
+        "params": {
+          "value": {
+            "label": "Limit",
+            "unit": "%",
+            "min": 0,
+            "max": 100,
+            "required": true,
+            "aliases": [
+              "limit_pct"
+            ]
+          },
+          "revert_s": {
+            "label": "Reverts after",
+            "unit": "s",
+            "default": 600,
+            "min": 0,
+            "max": 65535,
+            "aliases": [
+              "revert_timeout"
+            ]
+          },
+          "ramp_s": {
+            "label": "Ramp",
+            "unit": "s",
+            "default": 0,
+            "min": 0,
+            "max": 65535,
+            "aliases": [
+              "ramp_time"
+            ]
+          }
+        },
+        "guard": [
+          {
+            "read": "controls_model_id",
+            "expect": 123
+          },
+          {
+            "read": "wmaxlimpct_sf",
+            "in": [
+              -2,
+              -1,
+              0
+            ]
+          }
+        ],
+        "writes": [
+          {
+            "register": "power_limit_pct",
+            "value": "${value}"
+          },
+          {
+            "register": "power_limit_win_s",
+            "value": 0
+          },
+          {
+            "register": "power_limit_revert_s",
+            "value": "${revert_s}"
+          },
+          {
+            "register": "power_limit_ramp_s",
+            "value": "${ramp_s}"
+          },
+          {
+            "register": "power_limit_enabled",
+            "value": {
+              "if": "${value} < 100",
+              "then": 1,
+              "else": 0
+            }
+          }
+        ],
+        "settle_s": 1,
+        "verify": [
+          {
+            "read": "power_limit_pct",
+            "expect": "${value}",
+            "tolerance": 1
+          },
+          {
+            "read": "power_limit_enabled",
+            "expect": {
+              "if": "${value} < 100",
+              "then": 1,
+              "else": 0
+            }
+          }
+        ],
+        "safe": {
+          "value": 100,
+          "revert_s": 0
+        },
+        "readback_group": "controls",
+        "confirm": true
+      },
+      "restore": {
+        "label": "Restore full power",
+        "alias": {
+          "command": "power_limit",
+          "params": {
+            "value": 100,
+            "revert_s": 0,
+            "ramp_s": 0
+          }
+        },
+        "confirm": false
+      }
+    }
   }
 }
