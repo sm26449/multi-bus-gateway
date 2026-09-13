@@ -520,10 +520,14 @@ Object.assign(JanitzaMonitor.prototype, {
         const proto = s?.protocol || 'tcp';
         const addr = s?.address || '';
         const hostPort = addr.match(/^(.*):(\d+)$/);
-        const groups = Object.entries(s?.poll_groups || { normal: 20 })
-            .map(([k, v]) => `${k}=${v}`).join(', ');
-        const tplOpts = ['<option value="">—</option>'].concat(templates.map(x =>
-            `<option value="${this._esc(x.id)}" ${s?.template === x.id ? 'selected' : ''}>${this._esc(x.name || x.id)}</option>`)).join('');
+        const pg = s?.poll_groups || {};
+        this._srcTemplates = templates;
+        this._srcRole = g.role || '';
+        const tplOpts = this._srcTplOptions(proto, s?.template || '');
+        const PROTO = { tcp: 'Modbus TCP', 'rtu-tcp': 'Modbus RTU over TCP', rtu: 'Modbus RTU', http: 'Solar API / HTTP JSON', mqtt: 'MQTT' };
+        const iv = (id, label, hint, val) => `<div class="form-group"><label class="form-label" for="${id}">${label}</label>
+                    <div style="display:flex;align-items:center;gap:6px;"><input id="${id}" class="input" type="number" min="1" step="1" value="${val ?? ''}" placeholder="—" style="width:90px;"> s</div>
+                    <div class="field-hint">${hint}</div></div>`;
         document.getElementById('endpointModalTitle').textContent = s
             ? t('endpoints.srcEditTitle', 'Edit source') : t('endpoints.srcAddTitle', 'Add source');
         document.getElementById('endpointModalBody').innerHTML = `
@@ -532,13 +536,14 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="form-row">
                 <div class="form-group"><label class="form-label" for="srcId">${t('endpoints.srcName', 'Source ID')}</label>
                     <input id="srcId" class="input" value="${this._esc(s?.id || '')}" ${s ? 'disabled' : ''} placeholder="solar_api"></div>
-                <div class="form-group"><label class="form-label" for="srcProto">${t('devices.wizard.protocol', 'Protocol')}</label>
+                <div class="form-group"><label class="form-label" for="srcProto">${t('endpoints.srcWay', 'Read over')}</label>
                     <select id="srcProto" class="input" onchange="app._srcProtoChanged()">
                         ${['tcp', 'rtu-tcp', 'rtu', 'http', 'mqtt'].map(x =>
-                            `<option value="${x}" ${proto === x ? 'selected' : ''}>${x}</option>`).join('')}
+                            `<option value="${x}" ${proto === x ? 'selected' : ''}>${PROTO[x]}</option>`).join('')}
                     </select></div>
                 <div class="form-group flex-2"><label class="form-label" for="srcTpl">${t('devices.wizard.template', 'Template')}</label>
-                    <select id="srcTpl" class="input">${tplOpts}</select></div>
+                    <select id="srcTpl" class="input">${tplOpts}</select>
+                    <div class="field-hint">${t('endpoints.srcTplHint', 'Only maps for this kind of unit and this way of reading.')}</div></div>
             </div>
             <div class="form-row" id="srcAddrTcp" ${proto === 'http' || proto === 'mqtt' || proto === 'rtu' ? 'hidden' : ''}>
                 <div class="form-group flex-2"><label class="form-label" for="srcHost">${t('endpoints.host', 'Host')}</label>
@@ -559,19 +564,23 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="form-group flex-2"><label class="form-label" for="srcTopic">${t('endpoints.srcTopic', 'Topic')}</label>
                     <input id="srcTopic" class="input" value="${this._esc(proto === 'mqtt' ? addr : '')}" placeholder="sensors/\${unit_id}/state"></div>
             </div>
+            <div class="wiz-eyebrow">${t('endpoints.srcHowOften', 'How often this source reads')}</div>
             <div class="form-row">
-                <div class="form-group flex-2"><label class="form-label" for="srcGroups">${t('endpoints.srcGroups', 'Intervals')}</label>
-                    <input id="srcGroups" class="input" value="${this._esc(groups)}" placeholder="normal=20, slow=120">
-                    <div class="field-hint">${t('endpoints.srcGroupsHint', 'group=seconds, comma separated. This source polls ONLY the groups named here.')}</div></div>
-                <div class="form-group"><label class="form-label" for="srcStale">${t('endpoints.srcStale', 'Yields after (s)')}</label>
+                ${iv('srcIvRealtime', t('endpoints.iv.realtime', 'Power, voltages, currents'), t('endpoints.iv.realtimeHint', 'the "realtime" fields'), pg.realtime)}
+                ${iv('srcIvNormal', t('endpoints.iv.normal', 'Energy counters'), t('endpoints.iv.normalHint', 'the "normal" fields'), pg.normal)}
+                ${iv('srcIvSlow', t('endpoints.iv.slow', 'Static data'), t('endpoints.iv.slowHint', 'the "slow" fields'), pg.slow)}
+            </div>
+            <div class="field-hint" style="margin:-6px 0 10px;">${t('endpoints.srcIvHint', 'Leave a field empty and this source will not read that kind of measurement — another source may.')}</div>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label" for="srcStale">${t('endpoints.srcStaleLabel', 'Stale after (s)')}</label>
                     <input id="srcStale" class="input" type="number" min="0" step="1" value="${s?.stale_after_s || 0}">
-                    <div class="field-hint">${t('endpoints.srcStaleHint2', '0 = never yields. Right for a counter.')}</div></div>
+                    <div class="field-hint">${t('endpoints.srcStaleHint2', 'How long its values stay authoritative before a later source may fill in. 0 = never — right for a counter.')}</div></div>
                 <div class="form-group"><label class="form-label" for="srcTimeout">${t('endpoints.srcTimeout', 'Timeout (s)')}</label>
                     <input id="srcTimeout" class="input" type="number" min="1" value="${s?.timeout ?? 3}"></div>
-            </div>
-            <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                <input type="checkbox" id="srcEnabled" ${s?.enabled !== false ? 'checked' : ''}>
-                ${t('endpoints.srcEnabled', 'Poll this source')}</label>`;
+                <div class="form-group flex-2" style="align-self:flex-end;"><label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                    <input type="checkbox" id="srcEnabled" ${s?.enabled !== false ? 'checked' : ''}>
+                    ${t('endpoints.srcEnabled', 'Read through this source')}</label></div>
+            </div>`;
         document.getElementById('endpointFeedback').textContent = '';
         const save = document.querySelector('#endpointModal [data-endpoint-save]')
             || document.querySelector('#endpointModal .btn-primary');
@@ -586,6 +595,23 @@ Object.assign(JanitzaMonitor.prototype, {
         show('srcAddrUrl', v === 'http');
         show('srcAddrSerial', v === 'rtu');
         show('srcAddrTopic', v === 'mqtt');
+        // the map must match the way of reading: a JSON-path map cannot be read
+        // over Modbus, nor a register map over HTTP
+        const tpl = document.getElementById('srcTpl');
+        if (tpl) tpl.innerHTML = this._srcTplOptions(v, tpl.value);
+    },
+
+    // templates for THIS kind of unit read THIS way; every map of the transport
+    // when no template is known for the kind
+    _tplTransportOf(proto) { return proto === 'http' ? 'http' : proto === 'mqtt' ? '' : 'modbus'; },
+    _srcTplOptions(proto, selected, role) {
+        const transport = this._tplTransportOf(proto);
+        const all = (this._srcTemplates || []).filter(x => !transport || x.transport === transport);
+        const fit = this._pwTemplatesFor ? this._pwTemplatesFor(role ?? this._srcRole, transport, this._srcTemplates || []).filter(x => all.includes(x)) : all;
+        const list = fit.length ? fit : all;
+        if (selected && !list.some(x => x.id === selected)) list.push(...all.filter(x => x.id === selected));
+        return ['<option value="">—</option>'].concat(list.map(x =>
+            `<option value="${this._esc(x.id)}" ${selected === x.id ? 'selected' : ''}>${this._esc(x.name || x.id)}</option>`)).join('');
     },
 
     async saveSource(endpointId) {
@@ -604,14 +630,9 @@ Object.assign(JanitzaMonitor.prototype, {
         else if (proto === 'mqtt') out.topic = (v('srcTopic') || '').trim();
         else { out.host = (v('srcHost') || '').trim(); out.port = parseInt(v('srcPort'), 10) || 502; }
         const groups = {};
-        for (const part of (v('srcGroups') || '').split(',')) {
-            const m = part.trim().match(/^([a-z0-9_-]+)\s*=\s*([\d.]+)$/i);
-            if (m) groups[m[1]] = { interval: parseFloat(m[2]) };
-            else if (part.trim()) {
-                fb.textContent = this.t('endpoints.srcBadGroups',
-                    'Intervals: use group=seconds, comma separated (e.g. normal=20, slow=120).');
-                return;
-            }
+        for (const [name, id] of [['realtime', 'srcIvRealtime'], ['normal', 'srcIvNormal'], ['slow', 'srcIvSlow']]) {
+            const n = parseFloat(v(id));
+            if (n > 0) groups[name] = { interval: n };
         }
         if (Object.keys(groups).length) out.poll_groups = groups;
 
@@ -638,10 +659,14 @@ Object.assign(JanitzaMonitor.prototype, {
         let templates = [];
         try { templates = (await (await fetch('/api/device-templates')).json()).templates || []; }
         catch (e) { console.error(e); }
-        const tplOpts = ['<option value="">—</option>'].concat(templates.map(x =>
-            `<option value="${this._esc(x.id)}" ${g?.template === x.id ? 'selected' : ''}>${this._esc(x.name || x.id)}</option>`)).join('');
+        this._srcTemplates = templates;
+        const role0 = g?.role || 'inverter';
+        const proto0 = ((g?.sources || [])[0] || {}).protocol || (p.connection || {}).protocol || 'tcp';
+        const tplOpts = this._srcTplOptions(proto0, g?.template || '', role0);
         const units = (g?.units || []).map(u => u.unit_id).join(', ');
-        const roles = ['inverter', 'meter', 'battery', 'sensor', ''];
+        const roles = ['inverter', 'site', 'meter', 'battery', 'sensor'];
+        const ROLE_LABEL = { inverter: 'Inverters', site: 'Site totals', meter: 'Grid meter', battery: 'Battery', sensor: 'Sensors' };
+        const PROTO = { tcp: 'Modbus TCP', 'rtu-tcp': 'Modbus RTU over TCP', http: 'Solar API / HTTP JSON' };
         document.getElementById('endpointModalTitle').textContent = g
             ? t('endpoints.groupEditTitle', 'Edit group') : t('endpoints.groupAddTitle', 'Add group');
         document.getElementById('endpointModalBody').innerHTML = `
@@ -650,12 +675,12 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="form-row">
                 <div class="form-group"><label class="form-label" for="grpId">${t('endpoints.groupId', 'Group ID')}</label>
                     <input id="grpId" class="input" value="${this._esc(g?.id || '')}" ${g ? 'disabled' : ''} placeholder="inverters"></div>
-                <div class="form-group"><label class="form-label" for="grpRole">${t('endpoints.groupRole', 'Role')}</label>
-                    <select id="grpRole" class="input">${roles.map(r =>
-                        `<option value="${r}" ${(g?.role || '') === r ? 'selected' : ''}>${r || '—'}</option>`).join('')}</select></div>
+                <div class="form-group"><label class="form-label" for="grpRole">${t('endpoints.groupRole', 'Holds')}</label>
+                    <select id="grpRole" class="input" onchange="app._grpKindChanged()">${roles.map(r =>
+                        `<option value="${r}" ${role0 === r ? 'selected' : ''}>${t('plant.role.' + r, ROLE_LABEL[r])}</option>`).join('')}</select></div>
                 <div class="form-group flex-2"><label class="form-label" for="grpTpl">${t('devices.wizard.template', 'Template')}</label>
                     <select id="grpTpl" class="input">${tplOpts}</select>
-                    <div class="field-hint">${t('endpoints.groupTplHint', 'Used by any source in this group that declares none of its own.')}</div></div>
+                    <div class="field-hint">${t('endpoints.groupTplHint', 'The map for this kind of unit — used by any source of the group that declares none of its own.')}</div></div>
             </div>
             <div class="form-row">
                 <div class="form-group flex-2"><label class="form-label" for="grpUnits">${t('endpoints.unitsLabel', 'Unit IDs')}</label>
@@ -664,8 +689,9 @@ Object.assign(JanitzaMonitor.prototype, {
                         ${g ? t('endpoints.unitsKeep', 'Per-unit names are kept — rename a unit in its row.') : ''}</div></div>
             </div>
             ${g ? '' : `<div class="form-row">
-                <div class="form-group"><label class="form-label" for="grpProto">${t('devices.wizard.protocol', 'Protocol')}</label>
-                    <select id="grpProto" class="input"><option value="tcp">tcp</option><option value="rtu-tcp">rtu-tcp</option><option value="http">http</option></select></div>
+                <div class="form-group"><label class="form-label" for="grpProto">${t('endpoints.srcWay', 'Read over')}</label>
+                    <select id="grpProto" class="input" onchange="app._grpKindChanged()">${['tcp', 'rtu-tcp', 'http'].map(x =>
+                        `<option value="${x}" ${proto0 === x ? 'selected' : ''}>${PROTO[x]}</option>`).join('')}</select></div>
                 <div class="form-group flex-2"><label class="form-label" for="grpAddr">${t('endpoints.srcAddress', 'Address')}</label>
                     <input id="grpAddr" class="input" value="${this._esc((p.connection || {}).host || '')}" placeholder="192.168.1.50">
                     <div class="field-hint">${t('endpoints.groupAddrHint', 'Host for Modbus, or a URL with ${unit_id} for HTTP. You can add more sources afterwards.')}</div></div>
@@ -674,11 +700,20 @@ Object.assign(JanitzaMonitor.prototype, {
             </div>`}
             <label class="form-label" style="display:flex;align-items:center;gap:8px;">
                 <input type="checkbox" id="grpEnabled" ${g?.enabled !== false ? 'checked' : ''}>
-                ${t('endpoints.groupOnLong', 'Poll this group')}</label>`;
+                ${t('endpoints.groupOnLong', 'Read this group')}</label>`;
         document.getElementById('endpointFeedback').textContent = '';
         const save = document.querySelector('#endpointModal [data-endpoint-save]');
         if (save) save.setAttribute('onclick', `app.saveGroup('${this._esc(endpointId)}')`);
         this.openModal('endpointModal');
+    },
+
+    // the template list follows the kind of unit and the way it is read
+    _grpKindChanged() {
+        const role = document.getElementById('grpRole')?.value || '';
+        const proto = document.getElementById('grpProto')?.value
+            || (((this._endpointDetail?.groups || []).find(x => x.id === this._grpEditId) || {}).sources || [])[0]?.protocol || 'tcp';
+        const tpl = document.getElementById('grpTpl');
+        if (tpl) tpl.innerHTML = this._srcTplOptions(proto, tpl.value, role);
     },
 
     async saveGroup(endpointId) {

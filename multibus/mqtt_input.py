@@ -258,6 +258,7 @@ class MqttInputClient:
             'successful_reads': self.updates,
             'failed_reads': 0,
             'last_success': self.last_msg_ts,
+            'last_success_ts': self.last_msg_ts,
             'endpoint': f"mqtt://{self.broker}:{self.port} · {self.base_topic or '/'.join(self._subscriptions())}",
         }
 

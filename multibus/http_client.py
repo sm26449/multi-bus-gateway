@@ -396,6 +396,7 @@ class HttpClient:
         self.successful_reads = 0
         self.failed_reads = 0
         self.last_success_mono = None   # step-immune staleness
+        self.last_success_ts: Optional[float] = None
         self.last_latency_ms = None
         self._lock = threading.Lock()
 
@@ -445,6 +446,7 @@ class HttpClient:
         with self._lock:
             self.successful_reads += 1
             self.last_success_mono = time.monotonic()
+            self.last_success_ts = time.time()
             self.connected = True
 
     def _note_failure(self):
@@ -520,6 +522,7 @@ class HttpClient:
             'successful_reads': self.successful_reads,
             'failed_reads': self.failed_reads,
             'staleness_age_s': age,
+            'last_success_ts': self.last_success_ts,
             'last_latency_ms': self.last_latency_ms,
             'poll_rate': round(poll_rate, 2),
             'total_registers': len(self.registers),

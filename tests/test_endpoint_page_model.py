@@ -124,3 +124,20 @@ def test_a_unit_is_described_by_the_sources_that_read_it(tmp_path):
     assert u["fields"]["voltage_dc"]["unit"] == "V"
     # a standalone device is untouched: no read_via, its own connection block
     assert "read_via" not in d["umg512"] and d["umg512"]["connection"]["host"]
+
+
+def test_every_driver_reports_when_it_last_succeeded():
+    """`sources[].last_success_ts` was null for HTTP and MQTT sources while
+    `successful_reads` climbed (UI audit 6.1) — an integrator could not tell
+    a fresh source from a dead one without the gateway's own verdict."""
+    from multibus.http_client import HttpClient
+    from multibus.mqtt_input import MqttInputClient
+    h = HttpClient({"url": "http://127.0.0.1:1/x"}, registers=[], poll_groups={})
+    assert "last_success_ts" in h.get_stats() and h.get_stats()["last_success_ts"] is None
+    h.last_success_ts = 1_700_000_000.0
+    assert h.get_stats()["last_success_ts"] == 1_700_000_000.0
+    m = MqttInputClient.__new__(MqttInputClient)
+    m.connected, m.messages, m.updates, m.last_msg_ts = False, 0, 0, 1_700_000_001.0
+    m.broker, m.port, m.base_topic = "b", 1883, "t"
+    m._subscriptions = lambda: ["t/#"]
+    assert m.get_stats()["last_success_ts"] == 1_700_000_001.0

@@ -894,13 +894,31 @@ Object.assign(JanitzaMonitor.prototype, {
         const hDot = { ok: 'var(--success)', degraded: 'var(--warning)',
                        stale: 'var(--warning)', down: 'var(--danger)' };
         const active = this._dashDeviceId();
-        box.innerHTML = devices.filter(d => d.enabled !== false).map(d => `
+        const chip = (d, label) => `
             <button type="button" class="dash-chip ${d.id === active ? 'active' : ''}"
                     role="tab" aria-selected="${d.id === active}"
                     ${this._act('switchDashDevice', [d.id])}>
                 <span class="dot" style="background:${hDot[health[d.id]] || 'var(--text-tertiary)'}"></span>
-                ${this._esc(d.name || d.id)}
-            </button>`).join('');
+                ${this._esc(label)}
+            </button>`;
+        // standalone devices first; an installation's units together under its
+        // name, each chip carrying only what distinguishes the unit
+        const live = devices.filter(d => d.enabled !== false);
+        const standalone = live.filter(d => !d.endpoint_id);
+        const byEp = new Map();
+        live.filter(d => d.endpoint_id).forEach(d => { if (!byEp.has(d.endpoint_id)) byEp.set(d.endpoint_id, []); byEp.get(d.endpoint_id).push(d); });
+        const short = (d, epName) => {
+            const n = d.name || d.id;
+            const stripped = epName && n.startsWith(epName) ? n.slice(epName.length).replace(/^[\s·:-]+/, '') : n;
+            return stripped || n;
+        };
+        box.innerHTML = standalone.map(d => chip(d, d.name || d.id)).join('')
+            + [...byEp.entries()].map(([pid, units]) => {
+                const epName = units[0].endpoint_name || pid;
+                return `<span class="dash-chip-group" role="group" aria-label="${this._esc(epName)}">
+                    <span class="dash-chip-group-name"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(epName)}</span>
+                    ${units.map(d => chip(d, short(d, epName))).join('')}</span>`;
+            }).join('');
     },
 
     async switchDashDevice(id) {

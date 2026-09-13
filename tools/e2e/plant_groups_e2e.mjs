@@ -95,7 +95,7 @@ try {
   await page.waitForTimeout(300);
   await page.fill('#srcUrl', 'http://127.0.0.1:9/api.cgi?DeviceId=${unit_id}');
   await page.selectOption('#srcTpl', 'fronius_solar_api_inverter');
-  await page.fill('#srcGroups', 'realtime=5');
+  await page.fill('#srcIvRealtime', '5');
   await page.fill('#srcStale', '30');
   await page.click('#endpointModal [data-endpoint-save]');
   await page.waitForTimeout(3000);

@@ -203,7 +203,8 @@ Object.assign(JanitzaMonitor.prototype, {
         }
     },
 
-    _pwTemplatesFor(role, transport) {
+    _pwTemplatesFor(role, transport, templates) {
+        const pool = templates || (this._plantWiz || {}).templates || this._srcTemplates || [];
         const roleOf = x => {
             const s = `${x.id} ${x.name || ''}`.toLowerCase();
             if (/site|installation/.test(s)) return 'site';
@@ -213,7 +214,7 @@ Object.assign(JanitzaMonitor.prototype, {
             if (/sensor|ble|zigbee|mqtt/.test(s)) return 'sensor';
             return '';
         };
-        return (this._plantWiz.templates || []).filter(x =>
+        return pool.filter(x =>
             (!transport || x.transport === transport) && (roleOf(x) === role || roleOf(x) === ''));
     },
 

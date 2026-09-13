@@ -531,6 +531,8 @@ input[type="time"].input {
     display: flex;
     gap: 12px;
 }
+/* a row the page hides stays hidden — display:flex would win over the UA's [hidden] */
+.form-row[hidden] { display: none; }
 
 .form-row .form-group {
     flex: 1;

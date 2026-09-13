@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.71.0
+
+### 2026-09-13 — the last three audit findings
+
+- **Source and group dialogs in plain words.** *Read over* with protocol
+  names (Modbus TCP, Solar API / HTTP JSON…) instead of `tcp`/`http`; only the
+  address fields of the chosen way (the rows the page hid were shown anyway —
+  `display:flex` beat `[hidden]`); the template list follows the kind of unit
+  and the way it is read (every map of the transport when none is known for
+  the kind); intervals as three labelled numbers — power/voltages/currents,
+  energy counters, static data — instead of `normal=20, slow=120`; *Stale
+  after* instead of *Yields after*; *Holds* with names (Inverters, Site
+  totals, Grid meter…) instead of `Role —`; *Read this group / Read through
+  this source*.
+- **Dashboard chips grouped by installation**: standalone devices first, then
+  each installation's units together under its name, each chip carrying only
+  what distinguishes the unit.
+- **`sources[].last_success_ts`** is set for HTTP and MQTT sources too (it was
+  `null` while `successful_reads` climbed).
+
+With this every finding of `docs/ui-audit-installations.md` is closed.
+
 ## 3.70.0
 
 ### 2026-09-13 — the Add Installation wizard asks what the operator knows
