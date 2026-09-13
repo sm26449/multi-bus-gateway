@@ -452,3 +452,18 @@ def test_an_endpoint_that_names_no_bucket_gets_its_own_not_someone_elses():
     assert endpoint_bucket({'influxdb': {'bucket': 'x_${endpoint_id}'}}, 'roof') == 'x_roof'
     # and a name that could never be a bucket is made into one
     assert endpoint_bucket({}, 'pv/roof #1') == 'pv_roof__1'
+
+
+def test_an_explicit_pattern_is_never_rewritten_for_the_first_group():
+    """The bare-path rule protects EXISTING consumers of the default topics. It
+    must not silently rewrite a pattern the operator wrote: `pv/${group_id}`
+    published the inverters' totals to a bare `pv/`, on top of the site's."""
+    from multibus.endpoint_aggregator import aggregate_topic
+    ep = {'mqtt': {'aggregate_prefix': 'pv/${group_id}'}}
+    assert aggregate_topic(ep, 'pv', 'inverters', first=True) == 'pv/inverters'
+    assert aggregate_topic(ep, 'pv', 'site', first=False) == 'pv/site'
+    ep2 = {'mqtt': {'aggregate_prefix': 'pv/${group_id}/summary'}}
+    assert aggregate_topic(ep2, 'pv', 'inverters', first=True) == 'pv/inverters/summary'
+    # the DEFAULT still keeps the first group bare, which is the whole point
+    assert aggregate_topic({}, 'fronius', 'units', first=True) == 'mbg/endpoints/fronius'
+    assert aggregate_topic({}, 'fronius', 'grid', first=False) == 'mbg/endpoints/fronius/grid'

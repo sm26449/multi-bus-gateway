@@ -2432,7 +2432,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'total_units': len(mine),
                 # the bare endpoint path belongs to the first group; the others
                 # publish under their own name
-                'topic': aggregate_topic(p, pid, '' if i == 0 else gid),
+                'topic': aggregate_topic(p, pid, gid, i == 0),
             })
         return out
 

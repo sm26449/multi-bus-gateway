@@ -98,15 +98,19 @@ CANONICAL_FIELDS: Dict[str, Tuple[str, str, str, str]] = {
     # Sign convention follows the source: grid power is NEGATIVE while
     # exporting, battery power negative while charging. Flipping it here would
     # make our number disagree with the inverter's own display.
-    'power_pv':          ('site', 'W', 'site/power/pv', 'Total PV generation across the installation'),
-    'power_grid':        ('site', 'W', 'site/power/grid', 'Grid power (negative = exporting)'),
-    'power_load':        ('site', 'W', 'site/power/load', 'House load (negative = consuming)'),
-    'power_battery':     ('site', 'W', 'site/power/battery', 'Battery power (negative = charging)'),
-    'energy_today':      ('site', 'Wh', 'site/energy/today', 'Energy generated today'),
-    'energy_year':       ('site', 'Wh', 'site/energy/year', 'Energy generated this year'),
-    'energy_lifetime':   ('site', 'Wh', 'site/energy/lifetime', 'Energy generated since commissioning'),
-    'autonomy':          ('site', '%', 'site/autonomy', 'Share of the load covered without the grid'),
-    'self_consumption':  ('site', '%', 'site/self_consumption', 'Share of generation consumed on site'),
+    #
+    # The leaves do NOT repeat "site": a canonical name describes the QUANTITY,
+    # and which thing it belongs to is already said by the device's own topic
+    # prefix. Encoding it twice produced `pv/site/site/power/pv`.
+    'power_pv':          ('site', 'W', 'power/pv', 'Total PV generation across the installation'),
+    'power_grid':        ('site', 'W', 'power/grid', 'Grid power (negative = exporting)'),
+    'power_load':        ('site', 'W', 'power/load', 'House load (negative = consuming)'),
+    'power_battery':     ('site', 'W', 'power/battery', 'Battery power (negative = charging)'),
+    'energy_today':      ('site', 'Wh', 'energy/today', 'Energy generated today'),
+    'energy_year':       ('site', 'Wh', 'energy/year', 'Energy generated this year'),
+    'energy_lifetime':   ('site', 'Wh', 'energy/lifetime', 'Energy generated since commissioning'),
+    'autonomy':          ('site', '%', 'autonomy', 'Share of the load covered without the grid'),
+    'self_consumption':  ('site', '%', 'self_consumption', 'Share of generation consumed on site'),
     # ── Diagnostics (measurement: diagnostic) ─────────────────────────────────
     'model_id':     ('diagnostic', '', 'diagnostic/model_id', 'Meter model identification code'),
     'firmware_rev': ('diagnostic', '', 'diagnostic/firmware_rev', 'Firmware / revision code'),

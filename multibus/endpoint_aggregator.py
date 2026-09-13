@@ -177,7 +177,8 @@ def compute_endpoint_aggregates(config, registry, endpoint_id: str,
     return out
 
 
-def aggregate_topic(endpoint: Dict, endpoint_id: str, group_id: str = "") -> str:
+def aggregate_topic(endpoint: Dict, endpoint_id: str, group_id: str = "",
+                    first: bool = False) -> str:
     """Where one group's totals are published.
 
     The default keeps every topic that exists today byte-identical:
@@ -193,12 +194,17 @@ def aggregate_topic(endpoint: Dict, endpoint_id: str, group_id: str = "") -> str
     mqtt = (endpoint.get('mqtt') or {})
     pat = str(mqtt.get('aggregate_prefix', '') or '').strip().strip('/')
     if not pat:
+        # Default only: the first group keeps the bare path so every topic that
+        # predates groups is byte-identical. That rule exists to protect
+        # EXISTING consumers — it must not silently rewrite a pattern the
+        # operator wrote themselves, which is how `pv/${group_id}` published the
+        # inverters' totals to a bare `pv/`.
         base = f"mbg/endpoints/{endpoint_id}"
-        return f"{base}/{group_id}" if group_id else base
+        return f"{base}/{group_id}" if group_id and not first else base
     out = (pat.replace('${endpoint_id}', endpoint_id)
               .replace('${group_id}', group_id or '')
               .replace('${id}', endpoint_id))
-    if '${group_id}' not in pat and group_id:
+    if '${group_id}' not in pat and group_id and not first:
         out = f"{out}/{group_id}"
     # The first group has no name, so a pattern that places ${group_id} mid-path
     # collapses to an empty segment. "pv//summary" is a DIFFERENT topic from
@@ -284,7 +290,10 @@ class EndpointAggregator(threading.Thread):
                                                   pid, group_id=gid)
                 # The FIRST group keeps the bare endpoint path, so every topic
                 # and Influx series that existed before groups is byte-identical.
-                sub = '' if gi == 0 else gid
+                # The real group id always travels; whether the FIRST group is
+                # published bare is a property of the default pattern, decided
+                # inside aggregate_topic, not guessed here.
+                sub, first = gid, (gi == 0)
                 if log:
                     fields = sum(1 for k in agg if k not in _META)
                     energy = sum(1 for k in agg if k.startswith("energy_"))
@@ -298,15 +307,15 @@ class EndpointAggregator(threading.Thread):
                 # fresh: that cycle still carries status=offline and
                 # units_online=0, which is precisely what a consumer needs at
                 # nightfall.
-                self._publish_mqtt(pid, agg, sub, p)
-                self._publish_influx(p, pid, agg, sub)
+                self._publish_mqtt(pid, agg, sub, p, first)
+                self._publish_influx(p, pid, agg, sub if not first else '')
 
     def _publish_mqtt(self, pid: str, agg: Dict[str, Any], sub: str = "",
-                      endpoint: Optional[Dict] = None):
+                      endpoint: Optional[Dict] = None, first: bool = False):
         mqtt = self._get_mqtt()
         if mqtt is None or not getattr(mqtt, "connected", False):
             return
-        base = aggregate_topic(endpoint or {}, pid, sub)
+        base = aggregate_topic(endpoint or {}, pid, sub, first)
         for name, val in agg.items():
             leaf = name if name in _META else (mqtt_topic_for(name) or name)
             # publish_if_changed keeps the change-detection semantics every
