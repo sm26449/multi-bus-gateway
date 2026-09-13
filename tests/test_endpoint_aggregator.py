@@ -480,3 +480,13 @@ def test_an_explicit_pattern_is_never_rewritten_for_the_first_group():
     # the DEFAULT still keeps the first group bare, which is the whole point
     assert aggregate_topic({}, 'fronius', 'units', first=True) == 'mbg/endpoints/fronius'
     assert aggregate_topic({}, 'fronius', 'grid', first=False) == 'mbg/endpoints/fronius/grid'
+
+
+def test_what_an_inverter_is_told_is_never_summed():
+    """A power limit is a setting per unit, not a quantity: two inverters at
+    100 % are not at 200 %. Seen live the day model 123 was read back."""
+    from multibus.endpoint_aggregator import aggregation_rule
+    assert aggregation_rule("power_limit_pct") is None
+    assert aggregation_rule("power_limit_enabled") is None
+    assert aggregation_rule("controls_connected") is None
+    assert aggregation_rule("power_active_total") == "sum"

@@ -144,7 +144,7 @@ def test_the_api_limits_one_inverter_and_audits_it(tmp_path):
     assert r.status_code == 200, r.text
     d = r.json()
     assert d['status'] == 'success' and d['before_pct'] == 100.0 and d['after_pct'] == 60.0
-    assert inv.writes == [(40233, [6000, 0, 300, 0, 1])]
+    assert inv.writes == [(40232, [6000, 0, 300, 0, 1])]
     # audited: who, what, before → after
     a = [x for x in _audit(tmp_path) if x.get('action') == 'power limit'][-1]
     assert a['user'] == 'admin' and a['target'] == 'pv-u1' and a['status'] == 'success'
@@ -192,9 +192,9 @@ def test_a_lease_restores_100_when_the_controller_goes_quiet(tmp_path):
     assert r.status_code == 200 and inv.writes[-1][1][0] == 4000
     mgr = app.state.lease_manager
     lease = next(l for l in mgr.snapshot() if l['device'] == 'pv-u1')
-    assert lease['address'] == 40233 and 0 < lease['remaining_s'] <= 5
+    assert lease['address'] == 40232 and 0 < lease['remaining_s'] <= 5
     # fire the revert as the dead-man would (the lease is still current)
-    mgr._leases[('pv-u1', 'holding', 40233)]['revert'](lambda: True)
+    mgr._leases[('pv-u1', 'holding', 40232)]['revert'](lambda: True)
     assert inv.writes[-1][1] == [10000, 0, 0, 0, 0]          # 100 %, enable cleared
     # a restore to 100 % clears any lease
     client.post("/api/devices/pv-u1/actions/power_limit", json={"limit_pct": 100})

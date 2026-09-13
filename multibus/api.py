@@ -1617,7 +1617,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # limit on its own. A controller (over-voltage protection in Node-RED, a
     # schedule) speaks over the API, over MQTT or through the HA number entity —
     # all three land here, so every write is audited the same way.
-    from .power_limit import REVERT_DEFAULT_S, apply_power_limit, parse_command
+    from .power_limit import REVERT_DEFAULT_S, WRITE_BASE, apply_power_limit, parse_command
     _pl_last_sf: Dict[str, int] = {}
     _pl_lock = threading.Lock()
 
@@ -1693,12 +1693,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 st, r = _power_limit_action(_c, c, 100.0, revert_s=0, who='lease', ip='-', via='lease-revert')
                 if r.get('status') not in ('success', 'mismatch'):
                     raise RuntimeError(f"lease-revert failed: {r.get('reason')}")
-            _lease_mgr.arm(dev_cfg.id, 'holding', 40233, lease_s * 1000, _revert,
-                           meta={'device': dev_cfg.id, 'register_type': 'holding', 'address': 40233,
+            _lease_mgr.arm(dev_cfg.id, 'holding', WRITE_BASE, lease_s * 1000, _revert,
+                           meta={'device': dev_cfg.id, 'register_type': 'holding', 'address': WRITE_BASE,
                                  'data_type': 'uint16', 'scale': 1.0, 'offset': 0.0, 'safe_value': 100,
                                  'lease_ms': lease_s * 1000, 'action': 'power_limit'})
         elif ok:
-            _lease_mgr.clear(dev_cfg.id, 'holding', 40233)
+            _lease_mgr.clear(dev_cfg.id, 'holding', WRITE_BASE)
         code = 200 if res['status'] in ('success', 'mismatch', 'unverified') else 422 if res['status'] == 'rejected' else 502
         return code, res
 

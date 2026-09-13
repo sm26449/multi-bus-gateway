@@ -24,14 +24,15 @@ from __future__ import annotations
 import time
 from typing import Callable, Dict, Optional
 
-MODEL_BASE = 40228          # model 123 header on a Fronius (int+SF map)
+MODEL_BASE = 40227          # model 123 header on a Fronius (int+SF map), 0-based —
+                            # verified live: [123, 24, …, Conn, WMaxLimPct, …, SF] starts here
 MODEL_LEN = 26              # header (2) + 24 data registers
 OFF_CONN = 4                # Conn
 OFF_WMAX = 5                # WMaxLimPct
 OFF_ENA = 9                 # WMaxLim_Ena
 OFF_SF = 23                 # WMaxLimPct_SF
 VALID_SF = (-2, -1, 0)      # the only scale factors Fronius ships
-WRITE_BASE = MODEL_BASE + OFF_WMAX   # 40233: [WMaxLimPct, WinTms, RvrtTms, RmpTms, WMaxLim_Ena]
+WRITE_BASE = MODEL_BASE + OFF_WMAX   # 40232: [WMaxLimPct, WinTms, RvrtTms, RmpTms, WMaxLim_Ena]
 RAW_NAN = 0xFFFF
 
 REVERT_DEFAULT_S = 600      # the inverter drops the limit on its own after this

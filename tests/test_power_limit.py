@@ -41,6 +41,21 @@ class _Inverter:
         return True, None
 
 
+def test_the_block_sits_where_the_datalogger_puts_it():
+    """Read live on 2026-09-13 from a Fronius DataManager (int+SF map), 0-based:
+    40227 = [123, 24, 0, 0, Conn=1, WMaxLimPct=10000, 0, 0, 0, Ena=0, OutPFSet=1000,
+    …, SF(-2) at +23]. The legacy collector spoke of 40228: its client counted
+    from one. A limit written one register off would land in WinTms."""
+    assert MODEL_BASE == 40227 and WRITE_BASE == 40232
+    live = [123, 24, 0, 0, 1, 10000, 0, 0, 0, 0, 1000, 0, 0, 0, 0, 0, 0, 32768, 0, 0, 0, 2, 0, 65534, 65533, 0]
+    class _Live:
+        def read_registers(self, a, n, register_type='holding'):
+            assert a == 40227 and n == 26
+            return live
+    assert read_controls(_Live()) == {'sf': -2, 'limit_pct': 100.0, 'enabled': False,
+                                      'connected': True, 'revert_s': 0, 'ramp_s': 0}
+
+
 def test_read_controls_decodes_the_block():
     inv = _Inverter(sf=-2, limit_raw=6000, ena=1)
     c = read_controls(inv)

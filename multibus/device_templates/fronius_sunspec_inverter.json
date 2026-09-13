@@ -27,7 +27,7 @@
       },
       "controls": {
         "interval": 20,
-        "description": "Immediate controls (model 123): the limit the inverter is told — a second read, 40232..40251"
+        "description": "Immediate controls (model 123): the limit the inverter is told — a second read, 40231..40250"
       }
     },
     "categories": {
@@ -1145,7 +1145,7 @@
         }
       },
       {
-        "address": 40232,
+        "address": 40231,
         "name": "controls_connected",
         "label": "Connected (model 123)",
         "unit": "",
@@ -1171,7 +1171,7 @@
         }
       },
       {
-        "address": 40233,
+        "address": 40232,
         "name": "power_limit_pct",
         "label": "Active power limit",
         "unit": "%",
@@ -1186,7 +1186,7 @@
         "write_min": 0,
         "write_max": 100,
         "write_safe": 100,
-        "description": "WMaxLimPct — set through the power-limit action, never as a bare register write (WMaxLim_Ena must travel with it)",
+        "description": "WMaxLimPct (40232) — set through the power-limit action, never as a bare register write (WMaxLim_Ena must travel with it)",
         "defaults": {
           "mqtt": {
             "enabled": true,
@@ -1204,7 +1204,7 @@
         }
       },
       {
-        "address": 40235,
+        "address": 40234,
         "name": "power_limit_revert_s",
         "label": "Power limit reverts after",
         "unit": "s",
@@ -1230,7 +1230,7 @@
         }
       },
       {
-        "address": 40236,
+        "address": 40235,
         "name": "power_limit_ramp_s",
         "label": "Power limit ramp time",
         "unit": "s",
@@ -1256,7 +1256,7 @@
         }
       },
       {
-        "address": 40237,
+        "address": 40236,
         "name": "power_limit_enabled",
         "label": "Power limit enabled",
         "unit": "",
@@ -1282,7 +1282,7 @@
         }
       },
       {
-        "address": 40251,
+        "address": 40250,
         "name": "wmaxlimpct_sf",
         "label": "WMaxLimPct Scale Factor",
         "unit": "",

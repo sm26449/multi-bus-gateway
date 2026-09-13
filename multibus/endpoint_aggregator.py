@@ -69,7 +69,10 @@ _AVG_PREFIXES = ("voltage_", "frequency", "temperature_",
 # powers instead (a ratio is neither summable nor meaningfully averageable).
 _SKIP_PREFIXES = ("operating_state", "vendor_state", "event_", "vendor_event_",
                   "manufacturer", "model", "serial", "mppt_modules",
-                  "power_factor")
+                  "power_factor",
+                  # what an inverter is TOLD (model 123) is a setting per unit:
+                  # summing two 100 % limits into "200 %" describes nothing
+                  "power_limit_", "controls_")
 
 # Census/status keys — not measurements: they bypass the canonical topic map and
 # (for the text one) the InfluxDB path.
