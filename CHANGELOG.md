@@ -1,5 +1,44 @@
 # Changelog
 
+## 3.65.0
+
+### 2026-09-13 — ticking fields per source
+
+A unit reached two ways has two maps: the SunSpec view reads holding registers,
+the Solar API view reads JSON paths. They share no address, no shape and no
+intervals. Editing them as one list made neither editable.
+
+The Measurements tab now shows a **source picker** — and only when there is a
+choice, so a single-source device looks exactly as it always did. Switching
+source switches the catalog, the selected list and the poll groups together, and
+a save lands in that source's file alone.
+
+`/api/registers/all` and `/api/registers/selected` both take `?source=`, and the
+selection response carries the unit's sources so the editor needs no second
+call.
+
+**Three defects found by building it, all silent:**
+
+- `MultiSourceClient` had no `update_registers`, so saving a register selection
+  from the UI would have raised on **every** device since 3.58.0. It now takes a
+  `source_id`, applies to that source alone, and with several sources refuses an
+  unaddressed update rather than pushing one source's map into all of them —
+  each would then poll addresses that mean nothing to it. A source whose map
+  changes also forgets what it owned, so fields it no longer reads fall to
+  whoever else offers them.
+- The register CATALOG resolved its template from the device, which is empty
+  when the templates live on the sources. The picker came up blank with nothing
+  to say why. It now resolves from the source being edited.
+- Switching source loaded the new map but did not redraw the visible lists, so
+  the operator kept looking at the previous source's fields — the most
+  misleading thing that screen could do, since ticking a box then edits the
+  wrong map.
+
+Verified in a real browser, 11 checks: the picker appears only with a choice,
+the selected list genuinely redraws (2045 characters of SunSpec fields against
+196 of Solar API), and a per-source save moved one map from 6 fields to 3 while
+the other stayed at 34.
+
 ## 3.64.0
 
 ### 2026-09-13 — the installation itself is a source, and topics have a root

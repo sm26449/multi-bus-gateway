@@ -29,6 +29,7 @@ Object.assign(JanitzaMonitor.prototype, {
             const data = await response.json();
             this.selectedRegisters = data.registers || [];
             this.pollGroups = data.poll_groups || {};
+            this._renderRegSourceSelector(data);
 
             this.updatePollGroupsStatus();
             // Keep the dashboard's OWN list in sync when both contexts look at
@@ -1243,10 +1244,60 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     _regDeviceQS(sep = '?') {
-        // query-string suffix routing register catalog/selection calls to the
-        // currently edited device; empty for device #1 (legacy endpoints).
+        // Query-string suffix routing register catalog/selection calls to the
+        // currently edited device AND, when it is reached several ways, to the
+        // source whose map is being edited.
+        //
+        // Every source has its own template and therefore its own address
+        // space: the SunSpec view of an inverter reads holding registers, the
+        // Solar API view reads JSON paths. Editing them as one list would make
+        // neither editable, and saving one over the other would have a source
+        // polling addresses that mean nothing to it.
         const id = this._regDevice;
-        return (id && id !== this._primaryDeviceId()) ? `${sep}device=${encodeURIComponent(id)}` : '';
+        const parts = [];
+        if (id && id !== this._primaryDeviceId()) parts.push(`device=${encodeURIComponent(id)}`);
+        if (this._regSource) parts.push(`source=${encodeURIComponent(this._regSource)}`);
+        return parts.length ? sep + parts.join('&') : '';
+    },
+
+    // The sources this device offers, learned from the last selection load —
+    // the API returns them alongside, so choosing one costs no extra call.
+    _renderRegSourceSelector(data) {
+        const host = document.getElementById('regSourceBar');
+        if (!host) return;
+        const srcs = (data && data.sources) || [];
+        // one way of being read is not a choice: say nothing rather than show a
+        // dropdown with a single entry
+        if (srcs.length < 2) { host.innerHTML = ''; this._regSource = ''; return; }
+        if (!srcs.some(s => s.id === this._regSource)) this._regSource = srcs[0].id;
+        const t = (k, d) => this.t(k, d);
+        host.innerHTML = `
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+              <span style="color:var(--text-secondary);font-size:12.5px;">
+                <i aria-hidden="true" class="bi bi-diagram-2"></i>
+                ${t('registers.sourceLabel', 'Editing the map read over')}</span>
+              ${srcs.map(x => `
+                <button class="btn btn-sm ${x.id === this._regSource ? 'btn-primary' : 'btn-ghost'}"
+                        onclick="app.setRegSource('${this._esc(x.id)}')">
+                  ${this._esc(x.id)} <span style="opacity:.7;">(${this._esc(x.protocol)})</span>
+                </button>`).join('')}
+              <span class="field-hint" style="margin:0;">${t('registers.sourceHint',
+                'Each source has its own map and its own intervals. Ticking a field here changes only what THIS source reads.')}</span>
+            </div>`;
+    },
+
+    async setRegSource(sourceId) {
+        if (this._regSource === sourceId) return;
+        this._regSource = sourceId;
+        await this.loadAllRegisters?.();
+        await this.loadSelectedRegisters?.();
+        // Loading data is not showing it: the two lists render on their own
+        // schedule, so without this the operator switches source and keeps
+        // looking at the previous source's map — the most misleading thing this
+        // screen could do, since ticking a box then edits the wrong one.
+        this.currentRegPage = 1;
+        try { this.renderRegistersTable?.(); } catch (e) { console.error(e); }
+        try { this.renderSelectedRegistersList?.(); } catch (e) { console.error(e); }
     },
 
     // The currently-scoped device id for POST bodies (on-demand queries), or
@@ -1275,6 +1326,9 @@ Object.assign(JanitzaMonitor.prototype, {
 
     async setRegDevice(id) {
         this._regDevice = id;
+        // a source id belongs to ONE device; carrying it across would ask for a
+        // map that device has never heard of
+        this._regSource = '';
         this._renderRegDeviceSelectors();               // keep both selects in sync
         await this.loadAllRegisters();
         await this.loadSelectedRegisters();

@@ -85,3 +85,18 @@ MBG_URL=http://localhost:18086 CHROMIUM_PATH=<chrome> node plant_wizard_e2e.mjs
 ```
 
 Config it expects: auth off and NO endpoints yet. The host never has to answer.
+
+## Per-source measurements
+
+`source_registers_e2e.mjs` drives ticking fields on a unit reached two ways: the
+picker appears only when there IS a choice, switching source switches both the
+catalog and the selected list, and a save lands in one source's file while the
+other is untouched.
+
+```bash
+MBG_URL=http://localhost:18088 DEVICE=pv-u1 \
+  CHROMIUM_PATH=<chrome> node source_registers_e2e.mjs
+```
+
+Config it expects: auth off, one endpoint whose group declares TWO sources
+(`solar_api` over HTTP, `sunspec` over Modbus) on units 1 and 2.

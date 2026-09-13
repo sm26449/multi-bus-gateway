@@ -142,6 +142,31 @@ class MultiSourceClient:
                              self.device_id, src.id, e)
             self.arbiter.forget(src.id)
 
+    def update_registers(self, registers, poll_groups, source_id: str = ""):
+        """Hand a new register selection to ONE source, or to the only one.
+
+        Every source has its own map — the SunSpec view of an inverter reads
+        holding registers, the Solar API view reads JSON paths — so pushing one
+        source's selection into all of them would have each polling addresses
+        that mean nothing to it. Without `source_id` this is only safe when
+        there is exactly one source, and with several it is refused rather than
+        applied to the wrong one.
+        """
+        for src, drv in self.parts:
+            if source_id and src.id != source_id:
+                continue
+            if not source_id and len(self.parts) > 1:
+                logger.warning("device %s: register update without a source, but "
+                               "it has %d — refusing rather than guessing",
+                               self.device_id, len(self.parts))
+                return
+            fn = getattr(drv, 'update_registers', None)
+            if callable(fn):
+                fn(registers, poll_groups)
+            # a source whose map changed must forget what it owned: the fields
+            # it no longer reads should fall to whoever else offers them
+            self.arbiter.forget(src.id)
+
     def reload_registers(self, *a, **kw):
         for _src, drv in self.parts:
             fn = getattr(drv, 'reload_registers', None)

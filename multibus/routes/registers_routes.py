@@ -134,7 +134,8 @@ def build(ctx) -> APIRouter:
         return _cached[2] if _cached else ""
 
     @r.get("/api/registers/all")
-    async def get_all_registers(request: Request, device: str = Query(default="")):
+    async def get_all_registers(request: Request, device: str = Query(default=""),
+                                source: str = Query(default="")):
         """Register catalog for the Registers page. EVERY device — including the
         primary — now draws its catalog from its device template (the uniform
         Tier 2 model: the map lives on the template, not a fixed file). The
@@ -150,47 +151,89 @@ def build(ctx) -> APIRouter:
             _i, dev_cfg, _c = registry.find(device)
             if dev_cfg is None:
                 raise HTTPException(status_code=404, detail="device not found")
+            # The catalog belongs to whichever map is being edited. A unit
+            # reached several ways carries its templates on the SOURCES, and a
+            # group may leave the device's own template empty — in which case
+            # resolving from the device alone returned an empty picker with
+            # nothing to say why.
+            _src = next((x for x in (dev_cfg.sources or [])
+                         if x.id == source), None) if source else None
+            _cand = (getattr(_src, 'template', '') or dev_cfg.template
+                     or next((x.template for x in (dev_cfg.sources or [])
+                              if x.template), ''))
             if not dev_cfg.primary:
-                _tpl = dev_cfg.template
-            elif dev_cfg.template and template_registry.get(dev_cfg.template) is not None:
-                _tpl = dev_cfg.template
+                _tpl = _cand
+            elif _cand and template_registry.get(_cand) is not None:
+                _tpl = _cand
         else:
             prim = next((d for d in config.devices if d.primary), None)
             if prim is not None and prim.template and template_registry.get(prim.template) is not None:
                 _tpl = prim.template
-        if _tpl is None:
+        if not _tpl:
             return config.all_registers        # defensive fallback (template missing)
         etag = _catalog_etag(_tpl)
         if etag and request.headers.get("if-none-match") == etag:
             return Response(status_code=304)
         return JSONResponse(_template_catalog(_tpl), headers={"ETag": etag} if etag else None)
 
+    def _source_of(dev_cfg, source_id: str):
+        """Resolve a source by id, or None for the device-level map.
+
+        A unit can be reached several ways at once and each way has its own
+        template and therefore its own register map — the SunSpec view of an
+        inverter reads holding registers, the Solar API view reads JSON paths.
+        Editing them as one list would make neither editable.
+        """
+        if not source_id:
+            return None
+        src = next((x for x in (dev_cfg.sources or []) if x.id == source_id), None)
+        if src is None:
+            raise HTTPException(status_code=404,
+                                detail=f"source '{source_id}' not found on "
+                                       f"device '{dev_cfg.id}'")
+        return src
+
     @r.get("/api/registers/selected")
-    async def get_selected_registers(device: str = Query(default="")):
-        """Get currently selected registers (optionally for a specific device)."""
+    async def get_selected_registers(device: str = Query(default=""),
+                                     source: str = Query(default="")):
+        """Get currently selected registers (optionally for a specific device,
+        and for one of its sources)."""
         if device:
             _i, dev_cfg, _c = registry.find(device)
             if dev_cfg is None:
                 raise HTTPException(status_code=404, detail="device not found")
-            if not dev_cfg.primary:
-                regs, groups = config.load_device_registers(dev_cfg)
+            src = _source_of(dev_cfg, source)
+            if not dev_cfg.primary or src is not None:
+                regs, groups = config.load_device_registers(dev_cfg, source=src)
                 return {
                     "registers": [_selected_register_out(x) for x in regs],
                     "poll_groups": {name: {"interval": g.interval,
                                            "description": g.description}
                                     for name, g in groups.items()},
+                    "source": source,
+                    # every way this unit can be reached, so the editor can offer
+                    # them without a second call
+                    "sources": [{"id": x.id, "protocol": x.protocol,
+                                 "template": x.template, "rank": i}
+                                for i, x in enumerate(dev_cfg.sources or [])],
                 }
+        _pi, _pcfg, _pc = registry.find(device) if device else (None, None, None)
         return {
             "registers": [_selected_register_out(x) for x in config.selected_registers],
             "poll_groups": {
                 name: {"interval": g.interval, "description": g.description}
                 for name, g in config.poll_groups.items()
-            }
+            },
+            "source": "",
+            "sources": [{"id": x.id, "protocol": x.protocol,
+                         "template": x.template, "rank": i}
+                        for i, x in enumerate(getattr(_pcfg, 'sources', None) or [])],
         }
 
     @r.post("/api/registers/selected")
     async def update_selected_registers(registers: List[SelectedRegisterUpdate],
-                                        device: str = Query(default="")):
+                                        device: str = Query(default=""),
+                                        source: str = Query(default="")):
         """Update selected registers configuration (optionally per device —
         a non-primary device saves to its own file and hot-reloads only its
         own pollers)."""
@@ -254,16 +297,26 @@ def build(ctx) -> APIRouter:
                 # Seed the device's poll-group intervals from its template (a new
                 # device otherwise inherits the primary's fast realtime rate,
                 # which is wrong for a slow HTTP/gateway source).
+                src = _source_of(dev_cfg, source)
                 tpg = None
-                tpl = template_registry.get(dev_cfg.template) if dev_cfg.template else None
+                _tid = (getattr(src, 'template', '') or dev_cfg.template) if src \
+                    else dev_cfg.template
+                tpl = template_registry.get(_tid) if _tid else None
                 if tpl and getattr(tpl, 'poll_groups', None):
                     tpg = {n: {"interval": g.get("interval", 5),
                                "description": g.get("description", "")}
                            for n, g in tpl.poll_groups.items()}
-                config.save_device_registers(device, reg_list, poll_groups=tpg)
-                regs, groups = config.load_device_registers(dev_cfg)
+                config.save_device_registers(device, reg_list, poll_groups=tpg,
+                                             source_id=source)
+                regs, groups = config.load_device_registers(dev_cfg, source=src)
                 if dev_client:
-                    dev_client.update_registers(regs, groups)
+                    # the selection belongs to ONE source; a facade over several
+                    # refuses an unaddressed update rather than applying it to
+                    # the wrong map
+                    try:
+                        dev_client.update_registers(regs, groups, source_id=source)
+                    except TypeError:      # a bare driver (no sources)
+                        dev_client.update_registers(regs, groups)
                     if hasattr(dev_client, 'reload_registers'):
                         dev_client.reload_registers()
                 # drop store ghosts at deselected addresses (M2: a re-select

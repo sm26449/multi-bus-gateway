@@ -265,3 +265,61 @@ def test_the_first_observation_is_not_reported_as_a_transition():
     c, _d = _client('down', 'ok')
     st = c.get_stats()
     assert [e for e in st['events'] if e['kind'].startswith('source_')] == []
+
+
+# ── editing one source's map ─────────────────────────────────────────────────
+
+class _USrc:
+    protocol, template, enabled = 'tcp', 't', True
+    def __init__(self, sid): self.id, self.stale_after_s = sid, 0.0
+
+
+class _UDrv:
+    publish_callback = None
+    def __init__(self): self.got = None
+    def update_registers(self, regs, groups): self.got = (regs, groups)
+    def get_stats(self): return {}
+    def data_health(self, *a, **kw): return {'status': 'ok'}
+
+
+def _pair():
+    from multibus.multi_source import MultiSourceClient
+    a, b = _UDrv(), _UDrv()
+    c = MultiSourceClient('u1', [(_USrc('sunspec'), a), (_USrc('solar_api'), b)])
+    return c, a, b
+
+
+def test_a_register_selection_reaches_only_its_own_source():
+    """Every source has its own map — SunSpec reads holding registers, the Solar
+    API reads JSON paths. Pushing one selection into both would have each polling
+    addresses that mean nothing to it."""
+    c, sunspec, api = _pair()
+    c.update_registers(['R'], {'normal': 1}, source_id='solar_api')
+    assert api.got == (['R'], {'normal': 1})
+    assert sunspec.got is None
+
+
+def test_an_unaddressed_update_is_refused_when_there_are_several():
+    """Refusing beats guessing: applied to the wrong source it would poll
+    nonsense, and nothing would say why."""
+    c, sunspec, api = _pair()
+    c.update_registers(['R'], {}, source_id='')
+    assert sunspec.got is None and api.got is None
+
+
+def test_a_single_source_device_still_takes_an_unaddressed_update():
+    """Which is every device written before sources existed."""
+    from multibus.multi_source import MultiSourceClient
+    drv = _UDrv()
+    c = MultiSourceClient('u1', [(_USrc('default'), drv)])
+    c.update_registers(['R'], {'normal': 5})
+    assert drv.got == (['R'], {'normal': 5})
+
+
+def test_a_source_forgets_what_it_owned_when_its_map_changes():
+    """Fields it no longer reads must fall to whoever else offers them, instead
+    of staying claimed by a source that has stopped publishing them."""
+    c, _s, _a = _pair()
+    c.arbiter.claim('power_active_total', 1, 'solar_api', 0.0)
+    c.update_registers([], {}, source_id='solar_api')
+    assert c.arbiter.owner_of('power_active_total') is None
