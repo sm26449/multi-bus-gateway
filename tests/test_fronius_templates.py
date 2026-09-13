@@ -372,7 +372,7 @@ def test_the_mppt_block_polls_on_its_own_cadence():
     what a slow master charges for."""
     t = _tpl(INV)
     groups = {g: t.poll_groups[g]["interval"] for g in t.poll_groups}
-    assert groups == {"normal": 5, "slow": 30, "static": 3600, "controls": 20}
+    assert groups == {"normal": 5, "slow": 30, "static": 3600, "controls": 300}
     for r in t.registers:
         if not r.defaults:
             continue
