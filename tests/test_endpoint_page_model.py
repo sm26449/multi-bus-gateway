@@ -99,3 +99,28 @@ def test_the_five_minute_window_is_a_difference_not_a_counter():
     assert c._window("s", 1000, 50, now=t + 400) == (1000 - 130 + 50 - 12, 38)
     assert c._window("s", 1010, 50, now=t + 720) == (10, 0)  # baseline moved to t+400
     assert c._window("s", None, None) == (None, None)
+
+
+@needs_tc
+def test_a_unit_is_described_by_the_sources_that_read_it(tmp_path):
+    """The unit page showed a Modbus form with an empty host for a unit read
+    over HTTP every two seconds. The entry now carries how it is read."""
+    cfg, client = make_app(tmp_path)
+    assert client.post("/api/endpoints", json=PLANT).status_code == 200
+    _feed(client.app.state.registry, "pv-u1", {"power_active_total": 9000, "voltage_dc": 636})
+    d = {x["id"]: x for x in client.get("/api/devices").json()["devices"]}
+    u = d["pv-u1"]
+    assert u["endpoint_name"] == "PV installation" and u["role"] == "inverter"
+    assert [r["id"] for r in u["read_via"]] == ["solar_api", "sunspec"]
+    api, sun = u["read_via"]
+    assert api["protocol"] == "http" and "DeviceId=1" in api["address"]
+    assert api["interval_s"] == 2 and api["stale_after_s"] == 0
+    assert sun["protocol"] == "tcp" and sun["address"] == "192.0.2.9:502 · unit 1"
+    assert sun["interval_s"] == 20 and sun["timeout_s"]
+    for r in u["read_via"]:
+        assert set(r) >= {"template", "registers", "provides", "status", "latency_ms",
+                          "reads_5m", "failed_5m", "fail_pct_5m"}
+    assert u["live"] == {"power_active_total": 9000, "voltage_dc": 636}
+    assert u["fields"]["voltage_dc"]["unit"] == "V"
+    # a standalone device is untouched: no read_via, its own connection block
+    assert "read_via" not in d["umg512"] and d["umg512"]["connection"]["host"]

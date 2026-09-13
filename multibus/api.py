@@ -1265,6 +1265,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     def _device_entry(dev_cfg, client, *, redact=False) -> Dict:
         entry = dev_cfg.summary()
         regs, _groups = config.load_device_registers(dev_cfg)
+        if len(dev_cfg.sources or []) > 1:
+            # each source has its own selection; what the unit reads is all of them
+            regs = [r for src in dev_cfg.sources
+                    for r in config.load_device_registers(dev_cfg, source=src)[0]]
         entry['selected_registers'] = len(regs)
         entry['influxdb_device_tag'] = dev_cfg.influxdb_device_tag
         from .pq_recorder import template_supports_pq
@@ -1359,10 +1363,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 entry['sinks']['rest']['url'] = redact_url(entry['sinks']['rest']['url'])
             if isinstance(entry.get('rest_push'), dict) and entry['rest_push'].get('url'):
                 entry['rest_push']['url'] = redact_url(entry['rest_push']['url'])
+        stats, verdicts = {}, {}
         if client:
             stats = client.get_stats()
             connected = stats.get('connected')
-            health = client.data_health().get('status')
+            hv = client.data_health()
+            health = hv.get('status')
+            verdicts = dict(hv.get('sources') or {})
             # The status dot must never contradict the connection text: a device
             # that isn't connected can't be 'ok'. data_health() reports 'ok' on
             # cold start / when nothing has been polled yet, so gate it on the
@@ -1381,7 +1388,67 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         else:
             # disabled or transport not run — idle (grey), not green
             entry.update({'connected': False, 'data_health': 'idle'})
+        _unit_read_via(dev_cfg, entry, stats, verdicts, redact=redact)
         return entry
+
+    def _unit_read_via(dev_cfg, entry: Dict, stats: Dict, verdicts: Dict, *, redact=False) -> None:
+        """How a unit of an installation is actually read, for its own page.
+
+        The flat ``connection`` block above is the fallback a unit was born with;
+        a unit read through sources is described by THEM — protocol, address,
+        interval, template, and what each one delivers right now. The unit page
+        showed a Modbus form with an empty host for a unit read over HTTP every
+        two seconds; this is the truth it shows instead."""
+        if not dev_cfg.endpoint_id:
+            return
+        from .canonical_fields import field_meta
+        from .redact import redact_url
+        ep = config.get_raw_endpoint(dev_cfg.endpoint_id) or {}
+        role = getattr(dev_cfg, 'role', '') or ''
+        entry['endpoint_name'] = ep.get('name') or dev_cfg.endpoint_id
+        entry['group_id'] = getattr(dev_cfg, 'group_id', '') or 'units'
+        entry['role'] = role
+        entry['live'] = _unit_live(dev_cfg, _ROLE_LIVE.get(role, ('power_active_total',)))
+        entry['fields'] = {n: m for n, m in ((n, field_meta(n)) for n in entry['live']) if m}
+        by_id = {r.get('id'): r for r in (stats.get('sources') or [])}
+        provides: Dict[str, int] = {}
+        for _f, prov in (stats.get('provenance') or {}).items():
+            provides[prov.get('source')] = provides.get(prov.get('source'), 0) + 1
+        out = []
+        for src in dev_cfg.sources or []:
+            proto = str(src.protocol or 'tcp').lower()
+            if proto == 'http':
+                url = str((src.http or {}).get('url', ''))
+                address = redact_url(url) if redact else url
+            elif proto == 'mqtt':
+                address = str((src.mqtt_in or {}).get('topic', ''))
+            elif proto == 'rtu':
+                address = f"{src.connection.serial_port} · unit {src.connection.unit_id}"
+            else:
+                address = f"{src.connection.host}:{src.connection.port} · unit {src.connection.unit_id}"
+            regs, groups = config.load_device_registers(dev_cfg, source=src)
+            used = {r.poll_group for r in regs}
+            ivals = [g.interval for n, g in groups.items() if n in used]
+            live = by_id.get(src.id) or {}
+            r5 = live.get('reads_5m') or 0
+            timeout = ((src.http or {}).get('timeout') if proto == 'http'
+                       else getattr(src.connection, 'timeout', None))
+            out.append({
+                'id': src.id, 'protocol': proto, 'address': address,
+                'template': src.template or dev_cfg.template,
+                'enabled': bool(getattr(src, 'enabled', True)),
+                'interval_s': min(ivals) if ivals else None,
+                'timeout_s': timeout,
+                'stale_after_s': float(getattr(src, 'stale_after_s', 0) or 0),
+                'registers': len(regs),
+                'provides': provides.get(src.id, 0),
+                'status': verdicts.get(src.id, 'idle' if not stats else 'down'),
+                'latency_ms': live.get('last_latency_ms'),
+                'reads_5m': r5, 'failed_5m': live.get('failed_5m') or 0,
+                'fail_pct_5m': (round(100.0 * (live.get('failed_5m') or 0) / r5, 1)
+                                if r5 else None),
+            })
+        entry['read_via'] = out
 
     @app.get("/api/devices")
     def list_devices(request: Request):
@@ -2742,7 +2809,24 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             # to one Modbus group, dropped every source and renamed its site
             # unit, on a save meant to change the name.
             if 'groups' not in payload and prev.get('groups'):
-                payload = {**payload, 'groups': prev['groups']}
+                groups = [dict(g) for g in prev['groups']]
+                # a rename sent the flat way — `units: [{unit_id, id, name}]` —
+                # lands on the unit inside its group; the rest of the flat list
+                # is discarded, because membership is the groups' to say
+                named = {u['unit_id']: u for u in (payload.get('units') or [])
+                         if isinstance(u, dict) and 'unit_id' in u and 'name' in u}
+                if named:
+                    for g in groups:
+                        gu = []
+                        for u in config._endpoint_units({'id': pid}, g):
+                            hit = named.get(u['unit_id'])
+                            item = {'unit_id': u['unit_id'], 'id': u['id']}
+                            name = hit['name'] if hit else u.get('name')
+                            if name:
+                                item['name'] = name
+                            gu.append(item)
+                        g['units'] = gu
+                payload = {**payload, 'groups': groups}
                 payload.pop('units', None)          # units live in the groups
             if 'sources' not in payload and prev.get('sources'):
                 payload = {**payload, 'sources': prev['sources']}

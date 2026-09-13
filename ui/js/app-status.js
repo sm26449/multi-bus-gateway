@@ -144,12 +144,22 @@ Object.assign(JanitzaMonitor.prototype, {
             <td style="padding:2px 12px 2px 0;">${g.age_s != null ? g.age_s + 's' : '—'}</td>
             <td style="padding:2px 0;">${g.poll_count ?? 0} polls</td></tr>`).join('');
         const latCol = ms => ms == null ? '—' : `${ms < 1 ? ms : Math.round(ms)} ms`;
-        const latColor = ms => ms == null ? 'var(--text-secondary)' : ms > 1000 ? BAD : ms > 300 ? WARN : 'var(--text-secondary)';
+        // Latency is judged against the source's OWN timeout when it has one —
+        // 1.5 s is fine for a datalogger's Solar API with a 3 s timeout and
+        // dreadful for a meter answering in 20 ms.
+        const latColor = (ms, d) => {
+            if (ms == null) return 'var(--text-secondary)';
+            const tmo = Math.min(...(d.read_via || []).map(r => r.timeout_s).filter(x => x > 0));
+            if (isFinite(tmo)) return ms > tmo * 500 ? BAD : ms > tmo * 250 ? WARN : 'var(--text-secondary)';
+            return ms > 1000 ? BAD : ms > 300 ? WARN : 'var(--text-secondary)';
+        };
+        const protoOf = d => (d.read_via || []).length
+            ? [...new Set(d.read_via.map(r => r.protocol))].join(' + ') : (d.protocol || '');
         const pollRows = devices.map(d => `<tr>
             <td style="padding:3px 12px 3px 0;">${dot(hColor[d.data_health] || OFF)} <b>${esc(d.name || d.id)}</b></td>
-            <td style="padding:3px 12px 3px 0;color:var(--text-secondary);">${esc(d.protocol || '')}</td>
+            <td style="padding:3px 12px 3px 0;color:var(--text-secondary);">${esc(protoOf(d))}</td>
             <td style="padding:3px 12px 3px 0;font-variant-numeric:tabular-nums;">${(d.poll_rate ?? 0).toFixed ? (d.poll_rate ?? 0).toFixed(2) : d.poll_rate}/s</td>
-            <td style="padding:3px 12px 3px 0;font-variant-numeric:tabular-nums;color:${latColor(d.last_latency_ms)};">${latCol(d.last_latency_ms)}</td>
+            <td style="padding:3px 12px 3px 0;font-variant-numeric:tabular-nums;color:${latColor(d.last_latency_ms, d)};">${latCol(d.last_latency_ms)}</td>
             <td style="padding:3px 12px 3px 0;font-variant-numeric:tabular-nums;">${d.staleness_age_s != null ? d.staleness_age_s + 's' : '—'}</td>
             <td style="padding:3px 0;font-variant-numeric:tabular-nums;color:${d.failed_reads ? BAD : 'var(--text-secondary)'};">${d.failed_reads ?? 0} ${t('status.fails', 'fails')}${this._errBreakdown(d.error_counts)}</td></tr>`).join('');
         const polling = `<div class="settings-card" style="padding:12px 14px;overflow-x:auto;"><table style="width:100%;font-size:12.5px;">
@@ -369,9 +379,17 @@ Object.assign(JanitzaMonitor.prototype, {
         // (this.pollGroups) instead of a hardcoded label — keeps the bar in
         // sync with config/selected_registers.json (e.g. realtime 250ms).
         const el = document.getElementById('pollGroupsStatus');
-        if (!el || !this.pollGroups) return;
-        const icons = { realtime: 'lightning-fill', normal: 'clock', slow: 'hourglass' };
+        if (!el) return;
         const fmt = (s) => (s < 1 ? `${Math.round(s * 1000)}ms` : `${s}s`);
+        if (this._footerOverride && this.currentPage === 'devices'
+            && document.getElementById('deviceDetailView')?.style.display !== 'none') {
+            // a unit page is open: its own rhythm, per source, not the primary's
+            el.innerHTML = `<span class="poll-item"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this.t('devices.readEvery', 'read every')} ${
+                this._footerOverride.map(r => `${r.interval_s != null ? fmt(r.interval_s) : '—'} (${this._esc(r.id)})`).join(' · ')}</span>`;
+            return;
+        }
+        if (!this.pollGroups) return;
+        const icons = { realtime: 'lightning-fill', normal: 'clock', slow: 'hourglass' };
         const items = Object.entries(this.pollGroups);
         if (!items.length) return;
         el.innerHTML = items.map(([name, g]) =>

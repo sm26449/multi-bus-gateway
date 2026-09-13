@@ -511,6 +511,7 @@ Object.assign(JanitzaMonitor.prototype, {
         document.getElementById(`${page}Page`)?.classList.add('active');
 
         this.currentPage = page;
+        if (this.updatePollGroupsStatus) this.updatePollGroupsStatus();   // the footer follows the page
 
         // stop any virtual-meter observability polling when leaving the page
         if (page !== 'vmeters' && this._stopVmPolls) this._stopVmPolls();

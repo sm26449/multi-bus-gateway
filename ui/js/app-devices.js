@@ -3,6 +3,8 @@ Object.assign(JanitzaMonitor.prototype, {
 
     // Devices page: show the list, hide the detail + register-editor overlays.
     _showDevicesList() {
+        this._footerOverride = null;
+        if (this.updatePollGroupsStatus) this.updatePollGroupsStatus();
         if (this._stopEndpointDetail) this._stopEndpointDetail();
         const list = document.getElementById('devicesListView');
         const detail = document.getElementById('deviceDetailView');
@@ -104,15 +106,16 @@ Object.assign(JanitzaMonitor.prototype, {
     // endpoint actions) + its unit devices nested underneath.
     _endpointGroupHtml(p, units, healthColor) {
         const open = this._endpointOpenState(p.id);
-        const conn = p.connection || {};
-        const proto = (conn.protocol || 'tcp') === 'rtu-tcp' ? 'RTU/TCP' : 'TCP';
         const online = units.filter(u => u.connected).length;
-        const pw = p.aggregates?.power_active_total;
+        const pw = (p.headline || {}).power_now ?? p.aggregates?.power_active_total;
         const pwTxt = (typeof pw === 'number')
-            ? `Σ ${pw >= 10000 ? (pw / 1000).toFixed(1) + ' kW' : Math.round(pw) + ' W'} · ` : '';
+            ? `${pw >= 10000 ? (pw / 1000).toFixed(1) + ' kW' : Math.round(pw) + ' W'} ${this.t('devices.now', 'now')} · ` : '';
         const stats = p.enabled === false
             ? this.t('devices.disabled', 'disabled')
-            : `${pwTxt}${online}/${units.length} ${this.t('endpoints.online', 'online')}`;
+            : `${pwTxt}${online}/${units.length} ${this.t('endpoints.answeringShort', 'answering')}`;
+        // what it holds and how it is read — not the fallback connection
+        const ways = [...new Set((p.read_via || []).map(r => r.id))];
+        const holds = (p.groups || []).map(g => this._groupLabel ? this._groupLabel(g) : g.id);
         const dot = p.enabled === false ? 'var(--text-secondary,#8a94a0)'
             : online === units.length && units.length ? 'var(--success,#22c55e)'
             : online ? 'var(--warning,#f59e0b)' : 'var(--danger,#ef4444)';
@@ -128,8 +131,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="device-row-title"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(p.name || p.id)}
                     <span class="dev-chip">${this._esc(p.id)}</span>
                     <span class="dev-chip">${units.length} ${units.length === 1 ? this.t('endpoints.unit', 'unit') : this.t('endpoints.units', 'units')}</span></div>
-                <div class="device-row-sub">${proto} · ${this._esc(conn.host || '')}:${conn.port || 502}
-                    · ${this._esc(p.template || '—')}</div>
+                <div class="device-row-sub">${this._esc(holds.join(' · ') || p.template || '')}${ways.length ? ` · ${this.t('endpoints.readVia', 'Read via')} ${this._esc(ways.join(' + '))}` : ''}</div>
             </div>
             <div class="device-row-stats">${stats}</div>
             <div class="device-row-actions">
@@ -146,7 +148,10 @@ Object.assign(JanitzaMonitor.prototype, {
 
     _deviceRowHtml(d, healthColor, nested = false) {
         {
-            const proto = d.protocol === 'rtu'
+            const PROTO = { http: 'HTTP', tcp: 'Modbus TCP', 'rtu-tcp': 'Modbus RTU/TCP', rtu: 'Modbus RTU', mqtt: 'MQTT' };
+            const proto = (d.read_via || []).length
+                ? d.read_via.map(r => `${this._esc(r.id)} ${PROTO[r.protocol] || this._esc(r.protocol)}${r.interval_s != null ? ` ${r.interval_s} s` : ''}`).join(' · ')
+                : d.protocol === 'rtu'
                 ? `RTU · ${this._esc(d.serial?.serial_port || '—')}`
                 : d.protocol === 'http'
                 ? `HTTP · ${this._esc((d.connection?.url || d.http_url || '').replace(/^https?:\/\//, '').split('/')[0] || '—')}`
@@ -183,8 +188,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="device-row-main">
                     <div class="device-row-title">${this._esc(d.name || d.id)}
                         <span class="dev-chip">${this._esc(d.id)}</span>${endpointChip}</div>
-                    <div class="device-row-sub">${proto} · unit ${d.unit_id}
-                        · ${this._esc(d.template || '—')} · ${d.selected_registers ?? 0} ${this.t('devices.regsSelected', 'measurements')}</div>
+                    <div class="device-row-sub">${proto}${(d.read_via || []).length ? '' : ` · unit ${d.unit_id} · ${this._esc(d.template || '—')}`} · ${d.selected_registers ?? 0} ${this.t('devices.regsSelected', 'measurements')}</div>
                     <div class="device-row-routing">→ MQTT <code>${this._esc(d.mqtt_topic_prefix || '')}/…</code>
                         &nbsp;→ InfluxDB <code>${this._esc(d.influxdb_bucket || '')}</code></div>
                 </div>
@@ -458,7 +462,8 @@ Object.assign(JanitzaMonitor.prototype, {
         catch (e) { console.error(e); }
         const c = dev.connection || {};
         this._devDetail = {
-            id, primary: !!dev.primary, endpoint_id: dev.endpoint_id || '', templates,
+            id, primary: !!dev.primary, endpoint_id: dev.endpoint_id || '',
+            endpoint_name: dev.endpoint_name || '', templates,
             data: {
                 name: dev.name || id, template: dev.template || '',
                 enabled: dev.enabled !== false,
@@ -493,13 +498,21 @@ Object.assign(JanitzaMonitor.prototype, {
         view.style.display = '';
         view.innerHTML = this._deviceDetailHtml();
         this._wireDeviceDetail();
+        // the status bar states this unit's own rhythm while it is open
+        this._footerOverride = (dev.read_via || []).length ? dev.read_via : null;
+        if (this.updatePollGroupsStatus) this.updatePollGroupsStatus();
     },
 
-    closeDeviceDetail() {
+    // Back from a unit is its installation; from a standalone device, the list.
+    closeDeviceDetail(toList = false) {
+        const pid = this._devDetail?.endpoint_id;
         this._stopDeviceLogs();
         this._restoreWsPages();       // return embedded pages home BEFORE wiping the view
         const view = document.getElementById('deviceDetailView');
         if (view) { view.style.display = 'none'; view.innerHTML = ''; }
+        this._footerOverride = null;
+        if (this.updatePollGroupsStatus) this.updatePollGroupsStatus();
+        if (pid && !toList && this.openEndpointDetail) { this.openEndpointDetail(pid); return; }
         const list = document.getElementById('devicesListView');
         if (list) list.style.display = '';
         this.renderDevicesList();
@@ -520,10 +533,17 @@ Object.assign(JanitzaMonitor.prototype, {
         return `
         <div class="section-header">
             <h2><button class="btn btn-ghost btn-sm" onclick="app.closeDeviceDetail()" aria-label="${t('common.back', 'Back')}"><i aria-hidden="true" class="bi bi-arrow-left"></i></button>
-                <i aria-hidden="true" class="bi bi-cpu"></i> ${this._esc(d.name)}
-                <span class="dev-chip">${this._esc(s.id)}</span></h2>
+                ${endpointId ? `<nav aria-label="${t('common.breadcrumb', 'Where you are')}" style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                    <a href="#" onclick="app.closeDeviceDetail(true);return false;" style="font-weight:500;color:var(--text-secondary);">${t('nav.devices', 'Devices')}</a>
+                    <span aria-hidden="true" style="color:var(--text-tertiary,#8a94a0);">›</span>
+                    <a href="#" onclick="app.openEndpointDetail('${this._esc(endpointId)}');return false;" style="font-weight:500;color:var(--text-secondary);"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(s.endpoint_name || endpointId)}</a>
+                    <span aria-hidden="true" style="color:var(--text-tertiary,#8a94a0);">›</span>
+                    <span><i aria-hidden="true" class="bi bi-cpu"></i> ${this._esc(d.name)}</span>
+                    <span class="dev-chip">${this._esc(s.id)}</span></nav>`
+                : `<i aria-hidden="true" class="bi bi-cpu"></i> ${this._esc(d.name)}
+                <span class="dev-chip">${this._esc(s.id)}</span>`}</h2>
             <div class="header-actions">
-                ${endpointId ? `<span class="dev-chip" title="${t('devices.endpointManaged', 'Managed through its endpoint — edit or delete the endpoint')}"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(endpointId)}</span>` : ''}
+                ${endpointId ? `<button class="btn btn-secondary btn-sm" onclick="app.openEndpointDetail('${this._esc(endpointId)}')"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.openInstallation', 'Open installation')}</button>` : ''}
                 ${(primary || endpointId) ? '' : `<button class="btn btn-ghost btn-sm" ${this._act('deleteDevice', [s.id])}><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>`}
             </div>
         </div>
@@ -533,7 +553,9 @@ Object.assign(JanitzaMonitor.prototype, {
              to this device, with no device selector). -->
         <div class="config-main-tabs" id="deviceWsTabs" style="margin-bottom:14px;">
             <button class="config-main-tab active" data-dtab="overview"><i aria-hidden="true" class="bi bi-grid-1x2"></i> ${t('devices.tab.overview', 'Overview')}</button>
-            <button class="config-main-tab" data-dtab="edit"><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('devices.tab.edit', 'Edit')}</button>
+            ${endpointId
+                ? `<button class="config-main-tab" data-dtab="edit"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.tab.readVia', 'Read via')}</button>`
+                : `<button class="config-main-tab" data-dtab="edit"><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('devices.tab.edit', 'Edit')}</button>`}
             <button class="config-main-tab" data-dtab="outputs"><i aria-hidden="true" class="bi bi-signpost-split"></i> ${t('devices.detail.outputs', 'Outputs')}</button>
             <button class="config-main-tab" data-dtab="measurements"><i aria-hidden="true" class="bi bi-list-check"></i> ${t('devices.registers', 'Measurements')} (${d.selected_registers})</button>
             <button class="config-main-tab" data-dtab="calculated"><i aria-hidden="true" class="bi bi-calculator"></i> ${t('calc.tab', 'Calculated')}</button>
@@ -564,11 +586,7 @@ Object.assign(JanitzaMonitor.prototype, {
              disabled and marked (defined once on the endpoint), never a
              different page -->
         <div data-dpanel="edit" hidden>
-        ${endpointId ? `
-        <div class="field-hint" style="margin:0 0 12px;display:flex;align-items:center;gap:10px;">
-            <span><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.endpointOwned', 'Connection, template and routing are defined on the endpoint and apply to every unit — locked fields below are edited on the endpoint.')}</span>
-            <button class="btn btn-secondary btn-sm" onclick="app.openEndpointModal('${this._esc(endpointId)}')"><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('devices.endpointUnit.editEndpoint', 'Edit endpoint')}</button>
-        </div>` : ''}
+        ${endpointId ? this._unitReadViaHtml(s, d) : `
         <div class="settings-card">
             <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-ethernet"></i> ${t('devices.detail.connection', 'Connection')}</h3></div>
             <div class="settings-card-body">
@@ -659,25 +677,23 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
                         <button class="btn btn-secondary btn-sm" ${this._act('saveDevicePollGroups', [s.id], {el: true})}><i aria-hidden="true" class="bi bi-clock"></i> ${t('devices.savePollGroups', 'Save intervals')}</button>
                         <span class="save-feedback" id="ddvPgFeedback"></span>
-                        ${endpointId ? `<span class="field-hint">${t('devices.endpointUnit.perUnit', 'Per-unit: the measurement selection (Measurements tab) and the poll intervals stay editable on THIS unit only.')}</span>` : ''}
                     </div>
                 </div>
             </div>
-            ${endpointId ? '' : `
             <div class="settings-card-footer">
                 <span class="save-feedback" id="ddvFeedback"></span>
                 <button class="btn btn-primary btn-sm" onclick="app.saveDeviceDetail(this)"><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
-            </div>`}
-        </div>
+            </div>
+        </div>`}
         </div>
 
         <!-- ── Outputs ── same cards for every device; endpoint-level toggles are
              disabled on units and edited on the endpoint -->
         <div data-dpanel="outputs" hidden>
             ${endpointId ? `
-            <div class="field-hint" style="margin:0 0 12px;display:flex;align-items:center;gap:10px;">
-                <span><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.endpointUnit.outputs', 'Output routing is defined on the endpoint (with per-unit substitution) and applied to every unit:')}</span>
-                <button class="btn btn-secondary btn-sm" onclick="app.openEndpointModal('${this._esc(endpointId)}')"><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('devices.endpointUnit.editEndpoint', 'Edit endpoint')}</button>
+            <div class="field-hint" style="margin:0 0 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <span><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.endpointUnit.outputs', 'Where this unit publishes is set on its installation, per group, and applies to every unit of the group.')}</span>
+                <button class="btn btn-secondary btn-sm" onclick="app.openEndpointDetail('${this._esc(endpointId)}')"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.openInstallation', 'Open installation')}</button>
             </div>` : ''}
             ${this._sinkCardMqtt(d, primary)}
             ${this._sinkCardInflux(d, primary)}
@@ -1013,6 +1029,113 @@ Object.assign(JanitzaMonitor.prototype, {
         if (this._stopMonitorPoll) this._stopMonitorPoll();   // stop the monitor poll when leaving
     },
 
+    _PROTO_LABEL: { http: 'HTTP', tcp: 'Modbus TCP', 'rtu-tcp': 'Modbus RTU/TCP', rtu: 'Modbus RTU', mqtt: 'MQTT' },
+
+    // Every way this unit is read, one line each: protocol, address, rhythm,
+    // cost and verdict — the same shape the installation page uses.
+    _unitReadViaLines(rv) {
+        const t = this.t.bind(this);
+        const hc = { ok: 'var(--success,#22c55e)', degraded: 'var(--warning,#f59e0b)',
+                     down: 'var(--danger,#ef4444)', idle: 'var(--text-secondary,#8a94a0)' };
+        return (rv || []).map(r => {
+            const bits = [
+                `${this._PROTO_LABEL[r.protocol] || this._esc(r.protocol)}${r.protocol === 'http' ? '' : ' ' + this._esc(r.address || '')}`,
+                r.interval_s != null ? `${t('endpoints.every', 'every')} ${r.interval_s} s` : null,
+                r.latency_ms != null ? `~${Math.round(r.latency_ms)} ms` : null,
+                r.fail_pct_5m != null ? `${r.fail_pct_5m} % ${t('endpoints.failed5m', 'failed (5 min)')}` : null,
+                `${t('devices.provides', 'provides')} ${r.provides} ${t('endpoints.srcFields', 'fields')}`,
+            ].filter(Boolean);
+            return `<div style="display:flex;gap:8px;align-items:baseline;font-size:12.5px;padding:2px 0;flex-wrap:wrap;" data-read-via="${this._esc(r.id)}">
+                <span class="status-dot" style="--dot:${hc[r.status] || hc.idle}" aria-hidden="true"></span>
+                <b>${this._esc(r.id)}</b>
+                <span style="color:var(--text-secondary);">${this._esc(r.status || 'idle')}</span>
+                <span>${bits.join(' · ')}</span></div>`;
+        }).join('');
+    },
+
+    // The "Read via" panel of a unit: the truth about how it is read, and the
+    // one thing that is the unit's own — its name. Sources, intervals and the
+    // template belong to the installation and are edited there.
+    _unitReadViaHtml(s, d) {
+        const t = this.t.bind(this);
+        const rv = (s.entry || {}).read_via || [];
+        const rows = rv.map((r, i) => `<tr data-src-row="${this._esc(r.id)}" style="border-top:1px solid var(--border,#2a3038);">
+            <td style="padding:8px 10px 8px 0;white-space:nowrap;"><span class="dev-chip">#${i + 1}</span> <b>${this._esc(r.id)}</b>
+                ${r.enabled === false ? `<span class="sink-pill warn" style="margin-left:6px;">${t('devices.disabled', 'disabled')}</span>` : ''}</td>
+            <td style="padding:8px 10px 8px 0;">${this._PROTO_LABEL[r.protocol] || this._esc(r.protocol)}</td>
+            <td style="padding:8px 10px 8px 0;font-size:12px;word-break:break-all;max-width:300px;">${this._esc(r.address || '')}</td>
+            <td style="padding:8px 10px 8px 0;font-size:12px;">${this._esc(r.template || '—')}</td>
+            <td style="padding:8px 10px 8px 0;white-space:nowrap;">${r.interval_s != null ? `${r.interval_s} s` : '—'}</td>
+            <td style="padding:8px 10px 8px 0;white-space:nowrap;">${r.stale_after_s ? `${r.stale_after_s} s` : t('endpoints.never', 'never')}</td>
+            <td style="padding:8px 10px 8px 0;white-space:nowrap;font-variant-numeric:tabular-nums;">${r.provides} / ${r.registers}</td>
+            <td style="padding:8px 0;white-space:nowrap;font-variant-numeric:tabular-nums;">${this._esc(r.status || 'idle')}${r.latency_ms != null ? ` · ${Math.round(r.latency_ms)} ms` : ''}${r.fail_pct_5m ? ` · <span style="color:var(--danger,#ef4444);">${r.fail_pct_5m} % ${t('endpoints.failed5m', 'failed (5 min)')}</span>` : ''}</td>
+        </tr>`).join('');
+        return `
+        <div class="field-hint" style="margin:0 0 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <span><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.unit.readViaIntro', 'This unit is read as part of')} <b>${this._esc(s.endpoint_name || s.endpoint_id)}</b>. ${t('devices.unit.readViaIntro2', 'Its sources, intervals and template are set there.')}</span>
+            <button class="btn btn-secondary btn-sm" onclick="app.openEndpointDetail('${this._esc(s.endpoint_id)}')"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.openInstallation', 'Open installation')}</button>
+        </div>
+        <div class="settings-card">
+            <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-tag"></i> ${t('devices.unit.identity', 'Name')}</h3></div>
+            <div class="settings-card-body">
+                <div class="form-row" style="align-items:flex-end;">
+                    <div class="form-group flex-2"><label class="form-label" for="ddvName">${t('devices.wizard.name', 'Device name')}</label>
+                        <input type="text" id="ddvName" class="input" value="${this._esc(d.name)}"></div>
+                    <div class="form-group"><button class="btn btn-primary btn-sm" ${this._act('saveUnitName', [s.id], { el: true })}><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('common.save', 'Save')}</button>
+                        <span class="save-feedback" id="ddvNameFeedback" role="status"></span></div>
+                </div>
+                <div class="field-hint">${t('devices.unit.nameHint', 'The only thing that is this unit’s own. Its id, topics and bucket stay as they are.')}</div>
+            </div>
+        </div>
+        <div class="settings-card">
+            <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.tab.readVia', 'Read via')}</h3></div>
+            <div class="settings-card-body">
+                <div style="overflow-x:auto;"><table style="width:100%;font-size:13px;">
+                    <tr style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;">
+                        <td style="padding-right:10px;">${t('endpoints.srcName', 'source')}</td>
+                        <td style="padding-right:10px;">${t('devices.wizard.protocol', 'protocol')}</td>
+                        <td style="padding-right:10px;">${t('endpoints.srcAddress', 'address')}</td>
+                        <td style="padding-right:10px;">${t('devices.wizard.template', 'template')}</td>
+                        <td style="padding-right:10px;">${t('devices.unit.interval', 'interval')}</td>
+                        <td style="padding-right:10px;">${t('endpoints.srcStale', 'stale after')}</td>
+                        <td style="padding-right:10px;" title="${t('devices.unit.providesHint', 'Fields this source supplies right now / fields selected from it')}">${t('endpoints.srcOwns', 'provides')}</td>
+                        <td>${t('endpoints.srcLive', 'live')}</td></tr>
+                    ${rows || `<tr><td colspan="8"><span class="field-hint">${t('endpoints.srcNone', 'No source declared yet.')}</span></td></tr>`}
+                </table></div>
+                <p class="field-hint" style="margin-top:12px;"><i aria-hidden="true" class="bi bi-list-check"></i>
+                    ${t('devices.unit.tickHint', 'What is read from each source is ticked in the Measurements tab — pick the source there.')}</p>
+            </div>
+        </div>`;
+    },
+
+    async saveUnitName(deviceId, btn) {
+        const s = this._devDetail;
+        const fb = document.getElementById('ddvNameFeedback');
+        const name = (document.getElementById('ddvName')?.value || '').trim();
+        if (!s?.endpoint_id) return;
+        if (btn) btn.disabled = true;
+        try {
+            const p = await (await fetch(`/api/endpoints/${encodeURIComponent(s.endpoint_id)}`)).json();
+            const body = this._endpointPutBody(p);
+            const u = body.units.find(x => x.id === deviceId);
+            if (!u) return;
+            if (name) u.name = name; else delete u.name;
+            const rsp = await fetch(`/api/endpoints/${encodeURIComponent(s.endpoint_id)}`, {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const d = await rsp.json().catch(() => ({}));
+            if (!rsp.ok) {
+                const errs = d.detail?.errors || [d.detail || rsp.statusText];
+                if (fb) { fb.textContent = Array.isArray(errs) ? errs.join(' · ') : String(errs); fb.className = 'save-feedback err'; }
+                return;
+            }
+            const made = (d.devices || []).find(x => x.id === deviceId);
+            s.data.name = made?.name || name || s.data.name;
+            const crumb = document.querySelector('#deviceDetailView .section-header h2 nav > span:not([aria-hidden])');
+            if (crumb) crumb.innerHTML = `<i aria-hidden="true" class="bi bi-cpu"></i> ${this._esc(s.data.name)}`;
+            if (fb) { fb.textContent = '✓ ' + this.t('settings.saved', 'Saved & applied'); fb.className = 'save-feedback ok'; setTimeout(() => { if (fb.classList.contains('ok')) fb.textContent = ''; }, 3000); }
+        } finally { if (btn) btn.disabled = false; }
+    },
+
     // Read-only status view — what you see first, no forms.
     _deviceOverviewHtml(d, entry) {
         const t = this.t.bind(this);
@@ -1020,6 +1143,41 @@ Object.assign(JanitzaMonitor.prototype, {
         const hColor = { ok: 'var(--success,#22c55e)', degraded: 'var(--warning,#f59e0b)',
                          down: 'var(--danger,#ef4444)', idle: 'var(--text-secondary,#8a94a0)' };
         const hLabel = { ok: 'OK', degraded: 'degraded', down: 'down', idle: 'idle' }[health] || health;
+        if ((entry.read_via || []).length) {
+            // a unit of an installation: what it shows now, how it is read,
+            // where it publishes — no fallback connection, no template dash
+            const live = entry.live || {}, meta = entry.fields || {};
+            const glance = Object.keys(live).map(n => `<div style="min-width:110px;">
+                <div style="color:var(--text-secondary);font-size:11.5px;">${this._esc(this._liveLabel ? this._liveLabel(n) : n)}</div>
+                <div style="font-weight:700;font-size:20px;letter-spacing:-.3px;font-variant-numeric:tabular-nums;">${this._endpointValue ? this._endpointValue(live[n], (meta[n] || {}).unit || '') : live[n]}</div></div>`).join('');
+            return `
+        <div class="settings-card">
+            <div class="settings-card-body">
+                <div style="display:flex;flex-wrap:wrap;gap:18px 36px;align-items:flex-start;">
+                    <div style="min-width:150px;">
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <span class="status-dot" style="width:12px;height:12px;border-radius:50%;--dot:${hColor[health]};background:var(--dot);box-shadow:0 0 0 3px color-mix(in srgb, var(--dot) 16%, transparent);" aria-hidden="true"></span>
+                            <span style="font-weight:600;font-size:15px;">${hLabel}</span>
+                        </div>
+                        <div style="color:var(--text-secondary);font-size:12px;margin-top:8px;">${t('devices.overview.lastRead', 'Last read')} ${entry.staleness_age_s != null ? entry.staleness_age_s + ' s ago' : '—'}</div>
+                    </div>
+                    <div style="display:flex;gap:18px 32px;flex-wrap:wrap;">${glance || `<span class="field-hint">${t('devices.overview.noValues', 'No values yet — the device may not be polling.')}</span>`}</div>
+                </div>
+                <div style="margin-top:16px;">
+                    <div style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px;">${t('endpoints.readVia', 'Read via')}</div>
+                    ${this._unitReadViaLines(entry.read_via)}
+                </div>
+                <div style="margin-top:12px;font-size:12.5px;display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline;">
+                    <span style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;">${t('endpoints.publishesTo', 'Publishes to')}</span>
+                    <code style="font-size:11px;">${this._esc(d.topic_prefix || '')}/…</code> → InfluxDB <code style="font-size:11px;">${this._esc(d.bucket || '')}</code> · ${this._esc(d.device_tag || '')}
+                </div>
+            </div>
+        </div>
+        <div class="settings-card">
+            <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-activity"></i> ${t('devices.overview.live', 'Live values')}</h3></div>
+            <div class="settings-card-body"><div id="ddvSnapshot"><span class="field-hint">${t('common.loading', 'Loading…')}</span></div></div>
+        </div>`;
+        }
         const src = d.protocol === 'http' ? this._esc(d.url || '—')
                   : d.protocol === 'rtu' ? `${this._esc(d.serial_port || '—')} · ${d.baudrate}${d.parity} · unit ${d.unit_id}`
                   : `${this._esc(d.host || '—')}:${d.port} · unit ${d.unit_id}`;
@@ -1062,9 +1220,21 @@ Object.assign(JanitzaMonitor.prototype, {
             const fmt = (val) => (typeof val === 'number' && !Number.isInteger(val))
                 ? Number(val.toFixed(3)).toString()   // cap noise at 3 decimals, drop trailing zeros
                 : this._esc(String(val));
-            box.innerHTML = `<table style="width:100%;font-size:13px;">${vals.slice(0, 40).map(v => `<tr>
+            // grouped by what they measure; a unit read two ways says which
+            // source each value came from
+            const manySources = ((this._devDetail?.entry || {}).read_via || []).length > 1;
+            const catOf = v => {
+                const c = v.category || String(v.name || '').split('_')[0] || 'other';
+                return this.t(`cat.${c}`, c.charAt(0).toUpperCase() + c.slice(1).replace(/_/g, ' '));
+            };
+            const groups = new Map();
+            vals.slice(0, 120).forEach(v => { const k = catOf(v); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(v); });
+            const row = v => `<tr>
                 <td style="padding:2px 12px 2px 0;color:var(--text-secondary);">${this._esc(v.label || v.name || '')}${v.label && v.name && v.label !== v.name ? ` <span style="color:var(--text-tertiary,#9aa4af);font-size:11px;">${this._esc(v.name)}</span>` : ''}</td>
-                <td style="padding:2px 0;text-align:right;font-variant-numeric:tabular-nums;">${fmt(v.value)} <span style="color:var(--text-secondary);">${this._esc(v.unit || '')}</span></td></tr>`).join('')}</table>`;
+                <td style="padding:2px 0;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;">${fmt(v.value)} <span style="color:var(--text-secondary);">${this._esc(v.unit || '')}</span>${manySources && v.source ? ` <span class="dev-chip" style="margin-left:6px;" title="${this.t('devices.valueSource', 'Source of this value')}">${this._esc(v.source)}</span>` : ''}</td></tr>`;
+            box.innerHTML = [...groups.entries()].map(([cat, items]) => `
+                <div style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;margin:10px 0 2px;">${this._esc(cat)}</div>
+                <table style="width:100%;font-size:13px;">${items.map(row).join('')}</table>`).join('');
         } catch (e) { box.innerHTML = `<span class="field-hint">${this.t('common.error', 'Error')}</span>`; }
     },
 

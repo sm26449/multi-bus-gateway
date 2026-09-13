@@ -1,5 +1,52 @@
 # Changelog
 
+## 3.68.0
+
+### 2026-09-13 — the unit page tells how the unit is read
+
+Third step of the audit. A unit of an installation opened on an **Edit** tab
+that described a Modbus connection nobody declared — empty host, `:502`,
+timeout 3, `(no template)`, template intervals — for a unit read over HTTP
+every two seconds. *Save intervals* was a silent no-op (the source's intervals
+are the last word) and *Test connection* probed the imaginary host. Its back
+arrow lost the installation.
+
+- **Breadcrumb** `Devices › PV installation › Invertor 1`, every level a link;
+  the back arrow returns to the installation; an **Open installation** button.
+- **Overview**: health as a word, the unit's glance values by what it is
+  (power, AC and DC voltage for an inverter), last read, then **Read via** —
+  every source with protocol, address (with the unit id), interval, latency,
+  five-minute failure rate and the fields it supplies right now — and where the
+  unit publishes. **Live values** are grouped by what they measure, each with
+  the source it came from when the unit is read more than one way.
+- **Read via** tab replaces Edit on a unit: the sources table (order, protocol,
+  address, template, interval, stale-after, fields provided / selected, live
+  verdict) and the one thing that is the unit's own — its **name**. No
+  connection form, no *Save intervals*, no *Test connection*. A standalone
+  device keeps its Edit tab untouched.
+- **Outputs** point to the installation, not to a dialog.
+- **Devices list**: a unit row says `solar_api HTTP 2 s · sunspec Modbus TCP
+  20 s · 50 measurements`; an installation row says what it holds and how it
+  is read, with power now and units answering. A unit's measurement count is
+  the union of its sources' selections.
+- **Status → Polling & threads**: protocol is the sources' (`http + tcp`), and
+  latency is coloured against the source's own timeout, not a fixed Modbus bar.
+- **Footer** on a unit page: `read every 2 s (solar_api) · 20 s (sunspec)`;
+  the gateway's groups everywhere else.
+- A flat rename (`units: [{unit_id, id, name}]`) on a grouped installation now
+  lands on the unit inside its group instead of being discarded with the flat
+  list — the rename from both pages depends on it.
+
+API: `GET /api/devices` entries of installation units gain `endpoint_name`,
+`group_id`, `role`, `live`, `fields` and `read_via[]` (`id`, `protocol`,
+`address`, `template`, `interval_s`, `timeout_s`, `stale_after_s`,
+`registers`, `provides`, `status`, `latency_ms`, `reads_5m`, `failed_5m`,
+`fail_pct_5m`); `/api/status` device rows gain `read_via` (`id`, `protocol`,
+`timeout_s`).
+
+Tests: `tests/test_endpoint_page_model.py`, `tests/test_endpoint_edit_guard.py`;
+e2e `tools/e2e/unit_page_e2e.mjs` (23 checks).
+
 ## 3.67.0
 
 ### 2026-09-13 — the installation page, in the operator's order

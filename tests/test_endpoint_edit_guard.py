@@ -114,3 +114,24 @@ def test_a_flat_endpoint_keeps_its_sources_when_the_form_omits_them(tmp_path):
     assert r.status_code == 200, r.text
     assert [s["id"] for s in r.json()["endpoint"]["sources"]] == ["sunspec", "solar_api"]
     assert [s.id for s in cfg.get_device("inv-u1").sources] == ["sunspec", "solar_api"]
+
+
+@needs_tc
+def test_a_flat_rename_lands_on_the_unit_inside_its_group(tmp_path):
+    """The unit page and the installation page rename a unit by re-sending the
+    flat unit list with a name. On a grouped installation that list is not
+    membership — but the NAME is the operator's, and must land."""
+    cfg, client = make_app(tmp_path)
+    assert client.post("/api/endpoints", json=PLANT).status_code == 200
+    body = dict(UI_EDIT, name="PV installation",
+                units=[{"unit_id": 1, "id": "pv-u1", "name": "East inverter"},
+                       {"unit_id": 2, "id": "pv-u2"}, {"unit_id": 0, "id": "pv-site"}])
+    r = client.put("/api/endpoints/pv", json=body)
+    assert r.status_code == 200, r.text
+    ep = r.json()["endpoint"]
+    names = {u["device_id"]: u["name"] for u in ep["units"]}
+    assert names["pv-u1"] == "East inverter"
+    assert names["pv-site"] == "Site totals"              # the hand-written name survives
+    assert [g["id"] for g in ep["groups"]] == ["inverters", "site"]
+    assert [s["id"] for s in ep["groups"][0]["sources"]] == ["solar_api", "sunspec"]
+    assert _ids(cfg) == ["pv-u1", "pv-u2", "pv-site"]

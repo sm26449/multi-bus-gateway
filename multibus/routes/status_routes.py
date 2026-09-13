@@ -72,6 +72,15 @@ def build(ctx) -> APIRouter:
                 if entry.get('http_url'):
                     from ..redact import redact_url
                     entry['http_url'] = redact_url(entry['http_url'])
+                if getattr(dev_cfg, 'endpoint_id', ''):
+                    # a unit is read through its sources — the status table
+                    # names their protocols and judges latency against their
+                    # own timeouts, not the fallback connection's
+                    entry["read_via"] = [{
+                        "id": s.id, "protocol": str(s.protocol or 'tcp').lower(),
+                        "timeout_s": ((s.http or {}).get('timeout') if s.protocol == 'http'
+                                      else getattr(s.connection, 'timeout', None)),
+                    } for s in (dev_cfg.sources or [])]
                 if client:
                     stats = client.get_stats()
                     entry.update({

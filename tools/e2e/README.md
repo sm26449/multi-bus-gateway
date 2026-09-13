@@ -125,3 +125,20 @@ and puts the name back.
 and both wizards, screenshots each (light, dark, phone width) and reports raw
 i18n keys, horizontal overflow and console errors to `/tmp/audit/report.json`.
 It is the regression walk behind `docs/ui-audit-installations.md`.
+
+## Unit page
+
+`unit_page_e2e.mjs` drives the page of a unit that belongs to an installation:
+the list row naming its sources and rhythms, the three-level breadcrumb, the
+Overview stating every source, the **Read via** tab (no connection form, no
+Save intervals / Test connection, the name as the one editable thing, a rename
+that lands on the installation and keeps every source), Outputs pointing to the
+installation, the back arrow returning to it, the footer following the page,
+and the Status page naming the sources' protocols.
+
+```bash
+MBG_URL=http://localhost:18087 ENDPOINT=sunfield UNIT=sunfield-u1 \
+  CHROMIUM_PATH=<chrome> node unit_page_e2e.mjs
+```
+
+Uses the installation-safety fixture.
