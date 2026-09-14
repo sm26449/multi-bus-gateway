@@ -285,7 +285,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="form-group"><label class="form-label" for="rlStale">${t('rules.staleAfter', 'Signal stale after (s)')}</label>
                     <input id="rlStale" class="input" type="number" min="1" value="${raw?.stale_after_s ?? 60}"></div>
                 <div class="form-group"><label class="form-label" for="rlOnStale">${t('rules.onStale', 'When stale')}</label>
-                    <select id="rlOnStale" class="input"><option value="hold" ${(raw?.on_stale || 'hold') === 'hold' ? 'selected' : ''}>${t('rules.hold', 'hold the last want')}</option><option value="safe" ${raw?.on_stale === 'safe' ? 'selected' : ''}>${t('rules.safe', 'ask for the safe values')}</option></select></div>
+                    <select id="rlOnStale" class="input" onchange="document.getElementById('rlStaleValueWrap').hidden = this.value !== 'value'"><option value="hold" ${(raw?.on_stale || 'hold') === 'hold' ? 'selected' : ''}>${t('rules.hold', 'hold the last want')}</option><option value="safe" ${raw?.on_stale === 'safe' ? 'selected' : ''}>${t('rules.safe', 'ask for the safe values')}</option><option value="value" ${(typeof raw?.on_stale === 'number') ? 'selected' : ''}>${t('rules.staleValue', 'ask for a fixed value (fail closed)')}</option></select>
+                    <span id="rlStaleValueWrap" ${(typeof raw?.on_stale === 'number') ? '' : 'hidden'}><input id="rlStaleValue" class="input" type="number" step="any" value="${(typeof raw?.on_stale === 'number') ? raw.on_stale : 80}" aria-label="${t('rules.staleValueLabel', 'value while stale')}"></span></div>
                 <div class="form-group"><label class="form-label" for="rlOnDisable">${t('rules.onDisable', 'When disabled')}</label>
                     <select id="rlOnDisable" class="input"><option value="safe" ${(raw?.on_disable || 'safe') === 'safe' ? 'selected' : ''}>${t('rules.safe', 'ask for the safe values')}</option><option value="hold" ${raw?.on_disable === 'hold' ? 'selected' : ''}>${t('rules.holdLeave', 'leave the device as it is')}</option></select></div>
             </div>
@@ -344,7 +345,7 @@ Object.assign(JanitzaMonitor.prototype, {
             label: v('rlLabel') || '', kind,
             target: { ...(tg ? tg.target : {}), command: v('rlCommand') },
             params: kv(v('rlParams')), stale_after_s: Number(v('rlStale')) || 60,
-            on_stale: v('rlOnStale'), on_disable: v('rlOnDisable'),
+            on_stale: v('rlOnStale') === 'value' ? Number(v('rlStaleValue')) : v('rlOnStale'), on_disable: v('rlOnDisable'),
             timing: { every_s: Number(v('rlEvery')) || 2, debounce: Number(v('rlDebounce')) || 3,
                       min_interval_s: Number(v('rlMinInt')) || 0, reassert_s: Number(v('rlReassert')) || 0 },
         };

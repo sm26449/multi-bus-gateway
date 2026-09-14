@@ -202,3 +202,35 @@ def test_a_group_rule_fans_out_and_a_failing_unit_alerts(tmp_path):
     assert set(live['units']) == {'pv-u1', 'pv-u2'} and live['units']['pv-u2']['failures'] >= 3
     ev = app.state.event_log.recent(20)
     assert any('cannot apply' in e.get('message', '') and 'pv-u2' in e.get('message', '') for e in ev)
+
+
+def test_every_notable_decision_is_a_rule_event_point_in_the_units_bucket():
+    """The rule's decisions are the OV history the UI panels read: one
+    rule_event point (tags device/rule/state/action/result, fields signal,
+    want_value, actual, reason) for every change and every command sent."""
+    from types import SimpleNamespace
+    from multibus.rules import Decision, RuleDef, Step
+    from multibus.rules_runtime import RulesRuntime
+
+    class _Influx:
+        def __init__(self): self.points = []
+        def write_point(self, p, ts=None, bucket=None): self.points.append((p, ts, bucket))
+
+    rt = RulesRuntime.__new__(RulesRuntime)
+    rt.influx = _Influx()
+    rule = RuleDef(id='ov-u1', target={'device': 'pv-u1', 'command': 'power_limit'}, kind='steps',
+                   signal='pv-u1.v', steps=[Step(at=250.0, value=80.0)], param='value')
+    cfg = SimpleNamespace(id='pv-u1', influxdb_bucket='pv', influxdb_device_tag='pv-u1', influxdb_enabled=True)
+    d = Decision(ts=1789380000.0, action='run', reason='Warning: want value 80', state='Warning',
+                 signal=250.6, want={'value': 80, 'revert_s': 0}, actual=100.0, changed=True)
+    rt._influx_event(rule, cfg, d, {'result': 'success'})
+    (p, ts, bucket), = rt.influx.points
+    lp = p.to_line_protocol()
+    assert bucket == 'pv' and ts == 1789380000.0
+    assert lp.startswith('rule_event,action=run,device=pv-u1,result=success,rule=ov-u1,state=Warning ')
+    assert 'signal=250.6' in lp and 'want_value=80' in lp and 'actual=100' in lp and 'reason="Warning: want value 80"' in lp
+    # a unit with InfluxDB off writes nothing; no publisher, nothing
+    rt._influx_event(rule, SimpleNamespace(id='x', influxdb_enabled=False), d, {})
+    assert len(rt.influx.points) == 1
+    rt.influx = None
+    rt._influx_event(rule, cfg, d, {})

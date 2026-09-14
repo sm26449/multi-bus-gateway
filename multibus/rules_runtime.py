@@ -97,6 +97,7 @@ class RulesRuntime:
     def __init__(self, *, config_dir: Path, resolver_factory: Callable, find_device: Callable,
                  endpoint_devices: Callable, commands_for: Callable, run_command: Callable,
                  poll_now: Callable, event_log=None, alert_mgr=None, mqtt=None, audit_log=None,
+                 influx=None,
                  gates: Callable[[], bool] = lambda: True, clock: Callable[[], float] = time.time,
                  mono: Callable[[], float] = time.monotonic):
         self.store = RuleStore(Path(config_dir) / 'rules.yaml')
@@ -108,6 +109,7 @@ class RulesRuntime:
         self._run_command = run_command                # (cfg, client, name, params, who, ip, via) -> (code, res)
         self._poll_now = poll_now                      # (cfg, client, group) -> None
         self.event_log, self.alert_mgr, self.mqtt, self.audit_log = event_log, alert_mgr, mqtt, audit_log
+        self.influx = influx                           # the decisions' history: rule_event in the unit's bucket
         self._gates = gates                            # writes allowed at all?
         self._clock = clock
         self._mono = mono                              # ages come from the monotonic stamps in the store
@@ -341,6 +343,8 @@ class RulesRuntime:
                     pass
         if d.changed:
             self._event(rule, cfg, d)
+        if d.changed or d.action in ('run', 'reassert'):
+            self._influx_event(rule, cfg, d, rec)
         if notable:
             self.decisions.setdefault(rule.id, deque(maxlen=200)).appendleft(rec)
 
@@ -357,6 +361,34 @@ class RulesRuntime:
                        {'rule': rule.id, 'device': cfg.id, 'state': d.state, 'signal': d.signal,
                         'want': d.want, 'actual': d.actual, 'action': d.action, 'reason': d.reason,
                         'ts': round(d.ts, 3)}, retain=False)
+
+    def _influx_event(self, rule: RuleDef, cfg, d: Decision, rec: Dict) -> None:
+        """One ``rule_event`` point in the unit's bucket for every state/want
+        change and every command the rule sends — the history the UI's OV
+        panels and the alerts read (what Node-RED's ``ov_event`` used to be).
+        Tags: device, rule, state, action, result. Fields: signal, want_value,
+        actual, reason, result_reason."""
+        if self.influx is None or not getattr(cfg, 'influxdb_enabled', True):
+            return
+        try:
+            from influxdb_client import Point, WritePrecision
+            p = (Point('rule_event').tag('device', getattr(cfg, 'influxdb_device_tag', '') or cfg.id)
+                 .tag('rule', rule.id).tag('state', str(d.state)).tag('action', str(d.action))
+                 .tag('result', str(rec.get('result') or ''))
+                 .field('reason', str(d.reason or '')[:200]))
+            if isinstance(d.signal, (int, float)) and not isinstance(d.signal, bool):
+                p = p.field('signal', float(d.signal))
+            wv = (d.want or {}).get(rule.param) if isinstance(d.want, dict) else None
+            if isinstance(wv, (int, float)) and not isinstance(wv, bool):
+                p = p.field('want_value', float(wv))
+            if isinstance(d.actual, (int, float)) and not isinstance(d.actual, bool):
+                p = p.field('actual', float(d.actual))
+            if rec.get('result_reason'):
+                p = p.field('result_reason', str(rec['result_reason'])[:200])
+            p = p.time(int(d.ts * 1e9), WritePrecision.NS)
+            self.influx.write_point(p, ts=d.ts, bucket=getattr(cfg, 'influxdb_bucket', None) or None)
+        except Exception as e:  # noqa: BLE001 — history must never stall a decision
+            logger.debug("rule %s: influx event not written: %s", rule.id, e)
 
     def _alert(self, severity: str, key: str, message: str) -> None:
         if self.alert_mgr is not None:

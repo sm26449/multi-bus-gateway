@@ -210,3 +210,23 @@ def test_validation_speaks_in_words():
     assert any(e.startswith('kind:') for e in validate_rule_def(dict(OV, kind='magic')))
     assert validate_rule_def(OV) == []
     assert validate_rule_def(dict(OV, signal='pv-u1.voltage_l1_n +'), validate_expr=lambda e: 'syntax' if e.endswith('+') else None) == ['signal: syntax']
+
+
+def test_a_numeric_on_stale_asks_for_that_value_while_blind():
+    """Node-RED's OV fails closed to 80 % when its voltage feed goes stale;
+    the rule can do the same: a number instead of hold/safe."""
+    assert validate_rule_def({**_RAW, 'on_stale': 80}) == [] if '_RAW' in globals() else True
+    st = RuleState(_rule(mode='armed', on_stale=80))
+    _run(st, [231.0] * 3)                                   # normal, full power
+    d = st.evaluate(100.0, None, None)                       # the signal went away
+    assert d.action == 'run' and d.state == 'stale' and st.want['value'] == 80 and 'asking for value 80' in d.reason
+    d = _run(st, [231.0] * 3, t0=200.0)                      # back and low: normal again
+    assert st.state == 'normal' and d[2].want['value'] == 100
+    # the string form from YAML/UI and the validator agree
+    from multibus.rules import _on_stale
+    assert _on_stale('80') == 80.0 and _on_stale(75.5) == 75.5 and _on_stale('hold') == 'hold' and _on_stale(None) == 'hold'
+    raw = {'id': 'x', 'target': {'device': 'd', 'command': 'power_limit'}, 'kind': 'steps', 'signal': 'd.v',
+           'steps': [{'at': 250, 'value': 80}], 'on_stale': 'sometimes'}
+    assert any('on_stale' in e for e in validate_rule_def(raw))
+    assert not any('on_stale' in e for e in validate_rule_def({**raw, 'on_stale': 80}))
+    assert not any('on_stale' in e for e in validate_rule_def({**raw, 'on_stale': '80'}))

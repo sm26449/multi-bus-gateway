@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional
 
 MODES = ('shadow', 'armed')
 KINDS = ('steps', 'condition')
-ON_STALE = ('hold', 'safe')
+ON_STALE = ('hold', 'safe')      # or a number: the value to ask for while the signal is stale (fail closed)
 ON_DISABLE = ('safe', 'hold')
 _ID_RE = re.compile(r'^[a-z][a-z0-9_-]{0,47}$')
 NORMAL = 'normal'
@@ -67,7 +67,7 @@ class RuleDef:
     then: Optional[Dict[str, Any]] = None                     # {params: {...}} or None
     otherwise: Optional[Dict[str, Any]] = None                # `else` in YAML
     timing: Timing = field(default_factory=Timing)
-    on_stale: str = 'hold'
+    on_stale: Any = 'hold'                  # 'hold' | 'safe' | a number (param value while stale)
     on_disable: str = 'safe'
     # bound from the command the target offers (the runtime fills these in)
     param: str = 'value'
@@ -96,6 +96,18 @@ def _f(x, default=None):
         return default
 
 
+def _on_stale(v: Any) -> Any:
+    """'hold' | 'safe' | a float (the value to ask for while the signal is stale)."""
+    if isinstance(v, bool) or v is None:
+        return 'hold'
+    if isinstance(v, (int, float)):
+        return float(v)
+    t = str(v).strip()
+    if re.fullmatch(r'-?\d+(\.\d+)?', t):
+        return float(t)
+    return t or 'hold'
+
+
 def parse_rule_def(raw: Dict) -> RuleDef:
     """A definition from YAML/JSON. Lenient on types (validate_rule_def is the
     judge); missing fields take their defaults."""
@@ -121,7 +133,7 @@ def parse_rule_def(raw: Dict) -> RuleDef:
         release_below=_f(raw.get('release_below')), normal=dict(raw.get('normal') or {}),
         params=dict(raw.get('params') or {}), when=str(raw.get('when', '') or ''),
         then=raw.get('then'), otherwise=raw.get('else'), timing=timing,
-        on_stale=str(raw.get('on_stale', 'hold') or 'hold'),
+        on_stale=_on_stale(raw.get('on_stale', 'hold')),
         on_disable=str(raw.get('on_disable', 'safe') or 'safe'),
         param=str((raw.get('target') or {}).get('param', 'value') or 'value'),
     )
@@ -147,8 +159,10 @@ def validate_rule_def(raw: Dict, *, validate_expr=None) -> List[str]:
         errors.append("target.command: required")
     if isinstance(tgt, dict) and not (tgt.get('device') or (tgt.get('endpoint') and tgt.get('group'))):
         errors.append("target: a device, or an endpoint and a group")
-    if raw.get('on_stale', 'hold') not in ON_STALE:
-        errors.append(f"on_stale: one of {', '.join(ON_STALE)}")
+    _os = raw.get('on_stale', 'hold')
+    if not (_os in ON_STALE or (isinstance(_os, (int, float)) and not isinstance(_os, bool))
+            or (isinstance(_os, str) and re.fullmatch(r'-?\d+(\.\d+)?', _os.strip() or 'x'))):
+        errors.append(f"on_stale: one of {', '.join(ON_STALE)}, or a number (the value to ask for while stale)")
     if raw.get('on_disable', 'safe') not in ON_DISABLE:
         errors.append(f"on_disable: one of {', '.join(ON_DISABLE)}")
     t = raw.get('timing') or {}
@@ -348,10 +362,15 @@ class RuleState:
             if self.state != STALE:
                 self._pre_stale = (self.state, self.want)
                 self.stale_since = now
-                want = self.want if r.on_stale == 'hold' else self._want_for(dict(r.safe_params))
+                if r.on_stale == 'hold':
+                    want, why = self.want, 'holding the last want'
+                elif r.on_stale == 'safe':
+                    want, why = self._want_for(dict(r.safe_params)), 'asking for safe'
+                else:                                  # a fixed value: fail closed while blind
+                    want, why = self._want_for({r.param: float(r.on_stale)}), f'asking for {r.param} {r.on_stale:g}'
                 self._transition(STALE, want, now)
                 self._deb_target, self._deb_count = None, 0
-                return self._act(now, 'stale', 'signal stale — ' + ('holding the last want' if r.on_stale == 'hold' else 'asking for safe'),
+                return self._act(now, 'stale', 'signal stale — ' + why,
                                  signal, actual, changed=True, actual_age_s=actual_age_s, actual_stale_s=actual_stale_s)
             return self._act(now, 'stale', f'signal stale for {int(now - (self.stale_since or now))} s', signal, actual)
         if not valid:

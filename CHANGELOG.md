@@ -1,3 +1,17 @@
+## 3.76.0
+
+### 2026-09-14 — rules: a fail-closed stale policy and a history in InfluxDB
+
+- `on_stale` accepts a number: the value to ask for while the signal is
+  stale (Node-RED's OV failed closed to 80 % when blind; `hold` only keeps
+  a curtailment that is already on). The UI offers it as "ask for a fixed
+  value (fail closed)".
+- Every notable decision (a state or want change, every command sent) is
+  written to the unit's bucket as `rule_event` — tags device, rule, state,
+  action, result; fields signal, want_value, actual, reason. This is the OV
+  history pv-stack-ui's panels read once the rules own the limit (what
+  Node-RED's `ov_event` rows were).
+
 ## 3.75.2
 
 ### 2026-09-14 — the post-revert read-back is a short series
