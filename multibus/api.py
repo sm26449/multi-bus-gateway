@@ -1523,6 +1523,20 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             except Exception as e:  # noqa: BLE001
                 logger.warning("power-limit command topics: %s", e)
 
+    def _reread_after_revert(device_id: str, cmd_name: str, group: str) -> None:
+        """Timer callback: sweep the read-back group once the device-side
+        revert timer of ``cmd_name`` should have fired (device looked up
+        again — it may have been rebuilt or removed meanwhile)."""
+        try:
+            found = registry.find(device_id)
+            drv = _modbus_driver_of(found[2]) if found and found[2] is not None else None
+            if drv is not None and hasattr(drv, 'poll_now'):
+                drv.poll_now(group)
+                logger.info("command %s on %s: read-back after the revert timer (%s)",
+                            cmd_name, device_id, group)
+        except Exception:  # noqa: BLE001
+            pass
+
     def _push_readback_to_store(device_id, address, value):
         """Write-then-refresh: push a just-written register's read-back value into
         the live store so the vmeters / UI reflect the new value AT ONCE instead
@@ -1795,6 +1809,21 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             try:
                 if cmd.readback_group and hasattr(drv, 'poll_now'):
                     drv.poll_now(cmd.readback_group)
+            except Exception:  # noqa: BLE001
+                pass
+            # A command with a device-side revert timer (``revert_s``) changes
+            # the device again when that timer fires, with no write from here
+            # to trigger a read-back — the retained limit would say 95 for up
+            # to an hour (the controls group is hourly on purpose) while the
+            # inverter is back at 100. Sweep the group once more just after the
+            # timer, so MQTT/InfluxDB/HA and the rules see the revert.
+            try:
+                revert = float(norm.get('revert_s') or 0)
+                if revert > 0 and cmd.readback_group and hasattr(drv, 'poll_now'):
+                    t = threading.Timer(revert + 3.0, _reread_after_revert,
+                                        args=(dev_cfg.id, cmd.name, cmd.readback_group))
+                    t.daemon = True
+                    t.start()
             except Exception:  # noqa: BLE001
                 pass
         _publish_command_result(dev_cfg, cmd.name, res)

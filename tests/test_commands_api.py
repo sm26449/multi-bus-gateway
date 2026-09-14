@@ -53,6 +53,12 @@ class _Drv:
         self.connection = inv
         self.connected = True
 
+    swept: list = []            # every read-back sweep any fake driver ran
+
+    def poll_now(self, group=None):
+        _Drv.swept.append(group)
+        return 1
+
     def get_stats(self):
         return {'connected': True, 'successful_reads': 1, 'failed_reads': 0}
 
@@ -340,3 +346,37 @@ def test_the_ha_slider_and_the_mqtt_topic_go_through_the_same_command(tmp_path):
     cfg.mqtt.allow_write_entities = False
     mq.topics['pv/inverters/1/cmd/power_limit']('20')
     assert len(inv.writes) == n
+
+
+@needs_tc
+def test_a_revert_timer_arms_a_read_back_after_it_fires(tmp_path, monkeypatch):
+    """The inverter reverts on its own when revert_s elapses — no write from the
+    gateway, so nothing would re-read the hourly controls block; the retained
+    limit said 95 for up to an hour (seen live 2026-09-14). A timer sweeps the
+    read-back group just after the device-side timer, through the unit's
+    Modbus part."""
+    import multibus.api as apimod
+    armed = []
+
+    class _Timer:
+        def __init__(self, interval, fn, args=()):
+            armed.append((interval, fn, args))
+        def start(self): pass
+    monkeypatch.setattr(apimod.threading, 'Timer', _Timer)
+    _Drv.swept.clear()
+    inv = _Inverter(sf=-2)
+    cfg, app, client = _app(tmp_path, {'pv-u1': inv})
+    r = client.post("/api/devices/pv-u1/commands/power_limit", json={"value": 95, "revert_s": 120})
+    assert r.status_code == 200 and r.json()['status'] == 'success'
+    mine = [a for a in armed if getattr(a[1], '__name__', '') == '_reread_after_revert']
+    assert [a[0] for a in mine] == [123.0]                  # revert_s + 3
+    assert _Drv.swept == ['controls']                       # the write's own read-back
+    interval, fn, args = mine[0]
+    assert args == ('pv-u1', 'power_limit', 'controls')
+    fn(*args)
+    assert _Drv.swept == ['controls', 'controls']           # the sweep after the timer
+    # a command without a revert timer arms nothing
+    armed.clear()
+    r = client.post("/api/devices/pv-u1/commands/power_limit", json={"value": 100, "revert_s": 0})
+    assert r.status_code == 200
+    assert not [a for a in armed if getattr(a[1], '__name__', '') == '_reread_after_revert']

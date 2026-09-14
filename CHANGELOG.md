@@ -1,3 +1,16 @@
+## 3.75.1
+
+### 2026-09-14 — a command's revert timer is followed by a read-back
+
+- A power limit sent with `revert_s` reverts on the inverter when that timer
+  fires, with no write from the gateway — and the group that carries the
+  limit (`controls`) is swept once an hour on purpose. Seen live on the 95 %
+  test: the inverter was back at 100 % at 14:22:36, the gateway still
+  published 95 % / enabled at 14:23:54, and would have for up to an hour.
+  The command runner now arms a timer at `revert_s` + 3 s that sweeps the
+  read-back group through the unit's Modbus part, so MQTT, InfluxDB, HA and
+  the rules see the revert within seconds. Nothing is armed without a revert.
+
 ## 3.75.0
 
 ### 2026-09-14 — the per-phase AC block over the Solar API; SunSpec slows down
