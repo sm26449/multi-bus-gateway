@@ -263,9 +263,14 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         # Startup
         main_loop["loop"] = asyncio.get_running_loop()
         logger.info("API started, event loop captured")
+        rt = getattr(app.state, 'rules_runtime', None)
+        if rt is not None and not getattr(app.state, 'rules_runtime_manual', False):
+            rt.start()
         yield
         # Shutdown (cleanup if needed)
         logger.info("API shutting down")
+        if rt is not None:
+            rt.stop()
         hs = getattr(app.state, 'harvester_stop', None)
         if hs is not None:
             hs.set()                               # let the event harvester exit its loop
@@ -1511,8 +1516,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     logger.warning(f"device discovery publish failed: {e}")
         # the controller's command topics follow the same lifecycle (the
         # function is defined further down; at boot it runs itself once)
-        fn = _late_hooks.get('command_topics')
-        if fn is not None:
+        for _hook in ('command_topics', 'rules_reload'):
+            fn = _late_hooks.get(_hook)
+            if fn is None:
+                continue
             try:
                 fn()
             except Exception as e:  # noqa: BLE001
@@ -1731,6 +1738,15 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         face = via.split('-')[0]                   # api | mqtt | ha; the lease is the gateway's own
         if face in ('api', 'mqtt', 'ha') and not c['faces'].get(face, True):
             return 403, {'status': 'rejected', 'reason': f"command '{name}' does not accept the {face} face on '{dev_cfg.id}'"}
+        rt = getattr(app.state, 'rules_runtime', None)
+        if rt is not None and face in ('api', 'mqtt', 'ha') and not dry_run:
+            owner = rt.owner_of(dev_cfg.id, cmd.name)
+            if owner is not None:
+                secs = float((params or {}).get('override_s') or 0)
+                if secs <= 0:
+                    return 409, {'status': 'rejected', 'reason': f"owned by rule '{owner}' — pass override_s to pause it"}
+                rt.pause_owner(owner, secs, who=who, via=via)
+        params = {k: v for k, v in (params or {}).items() if k != 'override_s'}
         if not config.security.allow_writes and not dry_run:
             return 403, {'status': 'rejected', 'reason': 'Modbus writes are disabled — set security.allow_writes=true to enable'}
         if dev_cfg.write_locked and not dry_run:
@@ -1981,6 +1997,27 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         _sync_command_topics()                       # boot: the topics exist from the first second
     except Exception as e:  # noqa: BLE001
         logger.warning("command topics at boot: %s", e)
+
+    # ── rules: the declarative controller (docs/rules-design.md) ────────────
+    from .rules_runtime import RulesRuntime
+
+    def _rule_poll_now(dev_cfg, client, group):
+        drv = _modbus_driver_of(client)
+        if drv is not None and hasattr(drv, 'poll_now'):
+            drv.poll_now(group or None)
+
+    rules_runtime = RulesRuntime(
+        config_dir=config.config_path.parent, resolver_factory=calc_engine.resolver,
+        find_device=_find_device, endpoint_devices=config.endpoint_devices,
+        commands_for=_commands_for, run_command=_run_named_command, poll_now=_rule_poll_now,
+        event_log=event_log, alert_mgr=alert_mgr, mqtt=mqtt_publisher, audit_log=audit_log,
+        gates=lambda: bool(config.security.allow_writes))
+    try:
+        rules_runtime.load()
+    except Exception as e:  # noqa: BLE001
+        logger.error("rules.yaml: %s", e)
+    app.state.rules_runtime = rules_runtime
+    _late_hooks['rules_reload'] = rules_runtime.load   # devices changed: rebind targets
 
     def _apply_routing_defaults(raw: Dict) -> Dict:
         """Fill missing topic prefix / bucket from the configured {device}
@@ -4354,8 +4391,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     from .routes import (ApiCtx, auth_routes, builder_routes, calculated,
                          commissioning, config as config_routes, device_templates,
                          diagnostics, discovery_routes, energy, general_config,
-                         languages, metrics, pq, registers_routes, status_routes,
-                         system, values_routes, vmeters)
+                         languages, metrics, pq, registers_routes, rules as rules_routes,
+                         status_routes, system, values_routes, vmeters)
     ctx = ApiCtx(
         app=app, config=config, registry=registry, calc_engine=calc_engine,
         event_log=event_log, alert_mgr=alert_mgr,
@@ -4370,7 +4407,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     app.state.ctx = ctx
     for _mod in (builder_routes, calculated, commissioning, config_routes,
                  device_templates, diagnostics, discovery_routes, energy,
-                 general_config, languages, metrics, pq, registers_routes,
+                 general_config, languages, metrics, pq, registers_routes, rules_routes,
                  status_routes, system, auth_routes, values_routes, vmeters):
         app.include_router(_mod.build(ctx))
     app.include_router(auth_routes.build_passkeys(ctx))
