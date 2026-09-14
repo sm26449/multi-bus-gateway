@@ -15,6 +15,7 @@ Two invariants are pinned:
    that builds the mqtt.compat_aliases layer for the migration.
 """
 import json
+import os
 
 from multibus.canonical_fields import is_canonical, mqtt_topic_for
 from multibus.device_template import parse_template, validate_template
@@ -410,3 +411,20 @@ def test_every_curated_group_costs_exactly_one_transaction():
         p = RegisterPoller(g, t.poll_groups[g]["interval"], sel, conn,
                            RegisterParser("big"), lambda *a: None, "x")
         assert len(p._read_groups) == 1, (g, p._read_groups)
+
+
+def test_the_per_phase_solar_api_template_borrows_the_sunspec_addresses():
+    """The 3PInverterData source owns the six per-phase AC fields at 5 s; its
+    addresses are the SunSpec ones so the field identity (HA unique_id, the
+    Influx address tag) does not change with the owning source."""
+    from multibus.canonical_fields import CANONICAL_FIELDS
+    p3 = os.path.join(os.path.dirname(INV), "fronius_solar_api_inverter_3p.json")
+    assert validate_template(_load(p3)) == []
+    t3, r3 = _by_name(p3)
+    _t, inv = _by_name(INV)
+    assert set(r3) == {"voltage_l1_n", "voltage_l2_n", "voltage_l3_n", "current_l1", "current_l2", "current_l3"}
+    for name, r in r3.items():
+        assert r.address == inv[name].address, name
+        assert r.poll_group == "realtime" and r.json_path.startswith("Body.Data.")
+        assert name in CANONICAL_FIELDS
+    assert t3.poll_groups["realtime"]["interval"] == 5

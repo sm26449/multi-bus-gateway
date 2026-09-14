@@ -1,3 +1,24 @@
+## 3.75.0
+
+### 2026-09-14 — the per-phase AC block over the Solar API; SunSpec slows down
+
+- New template `fronius_solar_api_inverter_3p`: one HTTP request per inverter
+  (`DataCollection=3PInverterData`) for the three L–N voltages and phase
+  currents, poll group `realtime` at 5 s. Its registers carry the SunSpec
+  addresses of the same points, so the HA unique_ids and the Influx `address`
+  tag do not change with the source that owns the field.
+- Why: the over-voltage protection (Node-RED OV, the `ov-u*` rules, alertd's
+  ANRE rules) keys on max(L1, L2, L3). Four inverters on one datalogger could
+  not sweep the SunSpec `normal` block under ~25 s (21–33 s at a 20 s
+  interval; sources ok↔degraded ~50 times per unit per 3 h; read latency
+  alerts at 1.6–3.9 s). The Solar API answers from the web server's cache in
+  ~54 ms without touching the Modbus side.
+- Production: the `pv` endpoint's inverters declare `solar_api` (2 s),
+  `solar_api_3p` (5 s) and then `sunspec`, whose `normal` group moved from
+  20 s to 60 s (it still owns PF, VA/var, event flags, temperatures, the
+  operating state and the MPPT block). Modbus traffic on the datalogger drops
+  from ~12 to ~6 transactions a minute.
+
 # Changelog
 
 ## 3.74.2

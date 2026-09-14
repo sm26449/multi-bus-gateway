@@ -1,0 +1,130 @@
+{
+  "device_template": {
+    "id": "fronius_solar_api_inverter_3p",
+    "name": "Fronius inverter, per-phase AC (Solar API / HTTP-JSON)",
+    "manufacturer": "Fronius",
+    "description": "ONE HTTP request per inverter to the DataManager's Solar API (GetInverterRealtimeData.cgi?Scope=Device&DeviceId=${unit_id}&DataCollection=3PInverterData): the three line-to-neutral voltages and the three phase currents that CommonInverterData does not carry.\n\nWhy a second source (2026-09-14): the over-voltage protection (Node-RED OV, the gateway's ov-u* rules, alertd's ANRE rules) keys on max(L1, L2, L3). On SunSpec those live in the 'normal' block, and four inverters sharing one datalogger could not sweep that block under ~25 s (measured 21-33 s at a 20 s interval, sources flapping ok/degraded ~50 times per unit per 3 h). This call costs the web server ~54 ms and does not touch the Modbus side, so the phase voltages arrive every 5 s and the SunSpec block can slow to 60 s for the things only it carries (PF, VA/var, event flags, temperatures, MPPT).\n\nThe addresses are the SunSpec model-101/103 addresses of the same points on purpose: the field's identity (HA unique_id, InfluxDB address tag) does not change with the source that happens to own it. Declare this source BEFORE the SunSpec one so it owns the six fields; keep stale_after_s so SunSpec fills them when the DataManager's web server stalls or sleeps at night.\n\nNIGHT: like CommonInverterData, the DataManager omits UAC_*/IAC_* once the inverter stops producing (the call still succeeds); the fields then fall to the SunSpec source. Do not default them to zero.",
+    "protocol": {
+      "transports": [
+        "http"
+      ],
+      "byte_order": "big"
+    },
+    "poll_groups": {
+      "realtime": {
+        "interval": 5,
+        "description": "per-phase AC voltage and current (source cache refreshes ~2.6 s)"
+      }
+    },
+    "registers": [
+      {
+        "address": 40079,
+        "name": "voltage_l1_n",
+        "label": "L1-N voltage",
+        "unit": "V",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.UAC_L1.Value",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40080,
+        "name": "voltage_l2_n",
+        "label": "L2-N voltage",
+        "unit": "V",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.UAC_L2.Value",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40081,
+        "name": "voltage_l3_n",
+        "label": "L3-N voltage",
+        "unit": "V",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.UAC_L3.Value",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40072,
+        "name": "current_l1",
+        "label": "L1 current",
+        "unit": "A",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.IAC_L1.Value",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40073,
+        "name": "current_l2",
+        "label": "L2 current",
+        "unit": "A",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.IAC_L2.Value",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40074,
+        "name": "current_l3",
+        "label": "L3 current",
+        "unit": "A",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.IAC_L3.Value",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      }
+    ]
+  }
+}
