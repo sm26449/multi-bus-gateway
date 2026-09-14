@@ -1487,6 +1487,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
             def _hook(d=dev_cfg):
                 regs = config.unit_registers(d)     # all of the unit's sources, one entry per name
+                # derived measurements (status/text, status/alarm, …) are entities too
+                regs = regs + [e['_reg'] for e in calc_engine.store.get(d.id, []) if e.get('_reg') is not None]
                 # write-entities (number/select) only when FULLY enabled; the
                 # template is the write allowlist, so writability + bounds come
                 # from _write_rule, never from the saved register.
@@ -2750,7 +2752,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         # clear the device's retained HA discovery so HA drops its entities
         if mqtt_publisher and getattr(mqtt_publisher, "connected", False):
             try:
-                regs = config.unit_registers(dev_cfg)
+                regs = config.unit_registers(dev_cfg) + [e['_reg'] for e in calc_engine.store.get(device_id, []) if e.get('_reg') is not None]
                 pref = mqtt_publisher.config.ha_discovery_prefix
                 for r in regs:
                     if not r.mqtt_enabled:

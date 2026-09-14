@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.74.2
+
+### 2026-09-14 — derived measurements are HA entities
+
+- A device's calculated registers (the Fronius `status/text`, `status/alarm`,
+  `status/active`) are published in HA discovery like its read registers,
+  and cleared with them when the device is deleted.
+
 ## 3.74.1
 
 ### 2026-09-14 — HA discovery for units read through sources
