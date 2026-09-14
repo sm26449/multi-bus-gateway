@@ -1523,10 +1523,20 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             except Exception as e:  # noqa: BLE001
                 logger.warning("power-limit command topics: %s", e)
 
-    def _reread_after_revert(device_id: str, cmd_name: str, group: str) -> None:
+    # Seconds AFTER a command's revert_s at which the read-back group is swept
+    # again. Measured 2026-09-14 on a Fronius Symo: the inverter clears
+    # WMaxLim_Ena about 120-127 s after a write with revert_s = 120, but a
+    # single read 5 s past the mark still saw it enabled once — its own timer
+    # ticks coarsely. A short series catches it without polling the hourly
+    # controls block continuously.
+    REVERT_REREAD_AT_S = (5.0, 20.0, 60.0, 180.0)
+
+    def _reread_after_revert(device_id: str, cmd_name: str, group: str,
+                             remaining: tuple = ()) -> None:
         """Timer callback: sweep the read-back group once the device-side
         revert timer of ``cmd_name`` should have fired (device looked up
-        again — it may have been rebuilt or removed meanwhile)."""
+        again — it may have been rebuilt or removed meanwhile), then arm the
+        next sweep of the series."""
         try:
             found = registry.find(device_id)
             drv = _modbus_driver_of(found[2]) if found and found[2] is not None else None
@@ -1536,6 +1546,17 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                             cmd_name, device_id, group)
         except Exception:  # noqa: BLE001
             pass
+        if remaining:
+            _arm_revert_reread(device_id, cmd_name, group, remaining)
+
+    def _arm_revert_reread(device_id: str, cmd_name: str, group: str, delays: tuple) -> None:
+        """``delays`` are absolute offsets from the revert mark; arm the first,
+        pass the rest on as offsets from that one."""
+        first, rest = delays[0], tuple(d - delays[0] for d in delays[1:])
+        t = threading.Timer(first, _reread_after_revert, args=(device_id, cmd_name, group, rest))
+        t.daemon = True
+        t.start()
+
 
     def _push_readback_to_store(device_id, address, value):
         """Write-then-refresh: push a just-written register's read-back value into
@@ -1815,15 +1836,14 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             # the device again when that timer fires, with no write from here
             # to trigger a read-back — the retained limit would say 95 for up
             # to an hour (the controls group is hourly on purpose) while the
-            # inverter is back at 100. Sweep the group once more just after the
-            # timer, so MQTT/InfluxDB/HA and the rules see the revert.
+            # inverter is back at 100. Sweep the group a few times after the
+            # mark (REVERT_REREAD_AT_S), so MQTT/InfluxDB/HA and the rules see
+            # the revert within seconds of it.
             try:
                 revert = float(norm.get('revert_s') or 0)
                 if revert > 0 and cmd.readback_group and hasattr(drv, 'poll_now'):
-                    t = threading.Timer(revert + 3.0, _reread_after_revert,
-                                        args=(dev_cfg.id, cmd.name, cmd.readback_group))
-                    t.daemon = True
-                    t.start()
+                    _arm_revert_reread(dev_cfg.id, cmd.name, cmd.readback_group,
+                                       tuple(revert + d for d in REVERT_REREAD_AT_S))
             except Exception:  # noqa: BLE001
                 pass
         _publish_command_result(dev_cfg, cmd.name, res)

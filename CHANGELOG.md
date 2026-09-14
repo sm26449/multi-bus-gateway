@@ -1,3 +1,13 @@
+## 3.75.2
+
+### 2026-09-14 — the post-revert read-back is a short series
+
+- Measured with the controls block polled every 15 s: the Symo clears
+  `power_limit_enabled` 114–127 s after a write with `revert_s` = 120, and a
+  single read 5 s past the mark still saw it enabled once (its timer ticks
+  coarsely). The read-back after the revert is now a series at +5, +20, +60
+  and +180 s past the mark (`REVERT_REREAD_AT_S`), each sweep arming the next.
+
 ## 3.75.1
 
 ### 2026-09-14 — a command's revert timer is followed by a read-back

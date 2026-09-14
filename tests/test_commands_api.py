@@ -369,12 +369,20 @@ def test_a_revert_timer_arms_a_read_back_after_it_fires(tmp_path, monkeypatch):
     r = client.post("/api/devices/pv-u1/commands/power_limit", json={"value": 95, "revert_s": 120})
     assert r.status_code == 200 and r.json()['status'] == 'success'
     mine = [a for a in armed if getattr(a[1], '__name__', '') == '_reread_after_revert']
-    assert [a[0] for a in mine] == [123.0]                  # revert_s + 3
+    assert [a[0] for a in mine] == [125.0]                  # revert_s + the first offset
     assert _Drv.swept == ['controls']                       # the write's own read-back
     interval, fn, args = mine[0]
-    assert args == ('pv-u1', 'power_limit', 'controls')
-    fn(*args)
-    assert _Drv.swept == ['controls', 'controls']           # the sweep after the timer
+    assert args[:3] == ('pv-u1', 'power_limit', 'controls')
+    # the series chains: each sweep arms the next at the remaining offsets
+    seen = [interval]
+    while True:
+        fn(*args)
+        nxt = [a for a in armed if getattr(a[1], '__name__', '') == '_reread_after_revert'][len(seen):]
+        if not nxt:
+            break
+        interval, fn, args = nxt[0]; seen.append(interval)
+    assert seen == [125.0, 15.0, 40.0, 120.0]               # 5, 20, 60, 180 s past the mark
+    assert _Drv.swept == ['controls'] * 5                   # the write's, then four more
     # a command without a revert timer arms nothing
     armed.clear()
     r = client.post("/api/devices/pv-u1/commands/power_limit", json={"value": 100, "revert_s": 0})
