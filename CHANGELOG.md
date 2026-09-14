@@ -6,6 +6,9 @@
   stale (Node-RED's OV failed closed to 80 % when blind; `hold` only keeps
   a curtailment that is already on). The UI offers it as "ask for a fixed
   value (fail closed)".
+  Production keeps `hold`: on this plant the phase voltages read 0 V once
+  the inverters sleep, so a fixed value would be written to sleeping
+  inverters every evening.
 - Every notable decision (a state or want change, every command sent) is
   written to the unit's bucket as `rule_event` — tags device, rule, state,
   action, result; fields signal, want_value, actual, reason. This is the OV
