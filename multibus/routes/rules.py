@@ -23,10 +23,20 @@ def build(ctx) -> APIRouter:
     def _who(request: Request) -> str:
         return getattr(request.state, "user", None) or ("api-key" if ctx.api_key else "anon")
 
-    def _gate(request: Request) -> str:
+    def _arm_gate(request: Request) -> str:
+        """Arming is the act that lets a rule write: it needs the master switch
+        and an authenticated caller. Shadow rules are configuration."""
+        if not ctx.config.security.allow_writes:
+            raise HTTPException(status_code=403, detail={"errors": [
+                "Modbus writes are disabled — set security.allow_writes=true before arming a rule"]})
         if not (ctx.auth_state.enabled or ctx.api_key):
             raise HTTPException(status_code=403, detail={"errors": [
-                "rules require authentication — enable login (ui.auth) or set an API_KEY"]})
+                "arming requires authentication — enable login (ui.auth) or set an API_KEY"]})
+        return _who(request)
+
+    def _gate(request: Request, payload: Dict = None) -> str:
+        if payload is not None and payload.get('mode') == 'armed':
+            return _arm_gate(request)
         return _who(request)
 
     def _errs(errs):
@@ -48,7 +58,7 @@ def build(ctx) -> APIRouter:
 
     @r.post("/api/rules")
     def create_rule(request: Request, payload: Dict = Body(...)):
-        who = _gate(request)
+        who = _gate(request, payload)
         rt = _rt()
         if str(payload.get('id', '')) in rt.rules:
             raise HTTPException(status_code=409, detail={"errors": [f"rule '{payload.get('id')}' already exists"]})
@@ -58,7 +68,7 @@ def build(ctx) -> APIRouter:
 
     @r.put("/api/rules/{rule_id}")
     def update_rule(rule_id: str, request: Request, payload: Dict = Body(...)):
-        who = _gate(request)
+        who = _gate(request, payload)
         rt = _rt()
         if rule_id not in rt.rules:
             raise HTTPException(status_code=404, detail="rule not found")
@@ -83,14 +93,16 @@ def build(ctx) -> APIRouter:
     def set_mode(rule_id: str, request: Request, payload: Dict = Body(...)):
         """`{mode: shadow|armed}` — arming is an explicit, audited act; leaving
         armed releases the target to its safe values (on_disable)."""
-        who = _gate(request)
+        who = _gate(request, payload)
         _errs(_rt().set_mode(rule_id, str(payload.get('mode', '')), who=who, via='api'))
         return {"status": "ok", "rule": _rt().get(rule_id)}
 
     @r.post("/api/rules/{rule_id}/enable")
     def set_enabled(rule_id: str, request: Request, payload: Dict = Body(...)):
-        who = _gate(request)
-        _errs(_rt().set_enabled(rule_id, bool(payload.get('enabled', True)), who=who, via='api'))
+        rt = _rt()
+        cur = rt.rules.get(rule_id)
+        who = _gate(request, {'mode': 'armed'} if (cur is not None and cur.mode == 'armed' and payload.get('enabled', True)) else None)
+        _errs(rt.set_enabled(rule_id, bool(payload.get('enabled', True)), who=who, via='api'))
         return {"status": "ok", "rule": _rt().get(rule_id)}
 
     @r.post("/api/rules/{rule_id}/clamp")

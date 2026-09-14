@@ -860,3 +860,11 @@
 .ef-row .ef-btn:disabled { opacity: .35; cursor: default; }
 
 .disc-units { padding:2px 0 6px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+
+/* ── compact data tables (rules cards, command history) ───────────────────── */
+.table-wrap { overflow-x: auto; }
+.table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.table th, .table td { text-align: left; padding: 4px 12px 4px 0; vertical-align: top; border-bottom: 1px solid var(--border, #e5e7eb); }
+.table th { font-weight: 600; color: var(--text-secondary); font-size: 11.5px; text-transform: uppercase; letter-spacing: .02em; }
+.table tbody tr:last-child td { border-bottom: 0; }
+.table code { font-size: 12px; }

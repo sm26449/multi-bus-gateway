@@ -1,6 +1,7 @@
 # Rules — declarative control inside the gateway (design, 2026-09-14)
 
-**Status: sketch, to be agreed before code.** Builds on
+**Status: agreed 2026-09-14; phase 1 shipped in 3.74.0** (engine, runtime,
+API, MQTT, Rules page; `steps` + `condition`). Phases 2–3 (§9) open. Builds on
 [commands-design.md](commands-design.md) (3.73.0): a rule is *what decides
 when* a command runs. With rules, MBG is a gateway **and** a small,
 declarative controller — never a scripting host.

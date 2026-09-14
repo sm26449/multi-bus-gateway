@@ -1,5 +1,47 @@
 # Changelog
 
+## 3.74.0
+
+### 2026-09-14 — rules: the declarative controller
+
+The gateway can now decide *when* a command runs — narrowly, declaratively,
+never through scripts. Design in [docs/rules-design.md](docs/rules-design.md).
+
+- **Inputs are registers.** A rule reads `device.register` like a calculated
+  register does (same safe grammar, hyphenated device ids allowed); a remote
+  system enters through an `mqtt` device on its own broker. The oldest input's
+  age is the signal's age.
+- **Two kinds.** `steps` — ascending thresholds → a value, with a release
+  threshold under the first step (the dead band), an optional immediate step
+  (the emergency path), a valid signal range; `condition` — a boolean → run
+  A / run B.
+- **Time semantics, fixed fields.** Debounce, minimum interval between
+  commands, re-command only when the read-back drifts from the want for
+  `reassert_s` (closed loop, never a heartbeat), a missing or old read-back
+  asks for a sweep instead of a blind write.
+- **Fail closed.** A stale signal holds the last want (or asks for the
+  command's `safe`); disabling, un-arming or deleting an armed rule that moved
+  its target restores the safe values first. A want the device already holds
+  is not sent.
+- **Shadow and armed.** New rules are shadow: they decide, log and publish,
+  write nothing. Arming needs `security.allow_writes` and authentication and
+  is audited. An armed rule owns its target: other faces are refused with
+  `owned by rule` unless `override_s` pauses it. Two armed rules cannot share
+  a target.
+- **Clamp and override.** A ceiling on the want with an expiry that never
+  expires into a step; a pause for a stated time. Both over API and
+  `mbg/rules/<id>/set` (with `mqtt.allow_write_entities`).
+- **Faces.** `GET/POST/PUT/DELETE /api/rules`, `/validate` (what it would
+  decide now), `/mode`, `/enable`, `/clamp`, `/override`, `/decisions`;
+  retained `mbg/rules/<id>/state`, `…/event`. Every command a rule runs is
+  audited as `via: rule:<id>`; three failures in a row raise an alert.
+- **UI.** A *Rules* page: one card per rule with state in words, signal,
+  want → actual per unit, last decision and its reason, Arm / To shadow,
+  Clamp…, Pause…, Decisions, Edit, Delete; an editor built from the rule's
+  parts with *Preview now*. English and Romanian.
+- Storage: `rules.yaml` and `rules_state.json` next to `config.yaml`.
+
+
 ## 3.73.0
 
 ### 2026-09-13 — commands: the universal write path

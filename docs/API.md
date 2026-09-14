@@ -334,6 +334,34 @@ curl -s http://gateway:8080/metrics | grep gateway_device_up
 ```
 
 
+## Rules (the declarative controller)
+
+A rule decides *when* a command runs — see [rules-design.md](rules-design.md).
+New rules are **shadow** (they decide and say so, never write); arming needs
+`security.allow_writes` and an authenticated caller. Rules live in `rules.yaml`.
+
+| Method | Path | Description | Role |
+|---|---|---|---|
+| GET | `/api/rules` | Every rule with `live`: `state` in words (`normal`, a step label, `true`/`false`, `stale`), `signal`, per-unit `want` / `commanded` / `actual` (+ age) / `clamp` / `paused_until` / `failures`, `last` decision, `error` when it cannot run | viewer |
+| GET | `/api/rules/{id}` | One rule, same shape | viewer |
+| POST / PUT / DELETE | `/api/rules`, `/api/rules/{id}` | Create, edit, delete. Validated in words: target exists and offers the command (enabled, not an alias), signal parses and names its device (`device.register`, hyphenated ids allowed), steps ascending with a `release_below` under the first, `normal` present, timing bounds, one armed owner per target+command. Deleting or un-arming a rule that moved its target away from the command's `safe` values restores them first (`on_disable: safe`) | admin (armed: + writes on) |
+| POST | `/api/rules/validate` | The rule as a body → what it would see and want **now**: `signal`, `signal_age_s`, `stale`, `state`, `want`, per-unit `actual`. No state kept | viewer |
+| POST | `/api/rules/{id}/mode` | `{mode: shadow\|armed}` — arming is explicit and audited (`rule armed`); shadow releases the target | admin |
+| POST | `/api/rules/{id}/enable` | `{enabled: bool}` — disabling applies `on_disable` | admin |
+| POST / DELETE | `/api/rules/{id}/clamp` | `{max, expires_s}` — a ceiling on the numeric want; never expires *into* a step (holds until the signal is under `release_below`) | admin |
+| POST | `/api/rules/{id}/override` | `{seconds}` — pause the rule so another face may command its target; 0 lifts it | admin |
+| GET | `/api/rules/{id}/decisions?limit=` | The decision ring (200), newest first: `action` (run, reassert, shadow, hold, stale, idle, sweep, ignored), `reason`, `state`, `signal`, `want`, `actual`, `result` | viewer |
+
+While a rule is **armed**, `POST /api/devices/{id}/commands/{name}` (and the
+MQTT / HA faces) on its target answers `409 rejected: owned by rule <id>`
+unless the body carries `override_s` — which pauses the rule for that long.
+
+MQTT: retained `mbg/rules/<id>/state` `{mode, enabled, state, signal, units,
+decision, reason, ts}`; `mbg/rules/<id>/event` on transitions; `mbg/rules/<id>/set`
+accepts `{enabled}`, `{clamp: {max, expires_s}}` / `{clamp: null}`,
+`{override_s}` and `source` (gated by `mqtt.allow_write_entities`). Arming is
+not available over MQTT.
+
 ## MQTT commands (installations)
 
 With `security.allow_writes` and `mqtt.allow_write_entities` on, every unit

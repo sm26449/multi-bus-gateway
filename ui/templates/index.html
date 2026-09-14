@@ -46,6 +46,11 @@
                     <i class="bi bi-cpu" aria-hidden="true"></i>
                     <span data-i18n="nav.devices">Devices</span>
                 </button>
+                <button class="nav-tab" data-page="rules" role="tab"
+                        id="tab-rules" aria-controls="rulesPage" aria-selected="false">
+                    <i class="bi bi-sliders2" aria-hidden="true"></i>
+                    <span data-i18n="nav.rules">Rules</span>
+                </button>
                 <button class="nav-tab" data-page="templates" role="tab"
                         id="tab-templates" aria-controls="templatesPage" aria-selected="false">
                     <i class="bi bi-collection" aria-hidden="true"></i>
@@ -1085,6 +1090,22 @@
             </div>
 
             <!-- Virtual Meters page -->
+            <div class="page" id="rulesPage" role="tabpanel" aria-labelledby="tab-rules" tabindex="0">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:16px 20px;gap:16px;flex-wrap:wrap;">
+                    <div>
+                        <h2 style="margin:0;"><i aria-hidden="true" class="bi bi-sliders2"></i> <span data-i18n="nav.rules">Rules</span></h2>
+                        <p style="margin:6px 0 0;color:var(--text-secondary);font-size:13px;max-width:720px;" data-i18n="rules.intro">
+                            A rule decides when a command runs: it watches live values, waits for them to settle, and asks a
+                            device for what it wants. A new rule runs in shadow — it decides and says so, but writes nothing —
+                            until you arm it.</p>
+                    </div>
+                    <div style="display:flex;gap:8px;">
+                        <button class="btn btn-primary btn-sm" id="rulesAddBtn"><i aria-hidden="true" class="bi bi-plus-lg"></i> <span data-i18n="rules.add">Add rule</span></button>
+                        <button class="btn btn-sm" id="rulesRefreshBtn"><i aria-hidden="true" class="bi bi-arrow-clockwise"></i> <span data-i18n="common.refresh">Refresh</span></button>
+                    </div>
+                </div>
+                <div id="rulesContent" style="padding:0 20px 24px;"></div>
+            </div>
             <div class="page" id="vmetersPage" role="tabpanel" aria-labelledby="tab-vmeters" tabindex="0">
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:16px 20px;gap:16px;">
                     <div>
@@ -2157,6 +2178,23 @@
     </div>
 
     <!-- Add/Edit Endpoint -->
+    <div class="modal" id="ruleModal">
+        <div class="modal-content modal-lg">
+            <div class="modal-header">
+                <h3><i aria-hidden="true" class="bi bi-sliders2"></i> <span id="ruleModalTitle">Rule</span></h3>
+                <button class="modal-close" aria-label="Close" onclick="app.closeModal('ruleModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="ruleModalBody"></div>
+            </div>
+            <div class="modal-footer">
+                <span class="save-feedback" id="ruleFeedback" role="status" aria-live="polite"></span>
+                <button class="btn btn-secondary btn-sm" onclick="app.closeModal('ruleModal')"><span data-i18n="common.cancel">Cancel</span></button>
+                <button class="btn btn-primary btn-sm" data-rule-save onclick="app.saveRule()"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
+            </div>
+        </div>
+    </div>
+
     <div class="modal" id="endpointModal">
         <div class="modal-content modal-lg">
             <div class="modal-header">
@@ -2221,6 +2259,7 @@
     <script src="/static/js/app-registers.js?v=0"></script>
     <script src="/static/js/app-templates.js?v=0"></script>
     <script src="/static/js/app-vmeters.js?v=0"></script>
+    <script src="/static/js/app-rules.js?v=0"></script>
     <script src="/static/js/app-builder.js?v=0"></script>
     <script src="/static/js/app-history.js?v=0"></script>
     <script src="/static/js/app-powerquality.js?v=0"></script>

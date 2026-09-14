@@ -515,6 +515,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
         // stop any virtual-meter observability polling when leaving the page
         if (page !== 'vmeters' && this._stopVmPolls) this._stopVmPolls();
+        if (page !== 'rules' && this._stopRulesPolls) this._stopRulesPolls();
         // stop the Monitor's non-primary value poll when leaving Monitor
         if (page !== 'monitor' && this._stopMonitorPoll) this._stopMonitorPoll();
         // stop the Status page auto-refresh when leaving it
@@ -552,6 +553,8 @@ Object.assign(JanitzaMonitor.prototype, {
             this.initEnergyPage();
         } else if (page === 'vmeters') {
             this.renderVirtualMeters();
+        } else if (page === 'rules') {
+            this.renderRulesPage();
         } else if (page === 'templates') {
             this.renderTemplateManager();
         } else if (page === 'status') {
