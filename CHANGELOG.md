@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.74.1
+
+### 2026-09-14 — HA discovery for units read through sources
+
+- `Config.unit_registers(device)`: everything a unit reads across its
+  sources, one entry per register name (the first source that declares it
+  wins). HA discovery, the delete-time discovery clear and the device entry
+  use it — a unit read through Solar API + SunSpec published only its
+  connectivity sensor before, because the device-level file is empty.
+
+
 ## 3.74.0
 
 ### 2026-09-14 — rules: the declarative controller

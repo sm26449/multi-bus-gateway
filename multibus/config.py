@@ -1436,6 +1436,26 @@ class Config:
             os.replace(tmp, path)
         logger.info(f"device {device_id}: energy fields set ({len(fields)})")
 
+    def unit_registers(self, device: DeviceConfig) -> List[SelectedRegister]:
+        """Everything a unit reads, across its sources — the list a consumer of
+        the unit (HA discovery, the device entry) sees. Each source keeps its
+        own file; a name read by two sources (the arbiter picks the fresher
+        at runtime) appears once, from the first source that declares it, so
+        one MQTT topic never gets two discovery entries. A device without
+        sources is its own single list."""
+        if not (device.sources or []):
+            return self.load_device_registers(device)[0]
+        seen: set = set()
+        out: List[SelectedRegister] = []
+        for src in device.sources:
+            for r in self.load_device_registers(device, source=src)[0]:
+                key = r.name
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(r)
+        return out
+
     def load_device_registers(self, device: DeviceConfig, source=None):
         """Return (selected_registers, poll_groups) for a device, or for ONE of
         its sources.

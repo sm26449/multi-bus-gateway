@@ -1275,11 +1275,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     def _device_entry(dev_cfg, client, *, redact=False) -> Dict:
         entry = dev_cfg.summary()
-        regs, _groups = config.load_device_registers(dev_cfg)
-        if len(dev_cfg.sources or []) > 1:
-            # each source has its own selection; what the unit reads is all of them
-            regs = [r for src in dev_cfg.sources
-                    for r in config.load_device_registers(dev_cfg, source=src)[0]]
+        regs = config.unit_registers(dev_cfg)       # every source's selection, one entry per name
         entry['selected_registers'] = len(regs)
         entry['influxdb_device_tag'] = dev_cfg.influxdb_device_tag
         from .pq_recorder import template_supports_pq
@@ -1490,7 +1486,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 continue
 
             def _hook(d=dev_cfg):
-                regs, _g = config.load_device_registers(d)
+                regs = config.unit_registers(d)     # all of the unit's sources, one entry per name
                 # write-entities (number/select) only when FULLY enabled; the
                 # template is the write allowlist, so writability + bounds come
                 # from _write_rule, never from the saved register.
@@ -2754,7 +2750,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         # clear the device's retained HA discovery so HA drops its entities
         if mqtt_publisher and getattr(mqtt_publisher, "connected", False):
             try:
-                regs, _g = config.load_device_registers(dev_cfg)
+                regs = config.unit_registers(dev_cfg)
                 pref = mqtt_publisher.config.ha_discovery_prefix
                 for r in regs:
                     if not r.mqtt_enabled:
