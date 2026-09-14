@@ -13,8 +13,10 @@
   interval; sources ok↔degraded ~50 times per unit per 3 h; read latency
   alerts at 1.6–3.9 s). The Solar API answers from the web server's cache in
   ~54 ms without touching the Modbus side.
-- Production: the `pv` endpoint's inverters declare `solar_api` (2 s),
-  `solar_api_3p` (5 s) and then `sunspec`, whose `normal` group moved from
+- Production: the `pv` endpoint's inverters declare `solar_api` (5 s — it was
+  2 s; the web server's cache refreshes every ~2.6 s and at 2 s × 4 units
+  the HTTP side itself flapped ok↔degraded), `solar_api_3p` (5 s) and then
+  `sunspec`, whose `normal` group moved from
   20 s to 60 s (it still owns PF, VA/var, event flags, temperatures, the
   operating state and the MPPT block). Modbus traffic on the datalogger drops
   from ~12 to ~6 transactions a minute.
