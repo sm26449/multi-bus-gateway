@@ -1961,6 +1961,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 _publish_command_result(d, name, {'status': 'rejected', 'reason': str(e), 'device': d.id, 'via': 'mqtt'})
                 continue
             who = str(params.pop('source', '') or 'mqtt')[:64]
+            # a controller's envelope (the legacy collector's schema: command,
+            # device_id, ts) says who and what — the parameters are the rest
+            for k in ('command', 'device_id', 'ts'):
+                params.pop(k, None)
             _run_named_command(d, c, name, params, who=who, ip='mqtt', via='mqtt')
 
     def _sync_command_topics() -> None:

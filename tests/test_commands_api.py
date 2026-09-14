@@ -313,6 +313,11 @@ def test_the_ha_slider_and_the_mqtt_topic_go_through_the_same_command(tmp_path):
     topic, payload, retain = [x for x in mq.sent if x[0].endswith('/cmd/power_limit/state')][-1]
     assert topic == 'pv/inverters/1/cmd/power_limit/state' and retain is True
     assert json.loads(payload)['params']['value'] == 55.0
+    # the legacy collector's envelope (command, device_id) is tolerated: Node-RED's OV node speaks it
+    mq.topics['pv/inverters/1/cmd/power_limit']('{"command": "set_power_limit", "device_id": 1, "limit_pct": 65, "revert_timeout": 0, "ramp_time": 10, "source": "nodered-ov"}')
+    assert inv.writes[-1][1] == [6500, 0, 0, 10, 1]
+    mq.topics['pv/inverters/1/cmd/restore']('{"command": "restore_power_limit", "device_id": 1, "source": "nodered-ov"}')
+    assert inv.writes[-1][1] == [10000, 0, 0, 0, 0]
     # a bare number is the value
     mq.topics['pv/inverters/1/cmd/power_limit']('70')
     assert inv.writes[-1][1] == [7000, 0, 600, 0, 1]
@@ -329,7 +334,7 @@ def test_the_ha_slider_and_the_mqtt_topic_go_through_the_same_command(tmp_path):
     assert inv.writes[-1][1] == [8000, 0, 600, 0, 1]
     # audited with the face
     vias = [x['detail']['via'] for x in _audit(tmp_path) if x.get('action') == 'command']
-    assert vias[-5:] == ['mqtt', 'mqtt', 'mqtt', 'mqtt', 'ha']
+    assert vias[-7:] == ['mqtt'] * 6 + ['ha']
     # writes over MQTT off → the topic is ignored, nothing on the wire
     n = len(inv.writes)
     cfg.mqtt.allow_write_entities = False
