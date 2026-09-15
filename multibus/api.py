@@ -779,16 +779,36 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                               e.get('message') or e.get('kind') or 'event',
                               e.get('kind', ''), e.get('ts'))
 
+        # A device's "down" alert waits DOWN_GRACE_S: a datalogger that stalls
+        # for a few seconds (the Fronius Datamanager, also polled by the
+        # Cerbo, does so several times a day) flips a single-source unit
+        # down and back within one or two harvests, and an error alert for
+        # every such blink is noise. The transition is still logged at once;
+        # the alert fires only if the device is still down after the grace,
+        # and the recovery alert only if a down alert was sent.
+        DOWN_GRACE_S = 45.0
+        down_since: Dict[str, float] = {}
+        alerted_down: Set[str] = set()
+
         def transition(pk, src, connected, signal):
+            now = time.time()
             if prev.get(pk) is not None and connected != prev[pk]:
                 event_log.add('info' if connected else 'error', src,
                               'connected' if connected else 'disconnected', 'transition')
-                fire = (signal == 'device' and alert_mgr.sig_device) or \
-                       (signal == 'sink' and alert_mgr.sig_sink)
-                if fire:
-                    alert_mgr.fire('info' if connected else 'error',
-                                   f'{pk}:{"up" if connected else "down"}', src,
-                                   'recovered — connected' if connected else 'down — not responding')
+                if not connected:
+                    down_since[pk] = now
+                else:
+                    down_since.pop(pk, None)
+            fire = (signal == 'device' and alert_mgr.sig_device) or \
+                   (signal == 'sink' and alert_mgr.sig_sink)
+            if fire:
+                if (not connected and pk in down_since and pk not in alerted_down
+                        and now - down_since[pk] >= DOWN_GRACE_S):
+                    alerted_down.add(pk)
+                    alert_mgr.fire('error', f'{pk}:down', src, 'down — not responding')
+                elif connected and pk in alerted_down:
+                    alerted_down.discard(pk)
+                    alert_mgr.fire('info', f'{pk}:up', src, 'recovered — connected')
             prev[pk] = connected
 
         while not harvester_stop.is_set():

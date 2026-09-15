@@ -1,3 +1,15 @@
+## 3.77.1
+
+### 2026-09-15 — a device's "down" alert waits 45 s
+
+- The Fronius Datamanager stalls for a few seconds several times a day
+  (it also serves the Cerbo); the single-source site unit went down and
+  back within one harvest and fired an error alert each time (three
+  "PV installation: down — not responding" this morning, each recovered
+  5 s later). The transition is still logged at once; the alert fires
+  only if the device is still down after 45 s, and the recovery alert
+  only after a down alert was sent.
+
 ## 3.77.0
 
 ### 2026-09-15 — the morning audit: a day counter that holds, HA availability per device
