@@ -1550,13 +1550,25 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # ticks coarsely. A short series catches it without polling the hourly
     # controls block continuously.
     REVERT_REREAD_AT_S = (5.0, 20.0, 60.0, 180.0)
+    # One series per (device, command). A new command restarts the device-side
+    # revert timer, so the series armed for the previous command is cancelled
+    # and replaced — otherwise a controller that re-sends every minute stacks
+    # its series on the datalogger (1681 extra sweeps in 3.5 h on 2026-09-15,
+    # ~50 Solar API ok→degraded flaps an hour). Each series carries a
+    # generation; a callback from a superseded one sweeps nothing.
+    _revert_rereads: Dict[tuple, tuple] = {}        # (device, command) -> (generation, Timer)
+    _revert_rereads_lock = threading.Lock()
 
     def _reread_after_revert(device_id: str, cmd_name: str, group: str,
-                             remaining: tuple = ()) -> None:
+                             remaining: tuple = (), gen: Optional[int] = None) -> None:
         """Timer callback: sweep the read-back group once the device-side
         revert timer of ``cmd_name`` should have fired (device looked up
         again — it may have been rebuilt or removed meanwhile), then arm the
-        next sweep of the series."""
+        next sweep of the series — unless a newer command superseded it."""
+        with _revert_rereads_lock:
+            cur = _revert_rereads.get((device_id, cmd_name))
+        if gen is not None and cur is not None and cur[0] != gen:
+            return
         try:
             found = registry.find(device_id)
             drv = _modbus_driver_of(found[2]) if found and found[2] is not None else None
@@ -1567,15 +1579,29 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         except Exception:  # noqa: BLE001
             pass
         if remaining:
-            _arm_revert_reread(device_id, cmd_name, group, remaining)
+            _arm_revert_reread(device_id, cmd_name, group, remaining, gen=gen)
 
-    def _arm_revert_reread(device_id: str, cmd_name: str, group: str, delays: tuple) -> None:
+    def _arm_revert_reread(device_id: str, cmd_name: str, group: str, delays: tuple,
+                           gen: Optional[int] = None) -> None:
         """``delays`` are absolute offsets from the revert mark; arm the first,
-        pass the rest on as offsets from that one."""
+        pass the rest on as offsets from that one. Without ``gen`` this starts
+        a new series and cancels the one still pending for the same device
+        and command; with it, it continues that series if it is still the
+        current one."""
         first, rest = delays[0], tuple(d - delays[0] for d in delays[1:])
-        t = threading.Timer(first, _reread_after_revert, args=(device_id, cmd_name, group, rest))
-        t.daemon = True
-        t.start()
+        key = (device_id, cmd_name)
+        with _revert_rereads_lock:
+            cur = _revert_rereads.get(key)
+            if gen is None:
+                if cur is not None:
+                    cur[1].cancel()
+                gen = (cur[0] + 1) if cur is not None else 1
+            elif cur is not None and cur[0] != gen:
+                return
+            t = threading.Timer(first, _reread_after_revert, args=(device_id, cmd_name, group, rest, gen))
+            t.daemon = True
+            _revert_rereads[key] = (gen, t)
+            t.start()
 
 
     def _push_readback_to_store(device_id, address, value):

@@ -362,6 +362,7 @@ def test_a_revert_timer_arms_a_read_back_after_it_fires(tmp_path, monkeypatch):
         def __init__(self, interval, fn, args=()):
             armed.append((interval, fn, args))
         def start(self): pass
+        def cancel(self): pass
     monkeypatch.setattr(apimod.threading, 'Timer', _Timer)
     _Drv.swept.clear()
     inv = _Inverter(sf=-2)
@@ -388,3 +389,41 @@ def test_a_revert_timer_arms_a_read_back_after_it_fires(tmp_path, monkeypatch):
     r = client.post("/api/devices/pv-u1/commands/power_limit", json={"value": 100, "revert_s": 0})
     assert r.status_code == 200
     assert not [a for a in armed if getattr(a[1], '__name__', '') == '_reread_after_revert']
+
+
+def test_a_new_command_replaces_the_pending_read_back_series(tmp_path, monkeypatch):
+    """Node-RED's OV re-sends the limit every 30–60 s while a step holds; each
+    command used to arm its own four-sweep series on top of the previous ones
+    (1681 sweeps for 514 commands on 2026-09-15). A new command restarts the
+    inverter's revert timer, so only the latest series is worth running: the
+    pending one is cancelled and a callback of a superseded series is a no-op."""
+    import multibus.api as apimod
+    armed, cancelled = [], []
+
+    class _Timer:
+        def __init__(self, interval, fn, args=()):
+            self.fn, self.args = fn, args
+            armed.append(self)
+        def start(self): pass
+        def cancel(self): cancelled.append(self)
+    monkeypatch.setattr(apimod.threading, 'Timer', _Timer)
+    _Drv.swept.clear()
+    inv = _Inverter(sf=-2)
+    cfg, app, client = _app(tmp_path, {'pv-u1': inv})
+    for value in (80, 70, 80):
+        r = client.post("/api/devices/pv-u1/commands/power_limit", json={"value": value, "revert_s": 600})
+        assert r.status_code == 200 and r.json()['status'] == 'success'
+    def series_timers():          # the lease arms timers of its own; only the read-back series count
+        return [t for t in armed if getattr(t.fn, '__name__', '') == '_reread_after_revert']
+    series = series_timers()
+    # each command cancelled the previous series (the dead-man lease cancels its own timers too)
+    assert len(series) == 3 and [t for t in cancelled if t in series] == series[:2]
+    assert [t.args[4] for t in series] == [1, 2, 3]              # generations
+    assert _Drv.swept == ['controls'] * 3                        # only the writes' own read-backs so far
+    # a callback of the superseded series does nothing and arms nothing
+    series[0].fn(*series[0].args)
+    assert _Drv.swept == ['controls'] * 3 and len(series_timers()) == 3
+    # the current series runs and chains at the same generation
+    series[2].fn(*series[2].args)
+    assert _Drv.swept == ['controls'] * 4
+    assert series_timers()[-1].args[4] == 3 and len(series_timers()) == 4

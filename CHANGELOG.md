@@ -1,3 +1,17 @@
+## 3.77.2
+
+### 2026-09-15 — one read-back series per command, not one per send
+
+- The read-back series after a command's revert timer (3.75.2) was armed
+  for every command and never cancelled. Node-RED's OV re-sends the
+  limit every 30–60 s while a step holds, so on the first real
+  over-voltage day 514 commands stacked 1681 extra `controls` sweeps on
+  the Datamanager in 3.5 h — ~50 Solar API ok→degraded flaps an hour and
+  latency alerts even at 2500 ms. A new command restarts the inverter's
+  own revert timer, so only the latest series matters: it replaces the
+  pending one for the same device and command, and a callback of a
+  superseded series sweeps nothing.
+
 ## 3.77.1
 
 ### 2026-09-15 — a device's "down" alert waits 45 s
