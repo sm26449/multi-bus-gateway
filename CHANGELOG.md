@@ -1,3 +1,24 @@
+## 3.77.0
+
+### 2026-09-15 — the morning audit: a day counter that holds, HA availability per device
+
+- `daily: true` on a register: a day counter the source recomputes from
+  whatever is awake (Solar API `Site.E_Day` is the sum over the inverters
+  still answering — it fell 272.8 → 199 → 137 → 125 kWh at sunset on
+  2026-09-14, and Home Assistant's `total_increasing` statistics read every
+  drop as a meter reset). `DailyCounterFilter` serves the day's maximum
+  through such dips and adopts only the midnight reset (below 10 % of the
+  held maximum). Wired on both pollers behind `apply_corrections`; the
+  Solar API site template declares it on `energy_today`.
+- HA discovery: a device's value entities now carry the DEVICE's own
+  availability topic (`<prefix>/availability`, what
+  `publish_device_availability` writes), not the gateway's primary status
+  — every MBG entity used to follow the Janitza, so sleeping inverters
+  showed as available all night.
+- Production: `alerts.latency_ms` 1000 → 2500. The Datamanager is also
+  polled by the Cerbo (~1 request/s per inverter); 1–3 s answers are its
+  normal, and 75 latency alerts in two hours were noise.
+
 ## 3.76.0
 
 ### 2026-09-14 — rules: a fail-closed stale policy and a history in InfluxDB

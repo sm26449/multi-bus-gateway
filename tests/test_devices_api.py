@@ -311,7 +311,7 @@ def test_non_primary_ha_discovery_namespaced(tmp_path, monkeypatch):
     assert cfg["state_topic"] == "meters/em24/_v1"
     assert cfg["device"]["identifiers"] == ["mbg_dev_em24"]
     assert cfg["device"]["via_device"] == "janitza_umg512"
-    assert cfg["availability_topic"] == "janitza/umg512/status"
+    assert cfg["availability_topic"] == "meters/em24/availability"
     # and the per-device connectivity binary_sensor
     bs_topic = next(t for t in published if "/binary_sensor/" in t)
     assert _j.loads(published[bs_topic])["device_class"] == "connectivity"

@@ -141,3 +141,23 @@ def test_outage_drops_are_counted():
     p.publish_register_data("normal", {1: {"register": reg, "value": 5}})
     assert p.publish_drops == 1
     assert p.get_stats()["publish_drops"] == 1
+
+
+def test_a_devices_entities_follow_its_own_availability_topic():
+    """An inverter asleep at night must be unavailable in HA even while the
+    gateway and its primary meter are alive: value entities point at the
+    device's availability (publish_device_availability), the connectivity
+    binary_sensor at the gateway's status."""
+    import json
+    from multibus.config import SelectedRegister
+    p = _pub()
+    p.config.ha_discovery_enabled = True
+    reg = SelectedRegister(address=40083, name="power_active_total", label="Active power", unit="W",
+                           data_type="int16", poll_group="normal")
+    p.publish_device_discovery("pv-u1", "Inverter 1", "pv/inverters/1", [reg])
+    cfgs = {c.args[0]: json.loads(c.args[1]) for c in p.client.publish.call_args_list if c.args[0].startswith("homeassistant/")}
+    ent = cfgs["homeassistant/sensor/mbg_dev_pv-u1/40083_power_active_total/config"]
+    assert ent["availability_topic"] == "pv/inverters/1/availability" and ent["state_topic"].startswith("pv/inverters/1/")
+    conn = cfgs["homeassistant/binary_sensor/mbg_dev_pv-u1/connectivity/config"]
+    assert conn["state_topic"] == "pv/inverters/1/availability" and conn["availability_topic"] == "meters/umg512/status"
+

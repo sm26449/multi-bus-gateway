@@ -114,6 +114,9 @@ class TemplateRegister:
     # cumulative counter (energy Wh/kWh/varh): reject a downward glitch so it
     # never looks like a counter reset to HA/Victron/InfluxDB difference()
     monotonic: bool = False
+    # day counter recomputed by the source from whatever is awake (Solar API
+    # Site.E_Day): hold the day's maximum, adopt only the midnight reset
+    daily: bool = False
     # status-register decode (raw int → text): enum (one state) or bits (flags)
     enum: Optional[Dict[Any, str]] = None
     bits: Optional[Dict[Any, str]] = None
@@ -164,6 +167,8 @@ class TemplateRegister:
             d['nan'] = self.nan
         if self.monotonic:
             d['monotonic'] = True
+        if self.daily:
+            d['daily'] = True
         if self.enum:
             d['enum'] = self.enum
         if self.bits:
@@ -503,6 +508,7 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         write_safe=(float(r['write_safe']) if r.get('write_safe') is not None else None),
         nan=r.get('nan'),
         monotonic=bool(r.get('monotonic', False)),
+        daily=bool(r.get('daily', False)),
         enum=r.get('enum'),
         bits=r.get('bits'),
         mask=r.get('mask'),

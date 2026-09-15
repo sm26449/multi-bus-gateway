@@ -3,7 +3,7 @@
     "id": "fronius_solar_api_site",
     "name": "Fronius installation (Solar API site totals)",
     "manufacturer": "Fronius",
-    "description": "The whole INSTALLATION in one call \u2014 GetPowerFlowRealtimeData.fcgi \u2014 not a device on a bus.\n\nMeasured on a production DataManager 2026-09-13: 89 ms per call, and the values behind it refresh every 2.5-3.3 s. Polling faster than about 2 s returns the same number twice; the datalogger polls its own RS-485 side on its own rhythm and we cannot outrun it.\n\nWhat makes this worth a source of its own: house load, autonomy and self-consumption are NOT derivable from the inverters. Nothing in an inverter's register map knows what the house consumed. Sum the inverters and you get generation; you still cannot say how much of it stayed on site.\n\nGrid and battery power ship UNTICKED. A meter wired at the grid connection reports the same flow first-hand and faster (measured: 1.1 s against 2.5 s here), so taking it from the site view would be a slower second copy. Tick them only when there is no such meter.\n\nSign convention follows the source: grid negative while exporting, battery negative while charging. Flipping it would make our number disagree with the inverter's own display.\n\nThe URL carries no ${unit_id}: an installation is one thing, so this group holds exactly one unit.",
+    "description": "The whole INSTALLATION in one call — GetPowerFlowRealtimeData.fcgi — not a device on a bus.\n\nMeasured on a production DataManager 2026-09-13: 89 ms per call, and the values behind it refresh every 2.5-3.3 s. Polling faster than about 2 s returns the same number twice; the datalogger polls its own RS-485 side on its own rhythm and we cannot outrun it.\n\nWhat makes this worth a source of its own: house load, autonomy and self-consumption are NOT derivable from the inverters. Nothing in an inverter's register map knows what the house consumed. Sum the inverters and you get generation; you still cannot say how much of it stayed on site.\n\nGrid and battery power ship UNTICKED. A meter wired at the grid connection reports the same flow first-hand and faster (measured: 1.1 s against 2.5 s here), so taking it from the site view would be a slower second copy. Tick them only when there is no such meter.\n\nSign convention follows the source: grid negative while exporting, battery negative while charging. Flipping it would make our number disagree with the inverter's own display.\n\nThe URL carries no ${unit_id}: an installation is one thing, so this group holds exactly one unit.",
     "protocol": {
       "transports": [
         "http"
@@ -135,7 +135,9 @@
           "influxdb": {
             "enabled": true
           }
-        }
+        },
+        "daily": true,
+        "description": "Site.E_Day is the sum over the inverters still answering: it drops at sunset as they sleep, so the gateway holds the day\\u2019s maximum and adopts only the midnight reset (daily: true)."
       },
       {
         "address": 8,

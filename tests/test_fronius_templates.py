@@ -428,3 +428,11 @@ def test_the_per_phase_solar_api_template_borrows_the_sunspec_addresses():
         assert r.poll_group == "realtime" and r.json_path.startswith("Body.Data.")
         assert name in CANONICAL_FIELDS
     assert t3.poll_groups["realtime"]["interval"] == 5
+
+
+def test_the_site_day_counter_is_a_daily_register():
+    ps = os.path.join(os.path.dirname(INV), "fronius_solar_api_site.json")
+    t, regs = _by_name(ps)
+    assert regs["energy_today"].daily is True and regs["energy_lifetime"].daily is False
+    assert regs["energy_today"].to_dict().get("daily") is True
+

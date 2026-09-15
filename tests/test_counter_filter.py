@@ -140,3 +140,21 @@ def test_monotonic_absent_by_default_stays_lean():
                        "data_type": "uint16"}]}})
     assert t.registers[0].monotonic is False
     assert "monotonic" not in t.registers[0].to_dict()   # not serialized when off
+
+
+def test_the_daily_counter_holds_the_days_maximum_and_adopts_midnight():
+    """Solar API Site.E_Day sums the inverters still awake: it drops at
+    sunset. The filter serves the day's maximum through the evening and
+    adopts the reset at midnight."""
+    from multibus.counter_filter import DailyCounterFilter
+    f = DailyCounterFilter()
+    assert f.feed(1000) == 1000 and f.feed(272810) == 272810        # a growing day
+    assert f.feed(199020) is None and f.feed(137670) is None and f.feed(125150) is None   # sunset: held
+    assert not f.just_reset
+    assert f.feed(272900) == 272900                                # a late uptick is real
+    assert f.feed(0) == 0 and f.just_reset                          # midnight: adopt
+    assert f.feed(517) == 517 and f.feed(20000) == 20000            # the new day grows
+    assert f.feed(1999) is None and f.feed(4000) is None             # dips (10 %, 20 %) are sleeping units, not a reset
+    assert f.feed(300) == 300 and f.just_reset                      # below 2 % of the held 20000: a reset
+    assert f.feed('n/a') == 'n/a' and f.feed(True) is True          # non-numerics pass through
+

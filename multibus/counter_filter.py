@@ -118,3 +118,45 @@ class MonotonicFilter:
             self.just_reset = True
             return value
         return None                                # transient → drop, keep last-good
+
+
+class DailyCounterFilter:
+    """Hold-the-day's-maximum guard for a *day* counter that a source
+    recomputes from whatever is awake.
+
+    The Fronius Solar API's ``Site.E_Day`` is the SUM of the inverters' own
+    day counters, taken over the inverters that still answer: as they fall
+    asleep one by one at sunset the sum drops (272.8 → 199 → 137 → 125 kWh on
+    2026-09-14), and Home Assistant's ``total_increasing`` statistics read
+    every drop as a meter reset. Within a day the true value never decreases,
+    so a lower read is HELD (the last maximum keeps being served) unless it is
+    a real reset — the counter fell to (near) zero at midnight, below
+    ``reset_below`` (2 %) of the held maximum — which is adopted at once. A
+    plant with one of four inverters still awake reads ~25 % of the day's sum
+    at dusk, never 2 %; the midnight value is 0 exactly.
+
+    Non-numeric values pass through untouched. Per register, on the poller,
+    like MonotonicFilter (no persistence: the first read re-seeds).
+    """
+
+    __slots__ = ("reset_below", "_max", "just_reset")
+
+    def __init__(self, reset_below: float = 0.02):
+        self.reset_below = min(max(float(reset_below), 0.0), 1.0)
+        self._max: Optional[float] = None
+        self.just_reset = False
+
+    def feed(self, value):
+        """Return the value to publish, or ``None`` to hold the day's maximum."""
+        self.just_reset = False
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return value
+        if self._max is None or value >= self._max:
+            self._max = value
+            return value
+        if value <= self._max * self.reset_below:        # a new day: adopt the reset
+            self._max = value
+            self.just_reset = True
+            return value
+        return None                                       # sunset: hold the maximum
+

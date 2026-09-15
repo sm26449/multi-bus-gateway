@@ -545,6 +545,7 @@ class SelectedRegister:
                           # (unit conversion, e.g. SunSpec PF percent → fraction)
     nan: Any = None       # not-available sentinel (True=std for type / value / list) → missing
     monotonic: bool = False   # cumulative counter (energy): reject downward glitches → HA/Victron safe
+    daily: bool = False       # day counter recomputed from whatever is awake: hold the day's max, adopt the midnight reset
     # status-register decode (mutually exclusive): raw int → text
     enum: Optional[Dict[Any, str]] = None   # {code: label}; unmapped → "unknown (n)"
     bits: Optional[Dict[Any, str]] = None   # {bit: name}; joined names of set bits
@@ -1863,6 +1864,7 @@ class Config:
                 scale_from=str(reg.get('scale_from', '') or ''),
                 nan=reg.get('nan'),
                 monotonic=bool(reg.get('monotonic', False)),
+                daily=bool(reg.get('daily', False)),
                 enum=reg.get('enum'),
                 bits=reg.get('bits'),
                 mask=reg.get('mask'),

@@ -129,3 +129,16 @@ def test_enum_survives_save_user_and_reload(tmp_path):
     reloaded = TemplateRegistry(builtin_dir=tmp_path / "builtin", user_dir=tmp_path / "user")
     r0 = reloaded.get("inv1").registers[0]
     assert r0.enum == STATE and r0.mask == 0x0F00 and r0.shift == 8
+
+
+def test_the_daily_stage_engages_only_for_a_daily_register_with_a_filter():
+    from multibus.counter_filter import DailyCounterFilter
+    from multibus.value_decode import apply_corrections
+    reg = {'name': 'energy_today', 'data_type': 'float', 'daily': True}
+    f = DailyCounterFilter()
+    assert apply_corrections(272810.0, reg, daily_filter=f) == 272810.0
+    info = {}
+    assert apply_corrections(199020.0, reg, daily_filter=f, info=info) is None and info['stage'] == 'filter_hold'
+    assert apply_corrections(199020.0, reg) == 199020.0              # a diagnostic read passes no filter
+    assert apply_corrections(199020.0, {'name': 'x', 'data_type': 'float'}, daily_filter=f) == 199020.0   # not declared
+

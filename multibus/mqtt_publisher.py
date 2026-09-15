@@ -697,7 +697,10 @@ class MQTTPublisher:
             config = {
                 "name": register.label or register.name,
                 "state_topic": topic,
-                "availability_topic": f"{self.config.topic_prefix}/status",
+                # the DEVICE's own availability (publish_device_availability),
+                # not the gateway's: an inverter asleep at night must show as
+                # unavailable even while the gateway and its primary meter live
+                "availability_topic": f"{topic_prefix}/availability",
                 "unique_id": f"mbg_dev_{device_id}_{register.address}_{safe_name}",
                 "device": device_info,
             }

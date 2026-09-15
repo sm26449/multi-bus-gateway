@@ -29,7 +29,7 @@ from pymodbus.client import ModbusTcpClient, ModbusSerialClient
 
 from . import bus_trace
 from .config import ModbusConfig, SelectedRegister, PollGroup
-from .counter_filter import MonotonicFilter
+from .counter_filter import DailyCounterFilter, MonotonicFilter
 from .register_parser import RegisterParser
 from .value_decode import apply_corrections
 
@@ -909,6 +909,7 @@ class RegisterPoller(threading.Thread):
         # reload since a fresh poller is built each time. Empty unless a register
         # opts in, so the default poll path is untouched.
         self._counter_filters: Dict[int, MonotonicFilter] = {}
+        self._daily_filters: Dict[int, DailyCounterFilter] = {}
         # enum/bits registers whose decode failed — edge-triggered warn (DP-6)
         self._decode_failed: set = set()
 
@@ -1099,10 +1100,16 @@ class RegisterPoller(threading.Thread):
                             f = self._counter_filters.get(reg.address)
                             if f is None:
                                 f = self._counter_filters[reg.address] = MonotonicFilter()
+                        df = None
+                        if getattr(reg, 'daily', False):
+                            df = self._daily_filters.get(reg.address)
+                            if df is None:
+                                df = self._daily_filters[reg.address] = DailyCounterFilter()
                         _info: Dict[str, str] = {}
                         value = apply_corrections(value, reg, counter_filter=f,
                                                   info=_info,
-                                                  siblings=self._sf_last_good)
+                                                  siblings=self._sf_last_good,
+                                                  daily_filter=df)
                         if value is None:
                             _stage = _info.get('stage')
                             if _stage == 'decode_failed':

@@ -117,7 +117,7 @@ def is_sentinel_value(value, data_type: str, nan) -> bool:
 
 
 def apply_corrections(value, reg, *, counter_filter=None, info=None,
-                      siblings=None):
+                      siblings=None, daily_filter=None):
     """The wire→value correction pipeline, shared by every transport.
 
     This logic used to exist in six drifted copies (external audit's
@@ -220,4 +220,12 @@ def apply_corrections(value, reg, *, counter_filter=None, info=None,
         value = counter_filter.feed(value)
         if value is None and info is not None:
             info["stage"] = "filter_drop"
+    # 5. day counter (``daily: true``): hold the day's maximum through a
+    #    source that recomputes the total from whatever is awake; adopt the
+    #    midnight reset. STATEFUL like the monotonic filter — polling callers
+    #    own one per register, diagnostic reads pass none.
+    if value is not None and daily_filter is not None and _f("daily"):
+        value = daily_filter.feed(value)
+        if value is None and info is not None:
+            info["stage"] = "filter_hold"
     return value
