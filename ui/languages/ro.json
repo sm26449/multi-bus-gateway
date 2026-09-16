@@ -238,6 +238,7 @@
   "login.invalid": "Utilizator sau parolă greșite.",
   "login.lockedOut": "Prea multe încercări. Reîncearcă în",
   "login.logout": "Deconectare",
+  "auth.sessionExpired": "Sesiunea a expirat — autentifică-te din nou",
   "security.title": "Securitate",
   "security.intro": "Opțional, dezactivat implicit (aparatul e gândit pentru o rețea de încredere). Activează-le când trebuie să fie accesibil dintr-o rețea mai largă.",
   "security.allowlist.title": "Listă IP permise",

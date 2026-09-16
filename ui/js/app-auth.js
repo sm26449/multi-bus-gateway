@@ -12,7 +12,14 @@ Object.assign(JanitzaMonitor.prototype, {
             const method = ((opts && opts.method) || (input && input.method) || 'GET').toUpperCase();
             const writing = method !== 'GET' && method !== 'HEAD';
             if (!writing || (typeof Request !== 'undefined' && input instanceof Request)) {
-                return orig(input, opts);
+                // Reads too: a 401 on any API read with login enabled means
+                // the session died (expired, revoked, or the server forgot
+                // it) — go to the login screen at once instead of polling
+                // into a wall until the operator happens to click.
+                return orig(input, opts).then((res) => {
+                    if (res.status === 401) this._verifySession();
+                    return res;
+                });
             }
             const send = (key) => {
                 const h = new Headers((opts && opts.headers) || {});
@@ -25,15 +32,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 // SESSION (a security save revokes all sessions), not a
                 // missing API key — the old prompt sent the operator hunting
                 // for a key that usually does not exist. Re-login instead.
-                try {
-                    const st = await (await orig('/api/auth/status')).json();
-                    if (st.enabled && !st.role) {
-                        this._showLogin && this._showLogin(
-                            this.t ? this.t('auth.sessionExpired', 'Session expired — sign in again')
-                                   : 'Session expired — sign in again');
-                        return res;
-                    }
-                } catch (e) { /* status unreachable → fall through */ }
+                if (!(await this._verifySession())) return res;
                 const k = window.prompt('This action needs the API key:');
                 if (!k) return res;
                 localStorage.setItem(KEY, k);
@@ -43,6 +42,37 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     // ── login / auth ────────────────────────────────────────────────────────
+    // ── dead session ────────────────────────────────────────
+    // A session ends without any request from this page: it expires, a
+    // security save revokes it, the server restarts without it. Until the
+    // operator clicked, the page just kept polling /api/status into 401s and
+    // re-dialling the WebSocket every 3 s into 403s (281 rejects in 10 min on
+    // 2026-09-15). Every 401 and every rejected WebSocket handshake now asks
+    // the always-open /api/auth/status; a dead session stops the page and
+    // shows the login screen — the same as an explicit logout.
+    async _verifySession() {
+        // true = the session is alive (or login is off); false = dead, page stopped
+        if (this._sessionDead) return false;
+        try {
+            const s = await (await fetch('/api/auth/status')).json();
+            if (s.enabled && !s.role) { this._sessionLost(); return false; }
+        } catch (e) { /* status unreachable: a network problem, not a dead session */ }
+        return true;
+    },
+
+    _sessionLost() {
+        if (this._sessionDead) return;
+        this._sessionDead = true;
+        if (this._statusTimer) { clearInterval(this._statusTimer); this._statusTimer = null; }
+        if (this.ws) {
+            this.ws.onclose = null;          // no reconnect loop on a dead session
+            try { this.ws.close(); } catch (e) {}
+            this.ws = null;
+        }
+        this.updateConnectionStatus && this.updateConnectionStatus(false);
+        this._showLogin(this.t('auth.sessionExpired', 'Session expired — sign in again'));
+    },
+
     async _checkAuth() {
         // returns true if we may proceed (auth off, or authenticated)
         try {

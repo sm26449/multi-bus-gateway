@@ -471,8 +471,8 @@ Object.assign(JanitzaMonitor.prototype, {
         this.updateDashboard();
         this.renderDashDeviceChips();
 
-        // Start status polling
-        setInterval(() => this.loadStatus(), 5000);
+        // Start status polling (stopped by _sessionLost)
+        this._statusTimer = setInterval(() => this.loadStatus(), 5000);
     },
 
     async loadConfig() {
@@ -823,12 +823,15 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     connectWebSocket() {
+        if (this._sessionDead) return;       // the login screen owns the page now
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}/ws`;
 
         this.ws = new WebSocket(wsUrl);
+        let opened = false;                  // a handshake the server refused never opens
 
         this.ws.onopen = () => {
+            opened = true;
             this.updateConnectionStatus(true);
 
             // Show reconnected banner if was disconnected
@@ -852,8 +855,13 @@ Object.assign(JanitzaMonitor.prototype, {
                     this.t('conn.lost', '⚠ Connection lost. Reconnecting…'));
             }
 
-            // Reconnect after 3 seconds
-            setTimeout(() => this.connectWebSocket(), 3000);
+            // Reconnect after 3 seconds — unless the handshake was refused
+            // because the session is dead (the server answers 403 before
+            // accepting; the browser only sees "closed"), in which case
+            // _verifySession stops the page and shows the login screen.
+            const retry = () => setTimeout(() => this.connectWebSocket(), 3000);
+            if (opened) retry();
+            else this._verifySession().then((alive) => { if (alive) retry(); });
         };
 
         this.ws.onerror = (error) => {

@@ -238,6 +238,7 @@
   "login.invalid": "Invalid username or password.",
   "login.lockedOut": "Too many attempts. Try again in",
   "login.logout": "Log out",
+  "auth.sessionExpired": "Session expired — sign in again",
   "security.title": "Security",
   "security.intro": "Optional, off by default (this appliance is meant for a trusted LAN). Turn these on when it must be reachable from a wider network.",
   "security.allowlist.title": "IP allowlist",

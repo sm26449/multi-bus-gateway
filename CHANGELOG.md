@@ -1,3 +1,17 @@
+## 3.77.3
+
+### 2026-09-16 — a dead session logs the page out
+
+- When the session ended behind an open page (expired, revoked by a
+  security save, or gone after a restart), the UI kept polling
+  `/api/status` into 401s and re-dialling the WebSocket every 3 s into
+  403s until the operator happened to click (281 rejects in 10 minutes
+  from one idle tab on 2026-09-15). Every 401 on an API call and every
+  refused WebSocket handshake now checks `/api/auth/status`; with login
+  enabled and no role, the page stops its status poll and its WebSocket
+  and shows the login screen with "Session expired" — the same end state
+  as an explicit logout. A network outage still reconnects as before.
+
 ## 3.77.2
 
 ### 2026-09-15 — one read-back series per command, not one per send
