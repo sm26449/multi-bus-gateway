@@ -1,3 +1,18 @@
+## 3.77.4
+
+### 2026-09-19 — counter hygiene comes from the template
+
+- `monotonic` and `daily` were added to the bundled templates after most
+  device register sets had been written to disk, and a selection made
+  before a flag existed kept it off forever: the 3.77.0 hold of
+  `Site.E_Day` never ran in production (the site's `selected_registers.json`
+  predates it), so the day counter still fell at sunset after the
+  Datamanager's first evening outage (2026-09-18: 432.96 → 201.18 kWh at
+  22:00) and Home Assistant read every drop as a meter reset. At load a flag
+  the template sets is applied to the matching selected register (same
+  name, else same address); a flag the selection sets itself is kept; the
+  log says which registers it touched.
+
 ## 3.77.3
 
 ### 2026-09-16 — a dead session logs the page out

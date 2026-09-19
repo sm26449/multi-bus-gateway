@@ -52,6 +52,35 @@ def driver_for(config, template_registry, dev_cfg, src, regs, groups, allow_nonl
                         device_id=f'{dev_cfg.id}:{src.id}' if multi else dev_cfg.id)
 
 
+def apply_template_hygiene(regs, template):
+    """Counter hygiene comes from the template, not from the day the device was
+    created.
+
+    ``monotonic`` and ``daily`` were added to the bundled templates after many
+    device register sets had already been written to disk; a selection made
+    before the flag existed keeps ``False`` forever, so the filter the
+    template promises never runs (Site.E_Day kept falling at sunset in
+    production for four days after 3.77.0 shipped it). A flag the template
+    sets is applied to the matching selected register (same name, or same
+    address when the names differ); a flag the selection already sets is
+    kept. Returns the list it was given, mutated, plus the names it changed."""
+    tregs = list(getattr(template, 'registers', None) or []) if template else []
+    if not tregs:
+        return regs, []
+    by_name = {t.name: t for t in tregs if getattr(t, 'name', None)}
+    by_addr = {t.address: t for t in tregs if getattr(t, 'address', None) is not None}
+    changed = []
+    for reg in regs:
+        t = by_name.get(reg.name) or by_addr.get(reg.address)
+        if t is None:
+            continue
+        for flag in ('monotonic', 'daily'):
+            if getattr(t, flag, False) and not getattr(reg, flag, False):
+                setattr(reg, flag, True)
+                changed.append(f"{reg.name}:{flag}")
+    return regs, changed
+
+
 def build_device_client(config, template_registry, dev_cfg, allow_nonlan=False):
     """The client for one device, or None when it has nothing to run.
 
@@ -80,6 +109,12 @@ def build_device_client(config, template_registry, dev_cfg, allow_nonlan=False):
                 regs, groups = config.selected_registers, config.poll_groups
             else:
                 regs, groups = config.load_device_registers(dev_cfg, source=src)
+            tpl = template_registry.get(src.template or dev_cfg.template) \
+                if (src.template or dev_cfg.template) else None
+            regs, hygiene = apply_template_hygiene(regs, tpl)
+            if hygiene:
+                logger.info("Device '%s' source '%s': counter hygiene from the template — %s",
+                            dev_cfg.id, src.id, ', '.join(hygiene))
             parts.append((src, driver_for(config, template_registry, dev_cfg,
                                           src, regs, groups, allow_nonlan)))
             where = ((src.http or {}).get('url')
