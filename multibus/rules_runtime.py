@@ -432,7 +432,8 @@ class RulesRuntime:
             units[dev] = {'state': st.state, 'want': st.want, 'commanded': st.commanded, 'since': st.since,
                           'actual': actual, 'actual_age_s': None if a_age is None else round(a_age, 1),
                           'clamp': snap['clamp'], 'paused_until': st.paused_until, 'failures': st.failures,
-                          'pending': st.pending, 'last_action': self._last_action.get(key)}
+                          'pending': st.pending, 'last_action': self._last_action.get(key),
+                          'ignored': st.ignored, 'guarded': st.guarded}
             sev = self._severity(rule, st.state)
             if sev > worst_sev:
                 worst, worst_sev = st.state, sev

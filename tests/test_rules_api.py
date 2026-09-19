@@ -234,3 +234,12 @@ def test_every_notable_decision_is_a_rule_event_point_in_the_units_bucket():
     assert len(rt.influx.points) == 1
     rt.influx = None
     rt._influx_event(rule, cfg, d, {})
+
+
+def test_the_published_unit_state_counts_ignored_and_guarded_samples(tmp_path):
+    inv = _Inverter(sf=-2)
+    cfg, app, client, clock, rt = _rule_app(tmp_path, {'pv-u1': inv})
+    _feed(app, clock, 'pv-u1', {'voltage_l1_n': 231, 'voltage_l2_n': 230, 'voltage_l3_n': 231, 'power_limit_pct': 100})
+    rt.tick(clock())
+    unit = rt.live('ov-u1')['units']['pv-u1']
+    assert unit['ignored'] == 0 and unit['guarded'] == 0

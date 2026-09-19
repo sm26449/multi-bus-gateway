@@ -1,3 +1,11 @@
+## 3.78.1
+
+### 2026-09-19 — the rule state says how many samples were ignored or guarded
+
+- `mbg/rules/<id>/state` carries `ignored` (outside the valid range) and
+  `guarded` (held by the plausibility guard) per unit, so a real OV day
+  shows at a glance whether the guard held anything.
+
 ## 3.78.0
 
 ### 2026-09-19 — rules: a plausibility guard on the signal, debounce by sample
