@@ -1,6 +1,6 @@
-## 3.78.1
+## 3.78.2
 
-### 2026-09-19 — the rule state says how many samples were ignored or guarded
+### 2026-09-19 — the rule state says how many samples were ignored or guarded (3.78.1 only had them in the API's live view)
 
 - `mbg/rules/<id>/state` carries `ignored` (outside the valid range) and
   `guarded` (held by the plausibility guard) per unit, so a real OV day

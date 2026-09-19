@@ -445,7 +445,7 @@ class RulesRuntime:
         lv = self.live(rule.id)
         body = {'id': rule.id, 'label': rule.label or rule.id, 'mode': rule.mode, 'enabled': rule.enabled,
                 'state': lv['state'], 'signal': lv['signal'],
-                'units': {d: {k: u.get(k) for k in ('state', 'want', 'clamp', 'paused_until', 'last_action')}
+                'units': {d: {k: u.get(k) for k in ('state', 'want', 'clamp', 'paused_until', 'last_action', 'ignored', 'guarded')}
                           for d, u in lv['units'].items()},
                 'decision': (lv['last'] or {}).get('action'), 'reason': (lv['last'] or {}).get('reason'),
                 'ts': round(self._clock(), 3)}

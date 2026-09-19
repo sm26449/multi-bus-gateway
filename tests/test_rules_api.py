@@ -243,3 +243,7 @@ def test_the_published_unit_state_counts_ignored_and_guarded_samples(tmp_path):
     rt.tick(clock())
     unit = rt.live('ov-u1')['units']['pv-u1']
     assert unit['ignored'] == 0 and unit['guarded'] == 0
+    rt._publish_state(rt.rules['ov-u1'])
+    published = json.loads(app.state.mqtt_publisher.published[-1][1]) if hasattr(app.state, 'mqtt_publisher') and hasattr(app.state.mqtt_publisher, 'published') else None
+    if published is not None:
+        assert published['units']['pv-u1']['guarded'] == 0 and published['units']['pv-u1']['ignored'] == 0
