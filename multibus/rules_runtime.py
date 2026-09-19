@@ -297,7 +297,8 @@ class RulesRuntime:
                 if st is None:
                     st = self.states[key] = RuleState(rule)
                 actual, a_age, a_stale = self._actual(rule, cfg)
-                d = st.evaluate(now, signal, age, actual=actual, actual_age_s=a_age, actual_stale_s=a_stale)
+                d = st.evaluate(now, signal, age, actual=actual, actual_age_s=a_age, actual_stale_s=a_stale,
+                                sample_ts=(self._mono() - age) if age is not None else None)
                 self._act(rule, cfg, client, st, d, now)
                 out.append({'rule': rule.id, 'device': cfg.id, **d.to_dict()})
             self._publish_state(rule)

@@ -77,8 +77,8 @@ def test_shadow_decides_but_never_writes_then_armed_runs_the_command(tmp_path):
     inv = _Inverter(sf=-2)
     mq = _Mqtt()
     cfg, app, client, clock, rt = _rule_app(tmp_path, {'pv-u1': inv}, mqtt=mq)
-    _feed(app, clock, 'pv-u1', {'voltage_l1_n': 252.6, 'voltage_l2_n': 230, 'voltage_l3_n': 231, 'power_limit_pct': 100})
     for _ in range(3):
+        _feed(app, clock, 'pv-u1', {'voltage_l1_n': 252.6, 'voltage_l2_n': 230, 'voltage_l3_n': 231, 'power_limit_pct': 100})   # a fresh reading each tick
         rt.tick(clock()); clock.t += 2
     live = client.get("/api/rules/ov-u1").json()['live']
     assert live['state'] == 'Severe' and live['units']['pv-u1']['want']['value'] == 60
@@ -139,8 +139,8 @@ def test_an_armed_rule_owns_its_target_until_overridden(tmp_path):
 def test_stale_holds_and_a_lost_write_is_reasserted(tmp_path):
     inv = _Inverter(sf=-2)
     cfg, app, client, clock, rt = _rule_app(tmp_path, {'pv-u1': inv}, mode='armed')
-    _feed(app, clock, 'pv-u1', {'voltage_l1_n': 252.6, 'voltage_l2_n': 230, 'voltage_l3_n': 231, 'power_limit_pct': 100})
     for _ in range(3):
+        _feed(app, clock, 'pv-u1', {'voltage_l1_n': 252.6, 'voltage_l2_n': 230, 'voltage_l3_n': 231, 'power_limit_pct': 100})   # a fresh reading each tick
         rt.tick(clock()); clock.t += 2
     assert inv.writes[-1][1][0] == 6000
     # the voltage feed dies: the limit holds (fail closed), the event says stale
@@ -149,9 +149,9 @@ def test_stale_holds_and_a_lost_write_is_reasserted(tmp_path):
     live = client.get("/api/rules/ov-u1").json()['live']
     assert live['state'] == 'stale' and live['units']['pv-u1']['want']['value'] == 60
     # somebody put the inverter back to 100 behind the rule's back: reasserted after reassert_s
-    _feed(app, clock, 'pv-u1', {'voltage_l1_n': 252.6, 'voltage_l2_n': 230, 'voltage_l3_n': 231})
     _feed(app, clock, 'pv-u1', {'power_limit_pct': 100})
     for _ in range(3):
+        _feed(app, clock, 'pv-u1', {'voltage_l1_n': 252.6, 'voltage_l2_n': 230, 'voltage_l3_n': 231})   # a fresh reading each tick
         rt.tick(clock()); clock.t += 2
     n = len(inv.writes)
     clock.t += 130
@@ -169,8 +169,8 @@ def test_clamp_over_mqtt_and_release_to_safe_on_delete(tmp_path):
     assert 'mbg/rules/ov-u1/set' in mq.topics
     mq.topics['mbg/rules/ov-u1/set'](json.dumps({'clamp': {'max': 60, 'expires_s': 3600}, 'source': 'nodered'}))
     assert rt.states[('ov-u1', 'pv-u1')].clamp['max'] == 60
-    _feed(app, clock, 'pv-u1', {'voltage_l1_n': 231, 'voltage_l2_n': 230, 'voltage_l3_n': 231, 'power_limit_pct': 100})
     for _ in range(3):
+        _feed(app, clock, 'pv-u1', {'voltage_l1_n': 231, 'voltage_l2_n': 230, 'voltage_l3_n': 231, 'power_limit_pct': 100})   # a fresh reading each tick
         rt.tick(clock()); clock.t += 2
     assert inv.writes[-1][1][0] == 6000                            # normal wants 100, the clamp says 60
     a = [x for x in _audit(tmp_path) if x['action'] == 'rule clamp'][-1]
@@ -193,9 +193,9 @@ def test_a_group_rule_fans_out_and_a_failing_unit_alerts(tmp_path):
                                                  signal='max(pv-u1.voltage_l1_n, pv-u2.voltage_l1_n)',
                                                  timing={'every_s': 2, 'debounce': 1, 'min_interval_s': 0, 'reassert_s': 120}))
     assert r.status_code == 200, r.text
-    for d in ('pv-u1', 'pv-u2'):
-        _feed(app, clock, d, {'voltage_l1_n': 252.6, 'power_limit_pct': 100})
     for _ in range(4):
+        for d in ('pv-u1', 'pv-u2'):
+            _feed(app, clock, d, {'voltage_l1_n': 252.6, 'power_limit_pct': 100})   # a fresh reading each tick
         rt.tick(clock()); clock.t += 2
     assert a.writes[-1][1][0] == 6000 and len(b.writes) >= 3
     live = client.get("/api/rules/ov-u1").json()['live']

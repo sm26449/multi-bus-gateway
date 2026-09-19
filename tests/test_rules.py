@@ -230,3 +230,59 @@ def test_a_numeric_on_stale_asks_for_that_value_while_blind():
     assert any('on_stale' in e for e in validate_rule_def(raw))
     assert not any('on_stale' in e for e in validate_rule_def({**raw, 'on_stale': 80}))
     assert not any('on_stale' in e for e in validate_rule_def({**raw, 'on_stale': '80'}))
+
+
+# ── the plausibility guard and sample-counted debounce ──────────────────────
+
+def test_a_one_sample_jump_is_held_and_never_reaches_the_fast_step():
+    """2026-09-18: one Solar API reading of 273 V on all phases (grid meter at
+    241 V) put Emergency on. With max_step the reading is held until the next
+    sample; a lone artefact changes nothing."""
+    st = RuleState(_rule(mode='armed', signal_valid={'min': 100, 'max': 350, 'max_step': 10}))
+    _run(st, [246.0] * 3)
+    assert st.state == 'normal'
+    d = st.evaluate(100.0, 273.0, 0.5)                   # the artefact (past the rate limit of the normal want)
+    assert d.action == 'ignored' and 'implausible jump +27' in d.reason and st.state == 'normal' and st.guarded == 1
+    d = st.evaluate(102.0, 273.0, 2.5)                   # same sample, next tick: still held
+    assert d.action == 'ignored' and st.guarded == 1
+    d = st.evaluate(105.0, 246.3, 0.5)                   # the next reading is back: forgotten
+    assert d.action != 'ignored' and st.state == 'normal'
+
+
+def test_a_real_jump_is_confirmed_by_the_second_sample_and_acts_at_once():
+    st = RuleState(_rule(mode='armed', signal_valid={'max_step': 10}))
+    _run(st, [246.0] * 3)
+    assert st.evaluate(100.0, 258.0, 0.5).action == 'ignored'       # held one poll
+    d = st.evaluate(105.0, 258.4, 0.5)                              # confirmed: fast step, no debounce
+    assert d.action == 'run' and d.state == 'Emergency' and d.want['value'] == 50
+    assert st.snapshot()['guarded'] == 1
+
+
+def test_without_max_step_nothing_changes():
+    st = RuleState(_rule(mode='armed'))
+    _run(st, [246.0] * 3)
+    d = st.evaluate(100.0, 273.0, 0.5)
+    assert d.action == 'run' and d.state == 'Emergency' and st.guarded == 0
+
+
+def test_the_debounce_counts_distinct_samples_not_ticks():
+    """every_s 2 with a 5-s signal: three ticks see the same reading; they are
+    one vote, not three."""
+    st = RuleState(_rule(mode='armed'))
+    _run(st, [231.0] * 3)
+    # one 252.6 reading polled at t=10, evaluated at 10, 12, 14 (age grows)
+    for now, age in ((100.0, 0.5), (102.0, 2.5), (104.0, 4.5)):
+        d = st.evaluate(now, 252.6, age)
+        assert d.action == 'hold' and 'debounce 1/3' in d.reason
+    d = st.evaluate(105.0, 252.6, 0.5)                   # a second reading
+    assert 'debounce 2/3' in d.reason
+    d = st.evaluate(110.0, 252.6, 0.5)                   # a third: transition
+    assert d.action == 'run' and d.state == 'Severe'
+
+
+def test_validation_knows_max_step():
+    raw = {'id': 'r', 'target': {'device': 'd', 'command': 'c'}, 'kind': 'steps', 'signal': 'd.v',
+           'steps': [{'at': 1, 'value': 1}], 'normal': {'value': 100}}
+    assert not [e for e in validate_rule_def(dict(raw, signal_valid={'max_step': 10})) if 'signal_valid' in e]
+    assert any('max_step' in e for e in validate_rule_def(dict(raw, signal_valid={'max_step': 0})))
+    assert any('signal_valid' in e for e in validate_rule_def(dict(raw, signal_valid={'bogus': 1})))

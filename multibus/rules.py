@@ -172,7 +172,7 @@ def validate_rule_def(raw: Dict, *, validate_expr=None) -> List[str]:
     if _f(t.get('every_s', 2)) is None or not (0.5 <= _f(t.get('every_s', 2)) <= 3600):
         errors.append("timing.every_s: 0.5..3600 seconds")
     if _f(t.get('debounce', 3)) is None or not (1 <= _f(t.get('debounce', 3)) <= 100):
-        errors.append("timing.debounce: 1..100 evaluations")
+        errors.append("timing.debounce: 1..100 samples")
     if _f(t.get('min_interval_s', 30)) is None or not (0 <= _f(t.get('min_interval_s', 30)) <= 86400):
         errors.append("timing.min_interval_s: 0..86400 seconds")
     if _f(t.get('reassert_s', 120)) is None or not (0 <= _f(t.get('reassert_s', 120)) <= 86400):
@@ -206,8 +206,11 @@ def validate_rule_def(raw: Dict, *, validate_expr=None) -> List[str]:
         if not isinstance(raw.get('normal'), dict) or not raw.get('normal'):
             errors.append("normal: the parameters asked for when no step matches (e.g. {value: 100})")
         sv = raw.get('signal_valid')
-        if sv is not None and (not isinstance(sv, dict) or any(_f(sv.get(k)) is None for k in sv)):
-            errors.append("signal_valid: {min, max} numbers")
+        if sv is not None and (not isinstance(sv, dict) or any(_f(sv.get(k)) is None for k in sv)
+                               or any(k not in ('min', 'max', 'max_step') for k in sv)):
+            errors.append("signal_valid: {min, max, max_step} numbers")
+        elif sv and _f(sv.get('max_step')) is not None and _f(sv.get('max_step')) <= 0:
+            errors.append("signal_valid.max_step: the largest plausible change between two samples, > 0")
     else:
         if not str(raw.get('when', '') or '').strip():
             errors.append("when: required for a condition rule")
@@ -271,6 +274,14 @@ class RuleState:
         self.drift_since: Optional[float] = None
         self._pre_stale: Optional[tuple] = None          # (state, want) to return to
         self._base: Optional[Dict[str, Any]] = None      # the last desired base params (pre clamp)
+        # plausibility guard (signal_valid.max_step): the last accepted sample,
+        # the sample held as suspect, and the identity of the sample last seen
+        self._accepted: Optional[float] = None
+        self._suspect: Optional[float] = None
+        self._suspect_reason: str = ''
+        self._sample_ts: Optional[float] = None
+        self._deb_sample_ts: Optional[float] = None      # the sample the debounce last counted
+        self.guarded: int = 0                            # samples held by the guard
 
     # ── public knobs ──
     def set_clamp(self, max_value: float, expires_at: Optional[float]) -> None:
@@ -286,7 +297,8 @@ class RuleState:
         return {'state': self.state, 'want': self.want, 'since': self.since, 'commanded': self.commanded,
                 'last_cmd_ts': self.last_cmd_ts, 'pending': self.pending, 'signal': self.last_signal,
                 'clamp': dict(self.clamp) if self.clamp else None, 'paused_until': self.paused_until,
-                'failures': self.failures, 'ignored': self.ignored, 'stale_since': self.stale_since}
+                'failures': self.failures, 'ignored': self.ignored, 'guarded': self.guarded,
+                'stale_since': self.stale_since}
 
     # ── helpers ──
     def _want_for(self, base: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -339,9 +351,17 @@ class RuleState:
     # ── the evaluation ──
     def evaluate(self, now: float, signal: Any, signal_age_s: Optional[float],
                  actual: Any = None, actual_age_s: Optional[float] = None,
-                 actual_stale_s: Optional[float] = None) -> Decision:
+                 actual_stale_s: Optional[float] = None,
+                 sample_ts: Optional[float] = None) -> Decision:
         r = self.rule
         self.last_signal = signal
+        # the identity of this sample: the rule ticks faster than the signal is
+        # polled, so several evaluations see the same reading — the guard and
+        # the debounce count samples, not ticks
+        if sample_ts is None:
+            sample_ts = (now - signal_age_s) if signal_age_s is not None else now
+        new_sample = self._sample_ts is None or abs(sample_ts - self._sample_ts) > 1e-6
+        self._sample_ts = sample_ts
         # 1. validity and staleness
         valid = signal is not None
         if valid and r.kind == 'steps':
@@ -376,6 +396,16 @@ class RuleState:
         if not valid:
             return Decision(now, 'ignored', 'sample outside the valid range', self.state, signal, self.want, actual)
         self.stale_since = None
+        # 1b. plausibility: a reading that jumps more than signal_valid.max_step
+        # from the last accepted one is held until the NEXT sample confirms it
+        # (a one-sample artefact never reaches a step — not even a fast one;
+        # a real jump costs one poll interval of delay). Seen live 2026-09-18:
+        # a single Solar API reading of 273/270/270 V on all three phases with
+        # the grid meter at 241 V put the Emergency step on, in shadow.
+        if r.kind == 'steps':
+            guard = self._guard(_f(signal), new_sample)
+            if guard is not None:
+                return Decision(now, 'ignored', guard, self.state, signal, self.want, actual)
         # 2. desired
         if r.kind == 'steps':
             d_state, base, fast = self._desired(_f(signal))
@@ -404,8 +434,10 @@ class RuleState:
             else:
                 if self._deb_target != key:
                     self._deb_target, self._deb_count = key, 1
-                else:
-                    self._deb_count += 1
+                    self._deb_sample_ts = sample_ts
+                elif new_sample or self._deb_sample_ts is None or abs(sample_ts - self._deb_sample_ts) > 1e-6:
+                    self._deb_count += 1                 # one more DISTINCT sample agrees
+                    self._deb_sample_ts = sample_ts
                 if self._deb_count >= r.timing.debounce:
                     self._deb_target, self._deb_count = None, 0
                     self._base = d_base
@@ -414,6 +446,26 @@ class RuleState:
                     return self._act(now, 'hold', f'debounce {self._deb_count}/{r.timing.debounce} towards {d_state}', signal, actual)
         # 4. act on the want (rate limit), else 5. the closed loop
         return self._act(now, None, '', signal, actual, changed=changed, actual_age_s=actual_age_s, actual_stale_s=actual_stale_s)
+
+    def _guard(self, v: Optional[float], new_sample: bool) -> Optional[str]:
+        """The plausibility guard. None = the sample is accepted (or the guard is
+        off); otherwise the reason the sample is being held."""
+        ms = _f((self.rule.signal_valid or {}).get('max_step'))
+        if v is None or ms is None or ms <= 0:
+            return None
+        if not new_sample:                               # the same reading as last tick
+            return self._suspect_reason if self._suspect is not None else None
+        if self._accepted is None or abs(v - self._accepted) <= ms:
+            self._accepted, self._suspect = v, None      # plausible against the last accepted
+            return None
+        if self._suspect is not None and abs(v - self._suspect) <= ms:
+            self._accepted, self._suspect = v, None      # a second sample agrees: it is real
+            return None
+        self._suspect = v
+        self.guarded += 1
+        self._suspect_reason = (f'implausible jump {v - self._accepted:+g} against {self._accepted:g} '
+                                f'(max step {ms:g}) — waiting for the next sample')
+        return self._suspect_reason
 
     def _act(self, now: float, forced: Optional[str], reason: str, signal, actual, *, changed: bool = False,
              actual_age_s: Optional[float] = None, actual_stale_s: Optional[float] = None) -> Decision:

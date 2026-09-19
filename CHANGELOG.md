@@ -1,3 +1,20 @@
+## 3.78.0
+
+### 2026-09-19 — rules: a plausibility guard on the signal, debounce by sample
+
+- `signal_valid.max_step`: a reading that differs from the last accepted one
+  by more than the step is held until the next sample confirms it; a
+  one-sample artefact never reaches a step, not even a `fast` one, and a
+  real jump costs one poll interval. Seen live on 2026-09-18: one Solar API
+  reading of 273/270/270 V on all three phases of an inverter (grid meter at
+  241 V, the other inverters at 245 V) put the Emergency step on in shadow —
+  armed, it would have cut to 50 % on an artefact. Reason in the decision
+  (`implausible jump +27 against 246 (max step 10) — waiting for the next
+  sample`), count in the state (`guarded`), field in the rule editor.
+- The debounce counts distinct samples, not ticks: with `every_s: 2` over a
+  5-s signal, three ticks over the same reading were three votes and
+  `debounce: 3` was satisfied by one reading.
+
 ## 3.77.4
 
 ### 2026-09-19 — counter hygiene comes from the template

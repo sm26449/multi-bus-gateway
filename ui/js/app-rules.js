@@ -264,7 +264,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div class="form-group"><label class="form-label" for="rlNormal">${t('rules.normal', 'Normal asks for')}</label>
                         <input id="rlNormal" class="input" value="${this._esc(kv(raw?.normal || { value: 100 }))}" placeholder="value=100"></div>
                     <div class="form-group"><label class="form-label" for="rlValidMin">${t('rules.valid', 'Valid signal range')}</label>
-                        <div style="display:flex;gap:6px;"><input id="rlValidMin" class="input" type="number" step="any" placeholder="min" value="${raw?.signal_valid?.min ?? ''}" aria-label="min"><input id="rlValidMax" class="input" type="number" step="any" placeholder="max" value="${raw?.signal_valid?.max ?? ''}" aria-label="max"></div>
+                        <div style="display:flex;gap:6px;"><input id="rlValidMin" class="input" type="number" step="any" placeholder="min" value="${raw?.signal_valid?.min ?? ''}" aria-label="min"><input id="rlValidMax" class="input" type="number" step="any" placeholder="max" value="${raw?.signal_valid?.max ?? ''}" aria-label="max"><input id="rlValidStep" class="input" type="number" step="any" min="0" placeholder="${t('rules.validStep', 'max step')}" value="${raw?.signal_valid?.max_step ?? ''}" aria-label="${t('rules.validStepLabel', 'largest plausible change between two samples')}"></div>
                         <div class="field-hint">${t('rules.validHint', 'A sample outside it is ignored as sensor garbage.')}</div></div>
                 </div>
             </div>
@@ -356,8 +356,10 @@ Object.assign(JanitzaMonitor.prototype, {
                 label: tr.querySelector('[data-st="label"]').value.trim(), fast: tr.querySelector('[data-st="fast"]').checked }));
             out.release_below = v('rlRelease') === '' ? null : Number(v('rlRelease'));
             out.normal = kv(v('rlNormal'));
-            const vmin = v('rlValidMin'), vmax = v('rlValidMax');
-            if (vmin !== '' || vmax !== '') out.signal_valid = { ...(vmin !== '' ? { min: Number(vmin) } : {}), ...(vmax !== '' ? { max: Number(vmax) } : {}) };
+            const vmin = v('rlValidMin'), vmax = v('rlValidMax'), vstep = v('rlValidStep');
+            if (vmin !== '' || vmax !== '' || vstep !== '') out.signal_valid = {
+                ...(vmin !== '' ? { min: Number(vmin) } : {}), ...(vmax !== '' ? { max: Number(vmax) } : {}),
+                ...(vstep !== '' ? { max_step: Number(vstep) } : {}) };
         } else {
             out.when = v('rlWhen');
             out.then = v('rlThen').trim() ? { params: kv(v('rlThen')) } : null;

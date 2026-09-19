@@ -67,7 +67,9 @@ rules:
     target: { device: pv-u1, command: power_limit }
     kind: steps
     signal: "max(pv-u1.voltage_l1_n, pv-u1.voltage_l2_n, pv-u1.voltage_l3_n)"
-    signal_valid: { min: 100, max: 350 }        # outside → the sample is ignored (sensor garbage)
+    signal_valid: { min: 100, max: 350, max_step: 10 }   # outside min/max → ignored; a change > max_step
+                                                # against the last accepted reading is held until the
+                                                # next sample confirms it (one-sample artefacts never act)
     stale_after_s: 60                           # oldest input older than this → stale
     steps:                                      # ascending; the highest matching step wins
       - { at: 250.0, value: 80, label: Warning }
@@ -79,7 +81,7 @@ rules:
     params: { revert_s: 0, ramp_s: 10 }         # sent with every want (the rule is the revert clock)
     timing:
       every_s: 2                                # evaluation tick
-      debounce: 3                               # consecutive evaluations that must agree
+      debounce: 3                               # consecutive samples that must agree
       min_interval_s: 30                        # between two commands on this target
       reassert_s: 120                           # re-command when actual ≠ want for this long
     on_stale: hold                              # hold | safe   (hold = fail closed)
@@ -154,8 +156,15 @@ the pause is visible on the Rules page. In **shadow** the target stays
    clamp)` while it has not expired; a clamp never expires *into* a step (it
    holds until the signal is under `release_below`, like the OV node).
 3. **Debounce**: a desired that differs from the current state needs
-   `debounce` consecutive agreeing evaluations, except a step marked `fast`
-   (emergency path). Decision `hold (debounce 2/3)` meanwhile.
+   `debounce` consecutive agreeing **samples** (the rule ticks faster than
+   the signal is polled; several ticks over the same reading are one vote),
+   except a step marked `fast` (emergency path). Decision `hold (debounce
+   2/3)` meanwhile. Before all this, the **plausibility guard**: with
+   `signal_valid.max_step`, a reading that differs from the last accepted
+   one by more than the step is held (`ignored: implausible jump …`) until
+   the next sample agrees with it — a lone artefact (2026-09-18: one Solar
+   API reading of 273 V on all three phases, grid meter at 241 V) never
+   reaches a step, fast or not; a real jump costs one poll interval.
 4. **Rate limit**: a command less than `min_interval_s` after the previous one
    is `hold (rate limit)`; the desired is kept and applied on the next tick
    that allows it.
