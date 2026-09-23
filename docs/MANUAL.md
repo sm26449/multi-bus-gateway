@@ -21,6 +21,7 @@ Companion documents:
 3. [First configuration](#3-first-configuration)
 4. [The Web UI, tab by tab](#4-the-web-ui-tab-by-tab)
 5. [Devices & device templates (multi-device)](#5-devices--device-templates-multi-device)
+5b. [Installations — one datalogger, many units](#5b-installations--one-datalogger-many-units)
 6. [Registers, poll groups & thresholds](#6-registers-poll-groups--thresholds)
 7. [Calculated registers](#7-calculated-registers)
 8. [MQTT & Home Assistant](#8-mqtt--home-assistant)
@@ -32,6 +33,8 @@ Companion documents:
 12. [Alerts & webhooks](#12-alerts--webhooks)
 13. [Diagnostics](#13-diagnostics)
 14. [Modbus writes & dead-man leases](#14-modbus-writes--dead-man-leases)
+14b. [Commands — named writes from the template](#14b-commands--named-writes-from-the-template)
+14c. [Rules — the declarative controller](#14c-rules--the-declarative-controller)
 15. [Config safety: snapshots, rollback, backup](#15-config-safety-snapshots-rollback-backup)
 16. [Security](#16-security)
 17. [Observability: Status, /metrics, events](#17-observability-status-metrics-events)
@@ -136,7 +139,7 @@ The optional env variables:
 | `UI_HOST` | bind address — bare-metal default is loopback (`127.0.0.1`); the container image sets `0.0.0.0` (exposure is governed by the compose port mapping) | `0.0.0.0` |
 | `API_KEY` | require `X-API-Key` on mutating requests | — |
 | `VMETER_PORT_START` / `VMETER_PORT_END` | virtual-meter port range | `1502` / `1512` |
-| `TZ` | timezone for the bundled ESPHome container and timestamps | `Europe/Bucharest` |
+| `TZ` | timezone of the bundled **ESPHome** container only (the compose file passes it to `esphome`); the gateway never reads it — its calendar boundaries and reports use `ui.timezone` (Config → General, §18) | `Europe/Bucharest` |
 | `ESPHOME_URL` | where the gateway finds the ESPHome dashboard (Device Builder); on a fresh deploy it also enables the section | `http://esphome:6052` |
 | `ESPHOME_ENABLED` | force the Builder on/off at every start (otherwise the UI decides) | — |
 | `ESPHOME_DASHBOARD_USERNAME` / `ESPHOME_DASHBOARD_PASSWORD` | login on the ESPHome dashboard; the same values also configure the gateway's client | — |
@@ -155,19 +158,25 @@ Open `http://<host>:8080`. The top navigation:
   widget colors follow the phase convention configured under Config →
   General.
 - **Devices** — every southbound source as a card with live health; the
-  **Add Device** wizard and **Discover devices** live here. Opening a device
-  gives its tabbed workspace: *Overview* (read-only summary + data health),
-  *Edit* (connection, template, poll intervals, output toggles),
-  *Registers*, *Calculated*, *Outputs*, and per-device *Monitor / History /
-  Energy*.
+  **Add Device** wizard, **Add Installation** (§5b) and **Discover devices**
+  live here. Opening a device gives its tabbed workspace: *Overview*
+  (read-only summary + data health), *Edit* (connection, template, poll
+  intervals, output toggles), *Registers*, *Calculated*, *Outputs*, and
+  per-device *Monitor / History / Energy*. A unit of an installation shows
+  *Read via* instead of *Edit*, and a *Commands* tab (§14b).
+- **Rules** — the declarative controller: one card per rule with its state,
+  want → actual, decisions, Arm / To shadow (see §14c).
+- **Templates** — the catalog behind your devices: **device maps** (how a
+  real device is read) and **meter emulations** (the virtual-meter templates
+  of §11) — bundled, uploaded, imported from CSV/YAML, edited.
+- **Status** — pipeline health, error taxonomy, events, alerts, resource
+  footprint (see §17).
+- **Config** (labelled *Settings* in the tab bar) — global settings: MQTT,
+  InfluxDB, General (timezone, colors), Security, Backup & Snapshots.
 - **Virtual Meters** — serve the live values as standard Modbus meters
   (see §11).
 - **Diagnostics** — the commissioning toolbox: bus monitor, register probe,
   discovery, SunSpec scan (see §13).
-- **Status** — pipeline health, error taxonomy, events, alerts, resource
-  footprint (see §17).
-- **Config** — global settings: MQTT, InfluxDB, General (timezone, colors),
-  Security, Backup & Snapshots.
 
 ---
 
@@ -252,6 +261,170 @@ byte-identical.
 
 **Deleting a device** keeps its register file on disk (data safety) and is
 blocked while any virtual meter sources it.
+
+---
+
+## 5b. Installations — one datalogger, many units
+
+A PV plant is one site behind one master device — a Fronius DataManager, a
+Deye/Huawei logger, an RS-485 multi-drop bridge — fronting several
+inverters, the meter at its grid connection, sometimes a battery. An
+**installation** (the `endpoints:` block) declares that once: **groups** of
+units (inverters, grid meter, site totals…), each read through one or more
+ordered **sources** (Modbus TCP and/or a Solar-API-style HTTP call). Every
+unit becomes an ordinary device with its own identity, history and Home
+Assistant entry; you get per-source failover, group totals that never add
+inverters to a meter, one write lock, and a page that reads top to bottom:
+*is it producing — is every unit fine — how it is read — where it publishes*.
+
+### 5b.1 Add one from the UI (the wizard)
+
+Devices → **Add Installation**. Four steps; nothing is created before
+*Create installation* on the last one.
+
+1. **Installation** — name (the id follows it, fixed after creation), **how
+   the datalogger is reached** (*Solar API*, *Modbus TCP*, or *Both* —
+   recommended: the fast one owns the fields it offers, Modbus fills in the
+   rest), its address, and **Publishes under** (the topic root: `pv` →
+   `pv/inverters/1/…`). **Test** probes what you ticked; with the Solar API
+   the test *is* the discovery.
+2. **What it holds** — what the datalogger reported, as ticks: *Inverters*,
+   *Site totals* (generation · load · grid · autonomy), *Grid meter*
+   (unticked on purpose: grid data is better read straight from the meter).
+   *Add a group by hand* if the datalogger did not answer.
+3. **How it is read** — labelled intervals per way (Solar API: power,
+   voltages, currents every 2 s, counters every 30 s; Modbus: the complete
+   reading every 20 s, counters and static data every 120 s), the measured
+   floor when the datalogger is slow, and — with both ways — how long the
+   Solar API stays authoritative before Modbus takes its fields back (30 s).
+4. **Review** — groups, units, sources in precedence order, the real topics
+   and the device ids that will be created.
+
+Refused before anything is created: a malformed id, a group without units
+or template, a group nothing can read, and a unit id claimed by two groups
+(one address on the wire, two devices racing it).
+
+### 5b.2 The same thing in `config.yaml`
+
+```yaml
+endpoints:
+  - id: pv
+    name: Fronius PV
+    enabled: true
+    mqtt:
+      topic_prefix: pv/units/${unit_id}            # per-unit default; a group may override
+      aggregate_prefix: pv/${group_id}/summary     # group totals (default mbg/endpoints/<id>/…)
+    influxdb: { bucket: pv, device_tag: "${device_id}" }
+    groups:
+      - id: inverters
+        role: inverter
+        units: [1, 2, 3, 4]                        # devices pv-u1 … pv-u4
+        mqtt: { topic_prefix: pv/inverters/${unit_id} }
+        sources:                                   # ORDER IS PRECEDENCE
+          - id: solar_api
+            protocol: http
+            url: "http://192.168.1.50/solar_api/v1/GetInverterRealtimeData.cgi?Scope=Device&DeviceId=${unit_id}&DataCollection=CommonInverterData"
+            template: fronius_solar_api_inverter
+            timeout: 5
+            poll_groups: { realtime: { interval: 2 }, normal: { interval: 30 } }
+            stale_after_s: 30                      # silent for 30 s → Modbus takes its fields
+          - id: sunspec
+            protocol: tcp
+            host: 192.168.1.50
+            port: 502
+            timeout: 3
+            template: fronius_sunspec_inverter
+            poll_groups: { normal: { interval: 20 }, slow: { interval: 120 } }
+            stale_after_s: 0                       # never yields — right for counters
+        commands: [{ name: power_limit }, { name: restore }]   # §14b
+      - id: grid                                 # another kind of unit: own template, own total
+        role: meter
+        units: [{ unit_id: 240, id: pv-meter-240, name: Grid meter }]
+        sources: [{ id: sunspec, protocol: tcp, host: 192.168.1.50, port: 502,
+                    template: fronius_sunspec_meter, poll_groups: { normal: { interval: 5 } } }]
+    write_locked: false                            # one endpoint, one lock — every unit
+```
+
+`${unit_id}`, `${endpoint_id}` and `${device_id}` substitute per unit in
+topic prefix, bucket, tag, name **and** connection (`url`, `host`). An
+endpoint with no `groups:` is one implicit group holding its flat `units:` /
+`sources:` / `connection:`, so older entries keep working unchanged. Every
+field: [config-reference.md](config-reference.md).
+
+### 5b.3 What you get
+
+- **Devices**: one per unit (`<id>-u<unit>`; the wizard names site units
+  `<id>-site`, discovered meters `<id>-meter-<unit>`), each with its own
+  socket, per-source register selection, bucket and HA device, managed
+  *through* the installation — device create/edit/delete refuses their ids.
+- **The installation page**: status and census; *producing now / today /
+  autonomy / self-consumption* (from the site group, else the inverters'
+  sum, dashes otherwise); **Read via** — every source with protocol,
+  interval, latency and failure rate over the last five minutes; then **one
+  card per group**: its unit table (health as a word, last read, each
+  source's verdict per unit), its total and topic, and the sources table
+  with arrows, because **order is precedence**: the first source offering a
+  field supplies it, a later one fills in only after the earlier has been
+  silent past its *stale after*. **Test units** asks every unit over every
+  source; units, sources and topics are edited on the group cards.
+- **A unit's page**: **Read via** replaces *Edit*; **Measurements** shows a
+  source picker when the unit is read more than one way (each source has
+  its own map and ticks); **Commands** (§14b). A unit read two ways is `ok`
+  only while every source is: one source down → `degraded` (*"read fine
+  over HTTP, Modbus side down"*), none left → `down`, nothing selected →
+  `idle`; transitions are events (`source_down` / `source_ok`) in its Logs.
+- **Topics**: unit values under the unit's prefix plus the liveness leaves
+  every device has (`availability`, `runtime/status`, `runtime/last_seen`,
+  `runtime/read_errors`). **Group totals** every 10 s on the group's totals
+  topic (default `mbg/endpoints/<id>/…`, later groups
+  `mbg/endpoints/<id>/<group>/…`, or your `aggregate_prefix`): powers and
+  currents summed, voltages/frequency/temperatures averaged, energy
+  counters summed from *last-known* values and published only when every
+  enabled unit has one, plus `units_online`, `units_total` and `status`
+  (`online` / `partial` / `offline`) on **every** cycle. A group of one unit
+  publishes no total. The same totals land in InfluxDB tagged
+  `device=<installation id>, aggregate=endpoint`. `GET /api/endpoints/{id}`
+  returns configuration and live state in one object.
+
+### 5b.4 Safety notes
+
+- **Routing identity is fixed after creation** (topic prefix, bucket, tag)
+  — changing it would orphan history and HA entities; a unit's hand-written
+  id survives regrouping for the same reason. **Write lock, HTTP output and
+  REST push are declared once** and apply to every unit; writes go to the
+  first source that can perform them — a Solar API source is read-only.
+- **Edits do not punch holes in acquisition**: a settings-only edit (name,
+  totals toggle, a unit's display name) keeps every poller running; only a
+  change to what units are built from re-materializes them. A disabled group
+  stays visible and editable; it simply stops polling.
+- **Stale data never becomes a value.** A field nobody offers is absent (at
+  night the DataManager *omits* `PAC`/`UAC`… rather than sending zero; the
+  template refuses to fabricate one); a stalled unit drops out of a power
+  total but never out of an energy counter, so totals never walk backwards.
+- **Gateway restart**: units come back from `config.yaml` with their saved
+  selections and poll at once; retained topics hold the last values until
+  then — gate consumers on `availability`, not on a value (§18c).
+  **Datalogger reboot / night sleep**: sources go `down`, units `down`, the
+  group `offline` (published even when nothing is fresh); on return the
+  first source to answer takes its fields back in precedence order.
+- **Deleting** keeps the units' register files on disk and is blocked while
+  a virtual meter sources one of its units. **The datalogger is shared and
+  slow**: units on one `host:port` are serialized (`serialize_endpoint`),
+  `endpoint_min_gap_s` adds breathing room, `max_connections` is a
+  measurement (`scripts/calibrate_endpoint.py`); a missed turn is a
+  `bus_busy` event, not a device failure.
+
+### 5b.5 Troubleshooting
+
+| Symptom | Check |
+|---------|-------|
+| The wizard refuses a group | no units, no template, or no way to be read — tick a way in step 1; or the same unit id sits in two groups |
+| A Solar API source answers but the unit reads nothing | a hand-typed URL with a wrong query still returns 200 OK with an empty body — use the preset call (`…&DeviceId=${unit_id}&DataCollection=CommonInverterData`) |
+| Units flap `ok ↔ degraded` all day | intervals too fast for the datalogger: Solar API ≥ 5 s per unit, SunSpec `normal` 20–60 s; the *failed (5 min)* column says which source |
+| Modbus latency climbs, then reads fail in bursts | the datalogger collapses above ~26 transactions a minute: slow the Modbus groups, set `endpoint_min_gap_s` (0.3 s), read the fast fields over HTTP |
+| `units_online` < `units_total` at night | expected: sleeping inverters are `down`; counters keep their last-known value, the total says `partial` / `offline` |
+| A total never appears | the group has one unit (no total by design), or an energy counter is missing on one enabled unit — the sum is withheld rather than published short |
+| A unit has no *Edit* tab | correct: its connection lives on its sources — use *Read via* and the group card's source editor |
 
 ---
 
@@ -412,7 +585,8 @@ in-container paths; "skip verification" is for testing only).
 
 - **Topics**: `<device prefix>/<register topic or derived name>`. Device #1
   keeps its historical prefix; new devices default to the
-  `mqtt.default_topic_pattern` (`meters/{device}`).
+  `mqtt.default_topic_pattern` (`mbg/devices/{device}`); installation
+  units use their group's prefix (§5b).
 - **Publish mode**: `changed` (default — only values that changed publish;
   the change cache confirms only after a successful publish, so a broker
   outage loses nothing) or `all` (every reading).
@@ -929,6 +1103,347 @@ itself crashes, the registers revert to safe on the next boot. This is the
 correct primitive for export-limit / power-setpoint control loops: a crashed
 controller can't leave a dangerous setpoint standing. Active leases:
 `GET /api/writes/leases`.
+
+---
+
+## 14b. Commands — named writes from the template
+
+A raw register write (§14) says *which address*. A **command** says *what*:
+`power_limit = 60 %`, `restore`. The device's template carries the
+**recipe** — which registers, in what order, in one frame, verified how —
+so a controller (the UI, Node-RED, Home Assistant, a script) never
+hard-codes addresses, and the gateway never decides *when* (that is a rule,
+§14c, or your controller). Every face lands on one engine with one set of
+gates, one audit record and one verdict vocabulary.
+
+### 14b.1 Enable one from the UI
+
+1. **Gates first** (§14): `security.allow_writes: true`, login enabled or
+   `API_KEY` set, and the unit not write-locked (on an installation the lock
+   is endpoint-wide).
+2. The template must declare the command. `fronius_sunspec_inverter` ships
+   `power_limit` (SunSpec model 123: `value` 0–100 %, `revert_s` default
+   600, `ramp_s`) and `restore` (an alias: `power_limit` 100 %, revert 0).
+   A template without `commands` offers nothing.
+3. **Tick it**: installation page → group card → *Edit group* → **Commands
+   this group accepts** (applies to every unit); on a standalone device, a
+   `commands:` binding on the device entry. Unticked = refused everywhere.
+4. **Run it**: the group card's **Commands…** button — the command, its
+   parameters (bounds, defaults and units come from the template), the
+   scope (*every unit of the group* or one unit), then **Test** (a dry run:
+   the guard's current readings and the exact registers that would be
+   written — nothing on the wire) or **Run** (with a confirmation). The
+   result is a word per unit. The unit page's **Commands** tab has the same
+   Run / Test, the last result and the recent history.
+
+### 14b.2 The same thing in YAML
+
+The preset, in the template (the vendor's language):
+
+```yaml
+commands:
+  power_limit:
+    label: Active power limit
+    params:
+      value:    { unit: "%", min: 0, max: 100, required: true, aliases: [limit_pct] }
+      revert_s: { unit: s, default: 600, min: 0, max: 65535 }
+      ramp_s:   { unit: s, default: 0,   min: 0, max: 65535 }
+    guard:                                    # must hold, or nothing is written
+      - { read: controls_model_id, expect: 123 }
+      - { read: wmaxlimpct_sf, in: [-2, -1, 0] }
+    writes:                                   # consecutive holding registers → ONE FC16
+      - { register: power_limit_pct,      value: "${value}" }
+      - { register: power_limit_win_s,    value: 0 }
+      - { register: power_limit_revert_s, value: "${revert_s}" }
+      - { register: power_limit_ramp_s,   value: "${ramp_s}" }
+      - { register: power_limit_enabled,  value: { if: "${value} < 100", then: 1, else: 0 } }
+    settle_s: 1
+    verify:
+      - { read: power_limit_pct,     expect: "${value}", tolerance: 1 }
+      - { read: power_limit_enabled, expect: { if: "${value} < 100", then: 1, else: 0 } }
+    safe: { value: 100, revert_s: 0 }         # what a lease or a rule restores
+    readback_group: controls                  # swept right after a run
+  restore:
+    alias: { command: power_limit, params: { value: 100, revert_s: 0 } }
+```
+
+The binding, on a group of an installation or on a device (what *you*
+declare; `faces` default to all three, `lease_s > 0` arms the dead-man of
+§14 with the command's `safe` parameters):
+
+```yaml
+commands:
+  - { name: power_limit }
+  - { name: restore, faces: { api: true, mqtt: true, ha: false }, confirm: true, lease_s: 0 }
+```
+
+A binding with its own `writes` is an inline recipe, validated like a
+template's. Expressions are deliberately tiny — literals, `${param}`, one
+`if`, one arithmetic operator; anything more is a controller's job. Design
+and grammar: [commands-design.md](commands-design.md).
+
+### 14b.3 What a run does, and what you see
+
+Guard reads (decoded through the template; a failed guard is re-read once
+before it is believed — dataloggers hand back buffer garbage) → encode
+through the template (type, scale, live SunSpec scale factor, offset, byte
+order, `write_min/max`) → frames (consecutive registers in one FC16, so a
+half-written block never exists) → settle → verify reads. One verdict, the
+same word on every face: **`success`** (read-back matched), **`mismatch`**
+(written, the device holds another value), **`unverified`** (written, the
+read-back did not answer), **`rejected`** (refused before the wire, with the
+reason), **`error`** (a write failed; the result says how many frames went
+out first).
+
+After `success`/`mismatch` the verified values go into the live store and
+the `readback_group` is swept; with `revert_s` set it is swept again at +5,
++20, +60 and +180 s past the device's own revert mark, so MQTT, InfluxDB, HA
+and the rules see the inverter release the limit itself. Every run is
+audited (`action: command`: who, face, unit, parameters, frames, before →
+after, verdict), logged in the unit's Logs, and published on MQTT:
+`<unit prefix>/cmd/result` (not retained) and the retained
+`<unit prefix>/cmd/<name>/state` (what the device was last told, for a
+controller that restarts). The Fronius read-back is published as
+`<unit prefix>/controls/power_limit_pct`, `…/power_limit_enabled`,
+`…/power_limit_revert_s`, `…/power_limit_ramp_s`, `…/connected` (the
+`controls` group is hourly on purpose — every run sweeps it at once).
+
+**The four faces** (the UI as above, and):
+
+- **HTTP API** — `GET /api/devices/{id}/commands` (what the unit offers:
+  params with bounds and defaults, faces, enabled, last result — discover
+  this instead of hard-coding), `POST /api/devices/{id}/commands/{name}`
+  `{"value": 60, "revert_s": 300}` (+ optional `lease_s`), `…/dry-run`,
+  `POST /api/endpoints/{id}/groups/{gid}/commands/{name}` (every unit, one
+  result each; a refusing unit does not stop the others, nothing is rolled
+  back), `GET /api/commands/history?device=`. HTTP 200 for
+  success/mismatch/unverified, 422 rejected, 502 error, 403 gates, 409 no
+  Modbus source ([API.md](API.md)).
+- **MQTT** — `<unit prefix>/cmd/<name>` and `<group prefix>/cmd/<name>`: a
+  bare number (the `value` parameter) or an object of parameters; `source`
+  names the caller in the audit; legacy aliases (`limit_pct`,
+  `revert_timeout`, `ramp_time`) accepted. Needs `mqtt.allow_write_entities`
+  **and** a broker login (`mqtt.username`) — with an anonymous broker a
+  publish is a hardware write for anyone on the LAN, so it is refused.
+  **Retained commands are never executed.**
+- **Home Assistant** — the `number` entity of the register a command writes
+  first (`power_limit_pct`) runs the *command*, never a bare register write
+  (alone it would do nothing, or harm); same gates as MQTT.
+
+### 14b.4 Safety notes
+
+- **Gates, in order, on every face**: offered by the template → enabled by
+  a binding → the face is allowed → not owned by an armed rule (§14c; pass
+  `override_s` to pause it) → `security.allow_writes` → not write-locked →
+  parameters parse, are within bounds and carry no unknown names (a typo is
+  refused, never ignored) → a Modbus source is running (a Solar-API-only
+  unit cannot write) → the per-face, per-unit rate limit. Authentication
+  (§14) is checked by the API route before any of this. One command runs at
+  a time; a second for the same unit waits, it is never merged. **Nothing
+  is retried after a frame went out** (writes in a sequence are not safely
+  idempotent); an unreachable device answers `error` with nothing written.
+- **Device-side revert (`revert_s`)** is the inverter's own timer: a dead
+  controller never leaves the plant throttled, with no help from the
+  gateway; `restore` clears it. **Gateway-side lease (`lease_s`)** runs the
+  `safe` parameters itself when not renewed; a run with the safe values
+  clears the lease. Leases persist to disk, so a gateway that crashes
+  reverts the register on its next boot (§14).
+- **Gateway restart**: no command is re-sent; the retained
+  `…/cmd/<name>/state` tells your controller what stood before, the
+  `controls` sweep tells everyone what the device holds now. **Device
+  reboot**: the inverter comes back at its own defaults and the next
+  `controls` sweep publishes the truth; a rule (§14c) re-commands on that
+  drift, a plain controller must watch `…/controls/*` itself.
+- Every invocation is in the audit trail (§16.6) with `via` = `api` /
+  `mqtt` / `ha` / `rule:<id>` / `lease-revert`.
+
+### 14b.5 Troubleshooting
+
+| Symptom | Check |
+|---------|-------|
+| 404 *offers no command* | the unit's Modbus source uses a template without `commands:`, or the name is misspelt — `GET /api/devices/{id}/commands` lists what exists |
+| 403 *not enabled on …* / *does not accept the … face* | tick it under *Commands this group accepts*, or fix the binding's `faces` |
+| 409 *owned by rule …* / *no Modbus source is running* | an armed rule drives this target (pass `override_s`, or *Pause…* on the Rules page) / the unit is read over HTTP only — add a Modbus source to the group |
+| `rejected: guard: controls_model_id is …` | model 123 is not where the template expects it, or the datalogger returned garbage twice — **Test** shows the guard values |
+| `…/controls/power_limit_enabled` is 0 while `power_limit_pct` still shows the limit | the inverter's own revert fired: it clears *enabled* and keeps the percentage — gate on `enabled`, not the percentage alone |
+| MQTT command silently ignored | both write gates on? broker login set? payload a number or an object? a **retained** message is dropped by design — publish without `-r` |
+| No `number` entity in HA | `mqtt.allow_write_entities` + `security.allow_writes` on, device not write-locked, discovery on; entities are (re)registered at boot |
+| 429 | `security.write_rate_limit_per_s` — the controller is sending too often |
+
+---
+
+## 14c. Rules — the declarative controller
+
+A **rule** decides *when* a command (§14b) runs and with *what* parameters:
+it watches a signal built from live registers, waits for it to settle, and
+asks its target for what it wants — an over-voltage limit on an inverter, a
+restore when the grid is gone. It is declarative on purpose (inputs → a
+signal or a condition with time semantics → a command), never a scripting
+host; anything beyond it stays in Node-RED, which speaks to the same
+commands. Two things an external controller does not give you: the loop is
+**closed** (the read-back is already in the store, so the rule re-commands
+on drift, not on a heartbeat) and it **fails closed** (a stale signal never
+relaxes a limit).
+
+### 14c.1 Set one up from the UI
+
+1. The target must offer an **enabled command** (§14b.1); only such targets
+   are listed.
+2. **Rules** page → **Add rule**. Kind first: *Steps* (thresholds → value)
+   or *Condition* (true / false). Target: a unit, or a whole group (the
+   command fans out per unit). Signal: an expression over live values
+   written `device.register` — the calculated-register grammar (`min`,
+   `max`, `avg`, `abs`, `+ - * /`; hyphenated ids are fine). Then the steps
+   table (*signal at or above → ask for*, label, *Immediate* = the
+   emergency path), *Normal again under* (the dead band), the valid signal
+   range and *max step*, the stale and disable policies and the timing
+   fields — each with its default and a one-line hint. **Preview now**
+   shows what the rule would see and want this second, nothing kept.
+3. **Save.** A new rule is saved in **shadow**: it evaluates, decides, logs
+   and publishes — and writes nothing. Watch its card: state in words,
+   signal, **want → actual** per unit with the actual's age, the last
+   decision and its reason, **Decisions** (the log).
+4. **Arm…** — a separate button with a confirmation that names the target.
+   Arming needs `security.allow_writes` and an authenticated caller, and is
+   audited. *To shadow* takes it back.
+
+Also on the card: **Clamp…** (a ceiling on what the rule may ask, for a
+stated number of hours), **Pause…** (an override, in minutes, so you or
+another system can command the target), enable/disable, Edit, Delete.
+
+### 14c.2 The same thing in `rules.yaml`
+
+Rules live in `config/rules.yaml` (they span devices), written by the UI
+and the API, included in snapshots and backups (§15).
+
+```yaml
+rules:
+  - id: ov-u1
+    label: Over-voltage protection · inverter 1
+    enabled: true
+    mode: shadow                                 # shadow | armed
+    target: { device: pv-u1, command: power_limit }   # or {endpoint: pv, group: inverters, command: …}
+    kind: steps
+    signal: "max(pv-u1.voltage_l1_n, pv-u1.voltage_l2_n, pv-u1.voltage_l3_n)"
+    signal_valid: { min: 100, max: 350, max_step: 10 }
+    stale_after_s: 60
+    steps:                                       # ascending; the highest matching step wins
+      - { at: 250.0, value: 80, label: Warning }
+      - { at: 251.0, value: 70, label: Moderate }
+      - { at: 252.5, value: 60, label: Severe }
+      - { at: 253.0, value: 50, label: Emergency, fast: true }   # no debounce
+    release_below: 248.0                         # normal only under this (dead band 248..250)
+    normal: { value: 100 }
+    params: { revert_s: 0, ramp_s: 10 }          # sent with every want
+    timing: { every_s: 2, debounce: 3, min_interval_s: 30, reassert_s: 120 }
+    on_stale: hold                               # hold | safe | a number (fail closed to it)
+    on_disable: safe                             # safe | hold
+
+  - id: grid-lost-restore                        # a condition: true → A, false → B (or nothing)
+    target: { endpoint: pv, group: inverters, command: power_limit }
+    kind: condition
+    when: "pv-meter-240.frequency < 45 or pv-meter-240.voltage_ln_avg < 100"
+    then: { params: { value: 100, revert_s: 0 } }
+    else: null
+    timing: { every_s: 2, debounce: 2, min_interval_s: 60 }
+    stale_after_s: 30
+```
+
+Defaults and bounds: `every_s` 2 (0.5–3600), `debounce` 3 (1–100 samples),
+`min_interval_s` 30, `reassert_s` 120 (0 = never), `stale_after_s` 60,
+`on_stale: hold`, `on_disable: safe`, `mode: shadow`. `release_below` must
+sit at or under the first step; `normal` is required. The read-back
+tolerance is the command's `verify` tolerance. Design:
+[rules-design.md](rules-design.md).
+
+### 14c.3 How one evaluation goes, and what you see
+
+Every `every_s` the runtime resolves the signal (its age is the **oldest**
+input's), reads the target's read-back from the store, and asks for one
+**decision**:
+
+1. **Validity** — a sample outside `signal_valid.min/max` is *ignored*
+   (counted). A change larger than `max_step` against the last accepted
+   reading is *held* until the next sample confirms it: a one-sample
+   artefact never reaches a step, not even a `fast` one; a real jump costs
+   one poll interval. Age past `stale_after_s` → state **stale**: `hold`
+   keeps the last want, `safe` asks for the command's `safe`, a number asks
+   for that value.
+2. **Desired** — `steps`: the highest step with `at <= signal`; none and
+   signal under `release_below` → `normal`; in between → keep the current
+   state. `condition`: `then` / `else`. Then the **clamp** folds in
+   (`want = min(want, clamp)`; it never expires *into* a step).
+3. **Debounce** — a new desired needs `debounce` consecutive agreeing
+   **samples** (distinct readings, not ticks); `fast` steps skip it.
+4. **Send** — if the read-back already matches, nothing is sent; less than
+   `min_interval_s` after the last command → *hold (rate limit)*. **Armed**:
+   the command runs through the same path as every face (`via: rule:<id>`,
+   same gates, audit and `…/cmd/result`). **Shadow**: *shadow (would run …)*.
+5. **Closed loop** — with nothing new to ask, the read-back is compared to
+   the want: off by more than the tolerance for longer than `reassert_s` →
+   *reassert*; read-back missing or older than 3 × its poll interval →
+   *sweep* (polled now, at most once a minute) rather than a blind write.
+
+Published: the retained **`mbg/rules/<id>/state`** `{mode, enabled, state,
+signal, units: {<unit>: {state, want, clamp, paused_until, last_action,
+ignored, guarded}}, decision, reason, ts}` on every change;
+**`mbg/rules/<id>/event`** on transitions; the event log and Status page; a
+**`rule_event`** point in the unit's InfluxDB bucket for every state or
+want change and every command sent (tags `device`, `rule`, `state`,
+`action`, `result`; fields `signal`, `want_value`, `actual`, `reason`) —
+the history Grafana reads; the decision ring (200 per rule,
+`GET /api/rules/{id}/decisions`). Three failed commands in a row raise an
+alert (§12); the rule keeps trying at `min_interval_s`.
+
+**`mbg/rules/<id>/set`** accepts `{"enabled": false}`, `{"clamp": {"max":
+60, "expires_s": 7200}}` / `{"clamp": null}`, `{"override_s": 900}` and an
+optional `source` (audited). Retained messages are dropped; anyone who can
+publish on your broker can do these, so keep the broker authenticated.
+**Arming is not available over MQTT** — only the UI and the API.
+
+### 14c.4 Safety notes
+
+- **New rules are shadow.** Arming is a separate, confirmed, audited act
+  that needs `security.allow_writes` and login or an API key. Use the
+  shadow period: want vs actual on the card is the evidence.
+- **One owner per target + command.** An armed rule owns its target: a
+  command from the API, MQTT or HA answers `409 rejected: owned by rule
+  <id>` unless it passes `override_s`, which pauses the rule (audited,
+  visible on the card). Two armed rules cannot share a target. In shadow
+  the target stays with external callers, so an existing controller keeps
+  working during the trial.
+- **Fail closed.** Stale never relaxes: `hold` keeps a curtailment that is
+  already on; a number (`on_stale: 80`) is the choice when blind should mean
+  throttled — but where phase voltages read 0 V once the inverters sleep, a
+  fixed value would be written to sleeping inverters every evening, hence
+  `hold` by default. **Leaving a limit standing is refused**: disabling,
+  un-arming or deleting an armed rule that moved its target away from the
+  command's `safe` values runs `safe` first (`on_disable: safe`).
+- **Gateway restart**: `rules.yaml` is reloaded; only clamps and pauses
+  survive (`rules_state.json`). State is rebuilt from live values, debounced
+  as usual; a want the device already holds is not sent, so a restart never
+  produces a surprise write. A rule whose target or signal no longer
+  resolves shows *cannot run* and does nothing. **Device reboot**: the
+  read-back drifts from the want and after `reassert_s` the rule
+  re-commands — unless the read-back is too old, in which case it sweeps
+  first. With writes off globally an armed rule's decisions are recorded as
+  `rejected` and the alert fires after three.
+- **Group targets** fan out per unit — per-unit want, actual and decisions;
+  the rule's state is the worst unit's; a refusing unit does not stop the
+  others.
+
+### 14c.5 Troubleshooting
+
+| Symptom | Check |
+|---------|-------|
+| The card says *cannot run* | the target does not offer the command (not enabled on the group), or the signal names a register that does not resolve — the error is spelled out on the card |
+| State stuck at *stale* | the oldest input is older than `stale_after_s`: a source down, a wrong device id in the signal, or a value polled slower than the timeout (a 60 s poll group under `stale_after_s: 60` goes stale between reads) |
+| Many *ignored* / *guarded* on the state topic | the signal leaves `signal_valid` (0 V at night is normal) or jumps more than `max_step` — a lone artefact was held; if it repeats, the max step is too tight for that source |
+| The rule wants a step but nothing is sent | shadow (*would run*), rate limit (*N s to go*), debounce (*2/3 towards Warning*), or the read-back already matches |
+| Node-RED / HA commands now return 409 | an armed rule owns the target — pass `override_s`, use *Pause…*, or put the rule back in shadow |
+| Arm is refused | `security.allow_writes` off, no login / `API_KEY`, or another armed rule already owns the target |
+| *reassert* every couple of minutes | the device does not hold the want (its own revert timer, a second writer) — read `…/cmd/result` and the Decisions log |
+| Alert *rule … cannot apply …* | three failures in a row: writes off, unit write-locked, guard failing (model 123 / scale factor), no Modbus source — run the command by hand from the unit's Commands tab to see the reason |
 
 ---
 
