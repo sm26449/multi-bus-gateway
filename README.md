@@ -61,7 +61,14 @@ Fronius și orice PLC/SCADA văd fiecare meterul pe care îl așteaptă. Totul
 🛡️ **[Fiabilitate & fail-safety](docs/reliability.md)** ·
 ⚙️ **[Referință configurare](docs/config-reference.md)** ·
 ⬆️ **[Ghid de upgrade](docs/upgrade-guide.md)** ·
-📥 **[Import YAML](docs/yaml-import.md)**
+📥 **[Import YAML](docs/yaml-import.md)** ·
+🚀 **[Instalare](docs/install.md)** ·
+🔧 **[Operare (upgrade, backup, dezinstalare)](docs/operations.md)** ·
+🩺 **[Depanare](docs/troubleshooting.md)** ·
+📨 **[Contract MQTT](docs/mqtt-contract.md)** ·
+🗄️ **[Schema InfluxDB](docs/influxdb-schema.md)** ·
+🔒 **[Hardening](docs/security-hardening.md)** ·
+🏷️ **[Cum se face un release](docs/releasing.md)**
 
 ## De ce software, nu o cutie?
 
@@ -93,7 +100,7 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
 - **MQTT-in** — abonare la un broker; valoare din payload JSON (`json_path`)
   sau payload brut; topic per registru cu wildcard-uri `+`/`#`.
 - **Template-uri de dispozitiv** — harta de registre ca fișier JSON portabil;
-  11 hărți incluse, field-tested, cu proveniență documentată
+  16 hărți incluse, field-tested, cu proveniență documentată
   ([catalog](docs/device-catalog.md)): Janitza UMG 512-PRO (4.126 registre),
   ABB B21/B23, Carlo Gavazzi EM24, Eastron SDM120/SDM630, Schneider iEM3000,
   Fronius Smart Meter 65A-3 + 3 hărți MQTT (Zigbee2MQTT, Theengs BLE, JSON
@@ -360,8 +367,8 @@ History / Energy), **Virtual Meters**, **Diagnostics**, **Status** și
 
 Peste 140 de endpoint-uri REST + WebSocket, grupate pe domenii (dispozitive,
 registre, metere virtuale, diagnostice, configurație, snapshot-uri, audit,
-metrics), fiecare cu rolul minim necesar — referința completă, generată din
-cod: **[docs/API.md](docs/API.md)**.
+metrics), fiecare cu rolul minim necesar — referința completă, întreținută manual
+și verificată față de rutele din cod: **[docs/API.md](docs/API.md)**.
 
 ```bash
 curl -s http://localhost:8080/api/status | jq .devices

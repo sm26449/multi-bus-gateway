@@ -333,6 +333,15 @@ devices:
 `rtu-tcp` speaks RTU framing over a TCP socket (a ser2net-style serial bridge);
 `rtu` opens a local serial port directly — see [rtu-serial.md](rtu-serial.md).
 
+Three more keys tie a device into an installation and give it named actions
+(user-facing walk-through in [MANUAL.md §5b and §14b](MANUAL.md)):
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `group_id` | `""` | which group of its endpoint the unit belongs to (`inverters`, `meters`…); the aggregator sums powers per group, never across groups |
+| `role` | `""` | what the unit is inside the installation (`inverter`, `meter`, `site`…) — a label the plant page and the aggregator read, not a permission |
+| `commands` | `[]` | command bindings: `[{name, from_template, enabled, faces, confirm, lease_s}]` enables a preset the template ships (or carries a full inline recipe); see [commands-design.md](commands-design.md) |
+
 ### `endpoints:` — N units of the same device behind one endpoint
 
 An endpoint instantiates **one template** for **several unit IDs** on **one
@@ -456,6 +465,37 @@ See [alerts-webhooks.md](alerts-webhooks.md) for payloads and examples.
 Raw block: `{enabled, url, username, password, timeout_s}`. Usually managed from
 the UI or seeded by `ESPHOME_URL` (see above).
 
+### `rules.yaml` — the rules engine
+
+Rules live in `config/rules.yaml` next to `config.yaml` (edited from the Rules
+page or by hand; the file is part of every snapshot). One list under `rules:`;
+the full semantics — steps, debounce by sample, stale handling, clamp,
+shadow vs armed — are in [MANUAL.md §14c](MANUAL.md) and
+[rules-design.md](rules-design.md).
+
+```yaml
+rules:
+  - id: ov-u1                          # [a-z][a-z0-9_-]{0,47}
+    label: "Over-voltage · inverter 1"
+    enabled: true
+    mode: shadow                       # shadow (decide, never write) | armed
+    target: { device: pv-u1, command: power_limit }   # or {endpoint, group, command}
+    kind: steps                        # steps | condition
+    signal: max(pv-u1.voltage_l1_n, pv-u1.voltage_l2_n, pv-u1.voltage_l3_n)
+    signal_valid: { min: 100, max: 350, max_step: 10 }  # outside min/max → ignored;
+                                       # a change > max_step is held until the next sample confirms it
+    stale_after_s: 90                  # oldest input older than this → stale
+    steps:                             # ascending; the highest matching step wins
+      - { at: 250.0, value: 80, label: Warning }
+      - { at: 253.0, value: 50, label: Emergency, fast: true }   # fast: no debounce
+    release_below: 248.0               # normal only under this (dead band above it)
+    normal: { value: 100 }             # what "no step" asks for
+    params: { revert_s: 0, ramp_s: 10 }  # fixed params sent with every want
+    timing: { every_s: 2, debounce: 3, min_interval_s: 30, reassert_s: 120 }
+    on_stale: hold                     # hold | safe | <number> (fail closed to a value)
+    on_disable: safe                   # safe | hold
+```
+
 ## Per-register options
 
 These appear in `selected_registers.json` / `config/devices/<id>/selected_registers.json`
@@ -477,6 +517,7 @@ text decode) or (`scale` + `offset`) → `monotonic` filter → outputs.**
 | `offset` | `0.0` | zero-point / unit shift, applied after scale |
 | `nan` | *(unset)* | not-available sentinel: `true` = the type's standard value (`0x8000`/`0xFFFF`/…), or a raw value, or a list; a match reads as *missing*, not data |
 | `monotonic` | `false` | cumulative counter (energy): a downward glitch is rejected so it never looks like a counter reset to consumers |
+| `daily` | `false` | day counter recomputed from whatever is awake (Fronius `Site.E_Day`): the day's maximum is held, only a drop below 2 % of it (midnight) is adopted; held samples are not published or written |
 | `enum` | *(unset)* | `{code: label}` — raw int → status text; unmapped codes render as `unknown (n)` |
 | `bits` | *(unset)* | `{bit: name}` — status word → joined names of the set bits |
 | `mask` / `shift` | *(unset)* | extract a sub-field before `enum` decode: `(raw & mask) >> shift` |

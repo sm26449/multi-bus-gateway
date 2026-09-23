@@ -57,7 +57,14 @@ in one container, on hardware you own.
 🛡️ **[Reliability & fail-safety](docs/reliability.md)** ·
 ⚙️ **[Config reference](docs/config-reference.md)** ·
 ⬆️ **[Upgrade guide](docs/upgrade-guide.md)** ·
-📥 **[YAML import](docs/yaml-import.md)**
+📥 **[YAML import](docs/yaml-import.md)** ·
+🚀 **[Install](docs/install.md)** ·
+🔧 **[Operations (upgrade, backup, uninstall)](docs/operations.md)** ·
+🩺 **[Troubleshooting](docs/troubleshooting.md)** ·
+📨 **[MQTT contract](docs/mqtt-contract.md)** ·
+🗄️ **[InfluxDB schema](docs/influxdb-schema.md)** ·
+🔒 **[Security hardening](docs/security-hardening.md)** ·
+🏷️ **[Releasing](docs/releasing.md)**
 
 ## Why software, not a box?
 
@@ -368,7 +375,8 @@ in a global menu. Full tab-by-tab tour:
 
 140+ REST endpoints + WebSocket, grouped by domain (devices, registers,
 virtual meters, diagnostics, config, snapshots, audit, metrics), each with
-its minimum required role — the full reference, generated from the code:
+its minimum required role — the full reference, hand-maintained and
+checked against the routes in the code:
 **[docs/API.md](docs/API.md)**.
 
 ```bash
