@@ -70,6 +70,11 @@ Types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`
 Open a PR against `main`, fill in the template, and make sure CI is green. A
 maintainer will review. Please be responsive to review comments.
 
+## Releases
+
+Maintainers cut releases as described in [docs/releasing.md](docs/releasing.md)
+(version bump, changelog entry, tag, the image workflow).
+
 ## License
 
 By contributing you agree that your contributions are licensed under the project

@@ -53,8 +53,8 @@ docker compose --profile rtu-bridge up -d
 ```
 
 The service (see the compose file for the authoritative definition) runs as
-container `pv-stack-serial-bridge` — the name the gateway's default
-`SERIAL_BRIDGE_URL=http://pv-stack-serial-bridge:7000` resolves. Key points:
+container `mbg-serial-bridge` — the name the gateway's default
+`SERIAL_BRIDGE_URL=http://mbg-serial-bridge:7000` resolves. Key points:
 
 - `/dev` is bound **read-only** and only ttyUSB/ttyACM device nodes are
   allowed (`device_cgroup_rules`); the process runs non-root (dialout).
@@ -66,7 +66,7 @@ container `pv-stack-serial-bridge` — the name the gateway's default
 
 - **Data ports (7001–7099) are internal-only.** They are *not* published to the
   LAN — anyone who can reach them speaks raw Modbus to your bus. MBG reaches the
-  bridge over the Docker network by name (`pv-stack-serial-bridge`).
+  bridge over the Docker network by name (`mbg-serial-bridge`).
 - **Exclusion is mandatory** for any adapter another container already owns.
   Excluded adapters are still *listed* (so you see them) but the bridge never
   opens their serial line. Cross-container "in-use" detection does not work
@@ -77,7 +77,7 @@ container `pv-stack-serial-bridge` — the name the gateway's default
 1. **Add device → Modbus RTU → Over network (auto-detect)**.
 2. Press **Scan**. Available adapters appear as *model (serial) → :port*. Pick
    one (a lone adapter auto-selects). This binds the device to that adapter's
-   stable endpoint (`host = pv-stack-serial-bridge`, `port = <tcp_port>`).
+   stable endpoint (`host = mbg-serial-bridge`, `port = <tcp_port>`).
 3. Set the unit ID, **Test connection**, pick a template, save.
 4. Unplug the adapter and **Scan** again → it disappears. Plug it back → same
    endpoint, the device reconnects automatically.
@@ -130,7 +130,7 @@ slave per adapter, or one adapter per bus.
 
 | Symptom | Likely cause / fix |
 |---|---|
-| Scan shows "serial bridge unreachable" | bridge container down, or `SERIAL_BRIDGE_URL` wrong. `docker ps` / `docker logs pv-stack-serial-bridge`. |
+| Scan shows "serial bridge unreachable" | bridge container down, or `SERIAL_BRIDGE_URL` wrong. `docker ps` / `docker logs mbg-serial-bridge`. |
 | Adapter missing from Scan | not plugged, or it is in `BRIDGE_EXCLUDE` (shown as unavailable), or claimed by another container. |
 | Test connection times out | wrong unit ID, wrong baud (bridge is 9600 8N1), A/B wires swapped, or no termination on a long bus. |
 | Values decode wrong (freq/scale off) | template register map / byte order mismatch — RTU vs TCP is *not* the cause; the frames are identical. Check the template. |

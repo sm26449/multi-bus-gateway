@@ -8,10 +8,19 @@ trap to know about before going *backwards*.
 An upgrade is just a new image over the same mounted config:
 
 ```bash
-git pull                       # or: docker pull, if you consume a published image
-docker compose build multi-bus-gateway
-docker compose up -d multi-bus-gateway
+# published image (default): pick the release, pull it, restart on it
+MBG_VERSION=3.79.0 docker compose pull multi-bus-gateway
+MBG_VERSION=3.79.0 docker compose up -d multi-bus-gateway
+
+# from source: same, with a local build
+git pull && docker compose build multi-bus-gateway && docker compose up -d multi-bus-gateway
 ```
+
+Put `MBG_VERSION=3.79.0` in `.env` to pin the tag for every later
+`docker compose up`; `latest` follows the newest release. **Rolling back** is
+the same command with the previous tag (`MBG_VERSION=3.78.2 …`) — read the
+downgrade warning below first, then restore the matching config snapshot
+(§Snapshots) if the newer version had migrated your config.
 
 Your configuration lives outside the container (`./config` bind mount:
 `config.yaml`, per-device register selections, templates, virtual meters,

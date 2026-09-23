@@ -1,3 +1,31 @@
+# Changelog
+
+## 3.79.0
+
+### 2026-09-23 — release plumbing for the public repository
+
+- `docker-compose.yml` names the published image
+  (`ghcr.io/sm26449/multi-bus-gateway:${MBG_VERSION:-latest}`) next to
+  `build:`, so `docker compose pull && up -d` runs a release without a local
+  build and `docker compose build` still works; the RTU bridge does the same
+  with `ghcr.io/sm26449/multi-bus-gateway-serial-bridge`. Its container is
+  now `mbg-serial-bridge` (was `pv-stack-serial-bridge`) — the gateway's
+  default `SERIAL_BRIDGE_URL` follows; set the env if you kept the old name.
+- `docker-compose.pv-stack.yml` is `docker-compose.external-network.yml`:
+  the overlay that joins an existing Docker network, named for what it does.
+- `config/rules.yaml` is part of every snapshot/backup bundle (it was the one
+  runtime file the bundle did not carry) and is ignored by git like the rest
+  of the runtime state.
+- `.dockerignore` excludes the whole `config/` tree except the shipped
+  examples and templates (`sessions.json`, PQ state and the `.good/.bad`
+  config copies could reach an image built from a tree the app had run in),
+  and keeps `docs/` out of the build context except `modbus_data.json`.
+- New `docs/releasing.md`: version bump, changelog entry, tag, the release
+  workflow, verifying the multi-arch image. `docs/upgrade-guide.md` covers
+  image consumers: pin a tag, roll back by tag.
+- Changelog file: the title is the first line again (3.75–3.78 had been
+  prepended above it) and the stray "Unreleased" heading is gone.
+
 ## 3.78.2
 
 ### 2026-09-19 — the rule state says how many samples were ignored or guarded (3.78.1 only had them in the API's live view)
@@ -161,8 +189,6 @@
   20 s to 60 s (it still owns PF, VA/var, event flags, temperatures, the
   operating state and the MPPT block). Modbus traffic on the datalogger drops
   from ~12 to ~6 transactions a minute.
-
-# Changelog
 
 ## 3.74.2
 
@@ -949,7 +975,6 @@ Verified end to end against the production DataManager: one endpoint definition,
 four units, all four online, and the plant aggregate live — 1048 W total,
 49.963 Hz and 234.175 V averaged, energy summed.
 
-## Unreleased
 
 ### 2026-09-12 — design note P7: Solar API alongside Modbus
 

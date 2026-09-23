@@ -19,18 +19,14 @@ serial-bridge
 Dockerfile.test
 docker-compose*.yml
 
-# runtime state under config/ — only templates/ and *.example.* belong in the image
-config/snapshots
-config/devices
-config/certs
-config/audit.jsonl*
-config/events.jsonl
-config/config.yaml
-config/config.yaml.*
-config/passkeys.json
-config/virtual_meters.yaml
-config/selected_registers.json
-config/calculated_templates.json
-config/builder_profiles.json
-config/write_leases.json
-config/influx_buffer.jsonl
+# config/: the image ships ONLY the examples and the meter templates. Everything
+# else under config/ is runtime state a tree the app has run in may hold
+# (config.yaml, sessions, passkeys, snapshots, audit log, PQ state, the
+# .good/.bad config copies) — an allow list cannot miss a new state file.
+config/*
+!config/config.example.yaml
+!config/selected_registers.example.json
+!config/templates/
+# docs/ stays out of the context except the register catalogue the app loads
+docs/*
+!docs/modbus_data.json

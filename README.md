@@ -268,7 +268,7 @@ Folosește overlay-ul și pornește doar gateway-ul — rețeaua e cea existent�
 (implicit `pv-stack-network`, configurabil prin `PV_STACK_NETWORK`):
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.pv-stack.yml \
+docker compose -f docker-compose.yml -f docker-compose.external-network.yml \
   up -d multi-bus-gateway
 ```
 
@@ -288,6 +288,19 @@ docker run -d --name multi-bus-gateway --restart unless-stopped \
 > **Notă:** `docker run` pornește DOAR gateway-ul — fără broker-ul MQTT
 > inclus, deci setează `MQTT_BROKER` spre un broker existent (sau folosește
 > compose-ul, care aduce tot stack-ul).
+
+Cu compose aceeași imagine e implicită: `docker-compose.yml` numește
+`ghcr.io/sm26449/multi-bus-gateway:${MBG_VERSION:-latest}`, deci
+
+```bash
+MBG_VERSION=3.79.0 docker compose pull && docker compose up -d
+```
+
+rulează un release fără niciun build (`docker compose build` construiește
+în continuare din sursă când vrei). Bridge-ul serial RTU e publicat la fel,
+ca `ghcr.io/sm26449/multi-bus-gateway-serial-bridge`. Upgrade și rollback
+pe tag: [docs/upgrade-guide.md](docs/upgrade-guide.md); cum se face un
+release: [docs/releasing.md](docs/releasing.md).
 
 > **Porturi:** `8080` = Web UI · `1502-1512` = metere virtuale (extinde cu
 > `VMETER_PORT_START/END`) · `502` = portul Modbus standard pe care unii
@@ -409,7 +422,7 @@ multi-bus-gateway/
 ├── ui/                        # SPA vanilla JS (i18n în ui/languages/)
 ├── tests/                     # Suita de teste (pytest)
 ├── main.py                    # Entry point
-├── Dockerfile / docker-compose.yml (+ docker-compose.pv-stack.yml — overlay rețea partajată)
+├── Dockerfile / docker-compose.yml (+ docker-compose.external-network.yml — overlay rețea partajată)
 ├── mosquitto/config/       # configul broker-ului inclus
 ├── serial-bridge/          # companion ser2net (profilul rtu-bridge)
 └── CHANGELOG.md

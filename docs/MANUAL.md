@@ -94,7 +94,7 @@ and the broker/InfluxDB — **already exist**, use the overlay and start only
 the gateway services:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.pv-stack.yml \
+docker compose -f docker-compose.yml -f docker-compose.external-network.yml \
   up -d multi-bus-gateway
 ```
 
@@ -978,7 +978,7 @@ Config → **Backup & Snapshots**.
 **What goes into a backup/snapshot:** `config.yaml`, each device's selected
 registers, the user's device templates, `virtual_meters.yaml` + the
 virtual-meter templates under `config/templates/`, calculated-register
-presets and the Builder's hardware profiles. The passkey registry
+presets, the Builder's hardware profiles and the rules (`rules.yaml`). The passkey registry
 (`passkeys.json`) goes **only** into the with-secrets backup
 (`include_secrets=true`) and into snapshots — otherwise a restore would
 unlock authentication.

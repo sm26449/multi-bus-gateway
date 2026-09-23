@@ -42,7 +42,7 @@ from typing import Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 BUNDLE_EXTRAS = ("calculated_templates.json", "builder_profiles.json",
-                 "passkeys.json")   # beside the classic backup set
+                 "rules.yaml", "passkeys.json")   # beside the classic backup set
 _INDEX = "index.json"
 _LKG_ZIP = "lkg.zip"
 _LKG_META = "lkg.json"

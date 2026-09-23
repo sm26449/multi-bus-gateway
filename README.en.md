@@ -274,7 +274,7 @@ Use the overlay and start only the gateway — it joins the existing network
 (default `pv-stack-network`, overridable via `PV_STACK_NETWORK`):
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.pv-stack.yml \
+docker compose -f docker-compose.yml -f docker-compose.external-network.yml \
   up -d multi-bus-gateway
 ```
 
@@ -294,6 +294,19 @@ docker run -d --name multi-bus-gateway --restart unless-stopped \
 > **Note:** `docker run` starts ONLY the gateway — no bundled MQTT broker,
 > so point `MQTT_BROKER` at an existing one (or use compose, which brings
 > the whole stack).
+
+With compose the same image is the default: `docker-compose.yml` names
+`ghcr.io/sm26449/multi-bus-gateway:${MBG_VERSION:-latest}`, so
+
+```bash
+MBG_VERSION=3.79.0 docker compose pull && docker compose up -d
+```
+
+runs a release without building anything (`docker compose build` still
+builds from source when you want to). The RTU serial bridge is published the
+same way as `ghcr.io/sm26449/multi-bus-gateway-serial-bridge`. Upgrades and
+rollbacks by tag: [docs/upgrade-guide.md](docs/upgrade-guide.md); how a
+release is cut: [docs/releasing.md](docs/releasing.md).
 
 > **Ports:** `8080` = Web UI · `1502-1512` = virtual meters (grow via
 > `VMETER_PORT_START/END`) · `502` = the standard Modbus port some
@@ -417,7 +430,7 @@ multi-bus-gateway/
 ├── ui/                        # Vanilla-JS SPA (i18n in ui/languages/)
 ├── tests/                     # Test suite (pytest)
 ├── main.py                    # Entry point
-├── Dockerfile / docker-compose.yml (+ docker-compose.pv-stack.yml — shared-network overlay)
+├── Dockerfile / docker-compose.yml (+ docker-compose.external-network.yml — shared-network overlay)
 ├── mosquitto/config/       # bundled broker config
 ├── serial-bridge/          # ser2net companion (rtu-bridge profile)
 └── CHANGELOG.md

@@ -26,6 +26,7 @@ config/config.yaml
 config/config.yaml.*
 config/selected_registers.json
 config/virtual_meters.yaml
+config/rules.yaml
 config/calculated_templates.json
 config/builder_profiles.json
 config/write_leases.json

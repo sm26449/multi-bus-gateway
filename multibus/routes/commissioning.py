@@ -34,7 +34,7 @@ from fastapi import APIRouter
 
 from ..redact import redact_url
 
-_BRIDGE_URL = os.environ.get("SERIAL_BRIDGE_URL", "http://pv-stack-serial-bridge:7000")
+_BRIDGE_URL = os.environ.get("SERIAL_BRIDGE_URL", "http://mbg-serial-bridge:7000")
 
 
 def build(ctx) -> APIRouter:
@@ -75,7 +75,7 @@ def build(ctx) -> APIRouter:
         scan for RTU-over-network devices. Returns available=false (not an error)
         when the bridge is unreachable, so the UI degrades gracefully. Adapters
         carry the bridge host + their stable tcp_port to prefill the add form."""
-        host = urlparse(_BRIDGE_URL).hostname or "pv-stack-serial-bridge"
+        host = urlparse(_BRIDGE_URL).hostname or "mbg-serial-bridge"
         try:
             with urllib.request.urlopen(f"{_BRIDGE_URL}/adapters", timeout=4) as resp:
                 data = json.loads(resp.read().decode())

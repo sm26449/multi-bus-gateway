@@ -96,7 +96,7 @@ pot alătura. Dacă rețeaua — și broker-ul/InfluxDB — **există deja**,
 folosește overlay-ul și pornește doar serviciile gateway-ului:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.pv-stack.yml \
+docker compose -f docker-compose.yml -f docker-compose.external-network.yml \
   up -d multi-bus-gateway
 ```
 
@@ -1027,8 +1027,8 @@ Config → **Backup & Snapshots**.
 **Ce intră în backup/snapshot:** `config.yaml`, registrele selectate ale
 fiecărui dispozitiv, template-urile de dispozitiv ale utilizatorului,
 `virtual_meters.yaml` + template-urile de metere virtuale din
-`config/templates/`, presetările calculate și profilurile hardware ale
-Builder-ului. Registrul de passkeys (`passkeys.json`) intră **doar** în
+`config/templates/`, presetările calculate, profilurile hardware ale
+Builder-ului și regulile (`rules.yaml`). Registrul de passkeys (`passkeys.json`) intră **doar** în
 backup-ul cu secrete (`include_secrets=true`) și în snapshot-uri — altfel
 un restore ar debloca autentificarea.
 

@@ -82,7 +82,7 @@ secret values masked.
 | `VMETER_PORT_START` | `1502` | First TCP port of the virtual-meter range (the UI offers/validates instance ports from it). |
 | `VMETER_PORT_END` | `1512` | Last port of the range. Widen it (and the compose port mapping) for more meters. |
 | `INFLUX_BUFFER_PATH` | `config/influx_buffer.jsonl` | On-disk location of the InfluxDB store-and-forward buffer (used only when `influxdb.buffer_persist` is true). |
-| `SERIAL_BRIDGE_URL` | `http://pv-stack-serial-bridge:7000` | Base URL of the optional ser2net serial-bridge companion, used by the commissioning UI to list remote serial adapters. |
+| `SERIAL_BRIDGE_URL` | `http://mbg-serial-bridge:7000` | Base URL of the optional ser2net serial-bridge companion, used by the commissioning UI to list remote serial adapters. |
 | `TZ` | `Europe/Bucharest` (compose) | Standard container timezone. Calendar reports (monthly energy) use `ui.timezone`, not `TZ`. |
 
 ### Compose-stack variables (infrastructure, not the gateway)
@@ -97,7 +97,7 @@ Consumed by `docker-compose.yml` for the bundled services — set them in `.env`
 | `GF_SECURITY_ADMIN_PASSWORD` | change-me | Grafana `admin` login |
 | `PV_STACK_NETWORK` | `pv-stack-network` | name of the docker network (created by the base file; joined as external by the overlay) |
 | `BRIDGE_EXCLUDE` | *(empty)* | serial adapters the bridge must never expose (`rtu-bridge` profile) |
-| `SERIAL_BRIDGE_URL` | `http://pv-stack-serial-bridge:7000` | where the gateway reaches the bridge's control API |
+| `SERIAL_BRIDGE_URL` | `http://mbg-serial-bridge:7000` | where the gateway reaches the bridge's control API |
 
 ### Backfill utility (`multibus/backfill.py`)
 

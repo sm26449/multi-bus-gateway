@@ -53,6 +53,11 @@ def test_bundle_contains_the_config_set(store):
     assert {"config.yaml", "virtual_meters.yaml", "manifest.json",
             "device_templates/my.json",
             "devices/umg512/selected_registers.json"} <= names
+    # the rules are runtime state too (3.79.0: they were the one file the
+    # bundle did not carry)
+    (store.cfg_dir / "rules.yaml").write_text("rules: []\n")
+    names = set(zipfile.ZipFile(io.BytesIO(store.build_bundle_bytes())).namelist())
+    assert "rules.yaml" in names
     assert json.loads(zf.read("manifest.json"))["snapshot"] is True
 
 

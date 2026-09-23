@@ -10,6 +10,9 @@ x-logging: &default-logging
 services:
   multi-bus-gateway:
     build: .
+    # The published multi-arch image; `docker compose pull` + `up -d` runs a
+    # release without a local build, `docker compose build` overrides it.
+    image: ghcr.io/sm26449/multi-bus-gateway:${MBG_VERSION:-latest}
     container_name: multi-bus-gateway
     logging: *default-logging
     restart: unless-stopped
@@ -197,13 +200,13 @@ services:
   # hotplug reload + a scan API the gateway's Add-Device wizard uses. Start
   # it with:  docker compose --profile rtu-bridge up -d
   # See docs/rtu-serial.md. The container name matches the gateway's default
-  # SERIAL_BRIDGE_URL (http://pv-stack-serial-bridge:7000) — override that
+  # SERIAL_BRIDGE_URL (http://mbg-serial-bridge:7000) — override that
   # env on the gateway if you rename it.
   serial-bridge:
     build:
       context: ./serial-bridge
-    image: mbg-serial-bridge:latest
-    container_name: pv-stack-serial-bridge
+    image: ghcr.io/sm26449/multi-bus-gateway-serial-bridge:${MBG_VERSION:-latest}
+    container_name: mbg-serial-bridge
     logging: *default-logging
     restart: unless-stopped
     environment:
