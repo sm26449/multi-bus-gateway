@@ -4,10 +4,9 @@
 store, the commands it runs, ownership, MQTT state, release to safe."""
 import json
 
-import pytest
 
 from tests.test_commands import _Inverter
-from tests.test_commands_api import PLANT_YAML, _Mqtt, _app, _audit
+from tests.test_commands_api import _Mqtt, _app, _audit
 from tests.test_endpoints import needs_tc
 from tests.test_rules import OV
 

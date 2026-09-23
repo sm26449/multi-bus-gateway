@@ -7,7 +7,6 @@ plus the flat shape it was born with (`units`, `connection`). Taken literally
 that flattened a plant to one Modbus group, dropped every source and renamed
 its site unit — on a save meant to change the name (UI audit, finding 1.1).
 """
-import pytest
 
 from tests.test_endpoints import make_app, needs_tc
 

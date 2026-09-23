@@ -6,7 +6,6 @@ The picker filed every Solar API register under "other" while the Monitor
 grouped the same fields under "Power_active / Dc" (UI audit 3.4). The
 category now comes from the canonical name, once, on the server.
 """
-import pytest
 
 from multibus.routes.registers_routes import canonical_category
 from tests.test_endpoint_edit_guard import PLANT

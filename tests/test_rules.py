@@ -2,7 +2,6 @@
 # Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
 """The rules engine — pure: samples in, decisions out. Every guarantee of
 docs/rules-design.md §4 has a test here."""
-import pytest
 
 from multibus.rules import RuleState, parse_rule_def, validate_rule_def
 
@@ -215,7 +214,7 @@ def test_validation_speaks_in_words():
 def test_a_numeric_on_stale_asks_for_that_value_while_blind():
     """Node-RED's OV fails closed to 80 % when its voltage feed goes stale;
     the rule can do the same: a number instead of hold/safe."""
-    assert validate_rule_def({**_RAW, 'on_stale': 80}) == [] if '_RAW' in globals() else True
+    assert validate_rule_def({**OV, 'on_stale': 80}) == []
     st = RuleState(_rule(mode='armed', on_stale=80))
     _run(st, [231.0] * 3)                                   # normal, full power
     d = st.evaluate(100.0, None, None)                       # the signal went away

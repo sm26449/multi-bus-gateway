@@ -6,7 +6,6 @@ template's (`power_limit` on fronius_sunspec_inverter); nothing here knows a
 register address."""
 import json
 
-import pytest
 
 from multibus.config import SourceConfig
 from tests.test_devices import write_config

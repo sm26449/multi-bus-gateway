@@ -7,7 +7,6 @@ holds more than one kind of thing.
 """
 import time
 
-import pytest
 
 from tests.test_endpoint_edit_guard import PLANT
 from tests.test_endpoints import make_app, needs_tc

@@ -26,7 +26,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import yaml
 
 from . import expressions
-from .rules import (KINDS, NORMAL, STALE, Decision, RuleDef, RuleState, parse_rule_def,
+from .rules import (NORMAL, STALE, Decision, RuleDef, RuleState, parse_rule_def,
                     validate_rule_def)
 
 logger = logging.getLogger(__name__)
