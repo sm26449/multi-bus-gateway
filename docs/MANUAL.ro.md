@@ -2,6 +2,13 @@
 
 [🇬🇧 English](MANUAL.md) | 🇷🇴 **Română**
 
+> Versiunea în engleză este referința și este întreținută prima. Capitolele
+> adăugate în 2026-09 — instalații cu mai multe unități (§5b), comenzi
+> (§14b) și reguli (§14c) — există deocamdată doar în
+> [MANUAL.md](MANUAL.md); la fel documentele noi de instalare, operare,
+> depanare, contract MQTT și schemă InfluxDB (toate în engleză, legate din
+> [README](../README.md)).
+
 Ghid pas cu pas pentru tehnician/integrator: de la o instalare curată la un
 gateway multi-dispozitiv cu metere virtuale, diagnostice și acces securizat.
 Documente însoțitoare:

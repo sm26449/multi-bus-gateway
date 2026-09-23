@@ -4,6 +4,13 @@
 
 ### 2026-09-23 — bundled broker: second start no longer fails
 
+- Documentation: English is the front page (`README.md`; Romanian moved to
+  `README.ro.md`), the quick start shows the published-image and the
+  from-source paths side by side, and the Romanian manual and UI guide
+  point at the English reference for the chapters they do not yet carry.
+  The repository history was rewritten before publication (author
+  identity, private notes and real addresses removed).
+
 - The mosquitto start command created the password file with
   `mosquitto_passwd -c`, which refuses an existing file — the broker came up
   once and crash-looped on every restart. It now updates the `.env` user in

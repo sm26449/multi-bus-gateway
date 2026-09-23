@@ -1,5 +1,9 @@
 # Ghid vizual al interfeței — Multi-Bus Gateway
 
+> Ghid în română, cu capturi din versiunea 3.35 (august 2026). Paginile
+> Rules, Templates și instalațiile cu mai multe unități au apărut după aceste
+> capturi; referința la zi este [MANUAL.md](MANUAL.md) (engleză).
+
 Un tur ilustrat al fiecărei pagini, sub-pagini și tab din interfața web, cu note
 explicative pentru operator/integrator. Capturile sunt făcute pe o **instanță
 demo completă** cu date vii (simulatoare de metere Modbus din `loadtest/`,

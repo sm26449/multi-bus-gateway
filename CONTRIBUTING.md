@@ -70,6 +70,12 @@ Types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`
 Open a PR against `main`, fill in the template, and make sure CI is green. A
 maintainer will review. Please be responsive to review comments.
 
+## Documentation language
+
+English is the reference for every document; `README.ro.md` and
+`docs/MANUAL.ro.md` are Romanian twins maintained best-effort and may lag the
+English versions. Please write new documentation in English.
+
 ## Releases
 
 Maintainers cut releases as described in [docs/releasing.md](docs/releasing.md)

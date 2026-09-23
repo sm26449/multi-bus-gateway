@@ -8,281 +8,301 @@
 > with commissioning diagnostics. The Janitza UMG 512-PRO remains a
 > first-class supported device (bundled template + verified register map).
 
-> fost *Janitza UMG 512-PRO Monitor* — gateway de protocol multi-sursă:
-> Modbus TCP/RTU · HTTP/JSON · MQTT → MQTT / InfluxDB / metere Modbus
-> virtuale / HTTP-JSON / REST
-
-🇷🇴 **Română** | [🇬🇧 English](README.en.md)
+🇬🇧 **English** | [🇷🇴 Română](README.ro.md)
 
 [![Release](https://img.shields.io/github/v/release/sm26449/multi-bus-gateway?sort=semver)](https://github.com/sm26449/multi-bus-gateway/releases)
 [![Container](https://img.shields.io/badge/container-ghcr.io-2496ED?logo=docker&logoColor=white)](https://github.com/sm26449/multi-bus-gateway/pkgs/container/multi-bus-gateway)
 ![Modbus → MQTT](https://img.shields.io/badge/Modbus-MQTT-6f42c1)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-autodiscovery-41BDF5?logo=homeassistant&logoColor=white)
-[![Licenta: AGPL v3](https://img.shields.io/badge/licen%C8%9B%C4%83-AGPL%20v3-blue.svg)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
-> **Gateway de protocol software — achiziție, verificare, monitorizare și
-> rutare de date. Retrofit, nu înlocuire.**
+> **A software-defined protocol gateway — acquire, verify, monitor and
+> route field data. Retrofit, don't replace.**
 
-Citește contoare și senzori existenți — prin **Modbus TCP**, **Modbus RTU**,
-**HTTP/JSON** (Solar API, Shelly, Tasmota…) sau **MQTT** — și rutează datele
-către **MQTT, InfluxDB/Grafana, Home Assistant, REST și feed-uri JSON**. În
-plus, unic: re-servește sursele fizice ca **metere Modbus virtuale**
-(Carlo Gavazzi EM24, Fronius Smart Meter, SunSpec), astfel încât Victron,
-Fronius și orice PLC/SCADA văd fiecare meterul pe care îl așteaptă. Totul
-într-un container, pe hardware pe care îl deții.
+It reads existing meters and sensors — over **Modbus TCP**, **Modbus RTU**,
+**HTTP/JSON** (Solar API, Shelly, Tasmota…) or **MQTT** — and routes the
+data to **MQTT, InfluxDB/Grafana, Home Assistant, REST and JSON feeds**.
+And, uniquely, it re-serves the physical sources as **virtual Modbus
+meters** (Carlo Gavazzi EM24, Fronius Smart Meter, SunSpec), so Victron,
+Fronius and any PLC/SCADA each see the meter they expect. Everything runs
+in one container, on hardware you own.
 
-- 🔌 **Retrofit în loc de înlocuire** — digitalizezi echipamente deja
-  instalate; **zero hardware nou**.
-- 🧩 **Multi-sursă, multi-sink** — fiecare dispozitiv cu rutarea lui proprie
-  (topic MQTT, bucket InfluxDB, ieșiri opt-in), pipeline-uri independente.
-- 🪞 **Un meter, mai mulți consumatori** — metere virtuale emulate, cu
-  politici explicite de staleness și bloc de calitate in-band.
-- 🛠️ **UI de operator** — wizard cu discovery, diagnostice la nivel de
-  cadru, snapshot-uri de configurație cu rollback, roluri și audit.
-- 📟 **Device Builder (noduri ESP32 remote)** — generează, compilează și
-  flash-uiește firmware ESPHome pentru cititoare RS485 aflate la distanță,
-  direct din UI (build pe containerul tău ESPHome, flash USB din browser,
-  OTA, adopție automată ca dispozitiv MQTT — zero configurare dublă).
-- ⚡ **Recorder de evenimente PQ (Janitza)** — arhivează permanent ring-ul
-  de evenimente de calitate a energiei al aparatului (dip/întrerupere/RVC
-  + forme de undă RMS), cu tab dedicat, alerte și istoric interogabil —
-  [manual §11c](docs/MANUAL.ro.md#11c-power-quality--recorderul-de-evenimente-pq-janitza).
+- 🔌 **Retrofit instead of replacement** — digitize installed equipment;
+  **zero new hardware**.
+- 🧩 **Multi-source, multi-sink** — each device with its own routing (MQTT
+  topic prefix, InfluxDB bucket, opt-in outputs), independent pipelines.
+- 🪞 **One meter, many consumers** — emulated virtual meters with explicit
+  staleness policies and an in-band quality block.
+- 🛠️ **Operator-grade UI** — discovery wizard, frame-level diagnostics,
+  config snapshots with rollback, roles and an audit trail.
+- 📟 **Device Builder (remote ESP32 nodes)** — generate, compile and flash
+  ESPHome firmware for far-away RS485 readers straight from the UI (builds
+  on your own ESPHome container, browser USB flashing, OTA, automatic
+  adoption as an MQTT device — zero double configuration).
+- ⚡ **PQ event recorder (Janitza)** — permanently archives the meter's
+  on-device power-quality event ring (dips/outages/RVC + RMS waveforms),
+  with a dedicated tab, alerts and a queryable history —
+  [manual §11c](docs/MANUAL.md#11c-power-quality--the-pq-event-recorder-janitza).
 
-> **Scop asumat:** e un **gateway de protocol**, nu o aplicație de
-> energie/raportare — costuri, tarife, facturare și analize rămân treaba
-> sistemelor din aval.
+> **Deliberate scope:** it is a **protocol gateway**, not an
+> energy/reporting application — cost, tariffs, billing and analytics stay
+> downstream.
 
-📖 **[Manual de utilizare](docs/MANUAL.ro.md)** ·
-🏗️ **[Arhitectură (diagrame)](docs/architecture.md)** ·
-🔌 **[Referință API](docs/API.md)** ·
-📡 **[Spec meter virtual](docs/virtual-meter-spec.md)** ·
-🗂️ **[Catalog de dispozitive](docs/device-catalog.md)** ·
-🖼️ **[Ghid vizual UI](docs/GHID-UI.md)** ·
-🛡️ **[Fiabilitate & fail-safety](docs/reliability.md)** ·
-⚙️ **[Referință configurare](docs/config-reference.md)** ·
-⬆️ **[Ghid de upgrade](docs/upgrade-guide.md)** ·
-📥 **[Import YAML](docs/yaml-import.md)** ·
-🚀 **[Instalare](docs/install.md)** ·
-🔧 **[Operare (upgrade, backup, dezinstalare)](docs/operations.md)** ·
-🩺 **[Depanare](docs/troubleshooting.md)** ·
-📨 **[Contract MQTT](docs/mqtt-contract.md)** ·
-🗄️ **[Schema InfluxDB](docs/influxdb-schema.md)** ·
-🔒 **[Hardening](docs/security-hardening.md)** ·
-🏷️ **[Cum se face un release](docs/releasing.md)**
+📖 **[User Manual](docs/MANUAL.md)** ·
+🏗️ **[Architecture (diagrams)](docs/architecture.md)** ·
+🔌 **[API Reference](docs/API.md)** ·
+📡 **[Virtual meter spec](docs/virtual-meter-spec.md)** ·
+🗂️ **[Device catalog](docs/device-catalog.md)** ·
+🖼️ **[Visual UI guide](docs/GHID-UI.md)** (RO notes) ·
+🛡️ **[Reliability & fail-safety](docs/reliability.md)** ·
+⚙️ **[Config reference](docs/config-reference.md)** ·
+⬆️ **[Upgrade guide](docs/upgrade-guide.md)** ·
+📥 **[YAML import](docs/yaml-import.md)** ·
+🚀 **[Install](docs/install.md)** ·
+🔧 **[Operations (upgrade, backup, uninstall)](docs/operations.md)** ·
+🩺 **[Troubleshooting](docs/troubleshooting.md)** ·
+📨 **[MQTT contract](docs/mqtt-contract.md)** ·
+🗄️ **[InfluxDB schema](docs/influxdb-schema.md)** ·
+🔒 **[Security hardening](docs/security-hardening.md)** ·
+🏷️ **[Releasing](docs/releasing.md)**
 
-## De ce software, nu o cutie?
+## Why software, not a box?
 
-Un aparat Modbus-to-MQTT dedicat e o variantă. Asta e cealaltă: aceeași
-treabă în software pe care îl deții și îl poți extinde — pe hardware pe care
-îl ai deja, sau pe un Raspberry Pi de ~50€ cu un adaptor USB/HAT RS-485,
-montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
+A dedicated Modbus-to-MQTT appliance is one option. This is the other: the
+same job in software you own and can extend — on hardware you already have,
+or on a ~€50 Raspberry Pi with a USB/HAT RS-485 adapter, DIN-rail-mountable
+all the same. No vendor lock-in, no per-box cost.
 
-- ⚡ **Polling sub-secundă configurabil** — reglabil per poll-group, fără
-  prag fix (rulăm 250 ms pe grupul realtime); gateway-urile cu funcție fixă
-  se opresc de obicei la ~5 s.
-- ♾️ **Fără limite de dispozitive / valori** — mărginit doar de host.
-- 🪞 **Metere virtuale** — un gateway read-only nu poate re-servi datele ca
-  device-uri emulate; acesta poate.
-- 🔓 **Sursă deschisă, hardware de comodă** — îl inspectezi, îl forkezi, îi
-  adaugi un protocol.
-- 🍓 **Frugal, măsurat pe hardware limitat** — ~90 MB RAM și câteva procente
-  CPU la o instalare tipică, fără scurgeri. Un **RPi 3 rulează confortabil
-  ~4–5 dispozitive + ~3 metere virtuale** (realtime ≥ 1 s), un Pi 4/5 mult mai
-  mult. Plicul de capacitate complet + profilul recomandat: [MANUAL §18b](docs/MANUAL.ro.md#18b-rulare-pe-hardware-limitat-raspberry-pi).
+- ⚡ **Configurable sub-second polling** — tunable per poll-group with no
+  fixed floor (we run 250 ms on the realtime group); fixed-function
+  gateways typically stop at ~5 s.
+- ♾️ **No device / value caps** — bounded only by your host.
+- 🪞 **Virtual meters** — a read-only gateway can't re-serve data as
+  emulated devices; this one can.
+- 🔓 **Open source, commodity hardware** — inspect it, fork it, add a
+  protocol.
+- 🍓 **Frugal, measured on constrained hardware** — ~90 MB RAM and a few
+  percent CPU on a typical install, no leaks. An **RPi 3 comfortably runs
+  ~4–5 devices + ~3 virtual meters** (realtime ≥ 1 s), a Pi 4/5 far more.
+  Full capacity envelope + recommended profile: [MANUAL §18b](docs/MANUAL.md#18b-running-on-constrained-hardware-raspberry-pi).
 
-## Caracteristici
+## Features
 
-**Southbound (achiziție)**
-- **Modbus TCP** și **Modbus RTU master** (serial RS-485), cu citiri batch,
-  retry-uri și taxonomie de erori (`timeout` / `exception_N` / `connection`).
-- **HTTP/JSON** — orice endpoint JSON, cu `json_path` per registru și gardă
-  SSRF (doar LAN privat, implicit).
-- **MQTT-in** — abonare la un broker; valoare din payload JSON (`json_path`)
-  sau payload brut; topic per registru cu wildcard-uri `+`/`#`.
-- **Template-uri de dispozitiv** — harta de registre ca fișier JSON portabil;
-  16 hărți incluse, field-tested, cu proveniență documentată
-  ([catalog](docs/device-catalog.md)): Janitza UMG 512-PRO (4.126 registre),
-  ABB B21/B23, Carlo Gavazzi EM24, Eastron SDM120/SDM630, Schneider iEM3000,
-  Fronius Smart Meter 65A-3 + 3 hărți MQTT (Zigbee2MQTT, Theengs BLE, JSON
-  generic). Editor + upload + export + **import CSV**
-  ([ghid](docs/csv-import.md)).
-- **Nume canonice de câmpuri** — nume uniforme de registre pe orice dispozitiv
-  (`voltage_l1_n` peste tot), deci topicele MQTT și field-urile InfluxDB sunt
-  predictibile. **Auto-canonicalize** dintr-un click le deduce pentru o hartă
-  criptică importată, conservator ([dicționar](docs/canonical-fields.md)).
-- **Wizard cu discovery** — scanare CIDR pe portul Modbus, sweep de unit-ID
-  (TCP și RTU), **SunSpec model walk**, răsfoire de topicuri MQTT cu preview,
-  Fronius Solar API discover, **scanare noduri ESPHome** (API nativ 6053,
-  merge din Docker fără mDNS); „Use" pre-completează wizard-ul.
-- **Restaurarea unui dispozitiv șters** — ștergerea păstrează definiția
-  completă; un card „Deleted devices" oferă restore cu un click (conexiune +
-  template + registre) sau „forget" definitiv.
+**Southbound (acquisition)**
+- **Modbus TCP** and **Modbus RTU master** (RS-485 serial), with batched
+  reads, retries and an error taxonomy
+  (`timeout` / `exception_N` / `connection`).
+- **HTTP/JSON** — any JSON endpoint, per-register `json_path`, SSRF-guarded
+  (private LAN only by default).
+- **MQTT-in** — subscribe to a broker; value from the JSON payload
+  (`json_path`) or the bare payload; per-register topics with `+`/`#`
+  wildcards.
+- **Device templates** — the register map as a portable JSON file; 11
+  bundled, field-tested maps with documented provenance
+  ([catalog](docs/device-catalog.md)): Janitza UMG 512-PRO (4,126
+  registers), ABB B21/B23, Carlo Gavazzi EM24, Eastron SDM120/SDM630,
+  Schneider iEM3000, Fronius Smart Meter 65A-3 + 3 MQTT maps (Zigbee2MQTT,
+  Theengs BLE, generic JSON).
+  In-UI editor + upload + export + **CSV/YAML import**
+  ([CSV](docs/csv-import.md), [YAML](docs/yaml-import.md)). Per-register
+  status decode (`enum`/`bits` → text, e.g. the EM24/Fronius identity
+  codes), `nan` sentinels, a symmetric **monotonic** counter filter and
+  `offset` — identical on every transport.
+- **Canonical field naming** — uniform register names across every device
+  (`voltage_l1_n` everywhere), so MQTT topics and InfluxDB fields are
+  predictable — and **the unit is part of the contract** (energy = the Wh
+  family; the editor flags a mismatched unit amber, the save warns).
+  One-click **Auto-canonicalize** infers names for a cryptic imported map,
+  conservatively ([dictionary](docs/canonical-fields.md)).
+- **Discovery wizard** — CIDR scan on the Modbus port, unit-ID sweep (TCP
+  and RTU), **SunSpec model walk**, MQTT topic browse with payload previews,
+  Fronius Solar API discover, **ESPHome node scan** (native API 6053, works
+  from Docker without mDNS); "Use" prefills the wizard.
+- **Restore a deleted device** — deleting keeps the full definition; a
+  "Deleted devices" card offers one-click restore (connection + template +
+  registers) or permanent "forget".
 
-**Măsurători**
-- Registre selectate per dispozitiv, **grupuri de poll**
-  (realtime/normal/slow, intervale 0,05 s–24 h, hot-reload).
-- **Registre calculate** — motor de expresii sigur (AST whitelist) cu
-  `prev()` și `dt` pentru rate (`(E - prev(E)) / dt * 3600`), referințe între
-  dispozitive, preview live, preset-uri reutilizabile; curg către toate
-  ieșirile.
-- **Praguri** de colorare per registru (warning/danger) pe dashboard.
+**Measurements**
+- Per-device selected registers, **poll groups**
+  (realtime/normal/slow, 0.05 s–24 h intervals, hot-reload).
+- **Calculated registers** — a safe expression engine (whitelisted AST)
+  with `prev()` and `dt` for rates (`(E - prev(E)) / dt * 3600`),
+  cross-device references, live preview, reusable presets; they flow to
+  every output.
+- Per-register **thresholds** (warning/danger color coding) on the
+  dashboard.
 
-**Northbound (sink-uri) — toate opt-in, per dispozitiv**
-- **MQTT** — moduri `changed`/`all`, retain/QoS, TLS/mTLS, Last-Will +
-  availability retained per device, heartbeat opțional,
-  **Home Assistant autodiscovery** (device-uri separate per sursă,
-  `unique_id` stabil `mbg_dev_*`, senzor de conectivitate, iar registrele
-  scriabile devin entități **`number`/`select`** cu limite din template).
-- **InfluxDB** — bucket per dispozitiv (auto-creat), timestamp = ora citirii,
-  **buffer store-and-forward persistat pe disc** (zero pierderi la pană,
-  replay idempotent cu timestamp-urile originale).
-- **REST push** — POST periodic de telemetrie JSON către un URL/webhook,
-  format `native`/`flat`, headere de auth mascate, fără redirecturi.
-- **HTTP/JSON output** — valorile live ca feed read-only la
-  `GET /api/meters/<id>` (stil Solar API).
+**Northbound sinks — all opt-in, per device**
+- **MQTT** — `changed`/`all` modes, retain/QoS, TLS/mTLS, Last-Will +
+  per-device retained availability, optional heartbeat,
+  **Home Assistant autodiscovery** (separate HA device per source, stable
+  `mbg_dev_*` unique ids, a connectivity sensor, and writable registers
+  become **`number`/`select` entities** with template-declared bounds).
+- **InfluxDB** — per-device bucket (auto-created), timestamps = read time,
+  **disk-persisted store-and-forward buffer** (no data loss across
+  outages; idempotent replay with original timestamps).
+- **REST push** — periodic JSON telemetry POST to a URL/webhook,
+  `native`/`flat` formats, masked auth headers, redirects refused.
+- **HTTP/JSON output** — live values as a read-only feed at
+  `GET /api/meters/<id>` (Solar-API style).
 
-**Metere virtuale**
-- Emulări: **Carlo Gavazzi EM24** (Victron), **Fronius Smart Meter TS**,
-  **SunSpec 213** — plus orice template YAML propriu.
-- **Compozite multi-sursă**: rânduri din mai multe dispozitive
-  (`dispozitiv.registru`), sume, constante; prag de prospețime per rând.
-- **Politici de staleness** (`legacy`/`fail`/`sentinel`/`hold`) — absența nu
-  se servește niciodată ca 0/false; sumele preiau calitatea celui mai slab
-  membru.
-- **Bloc de calitate in-band la 61440** (convenția v1) — starea datelor pe
-  aceeași conexiune Modbus ([spec](docs/virtual-meter-spec.md)).
-- Observabilitate completă: jurnal cu ultimele 1024 de query-uri, statistici,
-  decode pe interval de adrese, watchdog de prospețime (sursă stale → serverul
-  tace, fail-safe-ul consumatorului preia).
+**Virtual meters**
+- Emulations: **Carlo Gavazzi EM24** (Victron), **Fronius Smart Meter TS**,
+  **SunSpec 213** — plus any user YAML template.
+- **Multi-source composites**: rows from several devices
+  (`device.register`), sums, constants; per-row freshness bounds.
+- **Staleness policies** (`legacy`/`fail`/`sentinel`/`hold`) — absence is
+  never served as 0/false; sums take their worst member's quality.
+- **In-band quality block at 61440** (convention v1) — data quality on the
+  same Modbus connection ([spec](docs/virtual-meter-spec.md)).
+- Full observability: last-1024 query log, stats, address-range decode, a
+  freshness watchdog (stale source → the server goes silent so the
+  consumer's fail-safe engages).
 
-**Device Builder — noduri ESP32/ESP8266 remote (ESPHome)**
-- **Generează firmware dintr-un template** — alegi un template Modbus +
-  registre și primești YAML complet pentru un nod care citește contorul pe
-  RS485 și publică MQTT înapoi în gateway; build/OTA pe containerul tău
-  ESPHome (inclus în compose, zero-config).
-- **Adopt cu un click** — creează automat și device-ul mqtt-in pereche, cu
-  topicuri byte-identice — datele curg fără configurare dublă.
-- **Flash USB din browser** (esp-web-tools vendored, fără cloud) + Improv
-  Wi-Fi; **import mDNS**; profiluri hardware refolosibile; **Update all**
-  (rebuild + OTA în masă) — totul printr-o singură interfață și audit trail.
+**Device Builder — remote ESP32/ESP8266 nodes (ESPHome)**
+- **Generate firmware from a template** — pick a Modbus template + registers
+  and get complete YAML for a node that reads the meter over RS485 and
+  publishes MQTT back to the gateway; build/OTA on your own ESPHome container
+  (bundled in compose, zero-config).
+- **One-click Adopt** — also creates the paired mqtt-in device with
+  byte-identical topics — data flows with no double configuration.
+- **Browser USB flashing** (vendored esp-web-tools, no cloud) + Improv Wi-Fi;
+  **mDNS import**; reusable hardware profiles; **Update all** (bulk rebuild +
+  OTA) — all through one interface and audit trail.
 
-**Diagnostice (punere în funcțiune)**
-- **Bus monitor** la nivel de cadru — hex TX/RX, decodare, latență,
-  **fiecare retry ca intrare separată**; ring RAM-only, oprit implicit.
-- **Register probe** — matrice tip de date × ordine de cuvinte
-  (ABCD/CDAB/BADC/DCBA), hex + ASCII: bancul de lucru pentru endianness.
-- **Payload sample** pentru picker-ul `json_path`; **scanare SunSpec**.
+**Diagnostics (commissioning)**
+- Frame-level **bus monitor** — TX/RX hex, decode, latency, **each retry as
+  its own entry**; RAM-only ring, disabled by default.
+- **Register probe** — data type × word order matrix
+  (ABCD/CDAB/BADC/DCBA), hex + ASCII: the endianness workbench.
+- **Payload sample** for the `json_path` picker; **SunSpec scan**.
 
-**Siguranța configurației**
-- **Snapshot-uri automate** la fiecare modificare (50 păstrate) + manuale,
-  **diff semantic** între snapshot-uri, **rollback** reversibil,
-  **last-known-good boot seatbelt** (un config.yaml stricat e restaurat
-  automat la boot).
-- **Backup export/import ZIP** — secretele eliminate implicit (inclusiv
-  parola ESPHome și token-urile din webhook); include registre per dispozitiv,
-  template-uri, metere virtuale, profiluri hardware și presetări calculate;
-  passkeys doar în backup-ul cu secrete. Import cu merge (secretele
-  supraviețuiesc). Fișierele de identitate (`passkeys.json`, `audit.jsonl`)
-  sunt create `0600`.
+**Config safety**
+- **Automatic snapshots** on every config change (50 kept) + manual ones,
+  **semantic diff** between snapshots, reversible **rollback**, and a
+  **last-known-good boot seatbelt** (a broken config.yaml is restored
+  automatically at boot).
+- **Backup export/import ZIP** — secrets stripped by default (incl. the
+  ESPHome password and webhook tokens); includes per-device registers,
+  templates, virtual meters, hardware profiles and calculated presets;
+  passkeys only in a secret-bearing backup. Identity files (`passkeys.json`,
+  `audit.jsonl`) are created `0600`. Import merges
+  import (secrets survive the round-trip).
 
-**Securitate (totul opt-in, implicit LAN de încredere)**
-- **Login** cu sesiuni + lockout per IP; **roluri admin / operator / viewer**
-  (operator = acțiuni live, fără modificări de configurație).
-- **Passkeys (WebAuthn)** — cer context securizat (localhost sau hostname
-  peste HTTPS).
-- **Audit trail** JSONL rotit (login-uri, scrieri, exporturi; payload-uri
-  redactate), **cheie API** (`X-API-Key`), **allowlist de IP-uri**,
-  `ui.trusted_proxies` pentru reverse proxy (Traefik), HTTPS încorporat,
-  **redirect spre adresa canonică** (`ui.canonical_url`, portiță `?local`).
-- **Scrieri Modbus gated** — oprite implicit, allowlist din template cu
-  `write_min`/`write_max`, **lease-uri dead-man crash-safe** (revert automat
-  la `write_safe`), dispozitivul primar mereu read-only.
+**Security (all opt-in; trusted-LAN by default)**
+- **Login** with sessions + per-IP lockout; **admin / operator / viewer
+  roles** (operator = live actions, no configuration changes).
+- **Passkeys (WebAuthn)** — require a secure context (localhost or a
+  hostname over HTTPS).
+- **Audit trail** (rotated JSONL; logins, writes, exports; redacted
+  payloads), **API key** (`X-API-Key`), **IP allowlist**,
+  `ui.trusted_proxies` for reverse proxies (Traefik), built-in HTTPS,
+  **canonical-address redirect** (`ui.canonical_url`, `?local` escape hatch).
+- **Gated Modbus writes** — off by default; template allowlist with
+  `write_min`/`write_max`, **crash-safe dead-man leases** (auto-revert to
+  `write_safe`), the primary device always read-only.
 
-**Observabilitate & UX**
-- **`/metrics` Prometheus** (serii device/sink/vmeter), pagina **Status** cu
-  taxonomia erorilor, **jurnal de evenimente persistat**, `/health` corect
-  pentru probe de container.
-- **Alerte de infrastructură** pe MQTT + webhook ([ghid](docs/alerts-webhooks.md)).
-- **i18n EN+RO** (limbile = fișiere `ui/languages/*.json`, fără rebuild),
-  **fus orar configurabil** pentru rapoartele lunare, WebSocket real-time,
-  hot-reload aproape peste tot.
+**Observability & UX**
+- **Prometheus `/metrics`** (device/sink/vmeter series), a **Status** page
+  with the error taxonomy, a **persisted event log**, and a
+  container-probe-correct `/health`.
+- **Infrastructure alerts** over MQTT + webhook
+  ([guide](docs/alerts-webhooks.md)).
+- **EN+RO i18n** (languages are `ui/languages/*.json` files — no rebuild),
+  configurable **timezone** for monthly reports, real-time WebSocket,
+  hot-reload nearly everywhere.
 
-## 🔌 Metere virtuale
+## 🔌 Virtual meters
 
-Un singur meter la punctul de racord măsoară tot. Dar Victron vrea un
-*Carlo Gavazzi EM24*, Fronius vrea un *Fronius Smart Meter*, altul vrea
-SunSpec. În loc să cumperi trei metere, le **definești ca template-uri** și
-le servești pe toate din sursele pe care le ai deja — fiecare ca server
-Modbus-TCP izolat, alimentat din valorile live.
+One meter at the grid connection point measures everything. But Victron
+wants a *Carlo Gavazzi EM24*, Fronius wants a *Fronius Smart Meter*,
+another system wants SunSpec. Instead of buying three meters, you **define
+them as templates** and serve them all from the sources you already have —
+each an isolated Modbus-TCP server fed from live values.
 
 ```mermaid
 flowchart LR
-    SRC["Surse: Modbus · HTTP/JSON · MQTT"] --> ENG["Virtual Meter Engine"]
-    ENG -->|"hartă EM24 :1502"| V["Victron ESS"]
+    SRC["Sources: Modbus · HTTP/JSON · MQTT"] --> ENG["Virtual Meter Engine"]
+    ENG -->|"EM24 map :1502"| V["Victron ESS"]
     ENG -->|"Fronius SM :502"| F["Fronius DataManager"]
-    ENG -->|"SunSpec 213"| X["orice client SunSpec"]
+    ENG -->|"SunSpec 213"| X["any SunSpec client"]
 ```
 
-**Două moduri:** ① rulezi *în paralel* cu meterul real ca să validezi fără
-risc, apoi ② *consolidezi* — meterul virtual îl înlocuiește pe cel fizic. Cu
-observabilitate completă (query log) tot drumul — exact instrumentul cu care
-am făcut reverse-engineering la protocolul Fronius Smart Meter.
+**Two modes:** ① run *parallel* to the real meter to validate risk-free,
+then ② *consolidate* — the virtual meter replaces the physical one. With
+full query-log observability the whole way — the very tool we used to
+reverse-engineer the Fronius Smart Meter protocol.
 
-### Metere compozite (agregator multi-sursă)
+### Composite meters (multi-source aggregator)
 
-Un meter virtual poate aduna registre din **mai multe surse deodată** —
-meter Modbus + invertor HTTP + senzori MQTT — într-o singură hartă Modbus
-TCP și într-un feed JSON (`/api/virtual-meters/<id>/values`): un PLC/SCADA
-citește totul dintr-un singur poll.
+A virtual meter can gather registers from **several sources at once** — a
+Modbus meter + an HTTP inverter + MQTT sensors — into one Modbus TCP map
+and one JSON feed (`/api/virtual-meters/<id>/values`): a PLC/SCADA reads
+everything in a single poll.
 
-**Convenția de staleness** (absența nu se servește NICIODATĂ ca 0/false —
-o valoare înghețată poate conduce greșit o buclă de control):
+**The staleness convention** (absence is NEVER served as 0/false — a frozen
+value can mislead a control loop):
 
-| Politică (`on_stale`) | Registru stale/lipsă | Folosire |
+| Policy (`on_stale`) | Stale/missing register | Use for |
 |---|---|---|
-| `legacy` (implicit) | comportamentul clasic single-source: un singur watchdog pe instanță | meterele existente — neatinse |
-| `fail` | citirea care îl atinge → **excepție Modbus**; blocurile peste el sunt refuzate (fără adevăr parțial) | consumatori de control (Victron, PLC) |
-| `sentinel` | **N/A SunSpec**: float→NaN, int16→0x8000, uint16→0xFFFF… | consumatori care înțeleg santinelele |
-| `hold` | ultima valoare, plafonat la `max_hold_s`, apoi ca `fail` | display-uri tolerante |
+| `legacy` (default) | classic single-source behavior: one instance-level watchdog | existing meters — untouched |
+| `fail` | any read touching it → **Modbus exception**; spanning blocks refused (no partial truth) | control consumers (Victron, PLC) |
+| `sentinel` | **SunSpec N/A**: float→NaN, int16→0x8000, uint16→0xFFFF… | sentinel-aware consumers |
+| `hold` | last value up to `max_hold_s`, then like `fail` | tolerant displays |
 
-Sumele preiau calitatea **celui mai slab** membru — niciodată sume parțiale.
-Opțional, **blocul de calitate in-band la 61440** pune starea datelor chiar
-pe conexiunea Modbus ([spec](docs/virtual-meter-spec.md)).
+Sums take the quality of their **worst** member — never partial totals.
+Optionally, the **in-band quality block at 61440** puts the data quality on
+the Modbus connection itself ([spec](docs/virtual-meter-spec.md)).
 
 ![Virtual Meters — Logs](docs/img/vm-logs.png)
 
-## Instalare rapidă
+## Quick start
+
+You need Docker with Compose v2 and about five minutes. Two equal paths —
+the **published image** (nothing to build) or **from source**:
 
 ```bash
-git clone https://github.com/sm26449/multi-bus-gateway.git
-cd multi-bus-gateway
-cp .env.example .env          # OBLIGATORIU — setează credențialele broker-ului și schimbă fiecare change-me
-docker compose up -d          # stack COMPLET: gateway + MQTT (mosquitto)
-                              # + MQTT Explorer + InfluxDB + Grafana + ESPHome
-# Parola de admin generată la primul boot (afișată o singură dată):
+# A) published image — only the compose file and the env example are needed
+mkdir multi-bus-gateway && cd multi-bus-gateway
+curl -fsSLO https://raw.githubusercontent.com/sm26449/multi-bus-gateway/main/docker-compose.yml
+curl -fsSL  https://raw.githubusercontent.com/sm26449/multi-bus-gateway/main/.env.example -o .env
+mkdir -p mosquitto/config && curl -fsSL https://raw.githubusercontent.com/sm26449/multi-bus-gateway/main/mosquitto/config/mosquitto.conf -o mosquitto/config/mosquitto.conf
+#   edit .env: MQTT_USERNAME / MQTT_PASSWORD and every change-me are REQUIRED
+docker compose pull && docker compose up -d     # gateway + broker + InfluxDB + Grafana + ESPHome
+
+# B) from source — same stack, built locally
+git clone https://github.com/sm26449/multi-bus-gateway.git && cd multi-bus-gateway
+cp .env.example .env                            # edit as above
+docker compose up -d --build
+
+# then, either way — the admin password is generated on the first boot and printed once:
 docker compose logs multi-bus-gateway | grep -A3 'FIRST RUN'
-# UI: http://localhost:8080 · Grafana: :3000 · (MQTT Explorer: --profile debug, 127.0.0.1:4000)
+# UI: http://localhost:8080 · Grafana: http://localhost:3000
+# topic browser when you want it: docker compose --profile debug up -d  →  http://127.0.0.1:4000
 ```
 
-Nimic extern de instalat: broker-ul e inclus și gateway-ul publică în el
-din prima (host implicit `mosquitto`), Explorer-ul arată topicele curgând,
-iar InfluxDB se auto-configurează la primul boot. Vrei minimal?
-`docker compose up -d multi-bus-gateway mosquitto`. Broker/Influx propriu?
-Le schimbi din UI când vrei — cele incluse sunt containere obișnuite.
+Nothing external to install: the broker ships in the stack (authenticated
+with the credentials from `.env`; the gateway logs in with the same pair
+from the first boot) and InfluxDB self-configures. Want minimal?
+`docker compose up -d multi-bus-gateway mosquitto`. Your own broker or
+Influx? Repoint the gateway from the UI whenever you like — the bundled
+ones are ordinary containers. Pin a release with `MBG_VERSION=3.81.1` in
+`.env`; every install path in detail: [docs/install.md](docs/install.md),
+day-two operations: [docs/operations.md](docs/operations.md).
 
-Rulezi deja un stack pe rețeaua partajată (broker + Influx existente)?
-Folosește overlay-ul și pornește doar gateway-ul — rețeaua e cea existentă
-(implicit `pv-stack-network`, configurabil prin `PV_STACK_NETWORK`):
+Already running a stack on the shared network (existing broker + Influx)?
+Use the overlay and start only the gateway — it joins the existing network
+(default `pv-stack-network`, overridable via `PV_STACK_NETWORK`):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.external-network.yml \
   up -d multi-bus-gateway
 ```
 
-### Imaginea prebuilt (fără build local)
+### Prebuilt image (no local build)
 
-O imagine multi-arch (amd64 + arm64, inclusiv Raspberry Pi) este publicată în
-GitHub Container Registry la fiecare release:
+A multi-arch image (amd64 + arm64, Raspberry Pi included) is published to
+the GitHub Container Registry on every release:
 
 ```bash
 docker run -d --name multi-bus-gateway --restart unless-stopped \
@@ -292,177 +312,180 @@ docker run -d --name multi-bus-gateway --restart unless-stopped \
   ghcr.io/sm26449/multi-bus-gateway:latest
 ```
 
-> **Notă:** `docker run` pornește DOAR gateway-ul — fără broker-ul MQTT
-> inclus, deci setează `MQTT_BROKER` spre un broker existent (sau folosește
-> compose-ul, care aduce tot stack-ul).
+> **Note:** `docker run` starts ONLY the gateway — no bundled MQTT broker,
+> so point `MQTT_BROKER` at an existing one (or use compose, which brings
+> the whole stack).
 
-Cu compose aceeași imagine e implicită: `docker-compose.yml` numește
-`ghcr.io/sm26449/multi-bus-gateway:${MBG_VERSION:-latest}`, deci
+With compose the same image is the default: `docker-compose.yml` names
+`ghcr.io/sm26449/multi-bus-gateway:${MBG_VERSION:-latest}`, so
 
 ```bash
 MBG_VERSION=3.79.0 docker compose pull && docker compose up -d
 ```
 
-rulează un release fără niciun build (`docker compose build` construiește
-în continuare din sursă când vrei). Bridge-ul serial RTU e publicat la fel,
-ca `ghcr.io/sm26449/multi-bus-gateway-serial-bridge`. Upgrade și rollback
-pe tag: [docs/upgrade-guide.md](docs/upgrade-guide.md); cum se face un
-release: [docs/releasing.md](docs/releasing.md).
+runs a release without building anything (`docker compose build` still
+builds from source when you want to). The RTU serial bridge is published the
+same way as `ghcr.io/sm26449/multi-bus-gateway-serial-bridge`. Upgrades and
+rollbacks by tag: [docs/upgrade-guide.md](docs/upgrade-guide.md); how a
+release is cut: [docs/releasing.md](docs/releasing.md).
 
-> **Porturi:** `8080` = Web UI · `1502-1512` = metere virtuale (extinde cu
-> `VMETER_PORT_START/END`) · `502` = portul Modbus standard pe care unii
-> consumatori îl interoghează (scoate-l dacă e ocupat pe host; fiind port
-> privilegiat iar aplicația rulând non-root din 3.24.1, cere sysctl-ul
-> `net.ipv4.ip_unprivileged_port_start=0` de mai sus — scoate-le împreună). Pentru RTU
-> pornește bridge-ul serial inclus — `docker compose --profile rtu-bridge up -d`
-> (recomandat) — sau treci adaptorul în container (`devices:` în compose).
-> Ghid complet: [docs/MANUAL.ro.md](docs/MANUAL.ro.md).
+> **Ports:** `8080` = Web UI · `1502-1512` = virtual meters (grow via
+> `VMETER_PORT_START/END`) · `502` = the standard Modbus port some
+> consumers poll (drop it if it's taken on the host; it is a privileged
+> port and the app runs non-root since 3.24.1, hence the
+> `net.ipv4.ip_unprivileged_port_start=0` sysctl above — drop them together). For RTU start the bundled
+> serial bridge — `docker compose --profile rtu-bridge up -d` (recommended) —
+> or pass the adapter into the container (`devices:` in compose). Full guide:
+> [docs/MANUAL.md](docs/MANUAL.md).
 
-### InfluxDB și Grafana
+### InfluxDB and Grafana
 
-Sunt **incluse în stack-ul implicit** — nimic de pornit separat. La primul
-boot InfluxDB se auto-configurează (org/bucket `multibus`; schimbă
-parola/token-ul din `.env`), apoi activezi sink-ul din UI (Config →
-InfluxDB) și lipești token-ul. Grafana: `http://localhost:3000`. Nu le
-vrei? `docker compose up -d multi-bus-gateway mosquitto` pornește doar
-nucleul.
+They are **part of the default stack** — nothing to start separately. On
+first boot InfluxDB self-configures (org/bucket `multibus`; change the
+password/token in `.env`), then enable the sink in the UI (Config →
+InfluxDB) and paste the token. Grafana: `http://localhost:3000`. Don't
+want them? `docker compose up -d multi-bus-gateway mosquitto` starts just
+the core.
 
-## Configurare
+## Configuration
 
-> **Poți configura tot din UI.** Conexiunile dispozitivelor, MQTT și InfluxDB
-> sunt editabile live — salvate în `config/config.yaml` (volum montat) și
-> aplicate **fără restart**. Variabilele `.env` sunt **opționale**: doar
-> pre-populează un deploy nou sau fixează valori într-un setup imutabil. O
-> setare dată prin env are întâietate și apare **blocată** în UI. Atenție:
-> în `docker-compose.yml` liniile de pass-through `environment:` pentru
-> Modbus/MQTT/InfluxDB vin **comentate** — decomentează-le pe cele dorite,
-> altfel o valoare din `.env` nu ajunge niciodată în container (cu `docker
-> run` simplu, `--env-file .env` le transmite direct pe toate).
+> **You can configure everything from the UI.** Device connections, MQTT
+> and InfluxDB are editable live — saved to `config/config.yaml` (a mounted
+> volume) and applied **without a restart**. The `.env` variables are
+> **optional**: use them to pre-seed a fresh deploy or to pin values in an
+> immutable setup. A setting provided via env takes precedence and shows as
+> **locked** in the UI. Note: `docker-compose.yml` ships with the
+> Modbus/MQTT/InfluxDB `environment:` pass-through lines **commented out** —
+> uncomment the ones you want, or a `.env` value never reaches the container
+> (with plain `docker run`, `--env-file .env` passes everything directly).
 
-Esențialul din `.env` (lista completă în [manual](docs/MANUAL.ro.md#3-prima-configurare)):
+The `.env` essentials (full list in the
+[manual](docs/MANUAL.md#3-first-configuration)):
 
 ```bash
-MODBUS_HOST=192.168.1.100     # dispozitivul primar
+MODBUS_HOST=192.168.1.100     # the primary device
 MQTT_BROKER=mosquitto
 INFLUXDB_ENABLED=false
 UI_PORT=8080
-API_KEY=                      # opțional: cere X-API-Key la modificări
+API_KEY=                      # optional: require X-API-Key on mutations
 ```
 
-Fișiere sub `config/` (volum): `config.yaml` (tot ce e global + devices),
-`selected_registers.json` + `devices/<id>/selected_registers.json` (selecțiile
-de registre), `templates/` (template-uri vmeter), `virtual_meters.yaml`
-(instanțe), `snapshots/` (snapshot-uri automate), `audit.jsonl`,
-`events.jsonl`, `passkeys.json`.
+Files under `config/` (the volume): `config.yaml` (globals + devices),
+`selected_registers.json` + `devices/<id>/selected_registers.json`
+(register selections), `templates/` (vmeter templates),
+`virtual_meters.yaml` (instances), `snapshots/` (automatic snapshots),
+`audit.jsonl`, `events.jsonl`, `passkeys.json`.
 
-## Interfața web
+## Web UI
 
-Patru zone principale — **Dashboard** (global), **Devices** (workspace per
-dispozitiv: Overview / Edit / Registers / Calculated / Outputs / Monitor /
-History / Energy), **Virtual Meters**, **Diagnostics**, **Status** și
-**Config**. Tot ce ține de un singur dispozitiv stă în workspace-ul lui, nu
-într-un meniu global. Tur complet, tab cu tab: [manual §4](docs/MANUAL.ro.md#4-interfața-web-tab-cu-tab).
+Four main areas — **Dashboard** (global), **Devices** (per-device
+workspace: Overview / Edit / Registers / Calculated / Outputs / Monitor /
+History / Energy), **Virtual Meters**, **Diagnostics**, **Status** and
+**Config**. Everything specific to one device lives in its workspace, not
+in a global menu. Full tab-by-tab tour:
+[manual §4](docs/MANUAL.md#4-the-web-ui-tab-by-tab).
 
 ## API
 
-Peste 140 de endpoint-uri REST + WebSocket, grupate pe domenii (dispozitive,
-registre, metere virtuale, diagnostice, configurație, snapshot-uri, audit,
-metrics), fiecare cu rolul minim necesar — referința completă, întreținută manual
-și verificată față de rutele din cod: **[docs/API.md](docs/API.md)**.
+140+ REST endpoints + WebSocket, grouped by domain (devices, registers,
+virtual meters, diagnostics, config, snapshots, audit, metrics), each with
+its minimum required role — the full reference, hand-maintained and
+checked against the routes in the code:
+**[docs/API.md](docs/API.md)**.
 
 ```bash
 curl -s http://localhost:8080/api/status | jq .devices
 curl -s http://localhost:8080/metrics | grep gateway_device_up
 ```
 
-## Securitate
+## Security
 
-Implicit, appliance-ul e gândit pentru un **LAN de încredere** — totul e
-deschis local și fiecare strat de apărare e opt-in:
+By default the appliance targets a **trusted LAN** — everything is open
+locally and every defense layer is opt-in:
 
-> **🔐 Prima pornire generează un login.** O instalare proaspătă (fără
-> `config.yaml`) pornește cu autentificarea **activată**: e generată o parolă
-> de admin, stocată hash-uit și tipărită **o singură dată** în log —
-> `docker compose logs multi-bus-gateway | grep -A3 'FIRST RUN'`. Schimb-o
-> după primul login (Settings → Security). Pe bare-metal UI-ul ascultă
-> implicit doar pe `127.0.0.1`; imaginea de container setează explicit
-> `UI_HOST=0.0.0.0` (expunerea o controlează maparea de porturi din compose).
-> Oricine ajunge la port ajunge și la scrierile Modbus și la serverele de
-> metere virtuale — tratează accesul în consecință.
+> **🔐 First boot generates a login.** A fresh install (no `config.yaml`)
+> starts with authentication **enabled**: an admin password is generated,
+> stored hashed, and printed **once** to the log —
+> `docker compose logs multi-bus-gateway | grep -A3 'FIRST RUN'`. Change it
+> after the first login (Settings → Security). On bare metal the UI binds to
+> `127.0.0.1` by default; the container image explicitly sets
+> `UI_HOST=0.0.0.0` (exposure is governed by the compose port mapping).
+> Anyone who can reach the port can also reach the Modbus writes and the
+> virtual-meter servers — treat access accordingly.
 
-- **Login + roluri** (admin/operator/viewer), lockout per IP, **passkeys
-  WebAuthn**, sesiuni HttpOnly glisante 7 zile.
-- **Cheie API** (`API_KEY` → `X-API-Key` pe modificări), **allowlist de
-  IP-uri**, **HTTPS** încorporat sau prin reverse proxy cu
-  `ui.trusted_proxies` (Traefik), **adresă canonică** (`ui.canonical_url`)
-  cu portița `?local`.
-- **Scrieri Modbus** oprite implicit și, chiar activate, permise doar pe
-  registre declarate writable în template, cu limite și lease-uri dead-man;
-  **audit trail** pentru tot.
-- Gărzi SSRF pe fetch-urile server-side, redirecturi refuzate, CSRF pe
-  origin, secrete redactate din loguri și backup-uri.
+- **Login + roles** (admin/operator/viewer), per-IP lockout, **WebAuthn
+  passkeys**, HttpOnly sessions (7-day sliding).
+- **API key** (`API_KEY` → `X-API-Key` on mutations), **IP allowlist**,
+  built-in **HTTPS** or a reverse proxy with `ui.trusted_proxies`
+  (Traefik), **canonical address** (`ui.canonical_url`) with a `?local`
+  escape hatch.
+- **Modbus writes** off by default and, even when enabled, only on
+  registers declared writable in the template, with bounds and dead-man
+  leases; an **audit trail** for everything.
+- SSRF guards on server-side fetches, refused redirects, origin-based CSRF
+  checks, secrets redacted from logs and backups.
 
-Detalii și pași concreți: [manual §16](docs/MANUAL.ro.md#16-securitate).
+Details and concrete steps: [manual §16](docs/MANUAL.md#16-security).
 
-## Structura proiectului
+## Project structure
 
 ```
 multi-bus-gateway/
-├── config/                    # Volumul de configurație (exemple incluse)
-├── docs/                      # Manual EN/RO, arhitectură, API, spec-uri
-├── multibus/                  # Pachetul Python (motorul gateway-ului)
+├── config/                    # Config volume (examples included)
+├── docs/                      # Manual EN/RO, architecture, API, specs
+├── multibus/                  # The Python package (gateway engine)
 │   ├── api.py                 # REST API + WebSocket (FastAPI)
-│   ├── routes/                # Rutele pe domenii
-│   ├── modbus_client.py       # Driver Modbus TCP/RTU
-│   ├── http_client.py         # Driver HTTP/JSON
-│   ├── mqtt_input.py          # Driver MQTT-in
-│   ├── mqtt_publisher.py      # Sink MQTT + HA discovery
-│   ├── influxdb_publisher.py  # Sink InfluxDB + buffer
-│   ├── rest_push.py           # Sink REST push
-│   ├── virtual_meter*.py      # Motorul de metere virtuale
-│   ├── calc_engine.py         # Registre calculate
-│   ├── device_templates/      # Hărțile de registre incluse
-│   ├── snapshots.py           # Snapshot-uri + LKG seatbelt
-│   ├── auth.py / passkeys.py  # Login, roluri, WebAuthn
+│   ├── routes/                # Domain route modules
+│   ├── modbus_client.py       # Modbus TCP/RTU driver
+│   ├── http_client.py         # HTTP/JSON driver
+│   ├── mqtt_input.py          # MQTT-in driver
+│   ├── mqtt_publisher.py      # MQTT sink + HA discovery
+│   ├── influxdb_publisher.py  # InfluxDB sink + buffer
+│   ├── rest_push.py           # REST push sink
+│   ├── virtual_meter*.py      # Virtual meter engine
+│   ├── calc_engine.py         # Calculated registers
+│   ├── device_templates/      # Bundled register maps
+│   ├── snapshots.py           # Snapshots + LKG seatbelt
+│   ├── auth.py / passkeys.py  # Login, roles, WebAuthn
 │   ├── audit.py / event_log.py
 │   └── bus_trace.py / discovery.py / alerts.py …
-├── ui/                        # SPA vanilla JS (i18n în ui/languages/)
-├── tests/                     # Suita de teste (pytest)
+├── ui/                        # Vanilla-JS SPA (i18n in ui/languages/)
+├── tests/                     # Test suite (pytest)
 ├── main.py                    # Entry point
-├── Dockerfile / docker-compose.yml (+ docker-compose.external-network.yml — overlay rețea partajată)
-├── mosquitto/config/       # configul broker-ului inclus
-├── serial-bridge/          # companion ser2net (profilul rtu-bridge)
+├── Dockerfile / docker-compose.yml (+ docker-compose.external-network.yml — shared-network overlay)
+├── mosquitto/config/       # bundled broker config
+├── serial-bridge/          # ser2net companion (rtu-bridge profile)
 └── CHANGELOG.md
 ```
 
-## Folosirea unui stack MQTT / InfluxDB existent
+## Using an existing MQTT / InfluxDB stack
 
-Ca să conectezi gateway-ul la brokere/baze pe care le rulezi deja (în locul
-celor incluse), setează detaliile de conexiune din UI (Config → Settings) —
-se salvează în `config/config.yaml` și se aplică live, fără restart — și
-pornește doar serviciul gateway:
+To point the gateway at brokers/databases you already run (instead of the
+bundled ones), set the connection details in the UI (Config → Settings) —
+they persist to `config/config.yaml` and apply live, no restart — and start
+only the gateway service:
 
 ```bash
 docker compose up -d multi-bus-gateway
 ```
 
-Preferi pre-popularea din environment? Liniile `environment:` aferente din
-`docker-compose.yml` vin **comentate**, deci întâi decomentează-le acolo pe
-cele necesare, apoi setează-le în `.env` — de ex. `MQTT_BROKER`, `MQTT_PORT`,
-`INFLUXDB_URL`, `INFLUXDB_TOKEN` (vezi `.env.example` pentru lista completă).
-Variabilele sunt **fără prefix** (aplicația citește `MODBUS_HOST`); o valoare
-din env are întâietate față de UI/yaml la fiecare pornire și apare **blocată**
-în UI. `API_KEY` e acceptat și ca `JANITZA_API_KEY` (compatibilitate
-istorică).
+Prefer seeding from the environment instead? The matching `environment:`
+lines in `docker-compose.yml` ship **commented out**, so first uncomment the
+ones you need there, then set them in `.env` — e.g. `MQTT_BROKER`,
+`MQTT_PORT`, `INFLUXDB_URL`, `INFLUXDB_TOKEN` (see `.env.example` for the
+full list). Variable names are **unprefixed** (the app reads `MODBUS_HOST`);
+an env value overrides the UI/yaml on every start and shows as **locked** in
+the UI. `API_KEY` is also honoured as `JANITZA_API_KEY` (historical
+compatibility).
 
-## Dezvoltare
+## Development
 
 ```bash
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 python main.py --debug
 
-# teste (imaginea de test are pytest; cea de runtime NU)
+# tests (the test image has pytest; the runtime image does NOT)
 docker build -f Dockerfile.test -t multi-bus-gateway:test .
 docker run --rm -v "$(pwd)":/app -w /app --entrypoint sh \
   multi-bus-gateway:test -c "python -m pytest -q"
@@ -470,10 +493,10 @@ docker run --rm -v "$(pwd)":/app -w /app --entrypoint sh \
 
 ## Contributing
 
-Ai găsit un bug sau vrei o funcționalitate? Deschide un issue pe
+Found a bug or have a feature request? Please open an issue on
 [GitHub Issues](https://github.com/sm26449/multi-bus-gateway/issues).
-Hărțile de registre contribuite (template-uri, CSV) sunt binevenite — cu
-proveniență verificabilă, vezi [docs/device-catalog.md](docs/device-catalog.md).
+Contributed register maps (templates, CSV) are welcome — with verifiable
+provenance, see [docs/device-catalog.md](docs/device-catalog.md).
 
 ## Authors
 
@@ -483,25 +506,23 @@ proveniență verificabilă, vezi [docs/device-catalog.md](docs/device-catalog.m
 
 ## License
 
-**GNU Affero General Public License v3.0 sau ulterioară (AGPL-3.0-or-later)**
-— software liber și open source.
+**GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)** —
+free and open-source software.
 
 Copyright (c) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
 
-Poți folosi, studia, modifica și distribui acest software, **inclusiv
-comercial**. Condiția AGPL: dacă distribui versiuni modificate — sau le
-oferi ca **serviciu în rețea** (SaaS) — trebuie să pui la dispoziția
-utilizatorilor **codul sursă complet**, sub aceeași licență. Termeni
-compleți în [LICENSE](LICENSE) ·
-<https://www.gnu.org/licenses/agpl-3.0.html>
+You may use, study, modify, and distribute this software, **including
+commercially**. The AGPL condition: if you distribute modified versions — or
+offer them as a **network service** (SaaS) — you must make the **complete
+source code** available to those users, under the same license. Full terms in
+[LICENSE](LICENSE) · <https://www.gnu.org/licenses/agpl-3.0.html>
 
-Hărțile de registre incluse sunt date factuale de interoperabilitate,
-transcrise din documentația Modbus publică a fiecărui producător —
-proveniența și poziția de licențiere în
+The bundled device register maps are factual interoperability data
+transcribed from each manufacturer's publicly available Modbus
+documentation — provenance and licensing position in
 [docs/VENDOR-DATA.md](docs/VENDOR-DATA.md).
 
 ---
 
-**Disclaimer**: Acest software este furnizat „ca atare", fără nicio
-garanție. Folosește-l pe propriul risc când monitorizezi sisteme energetice
-critice.
+**Disclaimer**: This software is provided "as is", without warranty of any
+kind. Use at your own risk when monitoring critical energy systems.
