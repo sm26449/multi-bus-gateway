@@ -141,7 +141,7 @@ and puts the name back.
 `ui_sweep.mjs` is not a test: it walks every page, every unit tab, every modal
 and both wizards, screenshots each (light, dark, phone width) and reports raw
 i18n keys, horizontal overflow and console errors to `/tmp/audit/report.json`.
-It is the regression walk behind `docs/ui-audit-installations.md`.
+It is the regression walk behind the installations UI audit (operator notes).
 
 ## Unit page
 

@@ -62,14 +62,14 @@ build/
 # Node
 node_modules/
 
-# Internal dev tools / docs — kept in the private repo, not published to the public one
+# Maintainer-local tools and notes (not part of the published project)
 tools/capture-screenshots.js
 tools/run-backfill.sh
 tools/mqtt_capture_schema.py
 docs/PUBLISHING.md
 docs/ROADMAP.md
 docs/vendor/
-# Internal engineering notes & planning (leak the private pv-stack/Victron topology)
+# Maintainer-local engineering notes and planning
 reviews/
 perf/
 # Internal audit prompts & history — never published (see git history caveat before going public)

@@ -23,13 +23,13 @@ endpoints:
     sources:
       - id: sunspec
         protocol: tcp
-        host: 192.168.1.240
+        host: 192.168.1.50
         port: 502
         template: fronius_sunspec_inverter
         poll_groups: { normal: { interval: 20 }, slow: { interval: 120 } }
       - id: solar_api
         protocol: http
-        url: "http://192.168.1.240/api.cgi?DeviceId=${unit_id}&p=${endpoint_id}"
+        url: "http://192.168.1.50/api.cgi?DeviceId=${unit_id}&p=${endpoint_id}"
         template: fronius_solar_api_inverter
         poll_groups: { realtime: { interval: 5 } }
         stale_after_s: 15
@@ -65,7 +65,7 @@ def test_each_source_keeps_its_own_address_template_and_rhythm(tmp_path):
 
     mb = by_id['sunspec']
     assert mb.protocol == 'tcp' and mb.template == 'fronius_sunspec_inverter'
-    assert mb.connection.host == '192.168.1.240' and mb.connection.unit_id == 2
+    assert mb.connection.host == '192.168.1.50' and mb.connection.unit_id == 2
     assert {k: v.interval for k, v in mb.poll_groups.items()} == {'normal': 20, 'slow': 120}
 
     api = by_id['solar_api']
@@ -212,12 +212,12 @@ endpoints:
       - id: inverters
         role: inverter
         template: fronius_sunspec_inverter
-        connection: { protocol: tcp, host: 192.168.1.240, port: 502 }
+        connection: { protocol: tcp, host: 192.168.1.50, port: 502 }
         units: [1, 2]
       - id: grid
         role: meter
         template: fronius_sunspec_meter
-        connection: { protocol: tcp, host: 192.168.1.240, port: 502 }
+        connection: { protocol: tcp, host: 192.168.1.50, port: 502 }
         units:
           - { unit_id: 240, id: fronius-meter-240, name: Grid meter }
 """

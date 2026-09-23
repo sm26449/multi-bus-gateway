@@ -35,7 +35,7 @@ Three rules, because three kinds of quantity behave differently:
 definition that survives units of different size. (Until the Fronius templates
 normalize PF to a fraction, a unit's own ``power_factor/total`` is still the raw
 SunSpec ±100 while the endpoint's is a true ±1 — see
-``docs/fronius-migration-plan.md``, phase P3.)
+the Fronius migration plan (operator notes), phase P3.)
 
 ``units_online`` / ``units_total`` / ``status`` publish on EVERY cycle,
 including the one where nothing is fresh: an endpoint that never says ``offline``

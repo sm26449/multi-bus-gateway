@@ -284,7 +284,7 @@ Identity strings, status codes and event bitfields are skipped. The census and
 live under `mbg/devices/<id>/…`, endpoint values under `mbg/endpoints/<id>/…`,
 so a consumer always knows which entity published a topic. The roadmap
 for making the aggregate counter-safe and giving endpoints a full UI is in
-[fronius-migration-plan.md](fronius-migration-plan.md).
+the Fronius migration plan (operator's notes, not part of this repository).
 
 ### Value flow conventions
 

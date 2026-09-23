@@ -336,7 +336,7 @@ Tests: `tests/test_power_limit.py` (the sequence), `tests/test_power_limit_api.p
 - **`sources[].last_success_ts`** is set for HTTP and MQTT sources too (it was
   `null` while `successful_reads` climbed).
 
-With this every finding of `docs/ui-audit-installations.md` is closed.
+With this every finding of the installations UI audit (operator notes) is closed.
 
 ## 3.70.0
 
@@ -507,7 +507,7 @@ Tests: `tests/test_endpoint_page_model.py`; e2e suites adjusted
 
 ### 2026-09-13 — the installation page cannot lie or destroy
 
-The UI audit (`docs/ui-audit-installations.md`) found three things on the
+The installations UI audit (operator notes) found three things on the
 installation page that were worse than confusing. This release closes them
 before any of the page is redesigned.
 
@@ -886,7 +886,7 @@ endpoints:
     sources:
       - id: sunspec
         protocol: tcp
-        host: 192.168.1.240
+        host: 192.168.1.50
         template: fronius_sunspec_inverter
         poll_groups: { normal: { interval: 20 }, slow: { interval: 120 } }
       - id: solar_api
@@ -953,7 +953,7 @@ four units, all four online, and the plant aggregate live — 1048 W total,
 
 ### 2026-09-12 — design note P7: Solar API alongside Modbus
 
-`docs/fronius-migration-plan.md` gains phase P7. No code yet; the note records
+The Fronius migration plan (operator notes) gains phase P7. No code yet; the note records
 the measurements that make the case, so the decision is not re-litigated from
 memory.
 
@@ -1356,7 +1356,7 @@ clients, so concurrency there buys nothing and costs everything.
 ### 2026-09-12 — a plant is an entity, not a grouping
 
 Migration phase P4 of
-[`docs/fronius-migration-plan.md`](docs/fronius-migration-plan.md). Code only —
+the Fronius migration plan (operator notes). Code only —
 no live config, broker or container was touched.
 
 - **The plant has its own page.** Opened from its row in the devices list:
@@ -1399,7 +1399,7 @@ no live config, broker or container was touched.
 ### 2026-09-12 — power factor is a fraction; templates ship derived measurements
 
 Migration phase P3 of
-[`docs/fronius-migration-plan.md`](docs/fronius-migration-plan.md). Code only —
+the Fronius migration plan (operator notes). Code only —
 no live config, broker or container was touched.
 
 - **A fixed `scale` may now accompany `scale_from`.** It divides AFTER the
@@ -1439,7 +1439,7 @@ no live config, broker or container was touched.
 ### 2026-09-12 — one liveness verdict; plant counters that never walk backwards
 
 Migration phases P1 and P2 of
-[`docs/fronius-migration-plan.md`](docs/fronius-migration-plan.md). Code only —
+the Fronius migration plan (operator notes). Code only —
 no live config, broker or container was touched.
 
 - **ONE liveness verdict** (`device_registry.client_is_live`): a device is alive
@@ -1510,7 +1510,7 @@ no live config, broker or container was touched.
   on the new namespace.
 - **Plant status**: `mbg/plants/<id>/status` = `online` (all units fresh) /
   `partial` / `offline`, MQTT-only (text never reaches InfluxDB).
-- **Migration plan recorded**: [`docs/fronius-migration-plan.md`](docs/fronius-migration-plan.md)
+- **Migration plan recorded**: the Fronius migration plan (operator notes)
   — verified state, findings (liveness verdict, non-monotonic plant energy,
   PF units, missing collector leaves, UI parity gaps) and the phased plan
   for running MBG in parallel with the legacy Fronius collector on its own
@@ -2152,7 +2152,7 @@ this puts the contract in front of the person typing the scale.
 
 ### 2026-08-15 — a security save no longer logs out its own author
 
-Live incident (caught by Stefan minutes after the 3.34.0 deploy): disabling
+Live incident (caught by the operator minutes after the 3.34.0 deploy): disabling
 login, then re-enabling it while setting passwords, revoked EVERY session —
 including the caller's — so the very next write returned 401, which the UI
 misread as "enter the API key" (a dead end when no key is configured).

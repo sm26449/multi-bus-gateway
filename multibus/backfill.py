@@ -50,7 +50,7 @@ Idempotent: points land on exact minute boundaries keyed by
 
 Cron (host triggers the container every 10 min)::
 
-    */10 * * * * /home/user/docker-setup/templates/multi-bus-gateway/tools/run-backfill.sh >> /var/log/mbg-backfill.log 2>&1
+    */10 * * * * /opt/multi-bus-gateway/tools/run-backfill.sh >> /var/log/mbg-backfill.log 2>&1
 """
 from __future__ import annotations
 
