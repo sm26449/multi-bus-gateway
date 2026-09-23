@@ -105,8 +105,9 @@ services:
   # default broker host is `mosquitto`). BREAKING in 3.81.0: anonymous access
   # is off and MQTT_USERNAME / MQTT_PASSWORD are REQUIRED — `docker compose
   # up` refuses to start without them. The password file lives on the data
-  # volume and is regenerated from .env at every start, so a credential
-  # change is a `docker compose up -d mosquitto` away. STACK_BIND=127.0.0.1
+  # volume; the .env user is (re)written into it at every start, so a
+  # credential change is a `docker compose up -d mosquitto` away, and users
+  # added with mosquitto_passwd persist. STACK_BIND=127.0.0.1
   # keeps the broker (and InfluxDB/Grafana below) host-local; the default
   # publishes them on the LAN, authenticated.
   # Already have a broker? `docker compose up -d multi-bus-gateway` starts
@@ -124,7 +125,10 @@ services:
       - sh
       - -c
       - >-
-        mosquitto_passwd -c -b /mosquitto/data/passwd "$$MQTT_USERNAME" "$$MQTT_PASSWORD"
+        if [ -f /mosquitto/data/passwd ];
+        then mosquitto_passwd -b /mosquitto/data/passwd "$$MQTT_USERNAME" "$$MQTT_PASSWORD";
+        else mosquitto_passwd -c -b /mosquitto/data/passwd "$$MQTT_USERNAME" "$$MQTT_PASSWORD";
+        fi
         && chown 1883:1883 /mosquitto/data/passwd && chmod 0600 /mosquitto/data/passwd
         && exec mosquitto -c /mosquitto/config/mosquitto.conf
     ports:

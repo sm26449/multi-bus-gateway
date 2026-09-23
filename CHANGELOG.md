@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.81.1
+
+### 2026-09-23 — bundled broker: second start no longer fails
+
+- The mosquitto start command created the password file with
+  `mosquitto_passwd -c`, which refuses an existing file — the broker came up
+  once and crash-looped on every restart. It now updates the `.env` user in
+  the existing file (and creates it only the first time), so extra users
+  added with `mosquitto_passwd` also survive restarts.
+
 ## 3.81.0
 
 ### 2026-09-23 — BREAKING: the bundled stack requires credentials
