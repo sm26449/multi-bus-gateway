@@ -246,3 +246,18 @@ def test_the_published_unit_state_counts_ignored_and_guarded_samples(tmp_path):
     published = json.loads(app.state.mqtt_publisher.published[-1][1]) if hasattr(app.state, 'mqtt_publisher') and hasattr(app.state.mqtt_publisher, 'published') else None
     if published is not None:
         assert published['units']['pv-u1']['guarded'] == 0 and published['units']['pv-u1']['ignored'] == 0
+
+
+@needs_tc
+def test_rule_set_over_mqtt_is_refused_on_an_anonymous_broker(tmp_path):
+    """mbg/rules/<id>/set enables, clamps or pauses a rule — a control act,
+    gated like the command faces (3.80.2)."""
+    mq = _Mqtt()
+    inv = _Inverter(sf=-2)
+    cfg, app, client, clock, rt = _rule_app(tmp_path, {'pv-u1': inv}, mqtt=mq)
+    cfg.mqtt.username = ""
+    mq.topics['mbg/rules/ov-u1/set'](json.dumps({'clamp': {'max': 60}, 'source': 'nodered'}))
+    assert rt.states[('ov-u1', 'pv-u1')].clamp is None          # ignored
+    cfg.mqtt.username = "gw"
+    mq.topics['mbg/rules/ov-u1/set'](json.dumps({'clamp': {'max': 60}, 'source': 'nodered'}))
+    assert rt.states[('ov-u1', 'pv-u1')].clamp['max'] == 60

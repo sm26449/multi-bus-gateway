@@ -99,8 +99,10 @@ class RulesRuntime:
                  poll_now: Callable, event_log=None, alert_mgr=None, mqtt=None, audit_log=None,
                  influx=None,
                  gates: Callable[[], bool] = lambda: True, clock: Callable[[], float] = time.time,
+                 mqtt_refused: Callable[[], Optional[str]] = lambda: None,
                  mono: Callable[[], float] = time.monotonic):
         self.store = RuleStore(Path(config_dir) / 'rules.yaml')
+        self.mqtt_refused = mqtt_refused      # why a control message over MQTT must be ignored, or None
         self._state_path = Path(config_dir) / 'rules_state.json'
         self._resolver_factory = resolver_factory      # store -> resolve(name)
         self._find_device = find_device                # id -> (idx, cfg, client)
@@ -480,6 +482,13 @@ class RulesRuntime:
         except ValueError:
             return
         if not isinstance(body, dict):
+            return
+        # the same gate as the command faces: enabling, clamping or pausing a
+        # rule from the broker is a control act, refused on an anonymous
+        # broker session (3.80.2; the docs had claimed a gate that was not there)
+        refused = self.mqtt_refused()
+        if refused:
+            logger.warning("rule %s: MQTT set ignored: %s", rid, refused)
             return
         who = str(body.get('source') or 'mqtt')
         if 'enabled' in body:

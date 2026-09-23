@@ -359,7 +359,8 @@ unless the body carries `override_s` — which pauses the rule for that long.
 MQTT: retained `mbg/rules/<id>/state` `{mode, enabled, state, signal, units,
 decision, reason, ts}`; `mbg/rules/<id>/event` on transitions; `mbg/rules/<id>/set`
 accepts `{enabled}`, `{clamp: {max, expires_s}}` / `{clamp: null}`,
-`{override_s}` and `source` (gated by `mqtt.allow_write_entities`). Arming is
+`{override_s}` and `source` (gated like the command faces: `security.allow_writes`,
+`mqtt.allow_write_entities` and an authenticated broker session). Arming is
 not available over MQTT.
 
 ## MQTT commands (installations)

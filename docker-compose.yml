@@ -251,7 +251,7 @@ services:
 # creates carries the ecosystem name (pv-stack-network), so anything you add
 # later can join it by name. Already RUNNING a stack on that network? Use
 # the overlay and start only the gateway services:
-#   docker compose -f docker-compose.yml -f docker-compose.pv-stack.yml \
+#   docker compose -f docker-compose.yml -f docker-compose.external-network.yml \
 #     up -d multi-bus-gateway
 networks:
   monitoring:

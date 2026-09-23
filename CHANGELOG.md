@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.80.2
+
+### 2026-09-23 — first findings of the new scanners, and the rules' MQTT set gate
+
+- Dependencies with published advisories bumped in the hashed lock:
+  `anyio` 4.14.1 → 4.15.1 (CVE-2026-63374 critical, CVE-2026-63349),
+  `cryptography` 49.0.0 → 50.0.1 (CVE-2026-69247) with `pyOpenSSL` 26.4.0,
+  `pyasn1` 0.6.3 → 0.6.4 (three DoS advisories). `setuptools` and `wheel`
+  leave the runtime image — nothing needs them there and their vendored
+  copies carried two more flagged CVEs.
+- `mbg/rules/<id>/set` (enable, clamp, pause a rule from the broker) is now
+  behind the same gate as the command faces: refused while the broker
+  session is anonymous. `docs/API.md` and the design note had described a
+  gate that was not in the code.
+- The serial-bridge image is also tagged with its minor line, so
+  `MBG_VERSION=3.80` pulls both images; the four remaining mentions of the
+  old overlay filename point at `docker-compose.external-network.yml`.
+
 ## 3.80.1
 
 ### 2026-09-23 — supply chain: hash-pinned installs, pinned actions, scanners in CI

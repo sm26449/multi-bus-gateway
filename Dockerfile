@@ -19,7 +19,10 @@ WORKDIR /app
 # requirements.txt stays the human-edited intent file, see requirements.lock
 # header for the regenerate command).
 COPY requirements.lock .
-RUN pip install --no-cache-dir --require-hashes -r requirements.lock
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock \
+    # the runtime needs neither build tool; their vendored copies carried CVEs the
+    # image scanner flags (setuptools/_vendor jaraco.context + wheel)
+    && pip uninstall -y setuptools wheel
 
 # Copy application
 COPY multibus/ ./multibus/

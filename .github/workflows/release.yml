@@ -64,6 +64,7 @@ jobs:
           images: ghcr.io/${{ github.repository }}-serial-bridge
           tags: |
             type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
             # `latest` follows releases only — a pre-release tag (v3.81.0-rc1) keeps it where it is
             type=raw,value=latest,enable=${{ !contains(github.ref, '-') }}
 

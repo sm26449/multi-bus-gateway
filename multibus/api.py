@@ -2142,7 +2142,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         commands_for=_commands_for, run_command=_run_named_command, poll_now=_rule_poll_now,
         event_log=event_log, alert_mgr=alert_mgr, mqtt=mqtt_publisher, audit_log=audit_log,
         influx=influxdb_publisher,
-        gates=lambda: bool(config.security.allow_writes))
+        gates=lambda: bool(config.security.allow_writes),
+        mqtt_refused=_mqtt_writes_refused)
     try:
         rules_runtime.load()
     except Exception as e:  # noqa: BLE001

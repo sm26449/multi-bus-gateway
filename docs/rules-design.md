@@ -217,7 +217,7 @@ differs from actual is applied like any other, after debounce.
 |---|---|---|
 | `mbg/rules/<id>/state` (retained) | `{mode, enabled, state, signal, want, actual, actual_age_s, since, clamp, decision, reason, ts}` | on every change |
 | `mbg/rules/<id>/event` | `{from, to, signal, want, reason, ts}` | on state transitions and failures |
-| `mbg/rules/<id>/set` | `{enabled}`, `{mode}`, `{clamp: {max, expires_s}}` | with `mqtt.allow_write_entities`; replaces Node-RED's `pv-stack/nodered/ov/<n>/enable` and `…/manual_floor` |
+| `mbg/rules/<id>/set` | `{enabled}`, `{mode}`, `{clamp: {max, expires_s}}` | with `mqtt.allow_write_entities` + an authenticated broker session; replaces Node-RED's `pv-stack/nodered/ov/<n>/enable` and `…/manual_floor` |
 
 ### 5.3 Home Assistant (phase 2)
 
