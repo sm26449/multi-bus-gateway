@@ -404,3 +404,66 @@ def test_no_store_path_stays_in_memory(tmp_path):
     token, _ = st.login("1.2.3.4", "admin", "pw")
     assert st.role_for(token) == "admin"
     assert list(tmp_path.iterdir()) == []               # nothing written anywhere
+
+
+@needs_tc
+def test_guard_denials_carry_the_security_headers(tmp_path):
+    """The headers middleware is the outermost one (3.80.0): a 401 produced by
+    the auth guard used to leave without CSP/nosniff/frame headers."""
+    _cfg, client = make_app(tmp_path, auth_enabled=True, auth_username="admin",
+                            auth_password=auth.hash_password("pw"))
+    r = client.get("/api/status")
+    assert r.status_code == 401
+    assert "default-src 'self'" in r.headers.get("content-security-policy", "")
+    assert r.headers.get("x-frame-options") == "DENY"
+
+
+@needs_tc
+def test_login_posts_do_not_need_the_api_key(tmp_path, monkeypatch):
+    """API_KEY + login enabled was a dead end: the key gate sat in front of
+    /api/auth/login itself (3.80.0)."""
+    monkeypatch.setenv("API_KEY", "k")
+    _cfg, client = make_app(tmp_path, auth_enabled=True, auth_username="admin",
+                            auth_password=auth.hash_password("pw"))
+    r = client.post("/api/auth/login", json={"username": "admin", "password": "pw"})
+    assert r.status_code == 200 and r.json()["role"] == "admin"
+
+
+def test_session_cookie_refresh_and_absolute_cap(monkeypatch):
+    """The cookie is re-issued (at most hourly) with the time left until the
+    30-day absolute cap; the session itself ends at that cap however busy."""
+    now = [1_000_000.0]
+    monkeypatch.setattr(auth.time, "time", lambda: now[0])
+    st = auth.AuthState(make_ui())
+    token, _ = st.login("1.2.3.4", "admin", "pw")
+    first = st.cookie_refresh(token)
+    assert first == auth.SESSION_TTL_S                       # fresh: the full sliding TTL
+    assert st.cookie_refresh(token) is None                  # throttled
+    now[0] += 2 * 3600
+    assert st.cookie_refresh(token) == auth.SESSION_TTL_S
+    for _day in range(29):                                   # used every day: the session slides
+        now[0] += 24 * 3600
+        assert st.role_for(token) == "admin"
+    assert 0 < st.cookie_refresh(token) < auth.SESSION_TTL_S  # day 29: the cap is nearer than the TTL
+    now[0] += 2 * 24 * 3600                                  # past the cap: gone, however active
+    assert st.role_for(token) is None
+
+
+def test_a_low_iteration_hash_is_refused():
+    import hashlib
+    salt = bytes(range(16))
+    dk = hashlib.pbkdf2_hmac("sha256", b"pw", salt, 1000)
+    weak = f"pbkdf2_sha256$1000${salt.hex()}${dk.hex()}"
+    assert not auth.verify_password("pw", weak)
+
+
+def test_config_good_copy_is_private(tmp_path):
+    """config.yaml.good/.bad carry the same secrets as config.yaml: 0600 from
+    the first byte (3.80.0)."""
+    import stat
+    from multibus.config import _copy_private
+    src = tmp_path / "config.yaml"; src.write_text("mqtt: {password: s3}\n")
+    dst = tmp_path / "config.yaml.good"
+    _copy_private(src, dst)
+    assert dst.read_text() == src.read_text()
+    assert stat.S_IMODE(dst.stat().st_mode) == 0o600

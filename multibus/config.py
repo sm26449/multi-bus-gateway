@@ -17,6 +17,7 @@
 """Configuration loader for Multi-Bus Gateway."""
 
 import os
+import shutil
 import re
 import yaml
 import json
@@ -524,6 +525,21 @@ def normalize_register_type(v) -> str:
     if s in _INPUT_REGISTER_ALIASES:
         return 'input'
     return 'holding'
+
+
+def _copy_private(src, dst) -> None:
+    """Copy a secret-bearing file (config.yaml carries broker/Influx
+    credentials) so the copy is 0600 from its first byte, like config.yaml
+    itself — shutil.copyfile created the .good/.bad copies at the umask
+    (3.80.0)."""
+    src, dst = str(src), str(dst)
+    tmp = dst + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as out, open(src, "rb") as inp:
+        shutil.copyfileobj(inp, out)
+        out.flush()
+        os.fsync(out.fileno())
+    os.replace(tmp, dst)
 
 
 @dataclass
@@ -1711,7 +1727,6 @@ class Config:
             # while healing — we'd only be copying the snapshot onto itself.)
             if not getattr(self, '_healing', False):
                 try:
-                    import shutil
                     good = self.config_path.with_suffix('.yaml.good')
                     if self._good_would_regress(data, good):
                         # Truncated-but-plausible file (external audit): a cut
@@ -1725,7 +1740,7 @@ class Config:
                             "intentional device removal updates it on save)",
                             good)
                     else:
-                        shutil.copyfile(self.config_path, good)
+                        _copy_private(self.config_path, good)
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -1737,8 +1752,7 @@ class Config:
             self._load_failed = True
             try:
                 bad = self.config_path.with_suffix('.yaml.bad')
-                import shutil
-                shutil.copyfile(self.config_path, bad)
+                _copy_private(self.config_path, bad)
                 logger.error(f"Error loading config: {e} — broken file copied to {bad}; "
                              "config saves are DISABLED until it is repaired")
             except Exception:  # noqa: BLE001
@@ -2296,8 +2310,7 @@ class Config:
         # conservative (refuse on device-count shrink) without .good going
         # stale after a legitimate device deletion.
         try:
-            import shutil
-            shutil.copyfile(self.config_path, self.config_path.with_suffix('.yaml.good'))
+            _copy_private(self.config_path, self.config_path.with_suffix('.yaml.good'))
         except Exception:  # noqa: BLE001
             pass
 

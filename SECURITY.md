@@ -53,7 +53,8 @@ Defense in depth — every layer applies independently:
 2. **Three roles** — admin / operator (live actions, no config) / viewer
    (read-only) — enforced by middleware on all ~140 routes; WebAuthn
    passkeys as a password alternative; per-IP login lockout; sessions are
-   HttpOnly sliding cookies persisted as SHA-256 token hashes (0600).
+   HttpOnly sliding cookies (7-day slide, 30-day absolute cap, cookie
+   re-issued as the session slides) persisted as SHA-256 token hashes (0600).
 3. **Optional API key** (`API_KEY`) required on every state-changing HTTP
    request and on the OTA-capable builder WebSocket (header or
    `mbg-api-key.<base64url>` subprotocol).
@@ -62,15 +63,45 @@ Defense in depth — every layer applies independently:
    AND an authenticated caller AND a template allowlist entry (writability,
    bounds, encoding come from the template — never the caller) AND a
    per-IP rate limit; every write is read-back-verified, audit-logged, and
-   can carry a dead-man lease that auto-reverts to a safe value.
+   can carry a dead-man lease that auto-reverts to a safe value. Writing a
+   register the template does not declare (`unguarded`) is an admin act.
+   Writes arriving over MQTT (`mqtt.allow_write_entities`, HA entities and
+   command topics) are refused while the gateway's own broker session is
+   anonymous — a publish carries no identity beyond the broker's ACLs.
 6. **Browser hardening**: CSRF rejection (Sec-Fetch-Site/Origin), security
-   headers, canonical-URL output escaping, no secrets in exports or logs
-   (redaction on env/config endpoints), retained MQTT commands are never
-   replayed into hardware.
+   headers on every response including the guards' own denials,
+   canonical-URL output escaping, no secrets in exports or logs (redaction
+   on env/config endpoints), retained MQTT commands are never replayed into
+   hardware. Every id that becomes a filesystem path is validated; config
+   imports are size-capped and path-checked; HTTP device sources are pinned
+   to RFC 1918 addresses with redirects re-validated per hop.
 7. **Process hardening**: containers run non-root (gateway uid 10001,
-   serial bridge uid 10002 with /dev read-only + cgroup-scoped tty access);
-   bare-metal default bind is loopback; TLS optional in-process or via
-   your reverse proxy.
+   serial bridge uid 10002 with /dev read-only + cgroup-scoped tty access),
+   with every capability dropped except the five the entrypoint's root
+   phase needs and `no-new-privileges` set; bare-metal default bind is
+   loopback; TLS optional in-process or via your reverse proxy. Secret-bearing
+   files (config and its `.good`/`.bad` copies, sessions, passkeys, leases,
+   audit) are written 0600.
+8. **Audit trail**: every mutating request lands in `config/audit.jsonl`
+   (rotated at ~5 MB) and is mirrored as an `AUDIT` line in the process log,
+   so a burst of requests cannot roll the evidence away.
+
+## By design (read before reporting)
+
+- **Admin-configured egress is trusted.** The InfluxDB URL, MQTT broker,
+  alert webhooks, REST push and ESPHome dashboard are set by the admin and
+  the gateway connects to them as told (redirects are refused). Device
+  sources and probes are the ones restricted to the LAN.
+- **MQTT writes delegate authentication to the broker.** With
+  `mqtt.allow_write_entities` on, anyone the broker lets publish on the
+  command topics can write hardware; protect those topics with broker ACLs.
+  The gateway refuses the feature outright on an anonymous broker session.
+- **Passkeys enrolled while login is off** become admin credentials when
+  login is turned on; the enable flow lists them for review — remove the
+  ones you do not recognise.
+- **The bundled compose stack** (broker, InfluxDB, Grafana, MQTT Explorer)
+  is a convenience for a trusted LAN: secure its credentials and exposed
+  ports before putting anything else on that network.
 
 The reliability side of the same design — fail-safes, data-delivery
 guarantees, config self-healing — is cataloged in

@@ -401,8 +401,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                                     "max-age=31536000; includeSubDomains")
         return resp
 
-    @app.middleware("http")
     async def _security_headers(request, call_next):
+        # registered LAST (see the end of the middleware section) so it wraps
+        # every other middleware: a 401/403 produced by the allowlist, write
+        # or auth guard carries CSP/nosniff/frame headers too (3.80.0)
         resp = await call_next(request)
         _apply_security_headers(resp, request.url.scheme)
         return resp
@@ -426,6 +428,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # without a key. Unset => fully open (default, backward-compatible).
     _api_key = os.getenv("API_KEY") or os.getenv("JANITZA_API_KEY") or ""
     _open_writes = {"/api/query/register", "/api/query/batch",
+                    # the credential-establishing POSTs: an API key gate in front
+                    # of them made API_KEY + login unusable together (3.80.0)
+                    "/api/auth/login", "/api/auth/passkey/login/begin",
+                    "/api/auth/passkey/login/finish",
                     "/api/auth/logout"}  # POST but read-only (any role ends its own session)
 
     # OPERATOR: live actions yes, configuration no. Allowed mutations are the
@@ -540,7 +546,16 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 return JSONResponse(
                     {"detail": "the operator account cannot change configuration"},
                     status_code=403)
-        return await call_next(request)
+        resp = await call_next(request)
+        # the browser's cookie carried a fixed 7-day expiry from login while
+        # the server slid the session: re-issue it (at most hourly) with the
+        # time left until the absolute 30-day cap (3.80.0)
+        max_age = auth_state.cookie_refresh(token)
+        if max_age:
+            secure = bool(config.ui.tls_enabled) or request.url.scheme == "https"
+            resp.set_cookie(_auth.COOKIE_NAME, token, httponly=True, samesite="lax",
+                            secure=secure, max_age=max_age, path="/")
+        return resp
 
     # Tier 2: the DeviceRegistry owns the (DeviceConfig, client) pairs and one
     # live-value store per device; device #1's store IS the legacy
@@ -1483,6 +1498,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             })
         entry['read_via'] = out
 
+    # outermost of all: every response, including the guards' own 401/403s
+    app.middleware("http")(_security_headers)
+
     @app.get("/api/devices")
     def list_devices(request: Request):
         """All southbound devices with live health (device #1 first)."""
@@ -1630,7 +1648,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         blocking Modbus I/O would stall every publish (audit M4); write_value
         takes the connection lock, so it is serialized with the poller."""
         import math as _math
-        if not (config.security.allow_writes and config.mqtt.allow_write_entities):
+        refused = _mqtt_writes_refused()
+        if refused:
+            logger.warning("MQTT write on %s/%s ignored: %s", device_id, getattr(register, 'name', '?'), refused)
             return
         _idx, dev_cfg, client = _find_device(device_id)
         if dev_cfg is None or client is None or dev_cfg.primary or dev_cfg.protocol == 'http':
@@ -2034,12 +2054,25 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     def group_power_limit(endpoint_id: str, group_id: str, request: Request, payload: Dict = Body(...)):
         return run_group_command(endpoint_id, group_id, 'power_limit', request, payload)
 
+    def _mqtt_writes_refused() -> Optional[str]:
+        """Why a write arriving over MQTT must be ignored, or None. Both gates
+        must be on, AND the broker session must be authenticated: with
+        allow_write_entities on, a broker publish IS a hardware write, so an
+        anonymous broker would hand that to anyone on the LAN (3.80.0)."""
+        if not (config.security.allow_writes and config.mqtt.allow_write_entities):
+            return "writes over MQTT are off (security.allow_writes + mqtt.allow_write_entities)"
+        if not str(config.mqtt.username or "").strip():
+            return ("mqtt.allow_write_entities is on but the broker connection is "
+                    "anonymous — set mqtt.username/password (broker ACLs are the "
+                    "only authentication a publish carries)")
+        return None
+
     def _mqtt_command(device_ids, name: str, payload: str) -> None:
         """A controller's command over MQTT. The broker is not a trusted
         caller: the same gates as the API, plus mqtt.allow_write_entities."""
-        if not (config.security.allow_writes and config.mqtt.allow_write_entities):
-            logger.warning("MQTT command %s ignored: writes over MQTT are off "
-                           "(security.allow_writes + mqtt.allow_write_entities)", name)
+        refused = _mqtt_writes_refused()
+        if refused:
+            logger.warning("MQTT command %s ignored: %s", name, refused)
             return
         for did in device_ids:
             _i, d, c = _find_device(did)
@@ -2600,6 +2633,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             # payload owns the encoding; nothing is clamped or checked beyond
             # type sanity. Master switch + device lock + auth + rate limit +
             # audit still apply — safety by configuration, not prohibition.
+            # Bypassing the template envelope is an ADMIN act: the operator
+            # role is "live actions within the declared envelope" (3.80.0).
+            _role = getattr(request.state, 'role', None)
+            _key_ok = bool(_api_key) and hmac.compare_digest(request.headers.get("X-API-Key", ""), _api_key)
+            if auth_state.enabled and _role != 'admin' and not _key_ok:
+                raise HTTPException(status_code=403, detail={"errors": [
+                    "unguarded (raw) writes need the admin account or the API key"]})
             unguarded = True
             rule = None
             data_type = str(payload.get('data_type') or 'uint16').lower()
@@ -3856,6 +3896,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             topic = str(conn.get('topic', '')).strip()
             if not broker or not topic:
                 raise HTTPException(status_code=422, detail={"errors": ["connection.broker and connection.topic required"]})
+            from .discovery import lan_host_error
+            _e = lan_host_error(broker, config.security.allow_nonlan_http_devices)
+            if _e:
+                raise HTTPException(status_code=422, detail={"errors": [f"connection.broker: {_e}"]})
             import paho.mqtt.client as mqtt
             got = {"connected": False, "msg": None, "topic": None}
             ev = threading.Event()

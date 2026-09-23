@@ -992,3 +992,13 @@ def test_index_shell_is_never_browser_cached(tmp_path):
     r = client.get("/")
     assert r.status_code == 200
     assert r.headers.get("cache-control") == "no-cache"
+
+
+@needs_tc
+def test_adhoc_broker_probe_blocks_nonlan_host(tmp_path):
+    """The MQTT branch of /api/devices/test connects to a caller-chosen
+    broker; it validates the host like every other probe (3.80.0)."""
+    _cfg, client = make_app(tmp_path)
+    r = client.post("/api/devices/test", json={
+        "connection": {"protocol": "mqtt", "broker": "8.8.8.8", "topic": "t"}})
+    assert r.status_code == 422 and "connection.broker" in str(r.json())

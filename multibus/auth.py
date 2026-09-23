@@ -46,6 +46,9 @@ logger = logging.getLogger(__name__)
 _ALGO = "pbkdf2_sha256"
 _ITERATIONS = 600_000              # OWASP 2023 floor for PBKDF2-HMAC-SHA256
 SESSION_TTL_S = 7 * 24 * 3600      # 7-day sliding session (slides on each request)
+SESSION_MAX_S = 30 * 24 * 3600     # absolute cap: a session ends 30 days after login however busy
+_MIN_ITERATIONS = 100_000          # a stored hash below this floor is refused (hand-edited store)
+_COOKIE_REFRESH_S = 3600           # re-issue the cookie at most this often per session
 COOKIE_NAME = "janitza_session"
 
 
@@ -70,6 +73,12 @@ def verify_password(password: str, stored: str) -> bool:
     try:
         if stored.startswith(_ALGO + "$"):
             _algo, iter_s, salt_hex, hash_hex = stored.split("$", 3)
+            if int(iter_s) < _MIN_ITERATIONS:
+                # the iteration count is read from the stored string; a
+                # hand-edited low count would make brute force cheap
+                logger.error("SECURITY: stored password hash declares %s iterations "
+                             "(< %d) — refused; re-save the credential", iter_s, _MIN_ITERATIONS)
+                return False
             dk = hashlib.pbkdf2_hmac("sha256", password.encode(),
                                      bytes.fromhex(salt_hex), int(iter_s))
             return hmac.compare_digest(dk.hex(), hash_hex)
@@ -114,7 +123,8 @@ class AuthState:
     def __init__(self, ui_config, store_path: Optional[str] = None):
         self._lock = threading.Lock()
         # token_sha256 -> (role, expiry, username)
-        self._sessions: Dict[str, Tuple[str, float, str]] = {}
+        self._sessions: Dict[str, Tuple[str, float, str, float]] = {}
+        self._cookie_issued: Dict[str, float] = {}      # token key -> last cookie re-issue (memory only)
         self._fails: Dict[str, list] = {}                   # ip -> [failure epochs]
         self._locked_until: Dict[str, float] = {}           # ip -> epoch
         self._store_path = store_path
@@ -132,9 +142,10 @@ class AuthState:
             now = time.time()
             with self._lock:
                 for key, entry in (data.get("sessions") or {}).items():
-                    role, expiry, username = entry
-                    if float(expiry) > now:               # prune expired at load
-                        self._sessions[str(key)] = (str(role), float(expiry), str(username))
+                    role, expiry, username = entry[:3]
+                    created = float(entry[3]) if len(entry) > 3 else now   # pre-3.80 stores
+                    if float(expiry) > now and now - created < SESSION_MAX_S:   # prune at load
+                        self._sessions[str(key)] = (str(role), float(expiry), str(username), created)
                 n = len(self._sessions)
             logger.info("restored %d session(s) from %s", n, self._store_path)
         except Exception as e:  # noqa: BLE001
@@ -149,7 +160,7 @@ class AuthState:
         try:
             tmp = self._store_path + ".tmp"
             payload = json.dumps({"version": 1, "sessions": {
-                k: [r, e, u] for k, (r, e, u) in self._sessions.items()}})
+                k: [r, e, u, c] for k, (r, e, u, c) in self._sessions.items()}})
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "w") as f:
                 f.write(payload)
@@ -242,7 +253,7 @@ class AuthState:
         self._clear_failures(ip)
         token = secrets.token_urlsafe(32)
         with self._lock:
-            self._sessions[_token_key(token)] = (role, time.time() + SESSION_TTL_S, username)
+            self._sessions[_token_key(token)] = (role, time.time() + SESSION_TTL_S, username, time.time())
             self._save_sessions_locked()
         return token, role
 
@@ -256,12 +267,13 @@ class AuthState:
             entry = self._sessions.get(key)
             if not entry:
                 return None
-            role, expiry, username = entry
-            if expiry < now:
+            role, expiry, username, created = entry
+            if expiry < now or now - created >= SESSION_MAX_S:
                 self._sessions.pop(key, None)
                 self._save_sessions_locked()
                 return None
-            self._sessions[key] = (role, now + SESSION_TTL_S, username)  # sliding
+            # sliding, but never past the absolute cap
+            self._sessions[key] = (role, min(now + SESSION_TTL_S, created + SESSION_MAX_S), username, created)
             # slides happen per request — persist at most every _SLIDE_FLUSH_S
             # (losing a slide worst-cases as an expiry a few minutes short of
             # 7 days after an unclean stop; irrelevant, and logins/logouts
@@ -275,9 +287,31 @@ class AuthState:
         (the WebAuthn assertion IS the authentication)."""
         token = secrets.token_urlsafe(32)
         with self._lock:
-            self._sessions[_token_key(token)] = (role, time.time() + SESSION_TTL_S, username)
+            self._sessions[_token_key(token)] = (role, time.time() + SESSION_TTL_S, username, time.time())
             self._save_sessions_locked()
         return token
+
+    def cookie_refresh(self, token: str) -> Optional[int]:
+        """If this session's cookie should be re-issued now, the max_age to
+        give it (seconds left until the absolute cap, at most the sliding
+        TTL); None when the cookie was refreshed recently or the token is
+        unknown. The browser's cookie carries a fixed expiry from login; the
+        server slides the session — without a refresh the cookie died at 7
+        days however busy the tab was (2026-09-16)."""
+        if not token:
+            return None
+        now = time.time()
+        key = _token_key(token)
+        with self._lock:
+            entry = self._sessions.get(key)
+            if not entry:
+                return None
+            last = self._cookie_issued.get(key, 0.0)
+            if now - last < _COOKIE_REFRESH_S:
+                return None
+            self._cookie_issued[key] = now
+            remaining = int(entry[3] + SESSION_MAX_S - now)
+        return max(1, min(SESSION_TTL_S, remaining))
 
     def identity_for(self, token: str) -> Optional[Tuple[str, str]]:
         """(role, username) for a live session — the audit's 'who'. Does not

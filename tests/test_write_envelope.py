@@ -192,7 +192,7 @@ class _FakeClient:
         return self.reg.get(address)
 
 
-def _envelope_app(tmp_path):
+def _envelope_app(tmp_path, operator=False):
     from tests.test_devices import write_config
     from multibus.api import create_api
     from multibus import auth as _authmod
@@ -202,6 +202,9 @@ def _envelope_app(tmp_path):
     cfg.ui.auth_enabled = True
     cfg.ui.auth_username = "admin"
     cfg.ui.auth_password = _authmod.hash_password("pw")
+    if operator:                                   # a second, envelope-bound account
+        cfg.ui.operator_username = "op"
+        cfg.ui.operator_password = _authmod.hash_password("op-pw")
     dev = DeviceConfig(id="ctrl", name="ctrl", template="wr_test", protocol="tcp")
     fake = _FakeClient()
     app, _ = create_api(cfg, None, None, None,
@@ -383,3 +386,17 @@ def test_template_write_allowed_roundtrip():
     assert by[110].write_allowed == [0, 1, 4]
     assert by[110].to_dict()["write_allowed"] == [0, 1, 4]
     assert "write_allowed" not in by[100].to_dict()   # unset stays absent
+
+
+@needs_tc
+def test_unguarded_writes_need_the_admin_account(tmp_path):
+    """Bypassing the template envelope is an admin act (3.80.0): the operator
+    role is live actions WITHIN the declared envelope."""
+    client, fake = _envelope_app(tmp_path, operator=True)
+    op = TestClient(client.app, raise_server_exceptions=False)
+    assert op.post("/api/auth/login", json={"username": "op", "password": "op-pw"}).json()["role"] == "operator"
+    body = {"address": 200, "value": 5, "register_type": "holding", "data_type": "uint16", "unguarded": True}
+    r = op.post("/api/devices/ctrl/write", json=body)
+    assert r.status_code == 403 and "admin" in str(r.json())
+    r = client.post("/api/devices/ctrl/write", json=body)       # the admin session
+    assert r.status_code != 403

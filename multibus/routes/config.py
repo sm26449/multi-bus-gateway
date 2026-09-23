@@ -130,9 +130,10 @@ def build(ctx) -> APIRouter:
         }
 
     @r.post("/api/config/ui-security")
-    async def update_ui_security(request: Request, payload: Dict = Body(...)):
+    def update_ui_security(request: Request, payload: Dict = Body(...)):
         """Update HTTPS + login config. Passwords are hashed on write; a blank
-        password keeps the current one. HTTPS changes need a restart."""
+        password keeps the current one. HTTPS changes need a restart.
+        A plain ``def`` (threadpool): up to three PBKDF2 hashes run here."""
         from .. import auth as _auth
         u = config.ui
         # VALIDATE-THEN-COMMIT: build the change set + run every check BEFORE

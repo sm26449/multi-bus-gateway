@@ -1049,8 +1049,10 @@ route, a hand-edited `config.yaml`, a config import and a snapshot restore
 all hit the same guard, so no path yields a gateway that *looks* locked
 but accepts `admin/admin`. Failed logins are locked
 out per IP (`lockout_threshold` / `lockout_minutes`, defaults 5 / 5 min).
-Sessions are HttpOnly cookies, 7-day sliding, persisted as SHA-256 token
-hashes in `config/sessions.json` — a container restart keeps you logged in.
+Sessions are HttpOnly cookies, 7-day sliding with a 30-day absolute cap
+(3.80.0: the cookie is re-issued as the session slides, so a tab used
+daily stays logged in until the cap), persisted as SHA-256 token hashes in
+`config/sessions.json` — a container restart keeps you logged in.
 Rotating any password revokes **every** session (an old cookie can't outlive
 the rotation) — except the author's: the security save re-issues your own
 session, so changing passwords never logs *you* out mid-task. The audit

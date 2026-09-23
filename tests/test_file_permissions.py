@@ -36,3 +36,20 @@ def test_audit_file_is_0600(tmp_path):
     log.append(user="admin", ip="10.0.0.1", action="test", target="x")
     mode = stat.S_IMODE(os.stat(p).st_mode)
     assert mode == 0o600, oct(mode)
+
+
+def test_write_leases_file_is_0600(tmp_path):
+    from multibus.write_lease import WriteLeaseManager
+    p = tmp_path / "write_leases.json"
+    m = WriteLeaseManager(persist_path=p)
+    m._leases[("d", "x", 1)] = {"meta": {"device": "d"}}
+    m._persist_locked()
+    assert stat.S_IMODE(os.stat(p).st_mode) == 0o600
+
+
+def test_audit_entries_are_mirrored_to_the_process_log(tmp_path, caplog):
+    import logging
+    from multibus.audit import AuditLog
+    with caplog.at_level(logging.INFO, logger="multibus.audit"):
+        AuditLog(str(tmp_path / "audit.jsonl")).append(user="u", ip="1.2.3.4", action="write", status="ok")
+    assert any("AUDIT" in r.getMessage() and '"action": "write"' in r.getMessage() for r in caplog.records)

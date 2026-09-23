@@ -7,6 +7,8 @@
 set -e
 if [ "$(id -u)" = "0" ]; then
     chown -R mbg:mbg /app/config
-    exec setpriv --reuid=mbg --regid=mbg --init-groups "$@"
+    # --no-new-privs: nothing this process starts can regain privilege (setuid
+    # binaries, file capabilities) — the drop is final (3.80.0)
+    exec setpriv --reuid=mbg --regid=mbg --init-groups --no-new-privs "$@"
 fi
 exec "$@"

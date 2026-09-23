@@ -95,7 +95,10 @@ class EsphomeDashboard:
         if self._cookie:
             req.add_header("Cookie", self._cookie)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
+            # never follow a redirect with the dashboard session cookie on
+            # it — a cross-host 3xx would carry it elsewhere (3.80.0); the
+            # login path already refused redirects the same way
+            with self._open(req) as resp:
                 return resp.status, resp.read()
         except urllib.error.HTTPError as e:
             # Dashboard auth returns a redirect-to-login or 401; try one login.
@@ -111,6 +114,10 @@ class EsphomeDashboard:
         except (urllib.error.URLError, OSError, TimeoutError) as e:
             raise EsphomeError(
                 f"ESPHome unreachable at {redact_url(self.base)}: {getattr(e, 'reason', e)}")
+
+    def _open(self, req):
+        """One HTTP exchange with redirects refused (tests patch this)."""
+        return urllib.request.build_opener(_NoRedirect()).open(req, timeout=self.timeout_s)
 
     def _login(self) -> None:
         data = urllib.parse.urlencode(

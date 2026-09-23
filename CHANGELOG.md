@@ -1,5 +1,41 @@
 # Changelog
 
+## 3.80.0
+
+### 2026-09-23 — security fixes from the pre-publication review
+
+- **Writes over MQTT need an authenticated broker session.** With
+  `mqtt.allow_write_entities` on, a broker publish is a hardware write and
+  carries no identity beyond the broker's ACLs; the command topics and HA
+  write entities are now refused (logged once per attempt) while
+  `mqtt.username` is empty.
+- **Raw writes are an admin act.** `unguarded: true` on `/api/devices/{id}/write`
+  bypasses the template envelope; the operator role no longer can.
+- **Sessions**: 30-day absolute cap on top of the 7-day slide; the cookie
+  is re-issued (hourly at most) as the session slides — a tab in daily use
+  was logged out at exactly 7 days because the cookie's expiry was fixed
+  at login. A stored password hash that declares fewer than 100 000 PBKDF2
+  iterations is refused. Login and the passkey login POSTs no longer sit
+  behind the `API_KEY` gate (API key + login was a dead end).
+- **Headers on every response**: the security-headers middleware is the
+  outermost one, so the guards' own 401/403 answers carry CSP, nosniff and
+  frame protection too.
+- **Egress**: `/api/devices/test` validates a caller-chosen broker host like
+  every other probe; the ESPHome dashboard client refuses redirects (the
+  session cookie could have followed a 3xx to another host).
+- **Files**: `config.yaml.good`/`.bad` copies and `write_leases.json` are
+  created 0600; the InfluxDB URL is redacted in the two log lines that
+  printed it raw.
+- **Login off the event loop**: the password and security-settings handlers
+  run on the threadpool, so a 0.5-s PBKDF2 no longer stalls every other
+  request and the WebSocket broadcast.
+- **UI**: the stored API key is sent only to this origin and is removed on
+  logout.
+- **Container**: `setpriv --no-new-privs`; the compose service drops every
+  capability except the five the entrypoint's root phase needs and sets
+  `no-new-privileges`.
+- **Audit** entries are mirrored as `AUDIT` lines in the process log.
+
 ## 3.79.0
 
 ### 2026-09-23 — release plumbing for the public repository

@@ -25,6 +25,7 @@ import threading
 from collections import deque
 from typing import Dict, Any, Optional, List
 
+from .redact import redact_url
 from .config import InfluxDBConfig, SelectedRegister
 
 import logging
@@ -255,7 +256,7 @@ class InfluxDBPublisher:
                 self.client, self.write_api = new_client, new_write_api
 
             self.connected = True
-            logger.info(f"InfluxDB connected to {self.config.url}")
+            logger.info(f"InfluxDB connected to {redact_url(self.config.url)}")
             self._ensure_bucket()                 # auto-create if missing
 
             # Retire old objects after the swap, outside the lock: closing a
@@ -915,7 +916,7 @@ class InfluxDBPublisher:
         """Update InfluxDB configuration."""
         self.config = new_config
         self.publish_mode = new_config.publish_mode
-        logger.info(f"InfluxDB config updated: {new_config.url}")
+        logger.info(f"InfluxDB config updated: {redact_url(new_config.url)}")
 
     def update_registers(self, registers: List[SelectedRegister]):
         """Update register list."""

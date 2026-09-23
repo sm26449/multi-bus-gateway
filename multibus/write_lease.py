@@ -139,7 +139,8 @@ class WriteLeaseManager:
         try:
             self._persist_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._persist_path.with_name(self._persist_path.name + ".tmp")
-            with open(tmp, 'w') as f:
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)   # like the other state files
+            with os.fdopen(fd, 'w') as f:
                 json.dump(records, f)
                 f.flush()
                 os.fsync(f.fileno())

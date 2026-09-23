@@ -32,6 +32,19 @@ services:
     # virtual meter binds a port below 1024 (like the :502 above).
     sysctls:
       - net.ipv4.ip_unprivileged_port_start=0
+    # Least privilege (3.80.0): every capability dropped except the five the
+    # root phase of the entrypoint needs to chown the config volume and to
+    # switch to the unprivileged user; no-new-privileges makes that drop final.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - ./config:/app/config
       # (no docs mount — the image bakes docs/modbus_data.json, the only file

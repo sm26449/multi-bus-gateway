@@ -47,8 +47,11 @@ def build(ctx) -> APIRouter:
                 "has_passkeys": bool(pk and pk.count)}
 
     @r.post("/api/auth/login")
-    async def auth_login(request: Request, payload: Dict = Body(...)):
-        """Log in; sets an HttpOnly session cookie. Rate-limited per IP."""
+    def auth_login(request: Request, payload: Dict = Body(...)):
+        """Log in; sets an HttpOnly session cookie. Rate-limited per IP.
+        A plain ``def``: FastAPI runs it on the threadpool, so the ~0.5 s
+        PBKDF2 no longer freezes every other request and the WebSocket
+        broadcast (3.80.0)."""
         if not auth_state.enabled:
             return {"status": "ok", "role": "admin", "note": "auth disabled"}
         ip = request.client.host if request.client else "?"

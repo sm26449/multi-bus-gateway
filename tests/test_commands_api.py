@@ -19,7 +19,7 @@ except Exception:  # pragma: no cover
 
 PLANT_YAML = """
 security: { allow_writes: true }
-mqtt: { allow_write_entities: true }
+mqtt: { allow_write_entities: true, username: gw, password: pw }   # writes over MQTT need an authenticated broker
 endpoints:
   - id: pv
     name: PV
@@ -426,3 +426,21 @@ def test_a_new_command_replaces_the_pending_read_back_series(tmp_path, monkeypat
     series[2].fn(*series[2].args)
     assert _Drv.swept == ['controls'] * 4
     assert series_timers()[-1].args[4] == 3 and len(series_timers()) == 4
+
+
+@needs_tc
+def test_an_anonymous_broker_gets_no_writes_over_mqtt(tmp_path):
+    """With allow_write_entities on, a broker publish IS a hardware write —
+    so the gateway refuses to act on it while its own broker session is
+    anonymous (3.80.0): broker ACLs are the only authentication a publish
+    carries."""
+    mq = _Mqtt()
+    inv = _Inverter(sf=-2)
+    cfg, app, client = _app(tmp_path, {'pv-u1': inv}, mqtt=mq)
+    cfg.mqtt.username = ""
+    before = len(inv.writes)
+    mq.topics['pv/inverters/1/cmd/power_limit']('{"limit_pct": 55, "source": "ov"}')
+    assert len(inv.writes) == before                    # ignored, nothing written
+    cfg.mqtt.username = "gw"
+    mq.topics['pv/inverters/1/cmd/power_limit']('{"limit_pct": 55, "source": "ov"}')
+    assert len(inv.writes) > before                     # authenticated broker: acted on

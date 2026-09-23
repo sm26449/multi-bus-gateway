@@ -235,6 +235,7 @@ def _handler_and_client(tmp_path):
     cfg = write_config(tmp_path)
     cfg.security.allow_writes = True
     cfg.mqtt.allow_write_entities = True
+    cfg.mqtt.username = "gw"                            # writes over MQTT need an authenticated broker (3.80.0)
     dev = DeviceConfig(id="ctrl", name="ctrl", template="ctrl_tpl", protocol="tcp")
     fake = _FakeClient()
     mock_mqtt = MagicMock()
@@ -362,3 +363,10 @@ def test_device_runtime_publishes_read_errors():
     pub._captured.clear()
     pub.publish_device_runtime("mbg/devices/d1", True, "2026-09-12T08:00:30")
     assert list(pub._captured) == ["mbg/devices/d1/runtime/last_seen"]
+
+
+def test_handler_refuses_while_the_broker_session_is_anonymous(tmp_path):
+    handler, fake, cfg = _handler_and_client(tmp_path)
+    cfg.mqtt.username = ""
+    handler("ctrl", _reg(address=100), "42")
+    assert 100 not in fake.reg                          # ignored: an anonymous broker cannot write hardware

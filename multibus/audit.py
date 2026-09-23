@@ -118,6 +118,10 @@ class AuditLog:
                              os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
                 with os.fdopen(fd, "a", encoding="utf-8") as f:
                     f.write(line + "\n")
+            # a second copy in the process log: the JSONL file rotates at
+            # ~5 MB and can be rolled away by a burst of requests, the
+            # container log is kept by the host's own rotation (3.80.0)
+            logger.info("AUDIT %s", line)
         except Exception:  # noqa: BLE001
             logger.exception("audit append failed")
 

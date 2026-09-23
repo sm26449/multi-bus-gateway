@@ -310,7 +310,7 @@ def test_esphome_client_closes_error_responses(monkeypatch):
 
     def _raise(*a, **k):
         raise urllib.error.HTTPError("http://x", 500, "boom", None, _Body())
-    monkeypatch.setattr(urllib.request, "urlopen", _raise)
+    monkeypatch.setattr(esphome_client.EsphomeDashboard, "_open", lambda self, req: _raise())
     dash = esphome_client.EsphomeDashboard("http://127.0.0.1:1")
     try:
         dash._request("GET", "/anything")

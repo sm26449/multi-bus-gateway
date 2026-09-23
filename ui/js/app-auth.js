@@ -11,7 +11,10 @@ Object.assign(JanitzaMonitor.prototype, {
         window.fetch = (input, opts = {}) => {
             const method = ((opts && opts.method) || (input && input.method) || 'GET').toUpperCase();
             const writing = method !== 'GET' && method !== 'HEAD';
-            if (!writing || (typeof Request !== 'undefined' && input instanceof Request)) {
+            // the key belongs to THIS gateway: never attach it to another origin
+            const url = typeof input === 'string' ? input : (input && input.url) || '';
+            const sameOrigin = url.startsWith('/') || url.startsWith(location.origin + '/') || url === location.origin;
+            if (!writing || !sameOrigin || (typeof Request !== 'undefined' && input instanceof Request)) {
                 // Reads too: a 401 on any API read with login enabled means
                 // the session died (expired, revoked, or the server forgot
                 // it) — go to the login screen at once instead of polling
@@ -165,6 +168,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
     async logout() {
         try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (e) {}
+        try { localStorage.removeItem('mbg-api-key'); } catch (e) {}   // the key leaves with the session
         location.reload();
     }
 });
