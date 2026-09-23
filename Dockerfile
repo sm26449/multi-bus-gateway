@@ -1,5 +1,7 @@
 # Multi-Bus Gateway
-FROM python:3.11-slim
+# Digest-pinned base image (Dependabot's docker ecosystem refreshes the pin);
+# the tag is kept for humans, the digest is what is built.
+FROM python:3.11-slim@sha256:da047cb8f9d1d98e5c070f5300ba9f7274e33b8fc0e5be5ed88740aed1b95ba9
 
 # Dedicated non-root user. The entrypoint starts as root ONLY to chown the
 # mounted config volume (bind mounts arrive with host ownership — root on a
@@ -17,7 +19,7 @@ WORKDIR /app
 # requirements.txt stays the human-edited intent file, see requirements.lock
 # header for the regenerate command).
 COPY requirements.lock .
-RUN pip install --no-cache-dir -r requirements.lock
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
 # Copy application
 COPY multibus/ ./multibus/

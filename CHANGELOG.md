@@ -1,5 +1,21 @@
 # Changelog
 
+## 3.80.1
+
+### 2026-09-23 — supply chain: hash-pinned installs, pinned actions, scanners in CI
+
+- `requirements.lock` carries the hashes of every published file of each
+  pinned version; the image and CI install with `--require-hashes`, so a
+  substituted package is refused. Regeneration is documented in the file.
+- The base image is pinned by digest (tag kept for humans); Dependabot
+  refreshes it.
+- Every GitHub Action is pinned by commit SHA. CI runs with a read-only
+  token, gains `workflow_dispatch`, a `pip-audit` job over the lock and a
+  Trivy scan of the built image (HIGH/CRITICAL, fixed-only, fails the run),
+  and verifies the vendored UI assets against `ui/vendor/SHA256SUMS`.
+- Release images carry SLSA provenance and an SBOM; `latest` no longer
+  moves on a pre-release tag.
+
 ## 3.80.0
 
 ### 2026-09-23 — security fixes from the pre-publication review

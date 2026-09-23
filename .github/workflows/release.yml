@@ -3,11 +3,10 @@ name: Release image
 # Builds and pushes the container images to GHCR — the "no local build"
 # install path the README advertises.
 #
-# COST CONTROL (private repo, PAID minutes): this workflow fires ONLY on a
-# version tag push (v*), never per-commit. Multi-arch (amd64 + arm64 for
-# Raspberry Pi) via buildx/QEMU — expect a long build; tag deliberately.
-# While the repo is private the pushed images are private too; they become
-# publicly pullable when the repo (or the package) is flipped public.
+# Fires ONLY on a version tag push (v*), never per-commit — see
+# docs/releasing.md. Multi-arch (amd64 + arm64 for Raspberry Pi) via
+# buildx/QEMU; expect a long build. Actions are pinned by commit SHA
+# (Dependabot's github-actions ecosystem keeps them current).
 on:
   push:
     tags: ["v*"]
@@ -24,52 +23,60 @@ jobs:
   image:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
+            # `latest` follows releases only — a pre-release tag (v3.81.0-rc1) keeps it where it is
+            type=raw,value=latest,enable=${{ !contains(github.ref, '-') }}
 
       - name: Build and push gateway
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # SLSA provenance + SBOM attestations travel with the image
+          provenance: true
+          sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - id: meta-bridge
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ghcr.io/${{ github.repository }}-serial-bridge
           tags: |
             type=semver,pattern={{version}}
-            type=raw,value=latest
+            # `latest` follows releases only — a pre-release tag (v3.81.0-rc1) keeps it where it is
+            type=raw,value=latest,enable=${{ !contains(github.ref, '-') }}
 
       - name: Build and push serial-bridge
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ./serial-bridge
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta-bridge.outputs.tags }}
           labels: ${{ steps.meta-bridge.outputs.labels }}
+          # SLSA provenance + SBOM attestations travel with the image
+          provenance: true
+          sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max

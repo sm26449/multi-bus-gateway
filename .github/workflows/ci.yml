@@ -1,14 +1,18 @@
 name: CI
 
-# Private repo → every run burns PAID minutes (the whole month's budget went
-# in one day, 2026-08-14: per-commit pushes + the Dependabot burst). Triggers
-# are therefore minimal: main + PRs only — feature branches validate LOCALLY
-# with the exact same commands (ruff check . && pytest -q --timeout=120
-# --cov=multibus --cov-fail-under=72) and CI confirms on the PR.
+# Runs on every push to main and on every pull request (public repository:
+# minutes are free). Feature branches can still validate locally with the
+# exact same commands:
+#   ruff check . && pytest -q --timeout=120 --cov=multibus --cov-fail-under=72
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+# The token can only read the repository; nothing here writes to it.
+permissions:
+  contents: read
 
 # Cancel a superseded run when new commits land on the same ref.
 concurrency:
@@ -19,9 +23,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
           cache: pip
@@ -30,17 +34,49 @@ jobs:
             requirements-dev.txt
 
       - name: Install dependencies
-        # lock first (exact runtime pins — same set the image ships), then the
-        # dev extras; requirements.txt ranges are satisfied by the pins.
-        run: pip install -r requirements.lock -r requirements-dev.txt
+        # the lock first, hash-verified (exact runtime pins — the same set the
+        # image ships), then the dev extras; requirements.txt ranges are
+        # satisfied by the pins.
+        run: |
+          pip install --require-hashes -r requirements.lock
+          pip install -r requirements-dev.txt
+
+      - name: Vendored UI assets match their checksum manifest
+        run: cd ui/vendor && sha256sum -c SHA256SUMS --quiet
 
       - name: Lint (ruff)
         run: ruff check .
 
       - name: Run test suite
         # --timeout: a hung loopback server fails in minutes, not the 6h job cap.
-        # --cov-fail-under=72: floor just under the current 74% — raise it as
+        # --cov-fail-under=72: floor under the current coverage — raise it as
         # coverage grows, never lower it to make a PR pass.
         run: python -m pytest -q --timeout=120 -p randomly --cov=multibus --cov=main --cov-report=term --cov-fail-under=72
         # -p randomly: random test order (seed printed in the log header —
         # reproduce a failure locally with: pytest -p randomly --randomly-seed=<seed>)
+
+  dependency-audit:
+    # known vulnerabilities in the pinned runtime set (advisory DB: PyPI + OSV)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266 # v1.1.0
+        with:
+          inputs: requirements.lock
+          require-hashes: true
+
+  image-scan:
+    # the image exactly as the release workflow builds it (single arch here),
+    # scanned for OS + Python package CVEs; HIGH/CRITICAL fail the job
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build
+        run: docker build -t multi-bus-gateway:ci .
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: multi-bus-gateway:ci
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
