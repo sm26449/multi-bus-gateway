@@ -417,7 +417,7 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!el) return;
         if (!this._langs.length) { el.style.display = 'none'; return; }
         el.innerHTML = this._langs.map(l =>
-            `<option value="${l.code}" ${l.code === this._lang ? 'selected' : ''}>${l.flag || ''} ${this._esc(l.nativeName || l.name)}</option>`).join('');
+            `<option value="${this._esc(l.code)}" ${l.code === this._lang ? 'selected' : ''}>${this._esc(l.flag || '')} ${this._esc(l.nativeName || l.name)}</option>`).join('');
         if (!el._wired) { el._wired = true; el.addEventListener('change', () => this.setLanguage(el.value)); }
     },
 
@@ -657,8 +657,8 @@ Object.assign(JanitzaMonitor.prototype, {
         return Math.floor(s / 86400) + 'd ' + Math.floor((s % 86400) / 3600) + 'h';
     },
 
-    // Delegated actions: elements rendered with data-action="method" dispatch to
-    // app.method(...) — replaces inline onclick="app.m('${esc(x)}')" handlers.
+    // Delegated actions: elements rendered with a data-action attribute dispatch
+    // to app.<method>(...) — the page carries no inline event handlers at all.
     // Motivation (U1): _esc() is an HTML-context escaper, but an inline handler
     // is a JS-string-inside-attribute context — the HTML parser decodes &#39;
     // back to ' BEFORE the JS engine parses the handler, so a value containing a
@@ -669,12 +669,27 @@ Object.assign(JanitzaMonitor.prototype, {
     //   data-with-el         append the clicked element as the last argument
     //   data-guard=".sel"    ignore clicks landing inside a matching descendant
     //                        (row-click vs. its action-buttons cell)
+    // Every UI action is declared in markup as data-action="<method>" (plus
+    // data-args JSON, data-with-el, data-with-value, data-guard and
+    // data-on="click|change|input") and dispatched from here. The page carries
+    // no inline event handlers, so the CSP can forbid inline script entirely
+    // (script-src 'self') and an injected attribute can never execute.
     _wireActionDelegation() {
-        const dispatch = (ev) => {
-            const el = ev.target.closest('[data-action]');
+        const find = (target, type) => {
+            let el = target && target.closest ? target.closest('[data-action]') : null;
+            // an <input data-on="change"> inside a clickable row: the click still
+            // belongs to the row, so keep walking up past elements of another type
+            while (el && (el.dataset.on || 'click') !== type) {
+                el = el.parentElement ? el.parentElement.closest('[data-action]') : null;
+            }
+            return el;
+        };
+        const dispatch = (ev, type) => {
+            const el = find(ev.target, type);
             if (!el) return;
             const guard = el.dataset.guard;
             if (guard && ev.target.closest(guard) !== el && ev.target.closest(guard)) return;
+            if (type === 'click' && el.tagName === 'A') ev.preventDefault();   // href="#" links
             const fn = this[el.dataset.action];
             if (typeof fn !== 'function') {
                 console.warn('data-action: unknown method', el.dataset.action);
@@ -686,28 +701,42 @@ Object.assign(JanitzaMonitor.prototype, {
                 catch (e) { console.error('data-action: bad data-args', el.dataset.args); return; }
             }
             if ('withEl' in el.dataset) args.push(el);
+            if ('withValue' in el.dataset) args.push(el.value);
             fn.apply(this, args);
         };
-        document.addEventListener('click', dispatch);
+        document.addEventListener('click', (ev) => dispatch(ev, 'click'));
+        document.addEventListener('change', (ev) => dispatch(ev, 'change'));
+        document.addEventListener('input', (ev) => dispatch(ev, 'input'));
         // Enter on non-<button> actionable elements (div[role=button] rows) —
         // real buttons already synthesize a click on Enter natively.
         document.addEventListener('keydown', (ev) => {
             if (ev.key !== 'Enter') return;
             const el = ev.target.closest('[data-action]');
-            if (el && 'keyEnter' in el.dataset) dispatch(ev);
+            if (el && 'keyEnter' in el.dataset) dispatch(ev, 'click');
         });
     },
 
     // Build the data-action attribute string for a template literal:
     //   `<button ${this._act('deleteDevice', [d.id])}>` — args JSON-encoded and
     // attribute-escaped in one place so call sites can't get the escaping wrong.
+    // opts: el (append the element), value (append el.value), guard (selector
+    // whose nested matches don't count), on ('change' | 'input' instead of click).
     _act(method, args = [], opts = {}) {
         let s = `data-action="${method}"`;
         if (args.length) s += ` data-args="${this._esc(JSON.stringify(args))}"`;
         if (opts.el) s += ' data-with-el';
+        if (opts.value) s += ' data-with-value';
+        if (opts.on) s += ` data-on="${this._esc(opts.on)}"`;
         if (opts.guard) s += ` data-guard="${this._esc(opts.guard)}"`;
         return s;
     },
+
+    // Small DOM helpers reachable from markup (data-action) so no template
+    // needs an inline handler for a one-liner.
+    _navigate(url) { window.location = url; },
+    _selectEl(el) { el.select(); },
+    _removeRow(el) { const tr = el.closest('tr'); if (tr) tr.remove(); },
+    _clearHtml(id) { const el = document.getElementById(id); if (el) el.innerHTML = ''; },
 
     setupEventListeners() {
         this._wireActionDelegation();

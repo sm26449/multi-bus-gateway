@@ -249,7 +249,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="header-actions">
                   <label class="switch-label" title="${t('endpoints.groupToggleHint', 'Stop reading this group. Its units stay visible and editable.')}">
                     <input type="checkbox" ${off ? '' : 'checked'}
-                           onchange="app.toggleGroup('${this._esc(p.id)}','${this._esc(g.id)}',this)">
+                           ${this._act('toggleGroup', [p.id, g.id], {el: true, on: "change"})}>
                     <span>${t('endpoints.groupOn', 'Read')}</span></label>
                   ${(g.commands || []).some(c => c.enabled) ? `<button class="btn btn-secondary btn-sm" ${this._act('openCommandModal', [p.id, g.id, '', ''])}
                           title="${t('commands.groupHint', 'Tell the units of this group something — a power limit, a restore. Every command is verified and audited.')}"><i aria-hidden="true" class="bi bi-send"></i> ${t('commands.button', 'Commands…')}</button>` : ''}
@@ -541,7 +541,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="form-group"><label class="form-label" for="srcId">${t('endpoints.srcName', 'Source ID')}</label>
                     <input id="srcId" class="input" value="${this._esc(s?.id || '')}" ${s ? 'disabled' : ''} placeholder="solar_api"></div>
                 <div class="form-group"><label class="form-label" for="srcProto">${t('endpoints.srcWay', 'Read over')}</label>
-                    <select id="srcProto" class="input" onchange="app._srcProtoChanged()">
+                    <select id="srcProto" class="input" data-action="_srcProtoChanged" data-on="change">
                         ${['tcp', 'rtu-tcp', 'rtu', 'http', 'mqtt'].map(x =>
                             `<option value="${x}" ${proto === x ? 'selected' : ''}>${PROTO[x]}</option>`).join('')}
                     </select></div>
@@ -667,14 +667,15 @@ Object.assign(JanitzaMonitor.prototype, {
         return `<div class="form-row">${params.map(([name, p]) => {
             const id = `${prefix}_${name}`;
             const label = `${this._esc(p.label || name)}${p.unit ? ` (${this._esc(p.unit)})` : ''}`;
-            const bounds = p.min != null && p.max != null ? `${p.min}..${p.max}` : p.min != null ? `≥ ${p.min}` : p.max != null ? `≤ ${p.max}` : '';
+            const e = (v) => this._esc(v);
+            const bounds = p.min != null && p.max != null ? `${e(p.min)}..${e(p.max)}` : p.min != null ? `≥ ${e(p.min)}` : p.max != null ? `≤ ${e(p.max)}` : '';
             // no default → the field starts empty: a limit of "0" nobody typed must never be one click away
             const dflt = p.default != null ? p.default : '';
             const field = p.allowed
-                ? `<select id="${id}" class="input">${p.allowed.map(v => `<option value="${v}" ${v == dflt ? 'selected' : ''}>${v}</option>`).join('')}</select>`
-                : `<input id="${id}" class="input" type="number" ${p.min != null ? `min="${p.min}"` : ''} ${p.max != null ? `max="${p.max}"` : ''} step="any" value="${dflt}" placeholder="${bounds}" ${p.required ? 'required aria-required="true"' : ''}>`;
-            return `<div class="form-group"><label class="form-label" for="${id}">${label}${p.required ? ' *' : ''}</label>${field}
-                ${bounds ? `<div class="field-hint">${bounds}${p.default != null ? ` · ${t('commands.default', 'default')} ${p.default}` : ''}</div>` : ''}</div>`;
+                ? `<select id="${e(id)}" class="input">${p.allowed.map(v => `<option value="${e(v)}" ${v == dflt ? 'selected' : ''}>${e(v)}</option>`).join('')}</select>`
+                : `<input id="${e(id)}" class="input" type="number" ${p.min != null ? `min="${e(p.min)}"` : ''} ${p.max != null ? `max="${e(p.max)}"` : ''} step="any" value="${e(dflt)}" placeholder="${bounds}" ${p.required ? 'required aria-required="true"' : ''}>`;
+            return `<div class="form-group"><label class="form-label" for="${e(id)}">${label}${p.required ? ' *' : ''}</label>${field}
+                ${bounds ? `<div class="field-hint">${bounds}${p.default != null ? ` · ${t('commands.default', 'default')} ${e(p.default)}` : ''}</div>` : ''}</div>`;
         }).join('')}</div>`;
     },
 
@@ -699,8 +700,8 @@ Object.assign(JanitzaMonitor.prototype, {
     // a guard clause in words: `controls_model_id = 123`, `wmaxlimpct_sf in [-2, -1, 0]`
     _cmdGuardText(g) {
         const reg = this._esc(g.read || g.register || '');
-        if (g.in) return `${reg} ${this.t('commands.in', 'in')} [${g.in.join(', ')}]`;
-        if (g.expect != null) return `${reg} = ${this._esc(String(g.expect))}${g.tolerance ? ` ±${g.tolerance}` : ''}`;
+        if (g.in) return `${reg} ${this.t('commands.in', 'in')} [${this._esc(g.in.join(', '))}]`;
+        if (g.expect != null) return `${reg} = ${this._esc(String(g.expect))}${g.tolerance ? ` ±${this._esc(g.tolerance)}` : ''}`;
         return reg;
     },
 
@@ -749,7 +750,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 'The gateway writes the registers the template declares for this command, reads back and says whether it took. Test shows the exact registers without writing.')}</p>
             <div class="form-row">
                 <div class="form-group"><label class="form-label" for="cmdName">${t('commands.which', 'Command')}</label>
-                    <select id="cmdName" class="input" onchange="app._cmdPick()">${cmds.map(c =>
+                    <select id="cmdName" class="input" data-action="_cmdPick" data-on="change">${cmds.map(c =>
                         `<option value="${this._esc(c.name)}" ${c.name === cmd.name ? 'selected' : ''}>${this._esc(c.label || c.name)}</option>`).join('')}</select></div>
                 <div class="form-group flex-2"><label class="form-label" for="cmdScope">${t('commands.scope', 'Apply to')}</label>
                     <select id="cmdScope" class="input">
@@ -759,7 +760,7 @@ Object.assign(JanitzaMonitor.prototype, {
             </div>
             <div id="cmdParams">${this._cmdFormHtml(cmd, 'cmdP')}</div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                <button type="button" class="btn btn-ghost btn-sm" onclick="app.runCommand(true)"
+                <button type="button" class="btn btn-ghost btn-sm" ${this._act('runCommand', [true])}
                         title="${t('commands.testHint', 'Reads the device and shows what would be written — nothing is written.')}"><i aria-hidden="true" class="bi bi-eye"></i> ${t('commands.test', 'Test')}</button>
                 <span class="field-hint">${t('commands.mqttAt', 'Over MQTT')}: <code id="cmdTopic">${this._esc(g.cmd_topic_prefix || '')}/cmd/${this._esc(cmd.name)}</code></span>
             </div>
@@ -853,7 +854,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="form-group"><label class="form-label" for="grpId">${t('endpoints.groupId', 'Group ID')}</label>
                     <input id="grpId" class="input" value="${this._esc(g?.id || '')}" ${g ? 'disabled' : ''} placeholder="inverters"></div>
                 <div class="form-group"><label class="form-label" for="grpRole">${t('endpoints.groupRole', 'Holds')}</label>
-                    <select id="grpRole" class="input" onchange="app._grpKindChanged()">${roles.map(r =>
+                    <select id="grpRole" class="input" data-action="_grpKindChanged" data-on="change">${roles.map(r =>
                         `<option value="${r}" ${role0 === r ? 'selected' : ''}>${t('plant.role.' + r, ROLE_LABEL[r])}</option>`).join('')}</select></div>
                 <div class="form-group flex-2"><label class="form-label" for="grpTpl">${t('devices.wizard.template', 'Template')}</label>
                     <select id="grpTpl" class="input">${tplOpts}</select>
@@ -867,7 +868,7 @@ Object.assign(JanitzaMonitor.prototype, {
             </div>
             ${g ? '' : `<div class="form-row">
                 <div class="form-group"><label class="form-label" for="grpProto">${t('endpoints.srcWay', 'Read over')}</label>
-                    <select id="grpProto" class="input" onchange="app._grpKindChanged()">${['tcp', 'rtu-tcp', 'http'].map(x =>
+                    <select id="grpProto" class="input" data-action="_grpKindChanged" data-on="change">${['tcp', 'rtu-tcp', 'http'].map(x =>
                         `<option value="${x}" ${proto0 === x ? 'selected' : ''}>${PROTO[x]}</option>`).join('')}</select></div>
                 <div class="form-group flex-2"><label class="form-label" for="grpAddr">${t('endpoints.srcAddress', 'Address')}</label>
                     <input id="grpAddr" class="input" value="${this._esc((p.connection || {}).host || '')}" placeholder="192.168.1.50">
@@ -1056,7 +1057,7 @@ Object.assign(JanitzaMonitor.prototype, {
         return `
         <div data-endpoint-page="${this._esc(p.id)}">
         <div class="section-header">
-            <h2><button class="btn btn-ghost btn-sm" onclick="app.closeEndpointDetail()" aria-label="${t('common.back', 'Back')}"><i aria-hidden="true" class="bi bi-arrow-left"></i></button>
+            <h2><button class="btn btn-ghost btn-sm" data-action="closeEndpointDetail" aria-label="${t('common.back', 'Back')}"><i aria-hidden="true" class="bi bi-arrow-left"></i></button>
                 <i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(p.name || p.id)}
                 <span class="dev-chip">${this._esc(p.id)}</span></h2>
             <div class="header-actions">
@@ -1099,7 +1100,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <h3><i aria-hidden="true" class="bi bi-signpost-split"></i> ${t('endpoints.whereItPublishes', 'Where it publishes')}</h3>
                 <label class="switch-label">
                     <input type="checkbox" id="plAggEnabled" ${p.aggregates_enabled !== false ? 'checked' : ''}
-                           onchange="app.toggleEndpointAggregates('${this._esc(p.id)}', this)">
+                           ${this._act('toggleEndpointAggregates', [p.id], {el: true, on: "change"})}>
                     <span>${t('endpoints.aggEnable', 'Publish group totals')}</span>
                 </label>
             </div>
@@ -1257,7 +1258,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <h3 style="margin:0 0 10px;font-size:14px;"><i aria-hidden="true" class="bi bi-activity"></i>
                 ${this.t('endpoints.testResult', 'Test result')} <span style="font-weight:400;color:var(--text-secondary);">· ${when}</span></h3>
             ${perSource}
-            <button class="btn btn-ghost btn-sm" onclick="document.getElementById('plTestOut').innerHTML=''">${this.t('common.close', 'Close')}</button>
+            <button class="btn btn-ghost btn-sm" ${this._act('_clearHtml', ['plTestOut'])}>${this.t('common.close', 'Close')}</button>
         </div></div>`;
     },
 

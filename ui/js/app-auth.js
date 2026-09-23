@@ -291,7 +291,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <td class="mono" style="font-size:11.5px;">${this._esc(p.rp_id)}</td>
                 <td style="white-space:nowrap;">${this._esc(new Date(p.created * 1000).toLocaleDateString())}</td>
                 <td style="text-align:right;"><button class="btn btn-ghost btn-sm"
-                    onclick="app.deletePasskey('${this._esc(p.id)}')" title="${this._esc(this.t('common.delete', 'Delete'))}">
+                    ${this._act('deletePasskey', [p.id])} title="${this._esc(this.t('common.delete', 'Delete'))}">
                     <i aria-hidden="true" class="bi bi-trash"></i></button></td>
             </tr>`).join('');
         } catch (e) {

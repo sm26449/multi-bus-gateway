@@ -69,8 +69,12 @@ Defense in depth — every layer applies independently:
    command topics) are refused while the gateway's own broker session is
    anonymous — a publish carries no identity beyond the broker's ACLs.
 6. **Browser hardening**: CSRF rejection (Sec-Fetch-Site/Origin), security
-   headers on every response including the guards' own denials,
-   canonical-URL output escaping, no secrets in exports or logs (redaction
+   headers on every response including the guards' own denials, a Content
+   Security Policy with `script-src 'self'` (the page has no inline script
+   or event handler — every action is a `data-action` attribute dispatched
+   by app-core.js, so an injected string cannot execute even where an
+   escaping slip lets markup through), canonical-URL output escaping, no
+   secrets in exports or logs (redaction
    on env/config endpoints), retained MQTT commands are never replayed into
    hardware. Every id that becomes a filesystem path is validated; config
    imports are size-capped and path-checked; HTTP device sources are pinned

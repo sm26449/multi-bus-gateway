@@ -202,6 +202,12 @@ Object.assign(JanitzaMonitor.prototype, {
         if (w) w.hidden = !this._regCanWrite();
     },
 
+    // menu item: close the register menu, then run the named action
+    _regMenuPick(method) {
+        this.toggleRegMenu(false);
+        if (typeof this[method] === 'function') this[method]();
+    },
+
     toggleRegMenu(open) {
         const btn = document.getElementById('regMenuBtn'), menu = document.getElementById('regMenu');
         if (!btn || !menu) return;
@@ -668,7 +674,7 @@ Object.assign(JanitzaMonitor.prototype, {
             if (s) {
                 hint.innerHTML = '⚠ ' + this._esc(this.t('registers.canon.non', 'Non-canonical name')) +
                     ' — ' + this._esc(this.t('registers.canon.didYouMean', 'did you mean')) +
-                    ` <a href="#" data-canon-suggest="${this._esc(s)}" onclick="app._applyCanonicalSuggestion(this.dataset.canonSuggest);return false;"><code>${this._esc(s)}</code></a>?`;
+                    ` <a href="#" ${this._act('_applyCanonicalSuggestion', [s])}><code>${this._esc(s)}</code></a>?`;
             } else {
                 hint.textContent = '⚠ ' + this.t('registers.canon.non', 'Non-canonical name') +
                     ' — ' + this.t('registers.canon.pickFromList', 'pick a canonical name from the list for uniform output.');
@@ -1081,7 +1087,7 @@ Object.assign(JanitzaMonitor.prototype, {
             this.renderQueryHistory();
 
         } catch (error) {
-            resultDiv.innerHTML = `<div class="result-error"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> Error: ${error.message}</div>`;
+            resultDiv.innerHTML = `<div class="result-error"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> Error: ${this._esc(error.message)}</div>`;
         }
     },
 
@@ -1363,7 +1369,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <i aria-hidden="true" class="bi bi-diagram-2"></i> ${t('registers.sourceLabel', 'Read from')}</span>
               ${srcs.map(x => `
                 <button class="btn btn-sm ${x.id === this._regSource ? 'btn-primary' : 'btn-ghost'}" aria-pressed="${x.id === this._regSource}"
-                        onclick="app.setRegSource('${this._esc(x.id)}')">
+                        ${this._act('setRegSource', [x.id])}>
                   ${this._esc(x.id)} <span style="opacity:.75;">· ${PROTO[x.protocol] || this._esc(x.protocol)}${x.interval_s != null ? ` · ${t('registers.every', 'every')} ${x.interval_s} s` : ''}${x.selected != null ? ` · ${x.selected}${x.catalog != null ? '/' + x.catalog : ''} ${t('registers.ticked', 'ticked')}` : ''}</span>
                 </button>`).join('')}
               <span class="field-hint" style="margin:0;">${t('registers.sourceHint',
@@ -1431,6 +1437,11 @@ Object.assign(JanitzaMonitor.prototype, {
             this.loadAllRegisters();
             this.loadSelectedRegisters();
         }
+    },
+
+    // empty-state shortcut: "primary" = the primary device, "view" = the one on screen
+    _jumpToRegisters(which) {
+        this.jumpToDeviceRegisters(which === 'view' ? this._viewDeviceId() : this._primaryDeviceId());
     },
 
     async jumpToDeviceRegisters(id) {
@@ -1671,8 +1682,8 @@ Object.assign(JanitzaMonitor.prototype, {
               </div>
               ${guardTxt}
               <div style="margin-top:8px;display:flex;gap:8px;">
-                <button class="btn btn-ghost btn-sm" onclick="app._cancelWrite()">${this.t('common.cancel', 'Cancel')}</button>
-                <button class="btn btn-primary btn-sm" onclick="app.confirmWrite(this)"><i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('write.confirm', 'Confirm write')}</button>
+                <button class="btn btn-ghost btn-sm" data-action="_cancelWrite">${this.t('common.cancel', 'Cancel')}</button>
+                <button class="btn btn-primary btn-sm" data-action="confirmWrite" data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('write.confirm', 'Confirm write')}</button>
               </div>
             </div>`;
     },

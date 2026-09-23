@@ -107,7 +107,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <span><b>${t('rules.signal', 'Signal')}</b>: ${lv.signal == null ? '—' : this._esc(typeof lv.signal === 'number' ? lv.signal.toFixed(1) : String(lv.signal))}
                         <span class="field-hint">${this._esc(r.kind === 'steps' ? r.signal : r.when)}</span></span>
                 </div>
-                ${r.kind === 'steps' ? `<div class="field-hint" style="margin-bottom:8px;">${t('rules.stepsLine', 'Steps')}: ${(r.steps || []).map(s => `${s.label} ≥ ${s.at} → ${s.value}${s.fast ? ' ⚡' : ''}`).join(' · ')} · ${t('rules.releaseLine', 'normal under')} ${r.release_below} → ${this._fmtWant(r.normal)}</div>`
+                ${r.kind === 'steps' ? `<div class="field-hint" style="margin-bottom:8px;">${t('rules.stepsLine', 'Steps')}: ${this._esc((r.steps || []).map(s => `${s.label} ≥ ${s.at} → ${s.value}${s.fast ? ' ⚡' : ''}`).join(' · '))} · ${t('rules.releaseLine', 'normal under')} ${this._esc(r.release_below)} → ${this._esc(this._fmtWant(r.normal))}</div>`
                                      : `<div class="field-hint" style="margin-bottom:8px;">${t('rules.whenTrue', 'when true')}: ${this._esc(this._fmtWant(r.then?.params))} · ${t('rules.whenFalse', 'when false')}: ${this._esc(r.else ? this._fmtWant(r.else.params) : t('rules.nothing', 'nothing'))}</div>`}
                 ${units.length ? `<div class="table-wrap"><table class="table"><thead><tr>
                     <th>${t('rules.unit', 'Unit')}</th><th>${t('rules.state', 'State')}</th><th>${t('rules.want', 'Want')}</th><th>${t('rules.actual', 'Actual')}</th><th></th></tr></thead>
@@ -234,14 +234,14 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="form-group flex-2"><label class="form-label" for="rlLabel">${t('rules.label', 'Name')}</label>
                     <input id="rlLabel" class="input" value="${this._esc(raw?.label || '')}" placeholder="${t('rules.labelPh', 'Over-voltage protection · inverter 1')}"></div>
                 <div class="form-group"><label class="form-label" for="rlKind">${t('rules.kind', 'Kind')}</label>
-                    <select id="rlKind" class="input" onchange="app._ruleKindChanged()">
+                    <select id="rlKind" class="input" data-action="_ruleKindChanged" data-on="change">
                         <option value="steps" ${kind === 'steps' ? 'selected' : ''}>${t('rules.kindSteps', 'Steps (thresholds → value)')}</option>
                         <option value="condition" ${kind === 'condition' ? 'selected' : ''}>${t('rules.kindCondition', 'Condition (true / false)')}</option>
                     </select></div>
             </div>
             <div class="form-row">
                 <div class="form-group flex-2"><label class="form-label" for="rlTarget">${t('rules.target', 'Target')}</label>
-                    <select id="rlTarget" class="input" onchange="app._ruleTargetChanged()">
+                    <select id="rlTarget" class="input" data-action="_ruleTargetChanged" data-on="change">
                         ${this._ruleEdit.targets.map(x => `<option value="${this._esc(x.key)}" ${x.key === curKey ? 'selected' : ''}>${this._esc(x.label)}</option>`).join('')}
                     </select>
                     <div class="field-hint">${t('rules.targetHint', 'A group applies the command to every unit; a unit, to that one. Only targets with an enabled command are listed.')}</div></div>
@@ -255,7 +255,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="form-group"><label class="form-label">${t('rules.steps', 'Steps')}</label>
                     <div class="table-wrap"><table class="table" id="rlSteps"><thead><tr><th>${t('rules.stepAt', 'Signal at or above')}</th><th>${t('rules.stepValue', 'Ask for')}</th><th>${t('rules.stepLabel', 'Label')}</th><th>${t('rules.stepFast', 'Immediate')}</th><th></th></tr></thead>
                     <tbody>${(raw?.steps || [{ at: 250, value: 80, label: 'Warning' }]).map(s => this._ruleStepRow(s)).join('')}</tbody></table></div>
-                    <button type="button" class="btn btn-ghost btn-sm" onclick="app._ruleAddStep()"><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('rules.addStep', 'Add step')}</button>
+                    <button type="button" class="btn btn-ghost btn-sm" data-action="_ruleAddStep"><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('rules.addStep', 'Add step')}</button>
                     <div class="field-hint">${t('rules.stepsHint', 'The highest matching step wins. An immediate step skips the debounce — the emergency path.')}</div></div>
                 <div class="form-row">
                     <div class="form-group"><label class="form-label" for="rlRelease">${t('rules.release', 'Normal again under')}</label>
@@ -285,7 +285,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="form-group"><label class="form-label" for="rlStale">${t('rules.staleAfter', 'Signal stale after (s)')}</label>
                     <input id="rlStale" class="input" type="number" min="1" value="${raw?.stale_after_s ?? 60}"></div>
                 <div class="form-group"><label class="form-label" for="rlOnStale">${t('rules.onStale', 'When stale')}</label>
-                    <select id="rlOnStale" class="input" onchange="document.getElementById('rlStaleValueWrap').hidden = this.value !== 'value'"><option value="hold" ${(raw?.on_stale || 'hold') === 'hold' ? 'selected' : ''}>${t('rules.hold', 'hold the last want')}</option><option value="safe" ${raw?.on_stale === 'safe' ? 'selected' : ''}>${t('rules.safe', 'ask for the safe values')}</option><option value="value" ${(typeof raw?.on_stale === 'number') ? 'selected' : ''}>${t('rules.staleValue', 'ask for a fixed value (fail closed)')}</option></select>
+                    <select id="rlOnStale" class="input" ${this._act('_ruleOnStaleChanged', [], {value: true, on: 'change'})}><option value="hold" ${(raw?.on_stale || 'hold') === 'hold' ? 'selected' : ''}>${t('rules.hold', 'hold the last want')}</option><option value="safe" ${raw?.on_stale === 'safe' ? 'selected' : ''}>${t('rules.safe', 'ask for the safe values')}</option><option value="value" ${(typeof raw?.on_stale === 'number') ? 'selected' : ''}>${t('rules.staleValue', 'ask for a fixed value (fail closed)')}</option></select>
                     <span id="rlStaleValueWrap" ${(typeof raw?.on_stale === 'number') ? '' : 'hidden'}><input id="rlStaleValue" class="input" type="number" step="any" value="${(typeof raw?.on_stale === 'number') ? raw.on_stale : 80}" aria-label="${t('rules.staleValueLabel', 'value while stale')}"></span></div>
                 <div class="form-group"><label class="form-label" for="rlOnDisable">${t('rules.onDisable', 'When disabled')}</label>
                     <select id="rlOnDisable" class="input"><option value="safe" ${(raw?.on_disable || 'safe') === 'safe' ? 'selected' : ''}>${t('rules.safe', 'ask for the safe values')}</option><option value="hold" ${raw?.on_disable === 'hold' ? 'selected' : ''}>${t('rules.holdLeave', 'leave the device as it is')}</option></select></div>
@@ -297,7 +297,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="form-group"><label class="form-label" for="rlReassert">${t('rules.reassert', 'Re-command after drift (s)')}</label><input id="rlReassert" class="input" type="number" min="0" value="${tm.reassert_s ?? 120}"><div class="field-hint">${t('rules.reassertHint', '0 = never')}</div></div>
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                <button type="button" class="btn btn-ghost btn-sm" onclick="app.previewRule()"><i aria-hidden="true" class="bi bi-eye"></i> ${t('rules.preview', 'Preview now')}</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-action="previewRule"><i aria-hidden="true" class="bi bi-eye"></i> ${t('rules.preview', 'Preview now')}</button>
                 <span id="rlPreview" class="field-hint" role="status" aria-live="polite">${t('rules.previewHint', 'What the rule would see and want right now, nothing kept.')}</span>
             </div>
             ${r ? '' : `<p class="field-hint" style="margin:10px 0 0;">${t('rules.newShadow', 'A new rule is saved in shadow: it decides and says so, but writes nothing until you arm it.')}</p>`}`;
@@ -312,7 +312,12 @@ Object.assign(JanitzaMonitor.prototype, {
             <td><input class="input" type="number" step="any" value="${s.value ?? ''}" data-st="value" aria-label="value"></td>
             <td><input class="input" value="${this._esc(s.label || '')}" data-st="label" aria-label="label"></td>
             <td style="text-align:center;"><input type="checkbox" ${s.fast ? 'checked' : ''} data-st="fast" aria-label="immediate"></td>
-            <td><button type="button" class="btn btn-ghost btn-sm" onclick="this.closest('tr').remove()" aria-label="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-x-lg"></i></button></td></tr>`;
+            <td><button type="button" class="btn btn-ghost btn-sm" data-action="_removeRow" data-with-el aria-label="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-x-lg"></i></button></td></tr>`;
+    },
+
+    _ruleOnStaleChanged(value) {
+        const wrap = document.getElementById('rlStaleValueWrap');
+        if (wrap) wrap.hidden = value !== 'value';
     },
 
     _ruleAddStep() {

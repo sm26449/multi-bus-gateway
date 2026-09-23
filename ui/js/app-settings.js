@@ -679,13 +679,13 @@ Object.assign(JanitzaMonitor.prototype, {
                     <td>${this._esc(s.note || '')}</td>
                     <td class="mono">${kb}</td>
                     <td style="white-space:nowrap;text-align:right;">
-                        <button class="btn btn-ghost btn-sm" onclick="app.diffSnapshot('${this._esc(s.id)}')"
+                        <button class="btn btn-ghost btn-sm" ${this._act('diffSnapshot', [s.id])}
                                 title="${this._esc(this.t('snap.diff', 'What changed since'))}"><i aria-hidden="true" class="bi bi-file-diff"></i></button>
-                        <button class="btn btn-ghost btn-sm" onclick="app.restoreSnapshot('${this._esc(s.id)}')"
+                        <button class="btn btn-ghost btn-sm" ${this._act('restoreSnapshot', [s.id])}
                                 title="${this._esc(this.t('snap.restore', 'Restore'))}"><i aria-hidden="true" class="bi bi-arrow-counterclockwise"></i></button>
-                        <button class="btn btn-ghost btn-sm" onclick="window.location='/api/config/snapshots/${this._esc(s.id)}/download'"
+                        <button class="btn btn-ghost btn-sm" ${this._act('_navigate', [`/api/config/snapshots/${encodeURIComponent(s.id)}/download`])}
                                 title="${this._esc(this.t('snap.download', 'Download'))}"><i aria-hidden="true" class="bi bi-download"></i></button>
-                        ${s.lkg ? '' : `<button class="btn btn-ghost btn-sm" onclick="app.deleteSnapshot('${this._esc(s.id)}')"
+                        ${s.lkg ? '' : `<button class="btn btn-ghost btn-sm" ${this._act('deleteSnapshot', [s.id])}
                                 title="${this._esc(this.t('common.delete', 'Delete'))}"><i aria-hidden="true" class="bi bi-trash"></i></button>`}
                     </td></tr>`;
             }).join('');
@@ -745,6 +745,11 @@ Object.assign(JanitzaMonitor.prototype, {
 // ── Audit trail ──
 Object.assign(JanitzaMonitor.prototype, {
 
+    _auditSearchInput() {
+        clearTimeout(this._auditT);
+        this._auditT = setTimeout(() => this.loadAudit(), 300);
+    },
+
     async loadAudit() {
         const body = document.getElementById('auditTableBody');
         if (!body) return;
@@ -793,7 +798,7 @@ Object.assign(JanitzaMonitor.prototype, {
               <div class="modal-content" style="max-width:820px;">
                 <div class="modal-header">
                   <h3><i class="bi bi-file-diff" aria-hidden="true"></i> <span id="snapDiffTitle"></span></h3>
-                  <button class="modal-close" onclick="app.closeModal('snapDiffModal')" aria-label="Close">&times;</button>
+                  <button class="modal-close" ${this._act('closeModal', ["snapDiffModal"])} aria-label="Close">&times;</button>
                 </div>
                 <div class="modal-body" id="snapDiffBody" style="max-height:65vh;overflow-y:auto;"></div>
               </div>`;

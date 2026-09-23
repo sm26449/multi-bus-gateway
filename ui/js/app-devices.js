@@ -534,18 +534,18 @@ Object.assign(JanitzaMonitor.prototype, {
         const gInf = d.influxdb_enabled ? '' : 'disabled title="Enable the InfluxDB output"';
         return `
         <div class="section-header">
-            <h2><button class="btn btn-ghost btn-sm" onclick="app.closeDeviceDetail()" aria-label="${t('common.back', 'Back')}"><i aria-hidden="true" class="bi bi-arrow-left"></i></button>
+            <h2><button class="btn btn-ghost btn-sm" data-action="closeDeviceDetail" aria-label="${t('common.back', 'Back')}"><i aria-hidden="true" class="bi bi-arrow-left"></i></button>
                 ${endpointId ? `<nav aria-label="${t('common.breadcrumb', 'Where you are')}" style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">
-                    <a href="#" onclick="app.closeDeviceDetail(true);return false;" style="font-weight:500;color:var(--text-secondary);">${t('nav.devices', 'Devices')}</a>
+                    <a href="#" ${this._act('closeDeviceDetail', [true])} style="font-weight:500;color:var(--text-secondary);">${t('nav.devices', 'Devices')}</a>
                     <span aria-hidden="true" style="color:var(--text-tertiary,#8a94a0);">›</span>
-                    <a href="#" onclick="app.openEndpointDetail('${this._esc(endpointId)}');return false;" style="font-weight:500;color:var(--text-secondary);"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(s.endpoint_name || endpointId)}</a>
+                    <a href="#" ${this._act('openEndpointDetail', [endpointId])} style="font-weight:500;color:var(--text-secondary);"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(s.endpoint_name || endpointId)}</a>
                     <span aria-hidden="true" style="color:var(--text-tertiary,#8a94a0);">›</span>
                     <span><i aria-hidden="true" class="bi bi-cpu"></i> ${this._esc(d.name)}</span>
                     <span class="dev-chip">${this._esc(s.id)}</span></nav>`
                 : `<i aria-hidden="true" class="bi bi-cpu"></i> ${this._esc(d.name)}
                 <span class="dev-chip">${this._esc(s.id)}</span>`}</h2>
             <div class="header-actions">
-                ${endpointId ? `<button class="btn btn-secondary btn-sm" onclick="app.openEndpointDetail('${this._esc(endpointId)}')"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.openInstallation', 'Open installation')}</button>` : ''}
+                ${endpointId ? `<button class="btn btn-secondary btn-sm" ${this._act('openEndpointDetail', [endpointId])}><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.openInstallation', 'Open installation')}</button>` : ''}
                 ${(primary || endpointId) ? '' : `<button class="btn btn-ghost btn-sm" ${this._act('deleteDevice', [s.id])}><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>`}
             </div>
         </div>
@@ -652,7 +652,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     </div>
                     <div class="field-hint">${t('devices.editPassKeep', 'Leave the password blank to keep the stored one.')}</div>
                 </div>
-                <button class="btn btn-secondary btn-sm" onclick="app.deviceDetailTest(this)"><i aria-hidden="true" class="bi bi-activity"></i> ${t('devices.wizard.testConn', 'Test connection')}</button>
+                <button class="btn btn-secondary btn-sm" data-action="deviceDetailTest" data-with-el><i aria-hidden="true" class="bi bi-activity"></i> ${t('devices.wizard.testConn', 'Test connection')}</button>
                 <span class="wiz-test-result" id="ddvTestResult" role="status"></span>
             </div>
         </div>
@@ -686,7 +686,7 @@ Object.assign(JanitzaMonitor.prototype, {
             </div>
             <div class="settings-card-footer">
                 <span class="save-feedback" id="ddvFeedback"></span>
-                <button class="btn btn-primary btn-sm" onclick="app.saveDeviceDetail(this)"><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
+                <button class="btn btn-primary btn-sm" data-action="saveDeviceDetail" data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
             </div>
         </div>`}
         </div>
@@ -697,7 +697,7 @@ Object.assign(JanitzaMonitor.prototype, {
             ${endpointId ? `
             <div class="field-hint" style="margin:0 0 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
                 <span><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.endpointUnit.outputs', 'Where this unit publishes is set on its installation, per group, and applies to every unit of the group.')}</span>
-                <button class="btn btn-secondary btn-sm" onclick="app.openEndpointDetail('${this._esc(endpointId)}')"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.openInstallation', 'Open installation')}</button>
+                <button class="btn btn-secondary btn-sm" ${this._act('openEndpointDetail', [endpointId])}><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.openInstallation', 'Open installation')}</button>
             </div>` : ''}
             ${this._sinkCardMqtt(d, primary)}
             ${this._sinkCardInflux(d, primary)}
@@ -708,7 +708,7 @@ Object.assign(JanitzaMonitor.prototype, {
             ${endpointId ? '' : `
             <div class="settings-card"><div class="settings-card-footer">
                 <span class="save-feedback" id="ddvFeedback2"></span>
-                <button class="btn btn-primary btn-sm" onclick="app.saveDeviceDetail(this)"><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
+                <button class="btn btn-primary btn-sm" data-action="saveDeviceDetail" data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
             </div></div>`}
         </div>`;
     },
@@ -726,7 +726,7 @@ Object.assign(JanitzaMonitor.prototype, {
                              : `<span class="sink-pill ok">${this.t('devices.writeLock.unlocked', 'writes allowed')}</span>`}</h3>
                 <label class="switch-label">
                     <input type="checkbox" id="ddvWriteLock" ${locked ? 'checked' : ''}
-                           onchange="app.toggleWriteLock('${this._esc(this._devDetail.id)}', this)">
+                           ${this._act('toggleWriteLock', [this._devDetail.id], {el: true, on: "change"})}>
                     <span>${this.t('devices.writeLock.lock', 'Lock')}</span>
                 </label>
             </div>
@@ -892,8 +892,8 @@ Object.assign(JanitzaMonitor.prototype, {
                     ${c.writes && c.writes.length ? `<div class="field-hint" style="margin-bottom:8px;">${t('commands.writes', 'Writes')}: ${c.writes.map(w => `<code>${this._esc(w.register)}</code>`).join(', ')}${c.guard && c.guard.length ? ` · ${t('commands.guarded', 'only if')} ${c.guard.map(g => `<code>${this._cmdGuardText(g)}</code>`).join(', ')}` : ''}${c.verify && c.verify.length ? ` · ${t('commands.verifies', 'verifies')} ${c.verify.map(g => `<code>${this._esc(g.read)}</code>`).join(', ')}` : ''}</div>` : ''}
                     ${this._cmdFormHtml(c, `dcmd_${c.name}`)}
                     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                        <button type="button" class="btn btn-primary btn-sm" ${c.enabled ? '' : 'disabled'} onclick="app.runDeviceCommand('${this._esc(id)}','${this._esc(c.name)}',false)"><i aria-hidden="true" class="bi bi-send"></i> ${t('commands.run', 'Run')}</button>
-                        <button type="button" class="btn btn-ghost btn-sm" ${c.enabled ? '' : 'disabled'} onclick="app.runDeviceCommand('${this._esc(id)}','${this._esc(c.name)}',true)"
+                        <button type="button" class="btn btn-primary btn-sm" ${c.enabled ? '' : 'disabled'} ${this._act('runDeviceCommand', [id, c.name, false])}><i aria-hidden="true" class="bi bi-send"></i> ${t('commands.run', 'Run')}</button>
+                        <button type="button" class="btn btn-ghost btn-sm" ${c.enabled ? '' : 'disabled'} ${this._act('runDeviceCommand', [id, c.name, true])}
                                 title="${t('commands.testHint', 'Reads the device and shows what would be written — nothing is written.')}"><i aria-hidden="true" class="bi bi-eye"></i> ${t('commands.test', 'Test')}</button>
                         <span class="field-hint">${c.last ? `${t('commands.last', 'Last')}: ${this._cmdVerdict(c.last.status)} · ${fmtTs(c.last.ts)} · ${this._esc(c.last.via || '')} ${this._esc(c.last.by || '')}` : t('commands.neverRun', 'Never run since start')}</span>
                     </div>
@@ -1158,7 +1158,7 @@ Object.assign(JanitzaMonitor.prototype, {
         return `
         <div class="field-hint" style="margin:0 0 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
             <span><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.unit.readViaIntro', 'This unit is read as part of')} <b>${this._esc(s.endpoint_name || s.endpoint_id)}</b>. ${t('devices.unit.readViaIntro2', 'Its sources, intervals and template are set there.')}</span>
-            <button class="btn btn-secondary btn-sm" onclick="app.openEndpointDetail('${this._esc(s.endpoint_id)}')"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.openInstallation', 'Open installation')}</button>
+            <button class="btn btn-secondary btn-sm" ${this._act('openEndpointDetail', [s.endpoint_id])}><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.openInstallation', 'Open installation')}</button>
         </div>
         <div class="settings-card">
             <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-tag"></i> ${t('devices.unit.identity', 'Name')}</h3></div>
@@ -1442,7 +1442,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="settings-card-header">
                 <h3><i aria-hidden="true" class="bi bi-braces"></i> ${this.t('devices.sink.httpTitle', 'HTTP / JSON output')} ${this._sinkStatusPill(s, on, this._devDetail?.entry?.connected)}</h3>
                 <label class="switch-label">
-                    <input type="checkbox" id="ddvHttpEnabled" ${on ? 'checked' : ''} onchange="app.toggleHttpOutput('${this._esc(id)}', this)">
+                    <input type="checkbox" id="ddvHttpEnabled" ${on ? 'checked' : ''} ${this._act('toggleHttpOutput', [id], {el: true, on: "change"})}>
                     <span>${this.t('devices.sink.enable', 'Enable')}</span>
                 </label>
             </div>
@@ -1450,7 +1450,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div id="ddvHttpUrlRow" class="form-group flex-2" style="display:${on ? '' : 'none'}">
                     <label class="form-label" for="ddvHttpUrl">${this.t('devices.sink.httpUrl', 'JSON feed URL')}</label>
                     <div style="display:flex;gap:6px;align-items:center;">
-                        <input type="text" id="ddvHttpUrl" class="input" value="${this._esc(url)}" readonly onclick="this.select()">
+                        <input type="text" id="ddvHttpUrl" class="input" value="${this._esc(url)}" readonly data-action="_selectEl" data-with-el>
                         <button type="button" class="btn btn-sm btn-secondary" ${this._act('copyText', [url], {el: true})} title="${this.t('common.copy', 'Copy')}"><i aria-hidden="true" class="bi bi-clipboard"></i></button>
                         <a class="btn btn-sm btn-secondary" href="${this._esc(url)}" target="_blank" rel="noopener"><i aria-hidden="true" class="bi bi-box-arrow-up-right"></i> ${this.t('common.open', 'Open')}</a>
                     </div>

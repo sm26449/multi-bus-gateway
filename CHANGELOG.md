@@ -1,5 +1,30 @@
 # Changelog
 
+## 3.82.0
+
+### 2026-09-23 — the browser runs no inline script
+
+- **Content Security Policy `script-src 'self'`.** The UI carried 187 inline
+  event handlers (`onclick="app.x('…')"`) built from template literals, and
+  the CSP had to allow `'unsafe-inline'` for them. An escaping slip in any
+  of those handlers — a device id, a template command name, a snapshot id
+  in JavaScript-string context — was one step from script execution. Every
+  handler is now a `data-action` attribute (arguments JSON-encoded in
+  `data-args`, `data-on="change|input"` for form events) dispatched by one
+  listener in app-core.js; the canonical-host redirect moved to a static
+  `ui/js/canonical.js` that reads its target from a `<meta>` tag. With no
+  inline code left the policy forbids it, so an injected string can no
+  longer run whatever else goes wrong. `tests/test_ui_csp.py` keeps the
+  page inline-free and checks every `data-action` names a real method;
+  `tools/e2e/csp_smoke.mjs` exercises the dispatch in a browser.
+- Six rendering sites that interpolated template or API values without
+  escaping (command parameter forms and guards, the rule summary line, the
+  language selector, the register query error, the threshold "detected"
+  line) are escaped.
+- Template packs: command and parameter names are validated as identifiers
+  (`a-z 0-9 - _`), like template ids — they travel into MQTT topics, Home
+  Assistant discovery and element ids.
+
 ## 3.81.1
 
 ### 2026-09-23 — bundled broker: second start no longer fails

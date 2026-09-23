@@ -112,7 +112,7 @@ Object.assign(JanitzaMonitor.prototype, {
                   <span class="dev-chip" title="${t('vmeter.sourceDevice', 'Source device')}"><i aria-hidden="true" class="bi bi-arrow-left-short"></i>${this._esc(devName(m.device))}</span>
                   ${badge}
                 </div>
-                <div class="vm-head-r" style="display:flex;align-items:center;gap:14px;" onclick="event.stopPropagation()">
+                <div class="vm-head-r" style="display:flex;align-items:center;gap:14px;">
                   <span class="vm-head-summary" style="font-size:12px;color:var(--text-secondary);font-variant-numeric:tabular-nums;white-space:nowrap;">${summary}</span>
                   <label class="toggle-switch" title="Enable / disable">
                     <input type="checkbox" data-vm="${mid}" aria-label="Enable virtual meter ${mid}" ${m.enabled ? 'checked' : ''}>
@@ -210,7 +210,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 if (chev) chev.style.transform = opening ? 'rotate(90deg)' : '';
                 if (!opening) this._stopVmPolls();       // collapsed → stop its pollers
             };
-            head.addEventListener('click', toggle);
+            head.addEventListener('click', (e) => { if (!e.target.closest('.vm-head-r')) toggle(); });
             head.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
             });
@@ -365,6 +365,12 @@ Object.assign(JanitzaMonitor.prototype, {
         if (btn) btn.disabled = true;
         this.openModal('vmDeleteInstanceModal');
         setTimeout(() => inp && inp.focus(), 100);
+    },
+
+    // the delete button unlocks only once the operator typed DELETE
+    _vmDeleteConfirmInput(el) {
+        const btn = document.getElementById('vmDelBtn');
+        if (btn) btn.disabled = (el.value.trim() !== 'DELETE');
     },
 
     async confirmDeleteInstance() {

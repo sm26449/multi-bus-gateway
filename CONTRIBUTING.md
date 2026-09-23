@@ -52,6 +52,12 @@ generated admin password in the logs (`docker compose logs multi-bus-gateway
 5. **Don't break the live-safety contract.** Anything that changes how a device
    is polled or how a virtual meter serves data must fail safe (never serve
    wrong/stale values as live) and be opt-in where it affects existing setups.
+6. **No inline script in the UI.** The page runs under `script-src 'self'`:
+   no `onclick="…"`, no `<script>` blocks. Wire actions as
+   `data-action="method"` (static) or `${this._act('method', [args], opts)}`
+   in template literals — `opts.el` passes the element, `opts.value` its
+   value, `opts.on: 'change' | 'input'` picks the event. Escape every value
+   rendered into HTML with `this._esc()`. `tests/test_ui_csp.py` enforces it.
 
 ## Commit messages
 

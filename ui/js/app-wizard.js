@@ -104,7 +104,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <input type="text" id="devWizUrl" class="input" value="${this._esc(d.url || '')}" placeholder="http://192.168.1.50/rpc/Shelly.GetStatus">
                 <div class="field-hint">${this.t('devices.wizard.httpHint', 'The device polls this URL and reads values by the template’s json_path. Values arrive already scaled.')}</div>
             </div>
-            <button class="btn btn-secondary btn-sm" onclick="app.devWizardTest(this)">
+            <button class="btn btn-secondary btn-sm" data-action="devWizardTest" data-with-el>
                 <i aria-hidden="true" class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
             <div class="wiz-test-result" id="devWizTestResult3" role="status"></div>
         </div>
@@ -130,7 +130,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div class="field-hint">1–30 · ${this.t('common.default', 'default')} 3</div>
                 </div>
             </div>
-            <button class="btn btn-secondary btn-sm" id="devWizTestBtn" onclick="app.devWizardTest(this)">
+            <button class="btn btn-secondary btn-sm" id="devWizTestBtn" data-action="devWizardTest" data-with-el>
                 <i aria-hidden="true" class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
             <div class="wiz-test-result" id="devWizTestResult" role="status"></div>
         </div>
@@ -143,12 +143,12 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="form-row" style="align-items:end;">
                     <div class="form-group flex-2">
                         <label class="form-label" for="devWizAdapter">${this.t('devices.wizard.adapter', 'USB serial adapter')}</label>
-                        <select id="devWizAdapter" class="input" onchange="app._devWizAdapterPick(this.value)">
+                        <select id="devWizAdapter" class="input" data-action="_devWizAdapterPick" data-with-value data-on="change">
                             ${this._devWizAdapterOptions(d)}
                         </select>
                     </div>
                     <div class="form-group">
-                        <button class="btn btn-secondary btn-sm" id="devWizScanBtn" onclick="app.devWizScanBridge(this)">
+                        <button class="btn btn-secondary btn-sm" id="devWizScanBtn" data-action="devWizScanBridge" data-with-el>
                             <i aria-hidden="true" class="bi bi-arrow-repeat"></i> ${this.t('devices.wizard.scan', 'Scan')}</button>
                     </div>
                     <div class="form-group">
@@ -160,7 +160,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     d.host && rtuBridge
                         ? this.t('devices.wizard.bridgeBound', 'Bound to {ep} — the adapter keeps this endpoint across replug.').replace('{ep}', `${d.host}:${d.port}`)
                         : this.t('devices.wizard.bridgeScanHint', 'Plug the adapter in and press Scan. Baud rate is set on the bridge (default 9600 8N1).')}</div>
-                <button class="btn btn-secondary btn-sm" style="margin-top:8px;" onclick="app.devWizardTest(this)">
+                <button class="btn btn-secondary btn-sm" style="margin-top:8px;" data-action="devWizardTest" data-with-el>
                     <i aria-hidden="true" class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
             </div>
             <div id="devWizRtuDirect" style="display:${rtuBridge ? 'none' : ''}">
@@ -186,7 +186,7 @@ Object.assign(JanitzaMonitor.prototype, {
                         <input type="number" id="devWizUnitR" class="input" aria-label="Unit ID" value="${d.unit_id}" min="0" max="255">
                     </div>
                 </div>
-                <button class="btn btn-secondary btn-sm" onclick="app.devWizardTest(this)">
+                <button class="btn btn-secondary btn-sm" data-action="devWizardTest" data-with-el>
                     <i aria-hidden="true" class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
                 <div class="field-hint" style="margin-top:6px;">${this.t('devices.wizard.rtuNote', 'The serial device must be attached to the host and mapped into the container (e.g. devices: /dev/ttyUSB0). It starts polling right after saving.')}</div>
             </div>
@@ -209,8 +209,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="field-hint">${this.t('devices.wizard.mqttTopicHint', 'The device subscribes here; values are read from the JSON payload by the template’s json_path. + and # wildcards supported.')}</div>
                 <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
                     <span class="field-hint" style="margin:0;">${this.t('devices.wizard.presets', 'Presets:')}</span>
-                    <button type="button" class="calc-chip" onclick="app._devWizMqttPreset('zigbee2mqtt_sensor', 'zigbee2mqtt/<friendly_name>')"><i aria-hidden="true" class="bi bi-broadcast-pin"></i> Zigbee (zigbee2mqtt)</button>
-                    <button type="button" class="calc-chip" onclick="app._devWizMqttPreset('ble_theengs_sensor', 'home/TheengsGateway/BTtoMQTT/<MAC>')"><i aria-hidden="true" class="bi bi-bluetooth"></i> BLE (Theengs/BTHome)</button>
+                    <button type="button" class="calc-chip" ${this._act('_devWizMqttPreset', ["zigbee2mqtt_sensor", "zigbee2mqtt/<friendly_name>"])}><i aria-hidden="true" class="bi bi-broadcast-pin"></i> Zigbee (zigbee2mqtt)</button>
+                    <button type="button" class="calc-chip" ${this._act('_devWizMqttPreset', ["ble_theengs_sensor", "home/TheengsGateway/BTtoMQTT/<MAC>"])}><i aria-hidden="true" class="bi bi-bluetooth"></i> BLE (Theengs/BTHome)</button>
                 </div>
             </div>
             <div class="form-row">
@@ -222,16 +222,16 @@ Object.assign(JanitzaMonitor.prototype, {
                     <input type="checkbox" id="devWizMqttTls" ${d.mqtt_tls ? 'checked' : ''}> ${this.t('devices.wizard.mqttTls', 'TLS (8883)')}</label></div>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                <button class="btn btn-secondary btn-sm" onclick="app.devWizardTest(this)">
+                <button class="btn btn-secondary btn-sm" data-action="devWizardTest" data-with-el>
                     <i aria-hidden="true" class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
-                <button class="btn btn-secondary btn-sm" id="devWizMqttBrowseBtn" onclick="app.devWizMqttBrowse(this)">
+                <button class="btn btn-secondary btn-sm" id="devWizMqttBrowseBtn" data-action="devWizMqttBrowse" data-with-el>
                     <i aria-hidden="true" class="bi bi-binoculars"></i> ${this.t('devices.wizard.browseTopics', 'Browse topics')}</button>
             </div>
             <div class="wiz-test-result" id="devWizTestResult4" role="status"></div>
             <div id="devWizMqttBrowse" style="display:none;">
                 <input type="text" id="devWizMqttBrowseFilter" class="input" style="margin:8px 0 6px;"
                        placeholder="${this._esc(this.t('devices.wizard.browseFilter', 'Filter topics…'))}"
-                       oninput="app._devWizBrowseRender()">
+                       data-action="_devWizBrowseRender" data-on="input">
                 <div class="mqtt-browse-list" id="devWizMqttBrowseList" role="listbox"
                      aria-label="MQTT topics"></div>
                 <div class="field-hint" id="devWizMqttBrowseHint"></div>
@@ -340,7 +340,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div class="field-hint">${this._esc(t.vendor || '')} ${this._esc(t.model || '')}
                         ${(t.used_by || []).length ? `· ${this.t('devtpl.usedBy', 'used by')} ${t.used_by.map(x => this._esc(x)).join(', ')}` : ''}</div></div>
                 <div class="tpl-pick-meta">${t.builtin ? this.t('devices.builtin', 'built-in') : this.t('devices.community', 'user')}<br>${t.registers} measurements · v${this._esc(t.version)}</div>
-                <div class="tpl-pick-actions" onclick="event.stopPropagation()">
+                <div class="tpl-pick-actions">
                     ${t.builtin
                         ? `<button class="btn btn-ghost btn-sm" ${this._act('openTplEditor', [t.id, true])} title="${this.t('devtpl.duplicate', 'Duplicate to edit')}"><i aria-hidden="true" class="bi bi-copy"></i></button>`
                         : `<button class="btn btn-ghost btn-sm" ${this._act('openTplEditor', [t.id])} title="${this.t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>` +
@@ -352,9 +352,9 @@ Object.assign(JanitzaMonitor.prototype, {
         <div class="wiz-eyebrow">${this.t('devices.wizard.tplQ', 'What is it?')}</div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <input type="text" id="devWizTplSearch" class="input" placeholder="${this.t('common.search', 'Search')}…" style="max-width:240px;">
-            <button class="btn btn-secondary btn-sm" onclick="app.tplUpload()">
+            <button class="btn btn-secondary btn-sm" data-action="tplUpload">
                 <i aria-hidden="true" class="bi bi-upload"></i> ${this.t('devtpl.upload', 'Upload template')}</button>
-            <button class="btn btn-secondary btn-sm" onclick="app.openTplEditor(null)">
+            <button class="btn btn-secondary btn-sm" ${this._act('openTplEditor', [null])}>
                 <i aria-hidden="true" class="bi bi-plus-lg"></i> ${this.t('devtpl.new', 'New template')}</button>
         </div>
         <p class="field-hint" style="margin:6px 0;">${this.t('devices.wizard.tplIntro2', 'The template is the measurement map of the equipment: pick one, upload a file, or create your own.')}</p>
@@ -469,7 +469,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 this._devWizRender();
             };
             list?.querySelectorAll('.tpl-pick').forEach(el => {
-                el.addEventListener('click', () => pick(el));
+                el.addEventListener('click', (e) => { if (!e.target.closest('.tpl-pick-actions')) pick(el); });
                 el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(el); } });
             });
             const search = document.getElementById('devWizTplSearch');

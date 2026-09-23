@@ -95,7 +95,7 @@ Object.assign(JanitzaMonitor.prototype, {
     // ── 1. the installation ─────────────────────────────────────────────────
     _plantWizStep1() {
         const t = (k, d) => this.t(k, d), d = this._plantWiz.data, ways = this._pwWays();
-        const seg = (v, label, hint) => `<label class="seg-btn ${d.ways === v ? 'on' : ''}"><input type="radio" name="pwWays" value="${v}" ${d.ways === v ? 'checked' : ''} onchange="app.plantWizCollectAndRender()"><span class="s"></span> ${label}${hint ? ` <span class="seg-reco">${hint}</span>` : ''}</label>`;
+        const seg = (v, label, hint) => `<label class="seg-btn ${d.ways === v ? 'on' : ''}"><input type="radio" name="pwWays" value="${v}" ${d.ways === v ? 'checked' : ''} data-action="plantWizCollectAndRender" data-on="change"><span class="s"></span> ${label}${hint ? ` <span class="seg-reco">${hint}</span>` : ''}</label>`;
         const pr = d.probe || {};
         const line = (r, name) => r ? `<div><span class="status-dot" style="--dot:${r.ok ? 'var(--success,#22c55e)' : 'var(--danger,#ef4444)'}" aria-hidden="true"></span> <b>${name}</b> ${this._esc(r.msg || '')}</div>` : '';
         return `
@@ -103,9 +103,9 @@ Object.assign(JanitzaMonitor.prototype, {
             'An installation is one site behind one datalogger. Say how you reach it; what it holds is asked of the datalogger next.')}</p>
         <div class="form-row">
             <div class="form-group flex-2"><label class="form-label" for="pwName">${t('plant.wizard.name', 'Name')}</label>
-                <input id="pwName" class="input" value="${this._esc(d.name)}" placeholder="Fronius PV" oninput="app.plantWizNameTyped(this.value)"></div>
+                <input id="pwName" class="input" value="${this._esc(d.name)}" placeholder="Fronius PV" data-action="plantWizNameTyped" data-with-value data-on="input"></div>
             <div class="form-group"><label class="form-label" for="pwId">${t('plant.wizard.id', 'ID')}</label>
-                <input id="pwId" class="input" value="${this._esc(d.id)}" placeholder="fronius" oninput="app._plantWiz.data.idTouched = true">
+                <input id="pwId" class="input" value="${this._esc(d.id)}" placeholder="fronius" data-action="_plantWizIdTouched" data-on="input">
                 <div class="field-hint">${t('plant.wizard.idHint', 'a-z 0-9 - _ · in topics and device names, fixed after creation')}</div></div>
         </div>
         <div class="wiz-eyebrow">${t('plant.wizard.waysQ', 'How do we reach the datalogger?')}</div>
@@ -128,11 +128,15 @@ Object.assign(JanitzaMonitor.prototype, {
                 <input id="pwRoot" class="input" value="${this._esc(d.root)}" placeholder="pv">
                 <div class="field-hint"><code>${this._esc(d.root || 'pv')}/inverters/1/…</code> · <code>${this._esc(d.root || 'pv')}/site/…</code></div></div>
             <div class="form-group" style="align-self:flex-end;">
-                <button class="btn btn-secondary btn-sm" onclick="app.plantWizProbe()" id="pwProbeBtn">
+                <button class="btn btn-secondary btn-sm" data-action="plantWizProbe" id="pwProbeBtn">
                     <i aria-hidden="true" class="bi bi-activity"></i> ${t('plant.wizard.probe', 'Test')}</button></div>
         </div>
         <div id="pwProbeOut" role="status" aria-live="polite" style="margin-top:6px;font-size:12.5px;display:flex;flex-direction:column;gap:4px;">
             ${line(pr.http, 'Solar API')}${line(pr.modbus, 'Modbus')}</div>`;
+    },
+
+    _plantWizIdTouched() {
+        this._plantWiz.data.idTouched = true;
     },
 
     plantWizNameTyped(v) {
@@ -243,13 +247,13 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="settings-card" style="margin:10px 0;">
               <div class="settings-card-header">
                 <h3><i aria-hidden="true" class="bi ${pre.icon}"></i> ${this._esc(g.id || pre.group)}</h3>
-                <button class="btn btn-ghost btn-sm" ${d.groups.length < 2 ? 'disabled' : ''} onclick="app.plantWizRemoveGroup(${i})"
+                <button class="btn btn-ghost btn-sm" ${d.groups.length < 2 ? 'disabled' : ''} ${this._act('plantWizRemoveGroup', [i])}
                         title="${t('common.delete', 'Remove')}" aria-label="${t('common.delete', 'Remove')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
               </div>
               <div class="settings-card-body">
                 <div class="form-row">
                   <div class="form-group"><label class="form-label" for="pwRole${i}">${t('endpoints.groupRole', 'Holds')}</label>
-                    <select id="pwRole${i}" class="input" data-g="${i}" data-f="role" onchange="app.plantWizRoleChanged(${i}, this.value)">
+                    <select id="pwRole${i}" class="input" data-g="${i}" data-f="role" ${this._act('plantWizRoleChanged', [i], {value: true, on: "change"})}>
                       ${Object.entries(this.ROLE_PRESETS).map(([k, v]) => `<option value="${k}" ${g.role === k ? 'selected' : ''}>${t('plant.role.' + k, v.label)}</option>`).join('')}
                     </select></div>
                   <div class="form-group"><label class="form-label" for="pwGid${i}">${t('endpoints.groupId', 'Group ID')}</label>
@@ -272,7 +276,7 @@ Object.assign(JanitzaMonitor.prototype, {
             'An installation is not one kind of thing: its inverters, the site balance, the meter at the grid. Each is a group, totalled on its own.')}</p>
         ${foundHtml}
         ${manualHtml}
-        <button class="btn btn-secondary btn-sm" style="margin-top:10px;" onclick="app.plantWizAddGroup()">
+        <button class="btn btn-secondary btn-sm" style="margin-top:10px;" data-action="plantWizAddGroup">
             <i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('plant.wizard.addManual', 'Add a group by hand')}</button>`;
     },
 

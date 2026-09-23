@@ -61,12 +61,12 @@ Object.assign(JanitzaMonitor.prototype, {
                 <p class="field-hint" style="margin-top:0"><i aria-hidden="true" class="bi bi-info-circle"></i>
                     ${t('calc.help', 'Derive new measurements from existing ones with a formula (e.g. power factor = P / S). Calculated values flow to MQTT, InfluxDB and the JSON output like any real measurement.')}</p>
                 <div class="calc-toolbar">
-                    <button class="btn btn-primary btn-sm" onclick="app.calcAdd()"><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('calc.add', 'Add')}</button>
+                    <button class="btn btn-primary btn-sm" data-action="calcAdd"><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('calc.add', 'Add')}</button>
                     <div class="calc-preset">
                         <label class="form-label" style="margin:0">${t('calc.fromPreset', 'From preset')}</label>
                         <select id="calcPresetSel" class="input input-sm"><option value="">—</option>${presetOpts}</select>
-                        <button class="btn btn-secondary btn-sm" onclick="app.calcApplyPreset(document.getElementById('calcPresetSel').value)">${t('calc.use', 'Use')}</button>
-                        <button class="btn btn-ghost btn-sm" title="${t('calc.deletePreset', 'Delete selected preset')}" onclick="app.calcDeleteSelectedPreset(document.getElementById('calcPresetSel').value)"><i aria-hidden="true" class="bi bi-trash"></i></button>
+                        <button class="btn btn-secondary btn-sm" ${this._act('_calcPresetSel', ['apply'])}>${t('calc.use', 'Use')}</button>
+                        <button class="btn btn-ghost btn-sm" title="${t('calc.deletePreset', 'Delete selected preset')}" ${this._act('_calcPresetSel', ['delete'])}><i aria-hidden="true" class="bi bi-trash"></i></button>
                     </div>
                 </div>
                 ${this._calc.editing ? this._calcEditorHtml() : ''}
@@ -153,11 +153,11 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="calc-editor-head">${this._calc.editing.index == null ? t('calc.newTitle', 'New calculated measurement') : t('calc.editTitle', 'Edit calculated measurement')}</div>
             <div class="form-row">
                 <div class="form-group"><label class="form-label" for="calcName">${t('calc.name', 'Name')}</label>
-                    <input id="calcName" class="input" value="${this._esc(d.name)}" placeholder="PF_TOTAL" oninput="app._calc.editing.draft.name=this.value"></div>
+                    <input id="calcName" class="input" value="${this._esc(d.name)}" placeholder="PF_TOTAL" ${this._act('_calcDraftSet', ['name'], {value: true, on: 'input'})}></div>
                 <div class="form-group"><label class="form-label" for="calcLabel">${t('calc.label', 'Label')}</label>
-                    <input id="calcLabel" class="input" value="${this._esc(d.label)}" oninput="app._calc.editing.draft.label=this.value"></div>
+                    <input id="calcLabel" class="input" value="${this._esc(d.label)}" ${this._act('_calcDraftSet', ['label'], {value: true, on: 'input'})}></div>
                 <div class="form-group" style="max-width:90px"><label class="form-label" for="calcUnit">${t('calc.unit', 'Unit')}</label>
-                    <input id="calcUnit" class="input" value="${this._esc(d.unit)}" oninput="app._calc.editing.draft.unit=this.value"></div>
+                    <input id="calcUnit" class="input" value="${this._esc(d.unit)}" ${this._act('_calcDraftSet', ['unit'], {value: true, on: 'input'})}></div>
                 <div class="form-group" style="max-width:110px"><label class="form-label" for="calcPoll">${t('calc.pollGroup', 'Poll group')}</label>
                     <select id="calcPoll" class="input">${groups}</select></div>
                 <div class="form-group" style="max-width:90px"><label class="form-label" for="calcDec">${t('calc.decimals', 'Decimals')}</label>
@@ -167,11 +167,11 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="form-group">
                 <label class="form-label" for="calcExpr">${t('calc.expr', 'Expression')}</label>
                 <textarea id="calcExpr" class="input calc-expr-input" rows="2" spellcheck="false"
-                    oninput="app._calc.editing.draft.expr=this.value; app.calcPreview()">${this._esc(d.expr)}</textarea>
+                    ${this._act('_calcDraftSet', ['expr'], {value: true, on: 'input'})}>${this._esc(d.expr)}</textarea>
                 <div id="calcPreview" class="calc-preview"></div>
             </div>
             <div class="calc-palette">
-                <div class="calc-palette-label">${t('calc.fields', 'Measurement fields')} <input class="input input-sm calc-fieldfilter" placeholder="${t('common.search', 'Search')}" value="${this._esc(this._calc.fieldFilter)}" oninput="app._calc.fieldFilter=this.value; app._calcRerenderChips()"></div>
+                <div class="calc-palette-label">${t('calc.fields', 'Measurement fields')} <input class="input input-sm calc-fieldfilter" placeholder="${t('common.search', 'Search')}" value="${this._esc(this._calc.fieldFilter)}" ${this._act('_calcFieldFilter', [], {value: true, on: 'input'})}></div>
                 <div class="calc-chips" id="calcFieldChips">${chips || `<span class="calc-empty">${t('calc.noFields', 'No measurements selected on this device yet.')}</span>`}</div>
             </div>
             <div class="calc-palette">
@@ -180,9 +180,9 @@ Object.assign(JanitzaMonitor.prototype, {
             </div>
             <div class="calc-editor-actions">
                 <span class="save-feedback" id="calcFeedback"></span>
-                <button class="btn btn-ghost btn-sm" onclick="app.calcSaveAsTemplate()" title="${t('calc.saveAsPresetHint', 'Save this formula as a reusable preset')}"><i aria-hidden="true" class="bi bi-bookmark-plus"></i> ${t('calc.saveAsPreset', 'Save as preset')}</button>
-                <button class="btn btn-ghost btn-sm" onclick="app.calcCancel()">${t('common.cancel', 'Cancel')}</button>
-                <button class="btn btn-primary btn-sm" onclick="app.calcSave()"><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('common.save', 'Save')}</button>
+                <button class="btn btn-ghost btn-sm" data-action="calcSaveAsTemplate" title="${t('calc.saveAsPresetHint', 'Save this formula as a reusable preset')}"><i aria-hidden="true" class="bi bi-bookmark-plus"></i> ${t('calc.saveAsPreset', 'Save as preset')}</button>
+                <button class="btn btn-ghost btn-sm" data-action="calcCancel">${t('common.cancel', 'Cancel')}</button>
+                <button class="btn btn-primary btn-sm" data-action="calcSave"><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('common.save', 'Save')}</button>
             </div>
         </div>`;
     },
@@ -197,10 +197,29 @@ Object.assign(JanitzaMonitor.prototype, {
         const rows = ed.preset.inputs.map(inp => `
             <div class="form-group">
                 <label class="form-label">${this._esc(inp.label)} <code>{${this._esc(inp.key)}}</code></label>
-                <select class="input" data-bindkey="${this._esc(inp.key)}" onchange="app.calcBindPreset()">${fieldOpts}</select>
+                <select class="input" data-bindkey="${this._esc(inp.key)}" data-action="calcBindPreset" data-on="change">${fieldOpts}</select>
             </div>`).join('');
         return `<div class="calc-bind"><div class="calc-palette-label">${this.t('calc.bindInputs', 'Bind preset inputs to your fields')}</div>
             <div class="form-row">${rows}</div></div>`;
+    },
+
+    // editor inputs (data-action, input event) write into the draft
+    _calcDraftSet(field, value) {
+        if (!this._calc.editing) return;
+        this._calc.editing.draft[field] = value;
+        if (field === 'expr') this.calcPreview();
+    },
+
+    _calcFieldFilter(value) {
+        this._calc.fieldFilter = value;
+        this._calcRerenderChips();
+    },
+
+    // toolbar: apply or delete the preset picked in the select
+    _calcPresetSel(action) {
+        const v = document.getElementById('calcPresetSel')?.value || '';
+        if (action === 'delete') this.calcDeleteSelectedPreset(v);
+        else this.calcApplyPreset(v);
     },
 
     _calcRerenderChips() {

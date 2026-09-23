@@ -102,7 +102,7 @@
                 <div class="theme-toggle" id="themeToggle" title="Toggle theme" data-i18n-title="tip.theme">
                     <i aria-hidden="true" class="bi bi-moon-fill"></i>
                 </div>
-                <button class="logout-btn" id="logoutBtn" title="Log out" data-i18n-title="login.logout" onclick="app.logout()">
+                <button class="logout-btn" id="logoutBtn" title="Log out" data-i18n-title="login.logout" data-action="logout">
                     <i aria-hidden="true" class="bi bi-box-arrow-right"></i>
                 </button>
             </div>
@@ -341,7 +341,7 @@
                     <div class="header-actions energy-controls">
                         <select id="energyViewDevice" class="input view-device-sel" aria-label="Device" data-i18n-title="devices.selector" title="Device" style="display:none;"></select>
                         <input type="month" id="energyMonth" class="input" aria-label="Month" data-i18n-title="energy.month" title="Month">
-                        <button class="btn" id="energyFieldsBtn" onclick="app.openEnergyFields()" data-i18n-title="energy.fieldsTip" title="Choose which counters to total"><i aria-hidden="true" class="bi bi-sliders"></i> <span data-i18n="energy.fields">Fields</span></button>
+                        <button class="btn" id="energyFieldsBtn" data-action="openEnergyFields" data-i18n-title="energy.fieldsTip" title="Choose which counters to total"><i aria-hidden="true" class="bi bi-sliders"></i> <span data-i18n="energy.fields">Fields</span></button>
                         <button class="btn" id="energyRefresh"><i aria-hidden="true" class="bi bi-arrow-clockwise"></i> <span data-i18n="common.refresh">Refresh</span></button>
                     </div>
                 </div>
@@ -361,14 +361,14 @@
                             <div class="settings-card-header">
                                 <h3><i aria-hidden="true" class="bi bi-cpu"></i> <span data-i18n="devices.title">Devices</span></h3>
                                 <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                                    <button class="btn btn-ghost btn-sm" onclick="app.openDiscoverModal()" data-i18n-title="tip.scan" title="Scan the network for devices you can add">
+                                    <button class="btn btn-ghost btn-sm" data-action="openDiscoverModal" data-i18n-title="tip.scan" title="Scan the network for devices you can add">
                                         <i aria-hidden="true" class="bi bi-search"></i> <span data-i18n="devices.discover">Discover devices</span></button>
-                                    <button class="btn btn-ghost btn-sm" onclick="app.openBuilderDeploy()" data-i18n-title="tip.deployNode" title="Build firmware for a remote ESP32/ESP8266 RS485 reader and adopt it as a device">
+                                    <button class="btn btn-ghost btn-sm" data-action="openBuilderDeploy" data-i18n-title="tip.deployNode" title="Build firmware for a remote ESP32/ESP8266 RS485 reader and adopt it as a device">
                                         <i aria-hidden="true" class="bi bi-magic"></i> <span data-i18n="builder.deployNew">Deploy new device</span></button>
-                                    <button class="btn btn-ghost btn-sm" onclick="app.openPlantWizard()" data-i18n-title="tip.addEndpoint" title="Add a whole installation: one master device fronting several units — inverters, the meter at its grid connection, a battery. Each kind is a group, totalled on its own.">
+                                    <button class="btn btn-ghost btn-sm" data-action="openPlantWizard" data-i18n-title="tip.addEndpoint" title="Add a whole installation: one master device fronting several units — inverters, the meter at its grid connection, a battery. Each kind is a group, totalled on its own.">
                                         <i aria-hidden="true" class="bi bi-diagram-3"></i> <span data-i18n="endpoints.add">Add Installation</span>
                                     </button>
-                                    <button class="btn btn-primary btn-sm" onclick="app.openDeviceWizard()">
+                                    <button class="btn btn-primary btn-sm" data-action="openDeviceWizard">
                                         <i aria-hidden="true" class="bi bi-plus-lg"></i> <span data-i18n="devices.add">Add Device</span>
                                     </button>
                                 </div>
@@ -403,24 +403,24 @@
                 <!-- Device registers editor (opened from a device's Registers section) -->
                 <div id="deviceRegistersView" style="display: none;">
                     <div class="section-header">
-                        <h2><button class="btn btn-ghost btn-sm" onclick="app.closeDeviceRegisters()" aria-label="Back"><i aria-hidden="true" class="bi bi-arrow-left"></i></button>
+                        <h2><button class="btn btn-ghost btn-sm" data-action="closeDeviceRegisters" aria-label="Back"><i aria-hidden="true" class="bi bi-arrow-left"></i></button>
                             <i aria-hidden="true" class="bi bi-list-check"></i> <span id="deviceRegistersTitle" data-i18n="registers.configured">Measurements</span></h2>
                         <div class="header-actions">
                             <!-- import / export / raw / write live behind one menu: five
                                  rarely-used buttons in a row taught nothing -->
                             <div class="reg-menu">
-                                <button class="btn btn-ghost btn-sm" id="regMenuBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="regMenu" onclick="app.toggleRegMenu()">
+                                <button class="btn btn-ghost btn-sm" id="regMenuBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="regMenu" data-action="toggleRegMenu">
                                     <i aria-hidden="true" class="bi bi-three-dots"></i> <span data-i18n="registers.more">More</span></button>
                                 <div id="regMenu" role="menu" hidden>
-                                    <button role="menuitem" class="btn btn-ghost btn-sm" onclick="app.toggleRegMenu(false);app.openCsvImport()" data-i18n-title="tip.importCsv" title="Import a register map from a CSV (vendor/community list) and assign it to this device">
+                                    <button role="menuitem" class="btn btn-ghost btn-sm" data-action="_regMenuPick" data-args='["openCsvImport"]' data-i18n-title="tip.importCsv" title="Import a register map from a CSV (vendor/community list) and assign it to this device">
                                         <i aria-hidden="true" class="bi bi-filetype-csv"></i> <span data-i18n="registers.importCsv">Import CSV</span></button>
-                                    <button role="menuitem" class="btn btn-ghost btn-sm" onclick="app.toggleRegMenu(false);app.uploadDeviceMap()" data-i18n-title="tip.upload" title="Upload a measurement map (device template) and assign it to this device">
+                                    <button role="menuitem" class="btn btn-ghost btn-sm" data-action="_regMenuPick" data-args='["uploadDeviceMap"]' data-i18n-title="tip.upload" title="Upload a measurement map (device template) and assign it to this device">
                                         <i aria-hidden="true" class="bi bi-upload"></i> <span data-i18n="registers.uploadMap">Upload map</span></button>
-                                    <button role="menuitem" class="btn btn-ghost btn-sm" onclick="app.toggleRegMenu(false);app.downloadRegisterMap()" data-i18n-title="tip.downloadMap" title="Download this device's full measurement map (JSON)">
+                                    <button role="menuitem" class="btn btn-ghost btn-sm" data-action="_regMenuPick" data-args='["downloadRegisterMap"]' data-i18n-title="tip.downloadMap" title="Download this device's full measurement map (JSON)">
                                         <i aria-hidden="true" class="bi bi-download"></i> <span data-i18n="registers.downloadMap">Download map</span></button>
                                     <button role="menuitem" class="btn btn-ghost btn-sm" id="rawConfigBtn">
                                         <i aria-hidden="true" class="bi bi-code-slash"></i> Raw JSON</button>
-                                    <button role="menuitem" class="btn btn-ghost btn-sm" id="writeRegBtn" onclick="app.toggleRegMenu(false);app.openWriteModal()" data-i18n-title="tip.write" title="Write a value to this device (Modbus FC5/FC6/FC16)">
+                                    <button role="menuitem" class="btn btn-ghost btn-sm" id="writeRegBtn" data-action="_regMenuPick" data-args='["openWriteModal"]' data-i18n-title="tip.write" title="Write a value to this device (Modbus FC5/FC6/FC16)">
                                         <i aria-hidden="true" class="bi bi-pencil-square"></i> <span data-i18n="write.button">Write</span></button>
                                 </div>
                             </div>
@@ -450,7 +450,7 @@
                             <button class="btn btn-ghost btn-sm" id="queryRegisterBtn">
                                 <i aria-hidden="true" class="bi bi-search"></i> Query
                             </button>
-                            <button class="btn btn-secondary btn-sm" onclick="app.openCustomRegisterModal()">
+                            <button class="btn btn-secondary btn-sm" data-action="openCustomRegisterModal">
                                 <i aria-hidden="true" class="bi bi-plus-lg"></i> <span data-i18n="registers.addCustom">Add measurement</span>
                             </button>
                         </div>
@@ -488,7 +488,7 @@
                     <h2><i aria-hidden="true" class="bi bi-activity"></i> <span data-i18n="status.title">System Status</span></h2>
                     <div class="header-actions" style="display:flex;align-items:center;gap:10px;">
                         <span id="statusUpdated" style="color:var(--text-secondary);font-size:12px;"></span>
-                        <button class="btn btn-ghost btn-sm" id="statusRefreshBtn" onclick="app.renderStatus()"><i aria-hidden="true" class="bi bi-arrow-repeat"></i> <span data-i18n="common.refresh">Refresh</span></button>
+                        <button class="btn btn-ghost btn-sm" id="statusRefreshBtn" data-action="renderStatus"><i aria-hidden="true" class="bi bi-arrow-repeat"></i> <span data-i18n="common.refresh">Refresh</span></button>
                     </div>
                 </div>
                 <div id="statusContent"><div class="field-hint" data-i18n="common.loading">Loading…</div></div>
@@ -636,7 +636,7 @@
                                     </div>
                                 </div>
                                 <div class="header-actions" style="gap:8px;margin-top:6px;">
-                                    <button class="btn btn-primary btn-sm" onclick="app.saveGeneralConfig(this)">
+                                    <button class="btn btn-primary btn-sm" data-action="saveGeneralConfig" data-with-el>
                                         <i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
                                     <span class="save-feedback" id="generalSaveFeedback"></span>
                                 </div>
@@ -658,9 +658,9 @@
                                     <span data-i18n="backup.includeSecrets">Include secrets (MQTT password, InfluxDB token)</span>
                                 </label>
                                 <div class="header-actions" style="gap:8px;margin-top:10px;flex-wrap:wrap;">
-                                    <button class="btn btn-secondary btn-sm" onclick="app.exportConfig()">
+                                    <button class="btn btn-secondary btn-sm" data-action="exportConfig">
                                         <i aria-hidden="true" class="bi bi-download"></i> <span data-i18n="backup.export">Export backup</span></button>
-                                    <button class="btn btn-secondary btn-sm" onclick="app.importConfig()">
+                                    <button class="btn btn-secondary btn-sm" data-action="importConfig">
                                         <i aria-hidden="true" class="bi bi-upload"></i> <span data-i18n="backup.import">Restore backup</span></button>
                                     <span class="save-feedback" id="backupFeedback"></span>
                                 </div>
@@ -672,7 +672,7 @@
                         <div class="settings-card devices-card" style="margin-top:14px;">
                             <div class="settings-card-header">
                                 <h3><i aria-hidden="true" class="bi bi-clock-history"></i> <span data-i18n="snap.title">Snapshots &amp; Rollback</span></h3>
-                                <button class="btn btn-secondary btn-sm" onclick="app.createSnapshot()">
+                                <button class="btn btn-secondary btn-sm" data-action="createSnapshot">
                                     <i aria-hidden="true" class="bi bi-camera"></i> <span data-i18n="snap.create">Snapshot now</span></button>
                             </div>
                             <div class="settings-card-body">
@@ -801,7 +801,7 @@
                             </div>
                             <div class="settings-card-footer">
                                 <span class="save-feedback" id="mqttSaveFeedback"></span>
-                                <button class="btn btn-primary btn-sm" onclick="app.saveAndApply('mqtt', this)"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="settings.saveApply">Save &amp; Apply</span></button>
+                                <button class="btn btn-primary btn-sm" data-action="saveAndApply" data-args='["mqtt"]' data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="settings.saveApply">Save &amp; Apply</span></button>
                             </div>
                         </div>
                 </div>
@@ -860,7 +860,7 @@
                             </div>
                             <div class="settings-card-footer">
                                 <span class="save-feedback" id="influxSaveFeedback"></span>
-                                <button class="btn btn-primary btn-sm" onclick="app.saveAndApply('influx', this)"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="settings.saveApply">Save &amp; Apply</span></button>
+                                <button class="btn btn-primary btn-sm" data-action="saveAndApply" data-args='["influx"]' data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="settings.saveApply">Save &amp; Apply</span></button>
                             </div>
                         </div>
                 </div>
@@ -950,7 +950,7 @@
                                         <div class="settings-subsection" style="margin-top:14px;">
                                             <h4 style="display:flex;justify-content:space-between;align-items:center;">
                                                 <span data-i18n="passkeys.title">Passkeys</span>
-                                                <button type="button" class="btn btn-secondary btn-sm" onclick="app.passkeyRegister()">
+                                                <button type="button" class="btn btn-secondary btn-sm" data-action="passkeyRegister">
                                                     <i aria-hidden="true" class="bi bi-fingerprint"></i> <span data-i18n="passkeys.add">Add passkey</span></button>
                                             </h4>
                                             <p class="field-hint" data-i18n="passkeys.hint">Password-less sign-in bound to this device (fingerprint, PIN, security key). Browsers require a secure context: register and sign in via localhost or an HTTPS hostname — a plain-HTTP IP address will not work. You can enroll now, before enabling login.</p>
@@ -996,7 +996,7 @@
                             </div>
                             <div class="settings-card-footer">
                                 <span class="save-feedback" id="securitySaveFeedback"></span>
-                                <button class="btn btn-primary btn-sm" onclick="app.saveSecurity(this)"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="settings.saveApply">Save &amp; Apply</span></button>
+                                <button class="btn btn-primary btn-sm" data-action="saveSecurity" data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="settings.saveApply">Save &amp; Apply</span></button>
                             </div>
                         </div>
 
@@ -1005,9 +1005,9 @@
                             <div class="settings-card-header">
                                 <h3><i aria-hidden="true" class="bi bi-journal-text"></i> <span data-i18n="audit.title">Audit Trail</span></h3>
                                 <div style="display:flex;gap:8px;align-items:center;">
-                                    <button class="btn btn-ghost btn-sm" onclick="window.location='/api/audit/export.csv'">
+                                    <button class="btn btn-ghost btn-sm" data-action="_navigate" data-args='["/api/audit/export.csv"]'>
                                         <i aria-hidden="true" class="bi bi-filetype-csv"></i> CSV</button>
-                                    <button class="btn btn-ghost btn-sm" onclick="app.loadAudit()">
+                                    <button class="btn btn-ghost btn-sm" data-action="loadAudit">
                                         <i aria-hidden="true" class="bi bi-arrow-repeat"></i> <span data-i18n="common.refresh">Refresh</span></button>
                                 </div>
                             </div>
@@ -1015,7 +1015,7 @@
                                 <p class="field-hint" data-i18n="audit.intro" style="margin-bottom:8px;">Every configuration change, login, device write and secret export — who, from which IP, when, with the payload redacted. With auth on, only the admin can read this.</p>
                                 <input type="text" id="auditFilter" class="input" style="max-width:280px;margin-bottom:8px;"
                                        placeholder="Filter…" data-i18n-placeholder="audit.filter"
-                                       oninput="clearTimeout(app._auditT); app._auditT = setTimeout(() => app.loadAudit(), 300)">
+                                      data-action="_auditSearchInput" data-on="input">
                                 <div class="diag-table-wrap">
                                     <table class="data-table" id="auditTable">
                                         <thead><tr>
@@ -1076,13 +1076,13 @@
                                         <textarea id="cfgAlertWebhookBody" class="input" rows="2" style="font-family:monospace;" placeholder='{"message": "{severity} {source}: {message}"}'></textarea>
                                         <p class="field-hint" data-i18n="alerts.webhookBodyHint">Placeholders: {severity} {source} {message} {key} {host} {ts}. Empty = raw alert JSON.</p></div>
                                 </div>
-                                <button class="btn btn-ghost btn-sm" onclick="app.testAlert(this)" style="margin-top:4px;"><i aria-hidden="true" class="bi bi-send"></i> <span data-i18n="status.testAlert">Test</span></button>
+                                <button class="btn btn-ghost btn-sm" data-action="testAlert" data-with-el style="margin-top:4px;"><i aria-hidden="true" class="bi bi-send"></i> <span data-i18n="status.testAlert">Test</span></button>
                                 <span id="alertTestResult" style="font-size:12px;margin-left:8px;"></span>
                             </div>
                         </div>
                         <div class="settings-card-footer">
                             <span class="save-feedback" id="alertsSaveFeedback"></span>
-                            <button class="btn btn-primary btn-sm" onclick="app.saveAlerts(this)"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="settings.saveApply">Save &amp; Apply</span></button>
+                            <button class="btn btn-primary btn-sm" data-action="saveAlerts" data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="settings.saveApply">Save &amp; Apply</span></button>
                         </div>
                     </div>
                 </div>
@@ -1162,7 +1162,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-pencil"></i> Edit measurement</h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeRegisterModal()">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeRegisterModal">&times;</button>
             </div>
             <div class="modal-body">
                 <input type="hidden" id="editAddress">
@@ -1263,7 +1263,7 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="app.closeRegisterModal()">Cancel</button>
+                <button class="btn btn-ghost" data-action="closeRegisterModal">Cancel</button>
                 <button class="btn btn-primary" id="modalSave">Save</button>
             </div>
         </div>
@@ -1275,7 +1275,7 @@
         <div class="modal-content" style="max-width:960px;width:96%;">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-cpu"></i> <span id="builderEdTitle">Node</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeModal('builderEditorModal')">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["builderEditorModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <div class="form-group">
@@ -1286,7 +1286,7 @@
                           style="width:100%;height:52vh;font-family:monospace;font-size:13px;white-space:pre;"></textarea>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="app.closeModal('builderEditorModal')" data-i18n="common.cancel">Cancel</button>
+                <button class="btn btn-ghost" data-action="closeModal" data-args='["builderEditorModal"]' data-i18n="common.cancel">Cancel</button>
                 <button class="btn" id="builderEdValidateBtn"><i aria-hidden="true" class="bi bi-check2-circle"></i> <span data-i18n="builder.saveValidate">Save &amp; validate</span></button>
                 <button class="btn btn-primary" id="builderEdSaveBtn"><i aria-hidden="true" class="bi bi-save"></i> <span data-i18n="common.save">Save</span></button>
             </div>
@@ -1298,7 +1298,7 @@
         <div class="modal-content" style="max-width:640px;width:96%;">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-list-ol"></i> <span id="enumBuilderTitle">Decode states</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeModal('enumBuilderModal')">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["enumBuilderModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <p style="font-size:12.5px;color:var(--text-secondary);margin:0 0 10px;">
@@ -1306,14 +1306,14 @@
                     (value → label). <b>Bitfield</b> = flags (bit position → name).</p>
                 <div style="display:flex;gap:18px;align-items:center;margin-bottom:12px;">
                     <label style="display:flex;gap:6px;align-items:center;cursor:pointer;">
-                        <input type="radio" name="enumMode" value="enum" onchange="app.enumBuilderSetMode('enum')"> Enum — one state</label>
+                        <input type="radio" name="enumMode" value="enum" data-action="enumBuilderSetMode" data-args='["enum"]' data-on="change"> Enum — one state</label>
                     <label style="display:flex;gap:6px;align-items:center;cursor:pointer;">
-                        <input type="radio" name="enumMode" value="bits" onchange="app.enumBuilderSetMode('bits')"> Bitfield — flags</label>
+                        <input type="radio" name="enumMode" value="bits" data-action="enumBuilderSetMode" data-args='["bits"]' data-on="change"> Bitfield — flags</label>
                 </div>
                 <table class="data-table"><thead><tr>
                     <th scope="col" id="enumValCol" style="width:130px;">Value</th><th scope="col">Label</th><th scope="col" style="width:36px;"></th>
                 </tr></thead><tbody id="enumBuilderRows"></tbody></table>
-                <button class="btn btn-secondary btn-sm" style="margin-top:8px;" onclick="app.enumBuilderAddRow()">
+                <button class="btn btn-secondary btn-sm" style="margin-top:8px;" data-action="enumBuilderAddRow">
                     <i aria-hidden="true" class="bi bi-plus-lg"></i> Add state</button>
                 <details id="enumAdvanced" style="margin-top:12px;">
                     <summary style="cursor:pointer;font-size:12.5px;color:var(--text-secondary);">Advanced — packed sub-field</summary>
@@ -1328,9 +1328,9 @@
                 <div class="field-error" id="enumBuilderError" style="display:none;white-space:pre-line;margin-top:8px;"></div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="app.closeModal('enumBuilderModal')">Cancel</button>
-                <button class="btn" id="enumBuilderClearBtn" onclick="app.enumBuilderClear()" title="Remove the decode map from this register">Clear</button>
-                <button class="btn btn-primary" onclick="app.enumBuilderApply()"><i aria-hidden="true" class="bi bi-check2"></i> Apply</button>
+                <button class="btn btn-ghost" data-action="closeModal" data-args='["enumBuilderModal"]'>Cancel</button>
+                <button class="btn" id="enumBuilderClearBtn" data-action="enumBuilderClear" title="Remove the decode map from this register">Clear</button>
+                <button class="btn btn-primary" data-action="enumBuilderApply"><i aria-hidden="true" class="bi bi-check2"></i> Apply</button>
             </div>
         </div>
     </div>
@@ -1341,14 +1341,14 @@
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-terminal"></i> <span id="builderConTitle">Console</span>
                     <span id="builderConStatus" class="sink-pill" style="margin-left:10px;"></span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app._builderCloseWs(); app.closeModal('builderConsoleModal')">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="_builderCloseModal" data-args='["builderConsoleModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <pre id="builderConOut" style="height:56vh;overflow:auto;background:#101418;color:#d7dee6;
                      padding:12px;border-radius:6px;font-size:12px;line-height:1.5;margin:0;"></pre>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="app._builderCloseWs(); app.closeModal('builderConsoleModal')" data-i18n="common.close">Close</button>
+                <button class="btn btn-ghost" data-action="_builderCloseModal" data-args='["builderConsoleModal"]' data-i18n="common.close">Close</button>
             </div>
         </div>
     </div>
@@ -1358,7 +1358,7 @@
         <div class="modal-content" style="max-width:1060px;width:96%;">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-magic"></i> <span data-i18n="builder.generate">Generate from template</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeModal('builderGenModal')">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["builderGenModal"]'>&times;</button>
             </div>
             <div class="modal-body" style="max-height:74vh;overflow:auto;">
                 <div style="display:flex;gap:18px;flex-wrap:wrap;">
@@ -1425,7 +1425,7 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="app.closeModal('builderGenModal')" data-i18n="common.cancel">Cancel</button>
+                <button class="btn btn-ghost" data-action="closeModal" data-args='["builderGenModal"]' data-i18n="common.cancel">Cancel</button>
                 <button class="btn" id="bgSaveBtn"><i aria-hidden="true" class="bi bi-save"></i> <span data-i18n="builder.saveOnly">Save YAML to ESPHome</span></button>
                 <button class="btn btn-primary" id="bgAdoptBtn"><i aria-hidden="true" class="bi bi-link-45deg"></i> <span data-i18n="builder.saveAdopt">Save + Adopt as device</span></button>
             </div>
@@ -1437,11 +1437,11 @@
         <div class="modal-content" style="max-width:600px;">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-usb-plug"></i> <span data-i18n="builder.flashUsb">Flash via USB</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeModal('builderFlashModal')">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["builderFlashModal"]'>&times;</button>
             </div>
             <div class="modal-body" id="builderFlashBody"></div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="app.closeModal('builderFlashModal')" data-i18n="common.close">Close</button>
+                <button class="btn btn-ghost" data-action="closeModal" data-args='["builderFlashModal"]' data-i18n="common.close">Close</button>
             </div>
         </div>
     </div>
@@ -1451,11 +1451,11 @@
         <div class="modal-content" style="max-width:640px;">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-download"></i> <span data-i18n="builder.binaries">Binaries</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeModal('builderDownloadsModal')">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["builderDownloadsModal"]'>&times;</button>
             </div>
             <div class="modal-body" id="builderDlBody"></div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="app.closeModal('builderDownloadsModal')" data-i18n="common.close">Close</button>
+                <button class="btn btn-ghost" data-action="closeModal" data-args='["builderDownloadsModal"]' data-i18n="common.close">Close</button>
             </div>
         </div>
     </div>
@@ -1464,11 +1464,11 @@
         <div class="modal-content" style="max-width:960px;width:96%;">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-diagram-3"></i> <span id="vmTplTitle" data-i18n="templates.editorTitle">Template editor</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeModal('vmTemplateModal')">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["vmTemplateModal"]'>&times;</button>
             </div>
             <div class="modal-body" id="vmTplBody"></div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="app.closeModal('vmTemplateModal')">Cancel</button>
+                <button class="btn btn-ghost" data-action="closeModal" data-args='["vmTemplateModal"]'>Cancel</button>
                 <button class="btn btn-primary" id="vmTplSaveBtn"><i aria-hidden="true" class="bi bi-save"></i> <span data-i18n="vmeter.saveTemplate">Save template</span></button>
             </div>
         </div>
@@ -1479,7 +1479,7 @@
         <div class="modal-content" style="max-width:480px;">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-sliders"></i> Edit instance — <span id="vmEditInstName"></span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeModal('vmEditInstanceModal')">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["vmEditInstanceModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <input type="hidden" id="vmEditInstTemplate">
@@ -1536,8 +1536,8 @@
                     (Victron / Fronius fall back to their own grid-loss fail-safe).</p>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="app.closeModal('vmEditInstanceModal')">Cancel</button>
-                <button class="btn btn-primary" onclick="app.saveEditInstance()"><i aria-hidden="true" class="bi bi-save"></i> <span data-i18n="common.save">Save</span></button>
+                <button class="btn btn-ghost" data-action="closeModal" data-args='["vmEditInstanceModal"]'>Cancel</button>
+                <button class="btn btn-primary" data-action="saveEditInstance"><i aria-hidden="true" class="bi bi-save"></i> <span data-i18n="common.save">Save</span></button>
             </div>
         </div>
     </div>
@@ -1547,7 +1547,7 @@
         <div class="modal-content" style="max-width:520px;">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-plus-lg"></i> <span data-i18n="vmeter.addInstance">Add instance</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeModal('vmAddInstanceModal')">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["vmAddInstanceModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <div class="form-group">
@@ -1600,8 +1600,8 @@
             </div>
             <div class="modal-footer">
                 <span class="save-feedback" id="vmAddFeedback"></span>
-                <button class="btn btn-ghost" onclick="app.closeModal('vmAddInstanceModal')">Cancel</button>
-                <button class="btn btn-primary" onclick="app.submitAddInstance(this)"><i aria-hidden="true" class="bi bi-plus-lg"></i> <span data-i18n="common.add">Add</span></button>
+                <button class="btn btn-ghost" data-action="closeModal" data-args='["vmAddInstanceModal"]'>Cancel</button>
+                <button class="btn btn-primary" data-action="submitAddInstance" data-with-el><i aria-hidden="true" class="bi bi-plus-lg"></i> <span data-i18n="common.add">Add</span></button>
             </div>
         </div>
     </div>
@@ -1611,19 +1611,19 @@
         <div class="modal-content" style="max-width:460px;">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-exclamation-triangle" style="color:var(--danger-text,#c0392b);"></i> <span data-i18n="vmeter.delete.title">Delete virtual meter</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeModal('vmDeleteInstanceModal')">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["vmDeleteInstanceModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <p style="font-size:13.5px;">This stops and removes <b id="vmDelName"></b>. Any connected consumer (Victron / Fronius) drops to its own grid-loss fail-safe.</p>
                 <div class="form-group">
                     <label class="form-label" for="vmDelConfirm" data-i18n="vmeter.delete.prompt">Type DELETE to confirm</label>
                     <input type="text" id="vmDelConfirm" class="input" autocomplete="off" placeholder="DELETE"
-                           oninput="document.getElementById('vmDelBtn').disabled = (this.value.trim() !== 'DELETE')">
+                          data-action="_vmDeleteConfirmInput" data-with-el data-on="input">
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="app.closeModal('vmDeleteInstanceModal')">Cancel</button>
-                <button class="btn btn-danger" id="vmDelBtn" disabled onclick="app.confirmDeleteInstance()"><i aria-hidden="true" class="bi bi-trash"></i> <span data-i18n="common.delete">Delete</span></button>
+                <button class="btn btn-ghost" data-action="closeModal" data-args='["vmDeleteInstanceModal"]'>Cancel</button>
+                <button class="btn btn-danger" id="vmDelBtn" disabled data-action="confirmDeleteInstance"><i aria-hidden="true" class="bi bi-trash"></i> <span data-i18n="common.delete">Delete</span></button>
             </div>
         </div>
     </div>
@@ -1633,7 +1633,7 @@
         <div class="modal-content" style="max-width:720px;">
             <div class="modal-header">
                 <h3 id="csvModalTitle"><i aria-hidden="true" class="bi bi-filetype-csv"></i> <span data-i18n="csv.title">Import register map from CSV</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeModal('csvImportModal')">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["csvImportModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <p class="field-hint" id="csvIntroCsv" style="margin:0 0 10px;" data-i18n="csv.intro">A CSV register list from a vendor or the community becomes a device template. Columns are matched loosely — <b>address</b> and <b>name</b> are required; <b>label, unit, type, scale, category, json_path</b> are optional. Address accepts decimal or 0x hex.</p>
@@ -1657,18 +1657,18 @@
                 </div>
                 <div class="form-group">
                     <label class="form-label" for="csvText"><span id="csvTextLabel">CSV</span>
-                        <a href="#" id="csvExampleLink" onclick="app.downloadCsvExample();return false;" style="font-weight:400;font-size:12px;margin-left:8px;" data-i18n="csv.example">download example</a>
+                        <a href="#" id="csvExampleLink" data-action="downloadCsvExample" style="font-weight:400;font-size:12px;margin-left:8px;" data-i18n="csv.example">download example</a>
                         · <label for="csvFile" id="csvPickLabel" style="display:inline;cursor:pointer;color:var(--primary,#2563eb);font-size:12px;" data-i18n="csv.pickFile">open a .csv file</label>
                         <input type="file" id="csvFile" accept=".csv,text/csv" style="display:none;">
                     </label>
                     <textarea id="csvText" class="input" rows="8" style="font-family:monospace;font-size:12px;" placeholder="address,name,label,unit,type,scale&#10;0x0000,V_L1,Voltage L1-N,V,float,1"></textarea>
                 </div>
-                <div><button class="btn btn-secondary btn-sm" onclick="app.csvPreview(this)"><i aria-hidden="true" class="bi bi-search"></i> <span data-i18n="csv.preview">Preview</span></button></div>
+                <div><button class="btn btn-secondary btn-sm" data-action="csvPreview" data-with-el><i aria-hidden="true" class="bi bi-search"></i> <span data-i18n="csv.preview">Preview</span></button></div>
                 <div id="csvPreviewResult" style="margin-top:12px;"></div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="app.closeModal('csvImportModal')" data-i18n="common.cancel">Cancel</button>
-                <button class="btn btn-primary" id="csvImportBtn" onclick="app.csvImport(this)" disabled data-i18n="csv.import">Import &amp; assign</button>
+                <button class="btn btn-ghost" data-action="closeModal" data-args='["csvImportModal"]' data-i18n="common.cancel">Cancel</button>
+                <button class="btn btn-primary" id="csvImportBtn" data-action="csvImport" data-with-el disabled data-i18n="csv.import">Import &amp; assign</button>
             </div>
         </div>
     </div>
@@ -1678,11 +1678,11 @@
         <div class="modal-content" style="max-width:860px;">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-table"></i> <span id="tmViewTitle" data-i18n="templates.viewTitle">Device map</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeModal('tmViewModal')">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["tmViewModal"]'>&times;</button>
             </div>
             <div class="modal-body" id="tmViewBody" style="max-height:70vh;overflow:auto;"></div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="app.closeModal('tmViewModal')" data-i18n="common.close">Close</button>
+                <button class="btn btn-ghost" data-action="closeModal" data-args='["tmViewModal"]' data-i18n="common.close">Close</button>
                 <button class="btn" id="tmViewExportBtn"><i aria-hidden="true" class="bi bi-download"></i> <span data-i18n="templates.exportJson">Export JSON</span></button>
                 <button class="btn btn-primary" id="tmViewDupBtn"><i aria-hidden="true" class="bi bi-files"></i> <span data-i18n="templates.duplicate">Duplicate</span></button>
             </div>
@@ -1694,7 +1694,7 @@
         <div class="modal-content" style="max-width:560px;">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-pencil-square"></i> <span data-i18n="write.title">Write to device</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeModal('writeModal')">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["writeModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <div class="settings-card" style="border-left:3px solid #c0392b;padding:8px 12px;margin-bottom:12px;color:var(--danger-text,#c0392b);font-size:12.5px;">
@@ -1702,7 +1702,7 @@
                 </div>
                 <div class="form-row">
                     <div class="form-group"><label class="form-label" data-i18n="write.regType" for="writeRegType">Target</label>
-                        <select id="writeRegType" class="input" onchange="app._syncWriteForm()">
+                        <select id="writeRegType" class="input" data-action="_syncWriteForm" data-on="change">
                             <option value="holding" data-i18n="write.holding">Holding register (FC6/16)</option>
                             <option value="coil" data-i18n="write.coil">Coil (FC5)</option>
                         </select></div>
@@ -1732,8 +1732,8 @@
                 <div id="writeResult" style="margin-top:10px;"></div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="app.closeModal('writeModal')" data-i18n="common.cancel">Cancel</button>
-                <button class="btn btn-primary" id="writeSubmitBtn" onclick="app.submitWrite(this)"><i aria-hidden="true" class="bi bi-pencil-square"></i> <span data-i18n="write.submit">Write value</span></button>
+                <button class="btn btn-ghost" data-action="closeModal" data-args='["writeModal"]' data-i18n="common.cancel">Cancel</button>
+                <button class="btn btn-primary" id="writeSubmitBtn" data-action="submitWrite" data-with-el><i aria-hidden="true" class="bi bi-pencil-square"></i> <span data-i18n="write.submit">Write value</span></button>
             </div>
         </div>
     </div>
@@ -1743,12 +1743,12 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-hdd-network"></i> <span data-i18n="devices.discover">Discover devices</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeModal('discoverModal')">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["discoverModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <div class="form-group">
                     <label class="form-label" for="discoverMethod" data-i18n="devices.discoverMethod">Discovery method</label>
-                    <select id="discoverMethod" class="input" onchange="app._syncDiscoverMethod()">
+                    <select id="discoverMethod" class="input" data-action="_syncDiscoverMethod" data-on="change">
                         <option value="modbus">Modbus TCP scan</option>
                         <option value="esphome">ESPHome nodes (native API)</option>
                         <option value="fronius">Fronius Solar API (DataManager)</option>
@@ -1780,7 +1780,7 @@
                     <span class="field-hint" data-i18n="devices.discoverEsphomeHint">Sweeps the LAN for ESPHome devices on the native-API port and asks each for its identity. Works from inside Docker (mDNS does not) — nodes broadcasting an adoption package can be imported into the Builder directly.</span>
                 </div>
                 <div>
-                    <button class="btn btn-secondary btn-sm" onclick="app.runDiscover(this)">
+                    <button class="btn btn-secondary btn-sm" data-action="runDiscover" data-with-el>
                         <i aria-hidden="true" class="bi bi-search"></i> <span data-i18n="devices.discoverRun">Discover</span></button>
                 </div>
                 <div id="discoverResult" style="margin-top:14px;"></div>
@@ -1793,7 +1793,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-plus-circle"></i> <span id="addModalTitle" data-i18n="reg.addMeasurement">Add measurement</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeAddModal()">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeAddModal">&times;</button>
             </div>
             <div class="modal-body">
                 <input type="hidden" id="addAddress">
@@ -1846,7 +1846,7 @@
                         <div class="form-group">
                             <label class="form-label" for="addNameInput" data-i18n="registers.custom.name">Name</label>
                             <input type="text" id="addNameInput" class="input" placeholder="voltage_l1_n"
-                                   list="canonicalNamesList" autocomplete="off" oninput="app._checkCanonicalName()">
+                                   list="canonicalNamesList" autocomplete="off" data-action="_checkCanonicalName" data-on="input">
                             <datalist id="canonicalNamesList"></datalist>
                             <span class="field-hint" id="canonicalNameHint"></span>
                         </div>
@@ -1873,7 +1873,7 @@
                             <label class="form-label" for="addJsonPathInput" data-i18n="registers.custom.jsonPath">JSON path</label>
                             <div style="display:flex;gap:6px;">
                                 <input type="text" id="addJsonPathInput" class="input" style="flex:1;" placeholder="Body.Data.PowerReal_P_Sum">
-                                <button type="button" class="btn btn-secondary btn-sm" onclick="app.pickJsonPath()"
+                                <button type="button" class="btn btn-secondary btn-sm" data-action="pickJsonPath"
                                         title="Pick from a live payload" data-i18n-title="registers.custom.pickTip">
                                     <i aria-hidden="true" class="bi bi-binoculars"></i> <span data-i18n="registers.custom.pick">Pick</span></button>
                             </div>
@@ -1881,7 +1881,7 @@
                             <div id="jsonPathPicker" style="display:none;margin-top:8px;">
                                 <input type="text" id="jsonPathPickerFilter" class="input" style="margin-bottom:6px;"
                                        placeholder="Filter fields…" data-i18n-placeholder="registers.custom.pickFilter"
-                                       oninput="app._renderJsonPathPicker()">
+                                      data-action="_renderJsonPathPicker" data-on="input">
                                 <div class="mqtt-browse-list" id="jsonPathPickerList" role="listbox" aria-label="JSON fields"></div>
                                 <span class="field-hint" id="jsonPathPickerHint"></span>
                             </div>
@@ -1991,7 +1991,7 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="app.closeAddModal()">Cancel</button>
+                <button class="btn btn-ghost" data-action="closeAddModal">Cancel</button>
                 <button class="btn btn-primary" id="addModalSave">Add measurement</button>
             </div>
         </div>
@@ -2002,7 +2002,7 @@
         <div class="modal-content modal-lg">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-code-slash"></i> Raw Configuration</h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeRawConfigModal()">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeRawConfigModal">&times;</button>
             </div>
             <div class="modal-body">
                 <p class="hint-text">Edit the JSON configuration directly. Be careful with syntax.</p>
@@ -2010,7 +2010,7 @@
                 <div class="editor-status" id="editorStatus"></div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="app.closeRawConfigModal()">Cancel</button>
+                <button class="btn btn-ghost" data-action="closeRawConfigModal">Cancel</button>
                 <button class="btn btn-ghost" id="rawConfigFormat">Format</button>
                 <button class="btn btn-primary" id="rawConfigSave">Save & Apply</button>
             </div>
@@ -2022,16 +2022,16 @@
         <div class="modal-content modal-lg">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-sliders"></i> Customize Dashboard</h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeCustomizeDashModal()">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeCustomizeDashModal">&times;</button>
             </div>
             <div class="modal-body">
                 <p class="hint-text">Drag to reorder widgets. Configure visibility, type, and size.</p>
                 <div class="customize-list" id="customizeList"></div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-ghost btn-sm" onclick="app.reapplyDefaultColors(this)" style="margin-right:auto;" data-i18n-title="dash.reapplyHint" title="Overwrite every dashboard widget's color with the convention defaults (phase/category) from Settings → General">
+                <button class="btn btn-ghost btn-sm" data-action="reapplyDefaultColors" data-with-el style="margin-right:auto;" data-i18n-title="dash.reapplyHint" title="Overwrite every dashboard widget's color with the convention defaults (phase/category) from Settings → General">
                     <i aria-hidden="true" class="bi bi-palette"></i> <span data-i18n="dash.reapplyColors">Reapply default colors</span></button>
-                <button class="btn btn-ghost" onclick="app.closeCustomizeDashModal()">Cancel</button>
+                <button class="btn btn-ghost" data-action="closeCustomizeDashModal">Cancel</button>
                 <button class="btn btn-primary" id="customizeDashSave">Save</button>
             </div>
         </div>
@@ -2042,7 +2042,7 @@
         <div class="modal-content modal-sm">
             <div class="modal-header">
                 <h3 id="statusDetailTitle"><i aria-hidden="true" class="bi bi-info-circle"></i> Status</h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeStatusDetailModal()">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeStatusDetailModal">&times;</button>
             </div>
             <div class="modal-body" id="statusDetailBody">
                 <!-- Populated by JavaScript -->
@@ -2055,7 +2055,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-search"></i> Query measurement</h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeQueryModal()">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeQueryModal">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="form-row">
@@ -2095,14 +2095,14 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-hdd-network"></i> <span data-i18n="firstrun.title">Connect your first device</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.dismissFirstRun()">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="dismissFirstRun">&times;</button>
             </div>
             <div class="modal-body">
                 <p data-i18n="firstrun.body">No data yet. Open your device in Devices, set its address (IP / port) in the Edit tab, then Save &amp; Apply.</p>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="app.dismissFirstRun()" data-i18n="firstrun.later">Later</button>
-                <button class="btn btn-primary" onclick="app.firstRunOpenSettings()" data-i18n="firstrun.openSettings">Set up device</button>
+                <button class="btn btn-ghost" data-action="dismissFirstRun" data-i18n="firstrun.later">Later</button>
+                <button class="btn btn-primary" data-action="firstRunOpenSettings" data-i18n="firstrun.openSettings">Set up device</button>
             </div>
         </div>
     </div>
@@ -2112,7 +2112,7 @@
         <div class="modal-content modal-lg">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-graph-up"></i> <span id="valHistTitle" data-i18n="valhist.title">History</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeModal('valueHistoryModal')">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["valueHistoryModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <div class="graph-controls" style="display:flex;gap:6px;margin-bottom:8px;">
@@ -2132,7 +2132,7 @@
         <div class="modal-content modal-lg">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-diagram-3"></i> <span id="plantWizTitle" data-i18n="plant.wizard.title">Add Installation</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeModal('plantWizardModal')">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["plantWizardModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <div class="wizard-steps" id="plantWizSteps" aria-label="Wizard progress">
@@ -2145,9 +2145,9 @@
             </div>
             <div class="modal-footer">
                 <span class="save-feedback" id="plantWizFeedback"></span>
-                <button class="btn btn-secondary btn-sm" id="plantWizBack" onclick="app.plantWizardBack()">
+                <button class="btn btn-secondary btn-sm" id="plantWizBack" data-action="plantWizardBack">
                     <i aria-hidden="true" class="bi bi-arrow-left"></i> <span data-i18n="common.back">Back</span></button>
-                <button class="btn btn-primary btn-sm" id="plantWizNext" onclick="app.plantWizardNext()">
+                <button class="btn btn-primary btn-sm" id="plantWizNext" data-action="plantWizardNext">
                     <span id="plantWizNextLabel" data-i18n="common.next">Next</span> <i aria-hidden="true" class="bi bi-arrow-right"></i></button>
             </div>
         </div>
@@ -2157,7 +2157,7 @@
         <div class="modal-content modal-lg">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-cpu"></i> <span id="devWizTitle" data-i18n="devices.wizard.titleAdd">Add Device</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeModal('deviceWizardModal')" aria-label="Close">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["deviceWizardModal"]' aria-label="Close">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="wizard-steps" id="devWizSteps" aria-label="Wizard progress">
@@ -2169,9 +2169,9 @@
             </div>
             <div class="modal-footer">
                 <span class="save-feedback" id="devWizFeedback"></span>
-                <button class="btn btn-secondary btn-sm" id="devWizBack" onclick="app.devWizardBack()">
+                <button class="btn btn-secondary btn-sm" id="devWizBack" data-action="devWizardBack">
                     <i aria-hidden="true" class="bi bi-arrow-left"></i> <span data-i18n="common.back">Back</span></button>
-                <button class="btn btn-primary btn-sm" id="devWizNext" onclick="app.devWizardNext()">
+                <button class="btn btn-primary btn-sm" id="devWizNext" data-action="devWizardNext">
                     <span id="devWizNextLabel" data-i18n="common.next">Next</span> <i aria-hidden="true" class="bi bi-arrow-right"></i></button>
             </div>
         </div>
@@ -2182,15 +2182,15 @@
         <div class="modal-content modal-lg">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-sliders2"></i> <span id="ruleModalTitle">Rule</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeModal('ruleModal')">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["ruleModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <div id="ruleModalBody"></div>
             </div>
             <div class="modal-footer">
                 <span class="save-feedback" id="ruleFeedback" role="status" aria-live="polite"></span>
-                <button class="btn btn-secondary btn-sm" onclick="app.closeModal('ruleModal')"><span data-i18n="common.cancel">Cancel</span></button>
-                <button class="btn btn-primary btn-sm" data-rule-save onclick="app.saveRule()"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
+                <button class="btn btn-secondary btn-sm" data-action="closeModal" data-args='["ruleModal"]'><span data-i18n="common.cancel">Cancel</span></button>
+                <button class="btn btn-primary btn-sm" data-rule-save data-action="saveRule"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
             </div>
         </div>
     </div>
@@ -2199,15 +2199,15 @@
         <div class="modal-content modal-lg">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-diagram-3"></i> <span id="endpointModalTitle" data-i18n="endpoints.titleAdd">Add Endpoint</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeModal('endpointModal')">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["endpointModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <div id="endpointModalBody"></div>
             </div>
             <div class="modal-footer">
                 <span class="save-feedback" id="endpointFeedback"></span>
-                <button class="btn btn-secondary btn-sm" onclick="app.closeModal('endpointModal')"><span data-i18n="common.cancel">Cancel</span></button>
-                <button class="btn btn-primary btn-sm" data-endpoint-save onclick="app.saveEndpoint()"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
+                <button class="btn btn-secondary btn-sm" data-action="closeModal" data-args='["endpointModal"]'><span data-i18n="common.cancel">Cancel</span></button>
+                <button class="btn btn-primary btn-sm" data-endpoint-save data-action="saveEndpoint"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
             </div>
         </div>
     </div>
@@ -2217,7 +2217,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-lightning-charge"></i> <span data-i18n="energy.fieldsTitle">Energy fields</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeModal('energyFieldsModal')" aria-label="Close">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["energyFieldsModal"]' aria-label="Close">&times;</button>
             </div>
             <div class="modal-body">
                 <p class="field-hint" style="margin:0 0 12px;" data-i18n="energy.fieldsIntro">Pick which cumulative counters to total each month for this device — auto-detected from its energy registers (Wh / varh / VAh).</p>
@@ -2225,8 +2225,8 @@
             </div>
             <div class="modal-footer">
                 <span class="save-feedback" id="energyFieldsFeedback"></span>
-                <button class="btn btn-secondary btn-sm" onclick="app.closeModal('energyFieldsModal')"><span data-i18n="common.cancel">Cancel</span></button>
-                <button class="btn btn-primary btn-sm" onclick="app.saveEnergyFields()"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
+                <button class="btn btn-secondary btn-sm" data-action="closeModal" data-args='["energyFieldsModal"]'><span data-i18n="common.cancel">Cancel</span></button>
+                <button class="btn btn-primary btn-sm" data-action="saveEnergyFields"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
             </div>
         </div>
     </div>
@@ -2236,13 +2236,13 @@
         <div class="modal-content modal-lg">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-file-earmark-spreadsheet"></i> <span id="devTplTitle" data-i18n="devtpl.title">Device Template</span></h3>
-                <button class="modal-close" aria-label="Close" onclick="app.closeModal('devTplModal')" aria-label="Close">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["devTplModal"]' aria-label="Close">&times;</button>
             </div>
             <div class="modal-body" id="devTplBody"></div>
             <div class="modal-footer">
                 <span class="save-feedback" id="devTplFeedback"></span>
-                <button class="btn btn-secondary btn-sm" onclick="app.closeModal('devTplModal')" data-i18n="common.cancel">Cancel</button>
-                <button class="btn btn-primary btn-sm" id="devTplSaveBtn" onclick="app.tplSave()">
+                <button class="btn btn-secondary btn-sm" data-action="closeModal" data-args='["devTplModal"]' data-i18n="common.cancel">Cancel</button>
+                <button class="btn btn-primary btn-sm" id="devTplSaveBtn" data-action="tplSave">
                     <i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
             </div>
         </div>

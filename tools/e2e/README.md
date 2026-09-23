@@ -177,6 +177,19 @@ MBG_URL=http://localhost:18087 UNIT=sunfield-u1 CHROMIUM_PATH=<chrome> \
 
 Uses the installation-safety fixture.
 
+## CSP smoke
+
+`csp_smoke.mjs` checks the browser side of the security model (3.82.0): the
+login shell and every page under `script-src 'self'`, modal open/close through
+`data-action`, `data-on="change|input"` dispatch, `data-with-value`, the
+`_navigate` helper, and a console free of CSP violations, unknown actions and
+page errors. Any instance will do — a fresh one with the generated password
+is enough.
+
+```bash
+MBG_URL=http://localhost:18090 MBG_USER=admin MBG_PASS=… node csp_smoke.mjs
+```
+
 ## Power limit
 
 `power_limit_e2e.mjs` drives the operator's hand on the power-limit action:

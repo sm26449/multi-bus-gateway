@@ -1640,8 +1640,11 @@ would leak the key into access logs).
 State-changing requests from a **different site** are rejected outright
 (`Sec-Fetch-Site` / `Origin` checks — a drive-by page in the operator's
 browser cannot fire configuration changes), on `/ws` too. Standard security
-headers are applied, including on the login shell, and the canonical-URL
-value is output-escaped against stored-XSS. Secrets never round-trip to the
+headers are applied, including on the login shell; the Content Security
+Policy allows no inline script (`script-src 'self'` — the UI has no inline
+event handlers, every action is a `data-action` attribute), so a value that
+slips through output escaping still cannot execute. The canonical-URL value
+is output-escaped against stored-XSS. Secrets never round-trip to the
 browser: exports, env listings and logs redact tokens and password hashes.
 
 ### 16.6 Audit trail

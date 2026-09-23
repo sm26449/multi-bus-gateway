@@ -550,9 +550,9 @@ Object.assign(JanitzaMonitor.prototype, {
         <div style="display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap;">
             <input type="text" id="tplSearch" class="input" placeholder="${this.t('common.search', 'Search')}…"
                    value="${this._esc(e.search || '')}" style="max-width:220px;">
-            <button class="btn btn-secondary btn-sm" onclick="app.tplAddRow()">
+            <button class="btn btn-secondary btn-sm" data-action="tplAddRow">
                 <i aria-hidden="true" class="bi bi-plus-lg"></i> ${this.t('devtpl.addRegister', 'Add measurement')}</button>
-            <button class="btn btn-secondary btn-sm" onclick="app.tplAutoCanonicalize()"
+            <button class="btn btn-secondary btn-sm" data-action="tplAutoCanonicalize"
                     title="${this._esc(this.t('devtpl.autoCanonHint', 'Infer canonical names from each row’s label/unit (conservative — leaves anything uncertain untouched). Review, then Save.'))}">
                 <i aria-hidden="true" class="bi bi-magic"></i> ${this.t('devtpl.autoCanon', 'Auto-canonicalize')}</button>
             <span class="field-hint">${matching.length > MAX
@@ -762,7 +762,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <tr>
               <td><input class="input enum-cell" data-f="v" data-i="${i}" value="${this._esc(row.v)}" style="width:120px;" placeholder="${this._enumBuilder.mode === 'bits' ? '0' : 'e.g. 4'}"></td>
               <td><input class="input enum-cell" data-f="label" data-i="${i}" value="${this._esc(row.label)}" placeholder="e.g. ${this._enumBuilder.mode === 'bits' ? 'overtemp' : 'MPPT'}"></td>
-              <td><button class="btn btn-ghost btn-sm" onclick="app.enumBuilderDelRow(${i})" aria-label="Remove"><i aria-hidden="true" class="bi bi-x-lg"></i></button></td>
+              <td><button class="btn btn-ghost btn-sm" ${this._act('enumBuilderDelRow', [i])} aria-label="Remove"><i aria-hidden="true" class="bi bi-x-lg"></i></button></td>
             </tr>`).join('');
         body.querySelectorAll('.enum-cell').forEach(inp => inp.addEventListener('change', () => {
             const r = this._enumBuilder.rows[parseInt(inp.dataset.i, 10)];

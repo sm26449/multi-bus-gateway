@@ -20,6 +20,7 @@ import asyncio
 import hmac
 import dataclasses
 import json
+from html import escape as _html_escape
 import logging
 import os
 import re
@@ -50,29 +51,18 @@ _INDEX_CACHE = {"key": None, "html": None}
 
 
 def _canonical_redirect_script(canonical_url: str) -> str:
-    """A tiny <head> script that steers the browser to the canonical HTTPS host
-    (so TLS + passkeys are the default) WITHOUT locking out the local IP: it is
-    client-side (the page loads first, so a down hostname is recoverable), and
-    two escape hatches keep the IP fallback usable — `?local` in the URL, or a
-    sticky `mbg-stay-local` flag it sets. A server-side redirect would strand
-    the operator if DNS/Traefik were down; this never can."""
+    """The <head> markup that steers the browser to the canonical HTTPS host
+    (so TLS + passkeys are the default) WITHOUT locking out the local IP. The
+    logic lives in the static ui/js/canonical.js — the page carries no inline
+    script, so the CSP can forbid inline code entirely — and the target URL
+    travels in a <meta> attribute, HTML-escaped, where no JS-string or
+    </script> trick can turn it into code. It is client-side on purpose: the
+    page loads first, so a down hostname is recoverable (`?local` in the URL,
+    or the sticky `mbg-stay-local` flag the script sets)."""
     if not canonical_url:
         return ""
-    # json.dumps alone does NOT neutralize "</script>" — the HTML tokenizer
-    # ends the script element regardless of JS string context, so a crafted
-    # canonical_url became stored XSS on every page incl. the login shell
-    # (external audit). Escaping <, > and & inside the JSON string keeps the
-    # value byte-identical to JS (\u003c parses back to '<') while making it
-    # inert to the HTML parser.
-    _safe = (json.dumps(canonical_url).replace('<', '\\u003c')
-             .replace('>', '\\u003e').replace('&', '\\u0026'))
-    return ("<script>(function(){var C=" + _safe + ";try{"
-            "var h=new URL(C).host;var p=new URLSearchParams(location.search);"
-            "if(p.has('local')){try{localStorage.setItem('mbg-stay-local','1')}catch(e){}return;}"
-            "if(localStorage.getItem('mbg-stay-local')==='1')return;"
-            "if(location.host===h)return;"
-            "location.replace(C.replace(/\\/$/,'')+location.pathname+location.search+location.hash);"
-            "}catch(e){}})();</script>")
+    return ('<meta name="mbg-canonical" content="' + _html_escape(canonical_url, quote=True)
+            + '"><script src="/static/js/canonical.js?v=0"></script>')
 
 
 def _render_index_html(path: str = "ui/templates/index.html",
@@ -100,12 +90,12 @@ def _render_index_html(path: str = "ui/templates/index.html",
             ver = 0
         return f"{m.group(1)}?v={ver}"
 
-    rendered = _STATIC_ASSET_RE.sub(_stamp, html)
     # inject the canonical redirect as the FIRST thing in <head> so it runs
     # before the heavy JS loads (no flash of the app on the wrong host)
     script = _canonical_redirect_script(canonical_url)
     if script:
-        rendered = rendered.replace("<head>", "<head>" + script, 1)
+        html = html.replace("<head>", "<head>" + script, 1)
+    rendered = _STATIC_ASSET_RE.sub(_stamp, html)
     _INDEX_CACHE.update(key=key, html=rendered)
     return rendered
 
@@ -380,8 +370,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # No external hosts: bootstrap-icons is vendored (ui/vendor/bootstrap-icons,
     # audit 2026-08-14) — the UI is fully self-contained again, works air-gapped
     # and stops beaconing every operator's browser to a CDN.
+    # script-src is 'self' only (3.82.0): the page has no inline script or
+    # event handler — every action is a data-action attribute dispatched from
+    # app-core.js — so an injected string can never run as code, whatever an
+    # escaping slip elsewhere lets through. Inline styles stay allowed.
     _CSP = ("default-src 'self'; "
-            "script-src 'self' 'unsafe-inline'; "
+            "script-src 'self'; "
             "style-src 'self' 'unsafe-inline'; "
             "font-src 'self' data:; "
             "img-src 'self' data:; connect-src 'self'; "

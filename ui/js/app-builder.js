@@ -373,6 +373,11 @@ Object.assign(JanitzaMonitor.prototype, {
         this.openModal('builderConsoleModal');
     },
 
+    _builderCloseModal(id) {
+        this._builderCloseWs();
+        this.closeModal(id);
+    },
+
     _builderCloseWs() {
         if (this._builderWs) {
             try { this._builderWs.close(); } catch (e) { /* already closed */ }

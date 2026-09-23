@@ -197,7 +197,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const unitLine = unit
             ? `<div>${this.t('thr.unitHint', 'Thresholds are compared against the RAW value in')} <b>${this._esc(unit)}</b>${liveTxt}</div>` : '';
         if (template) {
-            detectedDiv.innerHTML = `Detected: <span class="detected-type">${typeNames[template.templateType] || template.templateType}</span> - thresholds auto-filled${unitLine}`;
+            detectedDiv.innerHTML = `Detected: <span class="detected-type">${this._esc(typeNames[template.templateType] || template.templateType)}</span> - thresholds auto-filled${unitLine}`;
             detectedDiv.classList.add('visible');
         } else {
             detectedDiv.innerHTML = unitLine;
@@ -422,7 +422,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div class="empty-state-desc">
                         Add measurements to your dashboard to monitor values in real-time.
                     </div>
-                    <button class="empty-state-action" onclick="app.jumpToDeviceRegisters(app._primaryDeviceId())">
+                    <button class="empty-state-action" ${this._act('_jumpToRegisters', ['primary'])}>
                         📋 Go to Measurements
                     </button>
                 </div>
@@ -597,7 +597,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div class="empty-state-desc">
                         Add measurements to your dashboard to monitor values in real-time.
                     </div>
-                    <button class="empty-state-action" onclick="app.jumpToDeviceRegisters(app._primaryDeviceId())">
+                    <button class="empty-state-action" ${this._act('_jumpToRegisters', ['primary'])}>
                         📋 Go to Measurements
                     </button>
                 </div>

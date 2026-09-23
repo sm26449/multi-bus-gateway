@@ -474,6 +474,26 @@ def validate_template(data: Dict[str, Any]) -> List[str]:
         dec = c.get('decimals')
         if dec is not None and (not isinstance(dec, int) or isinstance(dec, bool)):
             errors.append(f"{where}: decimals must be an integer")
+
+    # Commands: names travel into MQTT topics, HA discovery ids and the UI's
+    # element ids, so they are identifiers, not free text. Params likewise.
+    cmds = t.get('commands')
+    if cmds is not None and not isinstance(cmds, dict):
+        errors.append("commands must be a mapping of name → definition")
+    for cname, c in (cmds or {}).items() if isinstance(cmds, dict) else []:
+        if not isinstance(cname, str) or not _ID_RE.match(cname):
+            errors.append(f"command {cname!r}: name invalid (a-z 0-9 - _, 2-64 chars, starts alphanumeric)")
+            continue
+        if not isinstance(c, dict):
+            errors.append(f"command {cname!r}: definition must be a mapping")
+            continue
+        params = c.get('params')
+        if params is not None and not isinstance(params, dict):
+            errors.append(f"command {cname!r}: params must be a mapping")
+            continue
+        for pname in (params or {}):
+            if not isinstance(pname, str) or not _ID_RE.match(pname):
+                errors.append(f"command {cname!r}: param {pname!r} invalid (a-z 0-9 - _, 2-64 chars)")
     return errors
 
 

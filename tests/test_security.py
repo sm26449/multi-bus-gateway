@@ -323,13 +323,28 @@ def test_challenge_cache_evicts_oldest_not_all():
 def test_canonical_redirect_script_and_bypass():
     from multibus.api import _canonical_redirect_script, _render_index_html
     s = _canonical_redirect_script("https://gw.example.com")
-    assert "gw.example.com" in s
-    assert "mbg-stay-local" in s          # sticky local bypass
-    assert "p.has('local')" in s          # ?local escape hatch
-    assert "location.host===h" in s       # no redirect when already canonical
+    # the value travels in a <meta> attribute; the logic is a static file
+    assert '<meta name="mbg-canonical" content="https://gw.example.com">' in s
+    assert 'src="/static/js/canonical.js' in s
+    assert "<script>" not in s                      # nothing inline
     assert _canonical_redirect_script("") == ""    # unset → no redirect (compat)
+    with open("ui/js/canonical.js", encoding="utf-8") as f:
+        js = f.read()
+    assert 'meta[name="mbg-canonical"]' in js
+    assert "mbg-stay-local" in js                   # sticky local bypass
+    assert "p.has('local')" in js                   # ?local escape hatch
+    assert "location.host === h" in js              # no redirect when already canonical
     html = _render_index_html(canonical_url="https://gw.example.com")
-    assert html.startswith("") and "<head><script>" in html   # injected first in head
+    assert '<head><meta name="mbg-canonical"' in html      # injected first in head
+    assert "canonical.js?v=" in html and "canonical.js?v=0" not in html   # cache-stamped
+
+
+def test_canonical_url_cannot_become_markup_or_script():
+    from multibus.api import _render_index_html
+    hostile = 'https://gw.example.com/"><script>alert(1)</script>'
+    html = _render_index_html(canonical_url=hostile)
+    assert "<script>alert" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
 
 
 @needs_tc

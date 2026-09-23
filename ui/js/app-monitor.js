@@ -64,7 +64,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <span class="hint-banner-text">
                 <strong>${this.t('monitor.hintTitle', 'Getting started:')}</strong> ${body}
             </span>
-            <button class="hint-banner-dismiss" onclick="app.dismissMonitorHint()" aria-label="Dismiss">✕</button>
+            <button class="hint-banner-dismiss" data-action="dismissMonitorHint" aria-label="Dismiss">✕</button>
         `;
 
         main.insertBefore(hint, main.firstChild);
@@ -176,7 +176,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div class="empty-state-desc">
                         Add measurements to monitoring to see real-time data.
                     </div>
-                    <button class="empty-state-action" onclick="app.jumpToDeviceRegisters(app._viewDeviceId())">
+                    <button class="empty-state-action" ${this._act('_jumpToRegisters', ['view'])}>
                         📋 Browse Registers
                     </button>
                 </div>

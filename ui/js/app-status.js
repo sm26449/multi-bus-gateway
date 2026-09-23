@@ -98,7 +98,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     if (!a) return '';
                     const on = a.enabled, chans = (a.channels || []).join(', ') || t('status.noChannel', 'no channel');
                     const testBtn = (a.channels && a.channels.length)
-                        ? ` <button class="btn btn-ghost btn-sm" style="padding:0 8px;font-size:11px;" onclick="app.testAlert(this)"><i aria-hidden="true" class="bi bi-send"></i> ${t('status.testAlert', 'Test')}</button> <span id="alertTestResult" style="font-size:11.5px;"></span>`
+                        ? ` <button class="btn btn-ghost btn-sm" style="padding:0 8px;font-size:11px;" data-action="testAlert" data-with-el><i aria-hidden="true" class="bi bi-send"></i> ${t('status.testAlert', 'Test')}</button> <span id="alertTestResult" style="font-size:11.5px;"></span>`
                         : '';
                     return `<i aria-hidden="true" class="bi bi-bell${on ? '-fill' : ''}"></i> ${t('status.alerts', 'Alerts')}: <b style="color:${on ? OK : OFF};">${on ? t('status.armed', 'armed') : t('status.off', 'off')}</b>${on ? ` <span style="color:var(--text-secondary);">· ${esc(chans)}</span>` : ''}${testBtn}`;
                 })()}</div>
