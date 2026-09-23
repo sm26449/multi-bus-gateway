@@ -261,12 +261,12 @@ the Modbus connection itself ([spec](docs/virtual-meter-spec.md)).
 ```bash
 git clone https://github.com/sm26449/multi-bus-gateway.git
 cd multi-bus-gateway
-cp .env.example .env          # recommended — change the change-me passwords
+cp .env.example .env          # REQUIRED — set the broker credentials and change every change-me
 docker compose up -d          # the COMPLETE stack: gateway + MQTT (mosquitto)
                               # + MQTT Explorer + InfluxDB + Grafana + ESPHome
 # Admin password generated on first boot (printed once):
 docker compose logs multi-bus-gateway | grep -A3 'FIRST RUN'
-# UI: http://localhost:8080 · MQTT Explorer: :4000 · Grafana: :3000
+# UI: http://localhost:8080 · Grafana: :3000 · (MQTT Explorer: --profile debug, 127.0.0.1:4000)
 ```
 
 Nothing external to install: the broker ships in the stack and the gateway

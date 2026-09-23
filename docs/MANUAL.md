@@ -1540,9 +1540,10 @@ from **Config → Security** as exposure grows. Defense in depth: each layer
 applies independently.
 
 > **The bundled stack has its own doors.** The default compose also exposes
-> the broker (`1883`/`9001`, anonymous by default — add credentials via the
-> two-line recipe in `mosquitto/config/mosquitto.conf`), MQTT Explorer
-> (`4000`, unauthenticated viewer), InfluxDB (`8086`) and Grafana (`3000`,
+> the broker (`1883`/`9001`, authenticated since 3.81.0 with
+> `MQTT_USERNAME`/`MQTT_PASSWORD` from `.env`), MQTT Explorer (`4000`, an
+> unauthenticated viewer — off unless `--profile debug`, host-local when on),
+> InfluxDB (`8086`) and Grafana (`3000`,
 > login `admin` / `GF_SECURITY_ADMIN_PASSWORD` from `.env`). On anything
 > beyond a trusted LAN, set broker credentials, change the change-me
 > passwords, and drop the port mappings you don't need.

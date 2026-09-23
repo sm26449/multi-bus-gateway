@@ -67,8 +67,11 @@ services:
       # - MQTT_ENABLED
       # - MQTT_BROKER
       # - MQTT_PORT
-      # - MQTT_USERNAME
-      # - MQTT_PASSWORD
+      # the bundled broker's credentials (3.81.0: required — see mosquitto below);
+      # the gateway logs in with the same pair. Point MQTT_BROKER elsewhere and
+      # set these to that broker's credentials when you bring your own.
+      - MQTT_USERNAME
+      - MQTT_PASSWORD
       # - MQTT_PREFIX
       # - MQTT_PUBLISH_MODE
       # - INFLUXDB_ENABLED
@@ -99,8 +102,13 @@ services:
 
   # MQTT broker — a REQUIRED part of the complete solution, bundled so the
   # whole pipeline works from the first `docker compose up -d` (the gateway's
-  # default broker host is `mosquitto`). Anonymous on the LAN by default —
-  # see mosquitto/config/mosquitto.conf for the two-line credential setup.
+  # default broker host is `mosquitto`). BREAKING in 3.81.0: anonymous access
+  # is off and MQTT_USERNAME / MQTT_PASSWORD are REQUIRED — `docker compose
+  # up` refuses to start without them. The password file lives on the data
+  # volume and is regenerated from .env at every start, so a credential
+  # change is a `docker compose up -d mosquitto` away. STACK_BIND=127.0.0.1
+  # keeps the broker (and InfluxDB/Grafana below) host-local; the default
+  # publishes them on the LAN, authenticated.
   # Already have a broker? `docker compose up -d multi-bus-gateway` starts
   # the gateway alone and you point it at yours from Config -> MQTT.
   mosquitto:
@@ -109,26 +117,39 @@ services:
     container_name: mbg-mosquitto
     logging: *default-logging
     restart: unless-stopped
+    environment:
+      - MQTT_USERNAME=${MQTT_USERNAME:?set MQTT_USERNAME in .env — the bundled broker requires credentials (3.81.0)}
+      - MQTT_PASSWORD=${MQTT_PASSWORD:?set MQTT_PASSWORD in .env — the bundled broker requires credentials (3.81.0)}
+    command:
+      - sh
+      - -c
+      - >-
+        mosquitto_passwd -c -b /mosquitto/data/passwd "$$MQTT_USERNAME" "$$MQTT_PASSWORD"
+        && chown 1883:1883 /mosquitto/data/passwd && chmod 0600 /mosquitto/data/passwd
+        && exec mosquitto -c /mosquitto/config/mosquitto.conf
     ports:
       # host-port mapping only (MQTT_PORT stays the GATEWAY override for an
       # external broker port — two different knobs on purpose)
-      - "${MQTT_BROKER_PORT:-1883}:1883"
-      - "${MQTT_WS_PORT:-9001}:9001"
+      - "${STACK_BIND:-0.0.0.0}:${MQTT_BROKER_PORT:-1883}:1883"
+      - "${STACK_BIND:-0.0.0.0}:${MQTT_WS_PORT:-9001}:9001"
     volumes:
-      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/config:/mosquitto/config:ro
       - mosquitto-data:/mosquitto/data
     networks:
       - monitoring
 
   # MQTT Explorer — web UI over every topic the gateway publishes; the
-  # fastest way to SEE the data flowing. http://<host>:4000
+  # fastest way to SEE the data flowing. It has no login of its own, so
+  # since 3.81.0 it is OFF by default and host-local when enabled:
+  #   docker compose --profile debug up -d      → http://127.0.0.1:4000
   mqtt-explorer:
-    image: smeagolworms4/mqtt-explorer:latest
+    image: smeagolworms4/mqtt-explorer:browser-1.0.3
     container_name: mbg-mqtt-explorer
     logging: *default-logging
     restart: unless-stopped
+    profiles: ["debug"]
     ports:
-      - "${MQTT_EXPLORER_PORT:-4000}:4000"
+      - "127.0.0.1:${MQTT_EXPLORER_PORT:-4000}:4000"
     volumes:
       - mqtt-explorer-config:/mqtt-explorer/config
     depends_on:
@@ -175,7 +196,7 @@ services:
     restart: unless-stopped
     ports:
       # host port only — remap when the host already runs an InfluxDB
-      - "${INFLUXDB_HOST_PORT:-8086}:8086"
+      - "${STACK_BIND:-0.0.0.0}:${INFLUXDB_HOST_PORT:-8086}:8086"
     volumes:
       - influxdb-data:/var/lib/influxdb2
       - influxdb-config:/etc/influxdb2
@@ -185,10 +206,10 @@ services:
       # then paste the same token in the gateway (Config -> InfluxDB).
       - DOCKER_INFLUXDB_INIT_MODE=setup
       - DOCKER_INFLUXDB_INIT_USERNAME=${DOCKER_INFLUXDB_INIT_USERNAME:-admin}
-      - DOCKER_INFLUXDB_INIT_PASSWORD=${DOCKER_INFLUXDB_INIT_PASSWORD:-multibus-change-me}
+      - DOCKER_INFLUXDB_INIT_PASSWORD=${DOCKER_INFLUXDB_INIT_PASSWORD:?set DOCKER_INFLUXDB_INIT_PASSWORD in .env (3.81.0, no built-in default)}
       - DOCKER_INFLUXDB_INIT_ORG=${DOCKER_INFLUXDB_INIT_ORG:-multibus}
       - DOCKER_INFLUXDB_INIT_BUCKET=${DOCKER_INFLUXDB_INIT_BUCKET:-multibus}
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${DOCKER_INFLUXDB_INIT_ADMIN_TOKEN:-multibus-dev-token-change-me}
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${DOCKER_INFLUXDB_INIT_ADMIN_TOKEN:?set DOCKER_INFLUXDB_INIT_ADMIN_TOKEN in .env (3.81.0, no built-in default)}
     networks:
       - monitoring
 
@@ -200,11 +221,11 @@ services:
     restart: unless-stopped
     ports:
       # host port only — remap when the host already runs a Grafana
-      - "${GRAFANA_HOST_PORT:-3000}:3000"
+      - "${STACK_BIND:-0.0.0.0}:${GRAFANA_HOST_PORT:-3000}:3000"
     volumes:
       - grafana-data:/var/lib/grafana
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:-multibus-change-me}
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:?set GF_SECURITY_ADMIN_PASSWORD in .env (3.81.0, no built-in default)}
     networks:
       - monitoring
 

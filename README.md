@@ -256,12 +256,12 @@ pe conexiunea Modbus ([spec](docs/virtual-meter-spec.md)).
 ```bash
 git clone https://github.com/sm26449/multi-bus-gateway.git
 cd multi-bus-gateway
-cp .env.example .env          # recomandat — schimbă parolele change-me
+cp .env.example .env          # OBLIGATORIU — setează credențialele broker-ului și schimbă fiecare change-me
 docker compose up -d          # stack COMPLET: gateway + MQTT (mosquitto)
                               # + MQTT Explorer + InfluxDB + Grafana + ESPHome
 # Parola de admin generată la primul boot (afișată o singură dată):
 docker compose logs multi-bus-gateway | grep -A3 'FIRST RUN'
-# UI: http://localhost:8080 · MQTT Explorer: :4000 · Grafana: :3000
+# UI: http://localhost:8080 · Grafana: :3000 · (MQTT Explorer: --profile debug, 127.0.0.1:4000)
 ```
 
 Nimic extern de instalat: broker-ul e inclus și gateway-ul publică în el

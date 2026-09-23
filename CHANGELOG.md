@@ -1,5 +1,35 @@
 # Changelog
 
+## 3.81.0
+
+### 2026-09-23 — BREAKING: the bundled stack requires credentials
+
+Only installs running the bundled `docker-compose.yml` stack are affected;
+a gateway pointed at your own broker and InfluxDB is not. Migration steps:
+`docs/upgrade-guide.md`, "3.81.0".
+
+- **Mosquitto refuses anonymous clients.** `MQTT_USERNAME`/`MQTT_PASSWORD`
+  in `.env` are required (`docker compose up` refuses to start the broker
+  without them); the password file is regenerated from them on the data
+  volume at every start; the gateway logs in with the same pair (they are
+  passed through as its config overrides). Every other client of the
+  broker — Home Assistant, Node-RED, Telegraf — needs the credentials.
+- **No built-in secrets.** `DOCKER_INFLUXDB_INIT_PASSWORD`,
+  `DOCKER_INFLUXDB_INIT_ADMIN_TOKEN` and `GF_SECURITY_ADMIN_PASSWORD` lost
+  their `multibus-change-me` defaults; they must be set in `.env`.
+- **MQTT Explorer** (a viewer with no login) starts only with
+  `--profile debug`, listens on `127.0.0.1`, and is tag-pinned
+  (`browser-1.0.3`) instead of `latest`.
+- **`STACK_BIND`** (default `0.0.0.0`) prefixes the broker, InfluxDB and
+  Grafana port mappings; `STACK_BIND=127.0.0.1` keeps them host-local. The
+  mosquitto config directory is mounted read-only.
+
+Why: the gateway refused blank and default passwords from its first release,
+while the stack around it shipped an anonymous broker and literal default
+credentials — and with `mqtt.allow_write_entities` on, an anonymous broker
+publish was a hardware write for anyone on the LAN (the gateway refuses that
+combination since 3.80.0; this closes the default that produced it).
+
 ## 3.80.2
 
 ### 2026-09-23 — first findings of the new scanners, and the rules' MQTT set gate

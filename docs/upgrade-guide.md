@@ -38,6 +38,55 @@ informational: loading never depends on it, so the compatibility contract is
 exactly the above. (Device *templates* additionally carry a `schema_version`,
 and newer template schemas are rejected with a clear error.)
 
+## 3.81.0 — the bundled stack requires credentials (breaking)
+
+Only installs that run the **bundled** `docker-compose.yml` stack are
+affected; a gateway pointed at your own broker/InfluxDB is not.
+
+What changed:
+
+- Mosquitto no longer accepts anonymous clients. `MQTT_USERNAME` and
+  `MQTT_PASSWORD` in `.env` are required — `docker compose up` refuses to
+  start the broker without them — and the password file is regenerated from
+  them at every start (on the `mosquitto-data` volume).
+- `DOCKER_INFLUXDB_INIT_PASSWORD`, `DOCKER_INFLUXDB_INIT_ADMIN_TOKEN` and
+  `GF_SECURITY_ADMIN_PASSWORD` have no built-in default any more; they must
+  be in `.env`.
+- MQTT Explorer (no login of its own) starts only with `--profile debug`
+  and listens on `127.0.0.1` when it does. Its image is tag-pinned.
+- `STACK_BIND` (default `0.0.0.0`) prefixes the broker, InfluxDB and Grafana
+  port mappings; `STACK_BIND=127.0.0.1` keeps them host-local.
+
+Migration, in order:
+
+1. Add to `.env` (copy the lines from `.env.example`):
+
+   ```
+   MQTT_USERNAME=mbg
+   MQTT_PASSWORD=<a long random secret>
+   ```
+
+   and make sure the three Influx/Grafana values are present (they were
+   already there if you copied `.env.example` when you installed).
+2. `docker compose up -d` — the gateway reads `MQTT_USERNAME`/`MQTT_PASSWORD`
+   itself (they are passed through as config overrides), so it reconnects
+   with credentials on the same start. Check `docker compose logs mosquitto`
+   for `mosquitto version … running` and the gateway's MQTT dot in the UI.
+3. Give the same credentials to **every other client** of that broker: Home
+   Assistant's MQTT integration, Node-RED broker nodes, Telegraf, scripts.
+   Until you do, they are refused with `not authorised` and their retained
+   topics simply stop updating — nothing is deleted.
+4. If a dashboard host reached MQTT Explorer on `:4000`, start it with
+   `docker compose --profile debug up -d` and reach it through an SSH
+   tunnel or on the host itself; it never had a login.
+5. Optional: extra broker users for third-party clients —
+   `docker compose exec mosquitto mosquitto_passwd -b /mosquitto/data/passwd <user> <pass>`
+   then `docker compose kill -s HUP mosquitto`. The first user is rewritten
+   from `.env` at each start; the others persist on the volume.
+
+Rolling back to 3.80.x restores anonymous access to the broker as before —
+remove the credentials from the other clients only if you go back.
+
 ## Downgrade warning
 
 Going back to an older version is where data can be lost — **silently**:

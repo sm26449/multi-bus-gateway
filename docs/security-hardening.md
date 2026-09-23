@@ -56,9 +56,10 @@ reverse proxy. It is not designed to be exposed to the public internet.
 ## 4. The broker
 
 - [ ] **No anonymous broker.** Set `mqtt.username`/`mqtt.password` (and TLS
-      if the broker is not on the same host). The bundled Mosquitto ships
-      permissive for a first boot; give it a password file and
-      `allow_anonymous false` before anything else joins the network.
+      if the broker is not on the same host). The bundled Mosquitto requires
+      `MQTT_USERNAME`/`MQTT_PASSWORD` in `.env` since 3.81.0 and regenerates
+      its password file from them at every start; give every consumer the
+      same pair, or add users with `mosquitto_passwd` on the data volume.
 - [ ] **ACLs on the write topics.** With `mqtt.allow_write_entities` on,
       whoever can publish to `<prefix>/cmd/#`, the HA `.../set` topics and
       `mbg/rules/+/set` can act on hardware. The gateway refuses those

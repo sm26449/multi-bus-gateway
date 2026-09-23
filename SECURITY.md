@@ -100,8 +100,10 @@ Defense in depth — every layer applies independently:
   login is turned on; the enable flow lists them for review — remove the
   ones you do not recognise.
 - **The bundled compose stack** (broker, InfluxDB, Grafana, MQTT Explorer)
-  is a convenience for a trusted LAN: secure its credentials and exposed
-  ports before putting anything else on that network.
+  is a convenience for a trusted LAN. Since 3.81.0 the broker requires
+  credentials, the Influx/Grafana secrets have no built-in defaults, MQTT
+  Explorer is off unless asked for and host-local, and `STACK_BIND` can keep
+  the rest host-local too — but their ports are still yours to review.
 
 The reliability side of the same design — fail-safes, data-delivery
 guarantees, config self-healing — is cataloged in

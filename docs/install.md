@@ -69,12 +69,12 @@ the password under **Config → Security**.
 entrypoint starts as root only to `chown` this directory to the app user
 (uid 10001) and then drops privileges — no manual ownership fix-up.
 
-**The bundled services** (none of them uses a Compose profile):
+**The bundled services** (only MQTT Explorer sits behind a profile):
 
 | Service | Container | Purpose | Data |
 |---|---|---|---|
-| `mosquitto` | `mbg-mosquitto` | MQTT broker — anonymous on the LAN by default; credentials via the two-line recipe in `mosquitto/config/mosquitto.conf` | `mosquitto-data` |
-| `mqtt-explorer` | `mbg-mqtt-explorer` | web view of every topic, `:4000` | `mqtt-explorer-config` |
+| `mosquitto` | `mbg-mosquitto` | MQTT broker — requires `MQTT_USERNAME`/`MQTT_PASSWORD` from `.env` (3.81.0); every LAN consumer logs in with that pair | `mosquitto-data` (retained messages + the generated password file) |
+| `mqtt-explorer` | `mbg-mqtt-explorer` | web view of every topic, `127.0.0.1:4000`, only with `--profile debug` (it has no login of its own) | `mqtt-explorer-config` |
 | `esphome` | `esphome` | build engine for the Device Builder; no published port on purpose | `esphome-config` |
 | `influxdb` | `mbg-influxdb` | history/energy store; self-configures on first boot (org/bucket `multibus`) | `influxdb-data`, `influxdb-config` |
 | `grafana` | `mbg-grafana` | dashboards, `:3000`, login `admin` / `GF_SECURITY_ADMIN_PASSWORD` | `grafana-data` |
@@ -351,8 +351,8 @@ docker compose logs multi-bus-gateway | tail -50    # "Multi-Bus Gateway startin
 - **First device**: **Devices → Add device** (or **Discover devices** for a
   CIDR scan / SunSpec walk / MQTT browse), **Test connection**, pick a
   template, save — the device polls immediately and its card turns green.
-  With the bundled stack, MQTT Explorer on `:4000` shows the topics as they
-  flow.
+  With the bundled stack, `docker compose --profile debug up -d` puts MQTT
+  Explorer on `127.0.0.1:4000` to watch the topics flow.
 - **Virtual meter**: only after the source is fresh — add an instance on a
   port inside the published range, enable it, watch its **Logs** tab for the
   consumer's reads ([MANUAL.md §11](MANUAL.md#11-virtual-meters--step-by-step)).
