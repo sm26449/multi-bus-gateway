@@ -16,6 +16,23 @@ each with its full license text alongside the vendored files:
   Copyright 2021 Open Home Foundation
   License: Apache-2.0 — ui/vendor/esp-web-tools/LICENSE
   https://esphome.github.io/esp-web-tools/
+  The minified bundle carries, without their own banners, these libraries:
+  - Lit — Copyright Google LLC — BSD-3-Clause — https://lit.dev
+  - esptool-js — Copyright Espressif Systems — Apache-2.0 —
+    https://github.com/espressif/esptool-js
+  - Improv Wi-Fi SDK — Copyright Open Home Foundation — Apache-2.0 —
+    https://github.com/improv-wifi/sdk-js
+  - Material Web Components — Copyright Google LLC — Apache-2.0 —
+    https://github.com/material-components/material-web
+  - tslib — Copyright Microsoft Corporation — 0BSD —
+    https://github.com/microsoft/tslib
+
+The SunSpec register maps (multibus/device_templates/fronius_sunspec_*.json)
+follow the SunSpec Alliance information models; the SunSpec model
+definitions are published under the Apache-2.0 license
+(https://github.com/sunspec/models). The maps themselves were written for
+this project and verified against Fronius documentation and hardware, as
+each template's provenance line states.
 
 The bundled Docker Compose stack references (but does not redistribute)
 container images with their own licenses: ESPHome (ghcr.io/esphome/esphome),

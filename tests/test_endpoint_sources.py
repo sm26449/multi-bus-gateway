@@ -344,3 +344,28 @@ endpoints:
     # a group that overrides nothing keeps the installation's own routing
     assert d['pv-u1'].influxdb_bucket == 'pv'
     assert d['pv-meter'].influxdb_bucket == 'pv_meter'
+
+
+def test_a_declared_template_that_did_not_load_idles_the_source(tmp_path, caplog):
+    """F-07 (3.83.0): a device whose template is missing or failed to parse
+    used to poll anyway with byte_order 'big' — a little-endian meter would
+    publish word-swapped garbage as if it were fine. The source stays idle
+    and the log says why."""
+    import logging
+    from tests.test_devices import write_config
+    from multibus.device_runtime import build_device_client
+    from multibus.device_template import TemplateRegistry
+    cfg = write_config(tmp_path, extra_yaml="""
+devices:
+  - id: ghost
+    template: no_such_template
+    connection: { protocol: tcp, host: 192.0.2.5 }
+""")
+    reg = TemplateRegistry(user_dir=tmp_path / "user_templates")
+    reg.reload()
+    dev = next(d for d in cfg.devices if d.id == "ghost")
+    with caplog.at_level(logging.WARNING):
+        client = build_device_client(cfg, reg, dev)
+    assert client is None
+    assert any("no_such_template" in r.getMessage() and "not loaded" in r.getMessage()
+               for r in caplog.records)

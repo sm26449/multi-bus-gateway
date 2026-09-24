@@ -171,3 +171,49 @@ def test_a_dry_run_shows_the_frames_and_touches_nothing(fronius):
     r = run_command(_cmd(t), {'value': 40, 'revert_s': 600, 'ramp_s': 0}, inv, regs, dry_run=True)
     assert r['status'] == 'dry_run' and r['frames'][0]['words'] == [4000, 0, 600, 0, 1]
     assert inv.writes == []
+
+
+def test_guard_reads_use_the_registers_own_function_code(fronius):
+    """F-14 (3.83.0): a guard or verify register declared as an input
+    register is read with FC4; before, every guard read went out as FC3."""
+    from multibus.commands import _read_named
+    from multibus.register_parser import RegisterParser
+    t, regs = fronius
+    import copy
+    regs2 = {k: copy.copy(v) for k, v in regs.items()}
+    regs2['controls_model_id'].register_type = 'input'
+    calls = []
+
+    class _Conn:
+        def read_registers(self, address, count, register_type='holding'):
+            calls.append((address, count, register_type))
+            return [123] * count
+    out, sf = _read_named(_Conn(), regs2, ['controls_model_id', 'power_limit_pct'],
+                          RegisterParser('big'), ['wmaxlimpct_sf'])
+    assert {c[2] for c in calls} == {'input', 'holding'}
+    assert [c for c in calls if c[2] == 'input'][0][0] == regs2['controls_model_id'].address
+
+
+def test_commands_respect_the_register_envelope_and_never_clamp(fronius):
+    """F-12 (3.83.0): a command's writes meet the register's own write_*
+    envelope, an input register cannot be written, and a value the encoder
+    would have to clamp is refused."""
+    import copy
+    from multibus.commands import plan_frames
+    from multibus.encoder import RegisterEncoder
+    t, regs = fronius
+    cmd = _cmd(t)
+    regs2 = {k: copy.copy(v) for k, v in regs.items()}
+    enc = RegisterEncoder('big')
+    ok = plan_frames(cmd, {'value': 60, 'revert_s': 600, 'ramp_s': 0}, regs2, enc, {'wmaxlimpct_sf': -2})
+    assert ok[0]['words'][0] == 6000
+    regs2['power_limit_revert_s'].write_max = 100                     # envelope on a written register
+    with pytest.raises(ValueError):
+        plan_frames(cmd, {'value': 60, 'revert_s': 600, 'ramp_s': 0}, regs2, enc, {'wmaxlimpct_sf': -2})
+    regs2['power_limit_revert_s'].write_max = None
+    regs2['power_limit_revert_s'].register_type = 'input'             # not writable at all
+    with pytest.raises(ValueError):
+        plan_frames(cmd, {'value': 60, 'revert_s': 600, 'ramp_s': 0}, regs2, enc, {'wmaxlimpct_sf': -2})
+    regs2['power_limit_revert_s'].register_type = 'holding'
+    with pytest.raises(ValueError):                                    # 100 % with SF -3 → 100000 > uint16
+        plan_frames(cmd, {'value': 100, 'revert_s': 600, 'ramp_s': 0}, regs2, enc, {'wmaxlimpct_sf': -3})

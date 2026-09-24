@@ -34,6 +34,8 @@ Design: docs/design/tier2-device-profiles.md §2.
 from __future__ import annotations
 
 import json
+import yaml
+import math
 import logging
 import os
 import re
@@ -356,7 +358,7 @@ def validate_template(data: Dict[str, Any]) -> List[str]:
     for i, r in enumerate(regs):
         where = f"register #{i} (addr {r.get('address')!r}, name {r.get('name')!r})"
         addr = r.get('address')
-        if not isinstance(addr, int) or not (0 <= addr <= 65535):
+        if isinstance(addr, bool) or not isinstance(addr, int) or not (0 <= addr <= 65535):
             errors.append(f"{where}: address must be an integer 0..65535")
         name = r.get('name')
         if not name or not isinstance(name, str):
@@ -376,8 +378,8 @@ def validate_template(data: Dict[str, Any]) -> List[str]:
                           f"({', '.join(sorted(VALID_DATA_TYPES))})")
         elif dt.startswith('string'):
             _m = re.search(r'(\d+)', dt)
-            if not _m or int(_m.group(1)) < 1:
-                errors.append(f"{where}: string needs a register length, e.g. 'string:7'")
+            if not _m or not (1 <= int(_m.group(1)) <= 125):
+                errors.append(f"{where}: string needs a register length of 1..125, e.g. 'string:7'")
         cat = r.get('category', 'other')
         if categories and cat not in categories:
             errors.append(f"{where}: category {cat!r} not declared in categories")
@@ -385,13 +387,22 @@ def validate_template(data: Dict[str, Any]) -> List[str]:
         if pg and poll_groups and pg not in poll_groups:
             errors.append(f"{where}: poll_group {pg!r} not declared in poll_groups")
         scale = r.get('scale', 1)
-        if not isinstance(scale, (int, float)) or scale == 0:
-            errors.append(f"{where}: scale must be a non-zero number")
+        if (isinstance(scale, bool) or not isinstance(scale, (int, float)) or scale == 0
+                or not math.isfinite(scale)):
+            errors.append(f"{where}: scale must be a finite, non-zero number")
+        offset = r.get('offset', 0)
+        if offset is not None and (isinstance(offset, bool) or not isinstance(offset, (int, float))
+                                   or not math.isfinite(offset)):
+            errors.append(f"{where}: offset must be a finite number")
         # Write guards are OPT-IN (F3a): a writable register without bounds is
         # legal (the value is sent verbatim after an explicit confirmation).
         # What IS validated: declared guards must be coherent.
         if r.get('writable'):
-            wmin, wmax = r.get('write_min'), r.get('write_max')
+            wmin, wmax, wsafe = r.get('write_min'), r.get('write_max'), r.get('write_safe')
+            for _k, _v in (('write_min', wmin), ('write_max', wmax), ('write_safe', wsafe)):
+                if _v is not None and (isinstance(_v, bool) or not isinstance(_v, (int, float))
+                                       or not math.isfinite(_v)):
+                    errors.append(f"{where}: {_k} must be a finite number")
             if (wmin is not None and wmax is not None
                     and float(wmin) > float(wmax)):
                 errors.append(f"{where}: write_min {wmin} > write_max {wmax}")
@@ -402,6 +413,16 @@ def validate_template(data: Dict[str, Any]) -> List[str]:
                                    and not isinstance(v, bool) for v in wa)):
                     errors.append(f"{where}: write_allowed must be a non-empty "
                                   f"list of numbers")
+            # the safe value is what a lease reverts to — it must itself be
+            # inside the envelope, or the revert writes what the guard forbids
+            # (F-21, 3.83.0)
+            if isinstance(wsafe, (int, float)) and not isinstance(wsafe, bool) and math.isfinite(wsafe):
+                if wmin is not None and isinstance(wmin, (int, float)) and wsafe < wmin:
+                    errors.append(f"{where}: write_safe {wsafe} is below write_min {wmin}")
+                if wmax is not None and isinstance(wmax, (int, float)) and wsafe > wmax:
+                    errors.append(f"{where}: write_safe {wsafe} is above write_max {wmax}")
+                if isinstance(wa, list) and wa and wsafe not in wa:
+                    errors.append(f"{where}: write_safe {wsafe} is not in write_allowed")
     # scale_from must reference an existing register NAME in this template —
     # a dangling referent would silently render every dependent value missing.
     _names = {r.get('name') for r in regs if isinstance(r, dict)}
@@ -683,6 +704,15 @@ class TemplateRegistry:
             raise ValueError(f"template {t.id!r} is built-in (read-only) — duplicate it under a new id")
         self.user_dir.mkdir(parents=True, exist_ok=True)
         path = self.user_dir / f"{t.id}.json"
+        # a user file named differently but carrying this id (a hand copy, an
+        # old upload) would shadow the fresh save at the next reload and
+        # resurrect a deleted template (F-20, 3.83.0): remove such twins
+        if existing and existing.path and Path(existing.path) != path \
+                and Path(existing.path).parent == self.user_dir:
+            Path(existing.path).unlink(missing_ok=True)
+        for twin in self._user_files_with_id(t.id):
+            if twin != path:
+                twin.unlink(missing_ok=True)
         # atomic temp+rename — a crash mid-write must not truncate the template
         # (the API.md-0-bytes failure class)
         _body = json.dumps(t.to_dict(), indent=1, ensure_ascii=False) + "\n"
@@ -697,6 +727,24 @@ class TemplateRegistry:
         logger.info("device template %s saved (%d registers)", t.id, len(t.registers))
         return t
 
+    def _user_files_with_id(self, template_id: str) -> List[Path]:
+        """Every file in the user dir whose content declares ``template_id``,
+        whatever it is named."""
+        out: List[Path] = []
+        if not self.user_dir.is_dir():
+            return out
+        for f in self.user_dir.iterdir():
+            if f.suffix.lower() not in ('.json', '.yaml', '.yml'):
+                continue
+            try:
+                with open(f, encoding='utf-8') as fh:
+                    raw = json.load(fh) if f.suffix.lower() == '.json' else yaml.safe_load(fh)
+                if ((raw or {}).get('device_template') or {}).get('id') == template_id:
+                    out.append(f)
+            except Exception:  # noqa: BLE001 — an unreadable file is not this id
+                continue
+        return out
+
     def delete_user(self, template_id: str) -> None:
         t = self.get(template_id)
         if not t:
@@ -704,5 +752,7 @@ class TemplateRegistry:
         if t.builtin:
             raise ValueError(f"template {template_id!r} is built-in (read-only)")
         Path(t.path).unlink(missing_ok=True)
+        for twin in self._user_files_with_id(template_id):      # F-20: no resurrection
+            twin.unlink(missing_ok=True)
         del self._templates[template_id]
         logger.info("device template %s deleted", template_id)

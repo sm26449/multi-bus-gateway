@@ -333,9 +333,11 @@ class GatewayApp:
         # 5 minutes up AND at least one successful device read (or no pollable
         # devices at all). Re-checks each minute until it succeeds once per boot.
         def _lkg_when_healthy():
-            deadline_first = time.time() + 300
+            # monotonic: a Pi booting at 1970 and NTP-stepping forward would
+            # otherwise pass the 5-minute deadline at once (F-58, 3.83.0)
+            deadline_first = time.monotonic() + 300
             while self.running:
-                time.sleep(max(1.0, deadline_first - time.time()) if time.time() < deadline_first else 60.0)
+                time.sleep(max(1.0, deadline_first - time.monotonic()) if time.monotonic() < deadline_first else 60.0)
                 if not self.running:
                     return
                 clients = [c for _d, c in self.devices if c is not None]
@@ -393,6 +395,16 @@ class GatewayApp:
         self.running = False
         logger.info("Shutting down...")
 
+        # dead-man leases first, while the devices are still connected: a
+        # controller that will not survive this restart must not leave its
+        # limit in place until boot recovery (F-28, 3.83.0)
+        _lm = getattr(getattr(self, 'app', None), 'state', None)
+        _lm = getattr(_lm, 'lease_manager', None)
+        if _lm is not None:
+            try:
+                _lm.stop(revert_now=True)
+            except Exception:  # noqa: BLE001
+                logger.exception("write-lease shutdown revert failed")
         if self.vmeter_manager:
             self.vmeter_manager.stop_all()
         if getattr(self, 'endpoint_aggregator', None):

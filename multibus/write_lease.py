@@ -43,6 +43,7 @@ _Key = Tuple[str, str, int]   # (device_id, register_type, address)
 class WriteLeaseManager:
     def __init__(self, tick_s: float = 1.0, persist_path=None):
         self._leases: Dict[_Key, dict] = {}
+        self._failing: set = set()        # keys whose revert failed at least once (F-59)
         self._lock = threading.Lock()
         self._tick = tick_s
         self._gen = 0                 # monotonic generation; bumps on every arm()
@@ -61,8 +62,34 @@ class WriteLeaseManager:
         self._thread = threading.Thread(target=self._run, name="write-lease", daemon=True)
         self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self, revert_now: bool = True, timeout_s: float = 10.0) -> None:
+        """Stop the sweeper. With ``revert_now`` (the clean-shutdown default)
+        every live lease is reverted first, best effort within ``timeout_s``:
+        a controller that will not survive the restart must not leave its
+        limit on the device until boot recovery gets to it (F-28, 3.83.0).
+        A revert that fails stays on disk, so boot recovery still fires."""
         self._stop.set()
+        if not revert_now:
+            return
+        with self._lock:
+            pending = [(k, dict(v)) for k, v in self._leases.items()]
+        deadline = time.monotonic() + max(0.0, timeout_s)
+        for key, lease in pending:
+            if time.monotonic() > deadline:
+                logger.warning("write-lease: shutdown revert budget spent; %d lease(s) left for boot recovery",
+                               len(pending) - pending.index((key, lease)))
+                break
+            try:
+                lease['revert'](lambda _k=key, _g=lease['gen']: self._is_current(_k, _g))
+                with self._lock:
+                    cur = self._leases.get(key)
+                    if cur is not None and cur['gen'] == lease['gen']:
+                        del self._leases[key]
+                        self._persist_locked()
+                logger.warning("WRITE-LEASE reverted at shutdown device=%s %s addr=%s", key[0], key[1], key[2])
+            except Exception as e:  # noqa: BLE001
+                logger.error("WRITE-LEASE shutdown revert failed (kept for boot recovery) device=%s addr=%s: %s",
+                             key[0], key[2], e)
 
     def arm(self, device_id: str, register_type: str, address: int,
             lease_ms: int, revert: Callable[[Callable[[], bool]], None],
@@ -193,11 +220,20 @@ class WriteLeaseManager:
             # on a failed write; a no-op (renewed) return also lands here as ok=True
             revert(lambda _k=key, _g=gen: self._is_current(_k, _g))
             ok = True
-            logger.warning("WRITE-LEASE expired → reverted device=%s %s addr=%s",
-                           key[0], key[1], key[2])
+            recovered = key in self._failing
+            self._failing.discard(key)
+            logger.warning("WRITE-LEASE expired → reverted device=%s %s addr=%s%s",
+                           key[0], key[1], key[2], " (after earlier failures)" if recovered else "")
         except Exception as e:  # noqa: BLE001
-            logger.error("WRITE-LEASE revert FAILED (will retry) device=%s addr=%s: %s",
-                         key[0], key[2], e)
+            # first failure at ERROR, the retries every few seconds at DEBUG
+            # — an offline device used to produce 20 ERROR lines a minute per
+            # lease (F-59, 3.83.0); recovery is logged at WARNING below
+            if key in self._failing:
+                logger.debug("WRITE-LEASE revert still failing device=%s addr=%s: %s", key[0], key[2], e)
+            else:
+                self._failing.add(key)
+                logger.error("WRITE-LEASE revert FAILED (will retry every few seconds, further "
+                             "failures at debug level) device=%s addr=%s: %s", key[0], key[2], e)
         # Recompute the clock AFTER the (possibly multi-second, blocking) revert so
         # the retry is scheduled relative to now, not to sweep-start — otherwise the
         # backoff lands in the past and a permanently-offline device is retried every

@@ -641,3 +641,60 @@ def test_meter_is_read_only_on_the_wire():
         c.close()
     finally:
         vm.stop()
+
+
+def test_an_unencodable_overflow_degrades_the_row_not_the_block():
+    """F-06 (3.83.0): an infinite or 1e300 source value (an MQTT publisher can
+    send one) raised OverflowError past the row guard, aborting the rebuild —
+    the served frame froze with the stale-stop disarmed. It is a missing row."""
+    now = time.monotonic()
+    vals = {"A": (10.0, now), "B": (float("inf"), now)}
+    vm = VirtualMeter(T([live(0, "A"), live(2, "B")]), lambda n: vals.get(n),
+                      stale_after_s=15, on_stale="legacy")
+    newest = vm._rebuild_block()                     # must not raise
+    assert f32(words_at(vm, 0)) == 10.0 and words_at(vm, 2) is None
+    assert newest == now
+    vals["B"] = (1e300, now)
+    vm._rebuild_block()
+    assert words_at(vm, 2) is None and 2 in vm._encode_failed
+    vals["B"] = (20.0, now)
+    vm._rebuild_block()
+    assert f32(words_at(vm, 2)) == 20.0 and 2 not in vm._encode_failed
+
+
+def test_hold_window_starts_when_the_row_goes_stale():
+    """F-62 (3.83.0): the hold used to be measured from the value's own
+    timestamp, so a row whose freshness bound was >= max_hold_s never held.
+    It counts from stale onset (stamp + bound) now."""
+    now = time.monotonic()
+    vals = {"A": (10.0, now, 60.0)}                    # source bound 60 s, hold 30 s
+    vm = VirtualMeter(T([live(0, "A")]), lambda n: vals.get(n),
+                      stale_after_s=15, on_stale="hold", max_hold_s=30)
+    vm._rebuild_block()
+    assert f32(words_at(vm, 0)) == 10.0
+    # the last fresh value is 70 s old: stale for 10 s → inside the 30 s hold
+    w, _ts = vm._last_good[0]
+    vm._last_good[0] = (w, now - 70)
+    vals["A"] = (10.0, now - 70, 60.0)
+    vm._rebuild_block()
+    assert f32(words_at(vm, 0)) == 10.0, "hold must engage once the row went stale"
+    assert vm._quality["stale"] == 1
+    # 100 s old: stale for 40 s → past the hold, behaves like fail
+    vm._last_good[0] = (w, now - 100)
+    vals["A"] = (10.0, now - 100, 60.0)
+    vm._rebuild_block()
+    assert vm._unavail_spans == [(0, 2)]
+
+
+def test_a_stamp_a_moment_ahead_is_fresh_a_stamp_far_ahead_is_not():
+    """F-31 (3.83.0): a push source stamps on its own thread; a stamp taken a
+    moment after the rebuild read its clock is a race, not a corrupted stamp."""
+    from multibus.virtual_meter import FUTURE_TOLERANCE_S
+    now = time.monotonic()
+    vals = {"A": (10.0, now + FUTURE_TOLERANCE_S / 2)}
+    vm = VirtualMeter(T([live(0, "A")]), lambda n: vals.get(n), stale_after_s=15, on_stale="fail")
+    vm._rebuild_block()
+    assert f32(words_at(vm, 0)) == 10.0 and vm._unavail_spans == []
+    vals["A"] = (10.0, now + 120)
+    vm._rebuild_block()
+    assert vm._unavail_spans == [(0, 2)]

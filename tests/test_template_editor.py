@@ -140,3 +140,27 @@ def test_port_range_info_and_validation(tmp_path, monkeypatch):
                             "registers": [{"addr": 0, "type": "int16",
                                            "source_kind": "const", "source": 1}]})
     assert "error" in mgr.add_instance("u", port=1503)
+
+
+def test_a_twin_file_with_the_same_id_cannot_shadow_or_resurrect(tmp_path):
+    """F-20 (3.83.0): a user file named differently but carrying the same id
+    used to shadow a fresh save at the next reload and to bring a deleted
+    template back."""
+    import json
+    from multibus.device_template import TemplateRegistry
+    udir = tmp_path / "user_templates"; udir.mkdir()
+    doc = {"device_template": {"id": "twin_t", "name": "Twin", "registers": [
+        {"address": 0, "name": "v", "data_type": "uint16", "writable": True, "write_min": 0, "write_max": 50}]}}
+    (udir / "hand-copy.json").write_text(json.dumps(doc))
+    reg = TemplateRegistry(user_dir=udir); reg.reload()
+    assert reg.get("twin_t").registers[0].write_max == 50
+    doc["device_template"]["registers"][0]["write_max"] = 10          # tighten the envelope
+    reg.save_user(doc)
+    assert not (udir / "hand-copy.json").exists() and (udir / "twin_t.json").exists()
+    reg.reload()
+    assert reg.get("twin_t").registers[0].write_max == 10             # the tightened one survives
+    (udir / "another-copy.json").write_text(json.dumps(doc))
+    reg.delete_user("twin_t")
+    assert not list(udir.glob("*.json"))
+    reg.reload()
+    assert reg.get("twin_t") is None                                   # no resurrection

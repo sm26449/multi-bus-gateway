@@ -266,7 +266,11 @@ def _coerce_numeric(val) -> Optional[float]:
     import math
     if isinstance(val, bool):
         return int(val)
-    if isinstance(val, (int, float)):
+    if isinstance(val, int):
+        # math.isfinite(int) raises OverflowError above ~1e308; an integer
+        # wider than 64 bits is no measurement either (F-63, 3.83.0)
+        return val if -(2 ** 63) <= val < 2 ** 63 else None
+    if isinstance(val, float):
         return val if math.isfinite(val) else None
     if isinstance(val, str):
         try:

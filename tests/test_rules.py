@@ -285,3 +285,14 @@ def test_validation_knows_max_step():
     assert not [e for e in validate_rule_def(dict(raw, signal_valid={'max_step': 10})) if 'signal_valid' in e]
     assert any('max_step' in e for e in validate_rule_def(dict(raw, signal_valid={'max_step': 0})))
     assert any('signal_valid' in e for e in validate_rule_def(dict(raw, signal_valid={'bogus': 1})))
+
+
+def test_rule_numbers_must_be_finite():
+    """F-30 (3.83.0): NaN/±inf are not setpoints, thresholds or stale values."""
+    for bad in ({'on_stale': float('inf')}, {'on_stale': 'nan'},
+                {'steps': [{'at': 250, 'value': float('nan'), 'label': 'x'}]},
+                {'steps': [{'at': 'inf', 'value': 80, 'label': 'x'}]},
+                {'release_below': float('-inf')}):
+        errs = validate_rule_def(dict(OV, **bad))
+        assert errs, bad
+    assert validate_rule_def(dict(OV, on_stale=70)) == []

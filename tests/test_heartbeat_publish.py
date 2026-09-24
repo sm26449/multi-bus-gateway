@@ -16,7 +16,7 @@ def _pub(heartbeat=0):
 
 def test_heartbeat_republishes_unchanged_after_interval(monkeypatch):
     now = [1000.0]
-    monkeypatch.setattr(mp.time, "time", lambda: now[0])
+    monkeypatch.setattr(mp.time, "monotonic", lambda: now[0])
     pub = _pub(heartbeat=10)
     t = "meters/x/voltage/l1_n"
 
@@ -36,7 +36,7 @@ def test_heartbeat_republishes_unchanged_after_interval(monkeypatch):
 
 def test_heartbeat_off_by_default(monkeypatch):
     now = [1000.0]
-    monkeypatch.setattr(mp.time, "time", lambda: now[0])
+    monkeypatch.setattr(mp.time, "monotonic", lambda: now[0])
     pub = _pub(heartbeat=0)                            # default: no heartbeat
     t = "meters/x/voltage/l1_n"
     assert pub._should_publish(t, 230.0) is True

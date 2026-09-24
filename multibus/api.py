@@ -339,7 +339,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             try:
                 nets.append(_ipaddr.ip_network(entry, strict=False))
             except ValueError:
-                logger.warning("security.allowlist: ignoring invalid entry %r", entry)
+                # fail CLOSED: an allowlist the operator wrote but that does
+                # not parse must not silently become "everyone" (F-18,
+                # 3.83.0); a no-match network denies every client until
+                # config.yaml is fixed
+                logger.critical("security.allowlist: entry %r does not parse — DENYING all "
+                                "clients until it is fixed", entry)
+                nets.append(_ipaddr.ip_network("255.255.255.255/32"))
         return nets
 
     def _ip_allowed(peer: str) -> bool:
@@ -1025,6 +1031,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # are exactly what a security review wants to see). Live-data actions with
     # no config effect (queries, probes, discovery) are skipped; device writes
     # have their own richer entry on the write route.
+    _BODY_CAP = 8 * 1024 * 1024                 # every JSON route
+    _BODY_CAP_IMPORT = 25 * 1024 * 1024         # matches the import handler's own cap
+    _BODY_CAP_LARGE_PATHS = ('/api/config/import',)
     _AUDIT_SKIP = ("/api/query", "/api/diagnostics/probe", "/api/discover",
                    "/api/auth/", "/api/alerts/test", "/api/devices/test",
                    "/api/bus-trace",
@@ -1038,6 +1047,19 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     async def _audit_mw(request: Request, call_next):
         body_summary = None
         p = request.url.path
+        # F-19 (3.83.0): one body cap for every /api/ write. Handlers read
+        # the body through Starlette, which buffers it whole — without a cap
+        # any authenticated peer (or, on an auth-off box, any LAN peer) could
+        # OOM the process with one oversized POST. Import has its own 25 MB
+        # cap inside the handler; everything else is JSON and fits 8 MB.
+        if request.method in ("POST", "PUT", "PATCH") and p.startswith("/api/"):
+            _cap = _BODY_CAP_IMPORT if p in _BODY_CAP_LARGE_PATHS else _BODY_CAP
+            _cl0 = request.headers.get("content-length", "")
+            if _cl0.isdigit() and int(_cl0) > _cap:
+                return JSONResponse({"detail": f"request body too large (max {_cap // 1048576} MB)"},
+                                    status_code=413)
+            if not _cl0 and "chunked" in request.headers.get("transfer-encoding", "").lower():
+                return JSONResponse({"detail": "Content-Length required"}, status_code=411)
         auditable = (request.method in ("POST", "PUT", "PATCH", "DELETE")
                      and p.startswith("/api/")
                      and not any(p.startswith(x) or x in p for x in _AUDIT_SKIP)
@@ -1093,20 +1115,54 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             rok, rerr, _w = c.write_value(addr, rt, dt, sv, scale=sc, offset=off)
             logger.warning("MODBUS WRITE (lease-revert) %s: device=%s addr=%s safe=%r%s",
                            "OK" if rok else "FAILED", dev, addr, sv, "" if rok else f" err={rerr}")
+            try:                                          # audited like every write (F-11, 3.83.0)
+                audit_log.append(user="lease", ip="-", action="modbus write",
+                                 target=f"{dev} {rt}@{addr}", status="ok" if rok else "failed",
+                                 detail={"value": sv, "data_type": dt, "words": list(_w) if _w else None,
+                                         "via": "lease-revert"})
+            except Exception:  # noqa: BLE001
+                pass
             if not rok:
                 raise RuntimeError(f"lease-revert write failed: {rerr}")
+        return _revert
+
+    def _make_command_lease_revert(dev, cmd_name):
+        """The dead-man revert for a lease taken by a COMMAND: run the command's
+        own `safe` recipe (every register it writes, encoded through its scale
+        factors, verified, audited) — never a bare word into the first
+        register. Resolved at fire time from the current template, so boot
+        recovery and the live path behave identically (3.83.0: recovery used
+        to write the raw safe value, which a SunSpec scale factor of -2
+        turned into a 1 % limit)."""
+        def _revert(is_current):
+            if not is_current():
+                return
+            _i, _c, cl = _find_device(dev)
+            if _c is None or cl is None:
+                raise RuntimeError(f"device {dev} not running; cannot run {cmd_name} safe")
+            c = _find_command(_c, cmd_name)
+            if c is None or not c['def'].safe:
+                raise RuntimeError(f"device {dev} no longer offers command {cmd_name} with a safe recipe")
+            st, r = _run_named_command(_c, cl, cmd_name, dict(c['def'].safe),
+                                       who='lease', ip='-', via='lease-revert')
+            if r.get('status') not in ('success', 'mismatch'):
+                raise RuntimeError(f"lease-revert failed: {r.get('reason')}")
         return _revert
 
     # Boot recovery: any write-lease left on disk means a previous run may have
     # crashed while holding a device at a non-safe setpoint. Re-arm each as
     # already-expired so the next sweep reverts it to safe (retrying until the
     # device is reachable). This closes the "crash strands a dangerous setpoint"
-    # gap that the in-RAM-only lease store had.
+    # gap that the in-RAM-only lease store had. A record taken by a command
+    # reverts through the command's safe recipe, never through a raw write.
     for _m in _lease_mgr.load_persisted():
         try:
-            _rv = _make_lease_revert(_m['device'], _m['register_type'], int(_m['address']),
-                                     _m['data_type'], float(_m['scale']), _m['safe_value'],
-                                     off=float(_m.get('offset', 0.0) or 0.0))
+            if _m.get('command'):
+                _rv = _make_command_lease_revert(_m['device'], _m['command'])
+            else:
+                _rv = _make_lease_revert(_m['device'], _m['register_type'], int(_m['address']),
+                                         _m['data_type'], float(_m['scale']), _m['safe_value'],
+                                         off=float(_m.get('offset', 0.0) or 0.0))
             _lease_mgr.arm(_m['device'], _m['register_type'], int(_m['address']),
                            int(_m.get('lease_ms') or 0), _rv, meta=_m, fire_now=True)
             logger.warning("WRITE-LEASE recovered after restart → reverting to safe: "
@@ -1649,6 +1705,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         _idx, dev_cfg, client = _find_device(device_id)
         if dev_cfg is None or client is None or dev_cfg.primary or dev_cfg.protocol == 'http':
             return
+        if dev_cfg.write_locked:
+            # the lock is per device, whichever face asks (F-13, 3.83.0)
+            logger.warning("MQTT write REJECTED (device write-locked): device=%s addr=%s", device_id, register.address)
+            return
         rule = _write_rule(dev_cfg, register.address, 'holding')
         if rule is None or not rule.writable:
             logger.warning("MQTT write REJECTED (not writable): device=%s addr=%s", device_id, register.address)
@@ -1832,17 +1892,31 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         if face in ('api', 'mqtt', 'ha') and not c['faces'].get(face, True):
             return 403, {'status': 'rejected', 'reason': f"command '{name}' does not accept the {face} face on '{dev_cfg.id}'"}
         rt = getattr(app.state, 'rules_runtime', None)
+        _pause = None
         if rt is not None and face in ('api', 'mqtt', 'ha') and not dry_run:
             owner = rt.owner_of(dev_cfg.id, cmd.name)
             if owner is not None:
-                secs = float((params or {}).get('override_s') or 0)
-                if secs <= 0:
-                    return 409, {'status': 'rejected', 'reason': f"owned by rule '{owner}' — pass override_s to pause it"}
-                rt.pause_owner(owner, secs, who=who, via=via)
+                from .rules_runtime import MAX_OVERRIDE_S
+                try:
+                    secs = float((params or {}).get('override_s') or 0)
+                except (TypeError, ValueError):
+                    secs = 0.0
+                if not (0 < secs <= MAX_OVERRIDE_S):      # NaN fails both sides
+                    return 409, {'status': 'rejected', 'reason':
+                                 f"owned by rule '{owner}' — pass override_s (1..{int(MAX_OVERRIDE_S)} s) to pause it"}
+                # the rule is paused only once the command has passed every
+                # gate below — a rejected command must not silence a safety
+                # rule (F-09, 3.83.0)
+                _pause = (owner, secs)
         params = {k: v for k, v in (params or {}).items() if k != 'override_s'}
-        if not config.security.allow_writes and not dry_run:
+        # a dead-man revert restores the SAFE value the template declares; it
+        # runs even if writes were disabled or the device locked after the
+        # limit was placed — otherwise the limit would stay forever (F-11,
+        # 3.83.0). Every other face meets the gates.
+        _is_revert = via == 'lease-revert'
+        if not config.security.allow_writes and not dry_run and not _is_revert:
             return 403, {'status': 'rejected', 'reason': 'Modbus writes are disabled — set security.allow_writes=true to enable'}
-        if dev_cfg.write_locked and not dry_run:
+        if dev_cfg.write_locked and not dry_run and not _is_revert:
             return 403, {'status': 'rejected', 'reason': f"device '{dev_cfg.id}' is write-locked"}
         try:
             norm = normalize_params(cmd, params or {})
@@ -1855,6 +1929,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         regs = {r.name: r for r in (tpl.registers if tpl else [])}
         if not dry_run and not _write_rate_ok(f'{via}:{dev_cfg.id}'):
             return 429, {'status': 'rejected', 'reason': 'write rate limit exceeded'}
+        if _pause is not None:
+            rt.pause_owner(_pause[0], _pause[1], who=who, via=via)
         try:
             with _cmd_lock:
                 res = run_command(cmd, norm, drv.connection, regs,
@@ -1913,27 +1989,28 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         vp = cmd.value_param
         safe_keys = [vp.name] if (vp is not None and cmd.safe and vp.name in cmd.safe) else list((cmd.safe or {}).keys())
         is_safe = bool(cmd.safe) and all(norm.get(k) == cmd.safe[k] for k in safe_keys)
-        if ok and lease > 0 and cmd.safe and not is_safe:
-            def _revert(is_current, _dev=dev_cfg.id, _name=cmd.name, _safe=dict(cmd.safe)):
-                if not is_current():
-                    return
-                _i, _c, cl = _find_device(_dev)
-                if _c is None or cl is None:
-                    raise RuntimeError(f"device {_dev} not running; cannot run {_name} safe")
-                st, r = _run_named_command(_c, cl, _name, _safe, who='lease', ip='-', via='lease-revert')
-                if r.get('status') not in ('success', 'mismatch'):
-                    raise RuntimeError(f"lease-revert failed: {r.get('reason')}")
+        # F-03 (3.83.0): frames that went out are on the device whatever the
+        # read-back said — an unverified or mismatched command still needs
+        # the dead-man, otherwise a dead controller leaves the limit in place
+        sent = int(res.get('frames_sent') or 0) > 0
+        if (ok or sent) and lease > 0 and cmd.safe and not is_safe:
+            _revert = _make_command_lease_revert(dev_cfg.id, cmd.name)
             first = regs.get(cmd.writes[0]['register']) if cmd.writes else None
             addr = int(first.address) if first is not None else 0
-            _lease_mgr.arm(dev_cfg.id, 'holding', addr, lease * 1000, _revert,
-                           meta={'device': dev_cfg.id, 'register_type': 'holding', 'address': addr,
-                                 'data_type': 'uint16', 'scale': 1.0, 'offset': 0.0,
+            # the record is declarative for the listing and for boot recovery;
+            # `command` is what recovery dispatches on — the raw fields are
+            # informational and are never written as such
+            # its own namespace ('command'): a raw leased write on the same
+            # register must never replace the recipe revert (F-75, 3.83.0)
+            _lease_mgr.arm(dev_cfg.id, 'command', addr, lease * 1000, _revert,
+                           meta={'device': dev_cfg.id, 'register_type': 'command', 'address': addr,
+                                 'data_type': 'command', 'scale': 1.0, 'offset': 0.0,
                                  'safe_value': cmd.safe.get('value'), 'lease_ms': lease * 1000,
                                  'command': cmd.name})
         elif ok and is_safe and cmd.writes:
             first = regs.get(cmd.writes[0]['register'])
             if first is not None:
-                _lease_mgr.clear(dev_cfg.id, 'holding', int(first.address))
+                _lease_mgr.clear(dev_cfg.id, 'command', int(first.address))
         code = 200 if res['status'] in ('success', 'mismatch', 'unverified') else 422 if res['status'] == 'rejected' else 502
         return code, res
 
@@ -2017,8 +2094,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'ok': all(r.get('status') == 'success' for r in results), 'units': results}
 
     @app.get("/api/commands/history")
-    def command_history(device: str = "", limit: int = 100):
-        """Past invocations, from the audit log (newest first)."""
+    def command_history(request: Request, device: str = "", limit: int = 100):
+        """Past invocations, from the audit log (newest first). It IS the audit
+        log, filtered — admin only while login is on (F-33, 3.83.0)."""
+        if auth_state.enabled and getattr(request.state, "role", None) != "admin":
+            raise HTTPException(status_code=403, detail={"errors": ["the command history is the audit log — admin only"]})
         rows = []
         try:
             for rec in audit_log.recent(limit=max(limit * 10, 500), q='"command"'):
@@ -2616,6 +2696,19 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         rule = _write_rule(dev_cfg, address, rtype)
         unguarded = False
         if rule is not None and rule.writable:
+            # A register whose engineering value depends on a live scale
+            # factor, or that a command writes first (WMaxLimPct travels with
+            # WMaxLim_Ena), is written THROUGH the command — alone, the raw
+            # path would encode it without the scale factor and "verify" the
+            # wrong value (3.83.0). The HA face has always routed it this way.
+            _fronting = next((c['def'].name for c in _commands_for(dev_cfg)
+                              if c['def'].writes
+                              and c['def'].writes[0].get('register') == getattr(rule, 'name', '')), None)
+            if getattr(rule, 'scale_from', None) or _fronting:
+                raise HTTPException(status_code=422, detail={"errors": [
+                    f"register {address} ({getattr(rule, 'name', '?')}) is written through "
+                    f"the command {_fronting or 'that owns it'!s}: "
+                    f"POST /api/devices/{dev_cfg.id}/commands/{_fronting or '<name>'}"]})
             # DECLARED: encoding is a property of the register (its template
             # row), NOT caller-controlled — a declared register always writes
             # with its declared type and scale, so a caller can't corrupt it
@@ -2630,11 +2723,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             # audit still apply — safety by configuration, not prohibition.
             # Bypassing the template envelope is an ADMIN act: the operator
             # role is "live actions within the declared envelope" (3.80.0).
+            # With login on, the API key is NOT a substitute for the role —
+            # every operator must present it on every write, so it would be
+            # a free escalation (3.83.0); it stands in only on an auth-off box.
             _role = getattr(request.state, 'role', None)
-            _key_ok = bool(_api_key) and hmac.compare_digest(request.headers.get("X-API-Key", ""), _api_key)
-            if auth_state.enabled and _role != 'admin' and not _key_ok:
+            if auth_state.enabled and _role != 'admin':
                 raise HTTPException(status_code=403, detail={"errors": [
-                    "unguarded (raw) writes need the admin account or the API key"]})
+                    "unguarded (raw) writes need the admin account"]})
             unguarded = True
             rule = None
             data_type = str(payload.get('data_type') or 'uint16').lower()
@@ -2691,6 +2786,19 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 "the template (raw unguarded writes cannot lease)"]})
         if client is None:
             raise HTTPException(status_code=409, detail={"errors": ["device is not running"]})
+        # what the encoder would have to clamp is refused here (F-15, 3.83.0):
+        # a clamped word is a value nobody asked for, and it was "verified"
+        from .encoder import RegisterEncoder as _Enc
+        _rng = _Enc.int_range(data_type)
+        if _rng is not None and rtype != 'coil':
+            try:
+                _raw = int(round((float(payload.get('value')) - _w_offset) * float(scale)))
+            except (TypeError, ValueError):
+                _raw = None
+            if _raw is not None and not (_rng[0] <= _raw <= _rng[1]):
+                raise HTTPException(status_code=422, detail={"errors": [
+                    f"value {payload.get('value')} encodes to {_raw}, outside {data_type} "
+                    f"[{_rng[0]}, {_rng[1]}]"]})
         ok, err, words = client.write_value(address, rtype, data_type,
                                             payload.get('value'), scale=scale,
                                             offset=_w_offset, prefer_fc6=prefer_fc6)
@@ -2703,6 +2811,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                          target=f"{device_id} {rtype}@{address}",
                          status="ok" if ok else "failed",
                          detail={"value": payload.get('value'), "data_type": data_type,
+                                 "words": list(words) if words else None,   # what actually went out (F-15)
                                  "lease_ms": lease_ms,
                                  **({"unguarded": True} if unguarded else {})})
         if not ok:
@@ -4135,26 +4244,34 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                      ("rest_push", "headers")]        # primary device REST-push auth headers
 
     def _strip_device_secrets(data: dict):
-        """Redact per-device secrets that live inside the devices[] list: the MQTT
-        broker / HTTP-input password + headers, REST-push auth headers, and any
-        URL that may embed credentials. These are NOT top-level so _strip_paths
-        misses them. The import side (_merge_devices) recognizes the redacted
-        URL forms and keeps the live originals on a merge-import."""
+        """Redact the secrets that live inside the devices[] and endpoints[]
+        trees, wherever they sit: a device's connection / http / mqtt_in /
+        rest_push blocks, each of its sources, every installation group's
+        sources. Secret-named fields are dropped and every URL goes through
+        redact_url (userinfo and secret query values). These are NOT top-level
+        so _strip_paths misses them. The import side (snapshots.
+        _reinject_secret_tree) recognizes the stripped and redacted forms and
+        keeps the live originals on a merge-import. (3.83.0: the old version
+        only knew connection.* and rest_push.*, so http.headers, mqtt_in.
+        password and per-source credentials went out in a "sanitized" export
+        any viewer could download.)"""
         from .redact import redact_url
-        for dev in (data.get("devices") or []):
-            if not isinstance(dev, dict):
-                continue
-            conn = dev.get("connection")
-            if isinstance(conn, dict):
-                conn.pop("password", None)           # MQTT-input broker password
-                conn.pop("headers", None)            # HTTP-input auth headers
-                if conn.get("url"):                  # HTTP URL may hold userinfo/token
-                    conn["url"] = redact_url(conn["url"])
-            rp = dev.get("rest_push")
-            if isinstance(rp, dict):
-                rp.pop("headers", None)              # REST-push auth headers
-                if rp.get("url"):                    # push target may hold a token
-                    rp["url"] = redact_url(rp["url"])
+        from .snapshots import SECRET_FIELDS
+
+        def _strip(node):
+            if isinstance(node, dict):
+                for k in list(node.keys()):
+                    if k in SECRET_FIELDS:
+                        node.pop(k, None)
+                    elif k == "url" and isinstance(node[k], str) and node[k]:
+                        node[k] = redact_url(node[k])
+                    else:
+                        _strip(node[k])
+            elif isinstance(node, list):
+                for item in node:
+                    _strip(item)
+        for sect in ("devices", "endpoints"):
+            _strip(data.get(sect))
     # network identity kept out of a portable backup (clone-to-another-host safe)
     _IDENTITY_PATHS = [("ui", "host"), ("ui", "port")]
 
@@ -4182,12 +4299,16 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         # must check the key HERE too (else an api-key-protected, auth-off box
         # would still leak secrets over a plain GET).
         if include_secrets or include_identity:
+            # admin only while login is on; on an auth-off box the API key is
+            # the only gate there is (3.83.0: the key no longer stands in for
+            # the role — every operator holds it)
             _is_admin = auth_state.enabled and getattr(request.state, "role", None) == "admin"
-            _key_ok = bool(_api_key) and hmac.compare_digest(
+            _key_ok = (not auth_state.enabled) and bool(_api_key) and hmac.compare_digest(
                 request.headers.get("X-API-Key", ""), _api_key)
             if not (_is_admin or _key_ok):
                 raise HTTPException(status_code=403, detail={"errors": [
-                    "exporting secrets/identity requires the admin role or a valid API key"]})
+                    "exporting secrets/identity requires the admin role"
+                    + ("" if auth_state.enabled else " or a valid API key")]})
         if include_secrets or include_identity:
             audit_log.append(user=getattr(request.state, "user", "") or "-",
                              ip=request.client.host if request.client else "-",
@@ -4288,25 +4409,33 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         if sum(getattr(zi, 'file_size', 0) for zi in zf.infolist()) > 50 * 1024 * 1024:
             raise HTTPException(status_code=422, detail={"errors": ["archive expands too large (ZIP bomb?)"]})
         from .device_template import USER_DIR as _UDIR
+        from .snapshots import validate_bundle as _validate_bundle
+        _verrs = _validate_bundle(zf, allow_nonlan=config.security.allow_nonlan_http_devices)
+        if _verrs:
+            raise HTTPException(status_code=422, detail={"errors": _verrs})
         # safety net: the pre-import state is one click away if the backup is bad
         try:
             snapshot_store.create("pre-import",
                                   user=getattr(request.state, "user", "") or "")
         except Exception:  # noqa: BLE001
             logger.exception("pre-import snapshot failed")
-        try:
+        def _import_on_disk():
             # sanitized backups merge config.yaml over the live file so stripped
             # secrets/identity survive; per-device register paths are mapped
             # through device_registers_path (the primary keeps its legacy root
             # file — writing devices/<primary>/ would be a dead copy).
-            summary = _write_bundle_files(
+            s = _write_bundle_files(
                 zf, cfg_dir=cfg_dir,
                 user_tpl_dir=_Path(getattr(template_registry, "user_dir", _UDIR)),
                 registers_path_for=config.device_registers_path,
                 replace_config=False)
+            _reload_from_disk(apply)
+            return s
+        try:
+            # N fsyncs and a full Modbus reconnect: off the event loop (F-38, 3.83.0)
+            summary = await asyncio.to_thread(_import_on_disk)
         except ValueError as e:
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
-        _reload_from_disk(apply)
         summary["note"] = ("imported; a restart is recommended so newly-added "
                            "devices start polling") if len(config.devices) > 1 else "imported"
         logger.info(f"config import: {summary}")
@@ -4361,11 +4490,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         # login is enabled. The old `auth_state.enabled and …` made the whole
         # check vanish on an auth-off box — any LAN peer could GET the secrets.
         _is_admin = auth_state.enabled and getattr(request.state, "role", None) == "admin"
-        _key_ok = bool(_api_key) and hmac.compare_digest(
+        _key_ok = (not auth_state.enabled) and bool(_api_key) and hmac.compare_digest(
             request.headers.get("X-API-Key", ""), _api_key)
         if not (_is_admin or _key_ok):
             raise HTTPException(status_code=403, detail={"errors": [
-                "downloading a snapshot requires the admin role or a valid API key"]})
+                "downloading a snapshot requires the admin role"
+                + ("" if auth_state.enabled else " or a valid API key")]})
         p = snapshot_store.get_path(sid)
         if p is None:
             raise HTTPException(status_code=404, detail=f"unknown snapshot {sid!r}")
@@ -4419,6 +4549,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             logger.exception("pre-restore snapshot failed")
         try:
             with zipfile.ZipFile(io.BytesIO(p.read_bytes())) as zf:
+                from .snapshots import validate_bundle as _validate_bundle
+                _verrs = _validate_bundle(zf, allow_nonlan=config.security.allow_nonlan_http_devices)
+                if _verrs:
+                    raise HTTPException(status_code=422, detail={"errors": _verrs})
                 from .device_template import USER_DIR as _UDIR
                 summary = _write_bundle_files(
                     zf, cfg_dir=config.config_path.parent,

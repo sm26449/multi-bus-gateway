@@ -204,7 +204,7 @@ all the same. No vendor lock-in, no per-box cost.
   **canonical-address redirect** (`ui.canonical_url`, `?local` escape hatch).
 - **Gated Modbus writes** — off by default; template allowlist with
   `write_min`/`write_max`, **crash-safe dead-man leases** (auto-revert to
-  `write_safe`), the primary device always read-only.
+  `write_safe`), the primary device locked by default (unlock it deliberately).
 
 **Observability & UX**
 - **Prometheus `/metrics`** (device/sink/vmeter series), a **Status** page
@@ -271,7 +271,7 @@ mkdir multi-bus-gateway && cd multi-bus-gateway
 curl -fsSLO https://raw.githubusercontent.com/sm26449/multi-bus-gateway/main/docker-compose.yml
 curl -fsSL  https://raw.githubusercontent.com/sm26449/multi-bus-gateway/main/.env.example -o .env
 mkdir -p mosquitto/config && curl -fsSL https://raw.githubusercontent.com/sm26449/multi-bus-gateway/main/mosquitto/config/mosquitto.conf -o mosquitto/config/mosquitto.conf
-#   edit .env: MQTT_USERNAME / MQTT_PASSWORD and every change-me are REQUIRED
+#   edit .env: uncomment and set the four REQUIRED secrets (MQTT, InfluxDB ×2, Grafana) — no placeholders are accepted
 docker compose pull && docker compose up -d     # gateway + broker + InfluxDB + Grafana + ESPHome
 
 # B) from source — same stack, built locally
@@ -290,7 +290,7 @@ with the credentials from `.env`; the gateway logs in with the same pair
 from the first boot) and InfluxDB self-configures. Want minimal?
 `docker compose up -d multi-bus-gateway mosquitto`. Your own broker or
 Influx? Repoint the gateway from the UI whenever you like — the bundled
-ones are ordinary containers. Pin a release with `MBG_VERSION=3.82.1` in
+ones are ordinary containers. Pin a release with `MBG_VERSION=3.83.0` in
 `.env`; every install path in detail: [docs/install.md](docs/install.md),
 day-two operations: [docs/operations.md](docs/operations.md).
 

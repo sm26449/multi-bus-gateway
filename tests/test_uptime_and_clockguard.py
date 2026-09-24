@@ -167,7 +167,7 @@ def test_future_timestamp_is_never_fresh():
     assert F(now, 995.0, 15) is True          # 5s old, within bound
     assert F(now, 980.0, 15) is False         # 20s old, stale
     assert F(now, 1133.0, 15) is False        # 133s in the FUTURE → never fresh
-    assert F(now, 1000.5, 15) is False        # slightly future → not fresh
+    assert F(now, 1002.5, 15) is False        # beyond the race tolerance → not fresh (3.83.0: ±1 s is a race)
     assert F(now, None, 15) is False          # no timestamp → not fresh
 
 
@@ -214,10 +214,22 @@ def test_hold_policy_respects_future_ts_guard():
     assert F(now, 995.0, max_hold) is True         # held 5s ago, within hold
     assert F(now, 985.0, max_hold) is False        # held 15s ago, hold expired
     assert F(now, 1120.0, max_hold) is False        # held ts 120s in FUTURE → no hold
-    # and the _rebuild_block hold branch actually uses the guard
-    import inspect
-    src = inspect.getsource(vm.VirtualMeter._rebuild_block)
-    assert 'self._is_fresh(now, held[1]' in src
+    # and the _rebuild_block hold branch actually applies the guard: a held
+    # stamp in the future (a backward clock step) must not hold at all —
+    # tested by behaviour, not by reading the source (3.83.0)
+    import time as _t
+    from multibus.virtual_meter import RegisterDef, Template
+    reg = RegisterDef(addr=0, type="float", source_kind="live", source="A")
+    vals = {"A": (10.0, _t.monotonic())}
+    meter = vm.VirtualMeter(Template(id="tg", name="guard", transport={"port": 19998}, registers=[reg]),
+                            lambda n: vals.get(n), stale_after_s=1, on_stale="hold", max_hold_s=3600)
+    meter._rebuild_block()
+    assert meter._last_good[0][0] and meter._unavail_spans == []
+    words, _ = meter._last_good[0]
+    vals["A"] = (10.0, _t.monotonic() - 30)          # stale source
+    meter._last_good[0] = (words, _t.monotonic() + 120)   # held stamp from the future
+    meter._rebuild_block()
+    assert meter._unavail_spans == [(0, 2)]          # no hold on a future stamp
 
 
 # ---------------------------------------------------------------------------

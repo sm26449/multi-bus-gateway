@@ -359,3 +359,16 @@ def test_scale_from_sentinel_checked_on_raw_before_sf():
     assert apply_corrections(0x8000, reg, siblings={"w_sf": -1},
                              info=info) is None
     assert info["stage"] == "sentinel"
+
+
+def test_query_batch_is_capped():
+    """F-70 (3.83.0): a viewer may call the batch query; an unbounded list
+    is bus contention against the pollers."""
+    regs = [_reg(address=2, name="v", label="v", scale=10.0)]
+    c = _query_app(regs)
+    r = c.post("/api/query/batch", json={"registers": [
+        {"address": 2 + i, "data_type": "uint16"} for i in range(65)]})
+    assert r.status_code == 422
+    r = c.post("/api/query/batch", json={"registers": [
+        {"address": 2 + i, "data_type": "uint16"} for i in range(64)]})
+    assert r.status_code == 200

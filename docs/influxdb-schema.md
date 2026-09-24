@@ -257,4 +257,4 @@ from(bucket: "multibus")
 
 ---
 
-Verified against `multibus/__init__.py` `__version__ = "3.80.1"`.
+Verified against `multibus/__init__.py` `__version__ = "3.83.0"`.

@@ -132,6 +132,7 @@ def compute_endpoint_aggregates(config, registry, endpoint_id: str,
     or not at all.
     """
     now = now if now is not None else time.time()
+    now_mono = time.monotonic()
     expected = [d for d in config.endpoint_devices(endpoint_id)
                 if getattr(d, "enabled", True)
                 and (group_id is None
@@ -149,8 +150,13 @@ def compute_endpoint_aggregates(config, registry, endpoint_id: str,
             if not name or not isinstance(val, (int, float)) or isinstance(val, bool):
                 continue
             interval = entry.get("interval") or 30
-            is_fresh = (ts is not None
-                        and (now - ts) <= max(4 * float(interval), 60.0))
+            # freshness on the store's monotonic stamp when it has one — an
+            # NTP step must not mark every unit offline for an interval
+            # (F-58, 3.83.0); the wall-clock stamp is the fallback
+            mono = entry.get("mono")
+            age = (now_mono - mono) if isinstance(mono, (int, float)) else (
+                (now - ts) if ts is not None else None)
+            is_fresh = age is not None and age <= max(4 * float(interval), 60.0)
             fresh_any = fresh_any or is_fresh
             rule = _rule_for(name)
             if rule == "counter":

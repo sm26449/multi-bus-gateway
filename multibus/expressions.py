@@ -59,6 +59,9 @@ _FUNC_ARITY = {
     'floor': (1, 1), 'ceil': (1, 1), 'clamp': (3, 3),
 }
 MAX_POW_EXP = 64          # cap exponents so base**exp can't blow up CPU/RAM
+MAX_ROUND_DIGITS = 15     # round(x, n): |n| beyond this is meaningless for a float
+                          # and a huge negative n makes CPython compute 10**|n|
+MAX_RESULT_BITS = 63      # an int result wider than this cannot leave the engine
 # Stateful helpers (v2): ``dt`` = seconds since this register was last computed;
 # ``prev(<ref>)`` = the previous value of a referenced measurement. Enables rates,
 # e.g. average power from an energy counter: (E - prev(E)) / dt * 3600.
@@ -158,6 +161,13 @@ def validate_expression(expr):
             if n < lo or (hi is not None and n > hi):
                 want = f"{lo}" if lo == hi else (f"at least {lo}" if hi is None else f"{lo}–{hi}")
                 return False, f"{fn}() takes {want} arguments, got {n}", []
+            if fn == 'round' and n == 2:
+                a1 = node.args[1]
+                neg = isinstance(a1, ast.UnaryOp) and isinstance(a1.op, ast.USub)
+                lit = a1.operand if neg else a1
+                if isinstance(lit, ast.Constant) and isinstance(lit.value, (int, float)) \
+                        and not isinstance(lit.value, bool) and abs(lit.value) > MAX_ROUND_DIGITS:
+                    return False, f"round(): decimals must be within ±{MAX_ROUND_DIGITS}", []
             continue
         if isinstance(node, ast.Subscript):      # register name like _G_ULN[1]
             if _ref_name(node) is None:
@@ -207,9 +217,17 @@ def evaluate_tree(tree, resolve, *, prev_resolve=None, dt=0.0):
     """Evaluate a PRE-PARSED expression tree (from compile_expression)."""
     ctx = {'resolve': resolve, 'prev': prev_resolve, 'dt': float(dt or 0.0)}
     try:
-        return _eval(tree.body, ctx)
+        val = _eval(tree.body, ctx)
     except (ZeroDivisionError, OverflowError, ValueError, TypeError) as e:
         raise ExpressionError(str(e))
+    # what leaves the engine must be a number every sink can carry: no
+    # inf/nan (they break /api/values, MQTT JSON and Influx line protocol)
+    # and no integer wider than 64 bits (3.83.0)
+    if isinstance(val, float) and not math.isfinite(val):
+        raise ExpressionError("result is not finite")
+    if isinstance(val, int) and not isinstance(val, bool) and val.bit_length() > MAX_RESULT_BITS:
+        raise ExpressionError("result too large")
+    return val
 
 
 def _lookup(resolve, name):
@@ -278,6 +296,14 @@ def _eval(node, ctx):
                 raise MissingValue(f"prev({ref})")   # first run / no history yet
             return val
         args = [_eval(a, ctx) for a in node.args]
+        if fn == 'round' and len(args) == 2:
+            # round(x, -10**8) makes CPython build 10**(10**8) — a hang of the
+            # poller or the single rules thread; the value of n is bounded
+            # whether it came from a constant or from a measurement (3.83.0)
+            nd = args[1]
+            if isinstance(nd, bool) or not isinstance(nd, (int, float)) or abs(nd) > MAX_ROUND_DIGITS:
+                raise ExpressionError(f"round(): decimals must be within ±{MAX_ROUND_DIGITS}")
+            args[1] = int(nd)
         return _FUNCS[fn](*args)
     raise ExpressionError(f"unsupported node {type(node).__name__}")
 

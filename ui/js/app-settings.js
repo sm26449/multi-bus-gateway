@@ -1,3 +1,7 @@
+/* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
+ * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
 // settings domain — augments JanitzaMonitor.prototype
 Object.assign(JanitzaMonitor.prototype, {
 
@@ -683,8 +687,8 @@ Object.assign(JanitzaMonitor.prototype, {
                                 title="${this._esc(this.t('snap.diff', 'What changed since'))}"><i aria-hidden="true" class="bi bi-file-diff"></i></button>
                         <button class="btn btn-ghost btn-sm" ${this._act('restoreSnapshot', [s.id])}
                                 title="${this._esc(this.t('snap.restore', 'Restore'))}"><i aria-hidden="true" class="bi bi-arrow-counterclockwise"></i></button>
-                        <button class="btn btn-ghost btn-sm" ${this._act('_navigate', [`/api/config/snapshots/${encodeURIComponent(s.id)}/download`])}
-                                title="${this._esc(this.t('snap.download', 'Download'))}"><i aria-hidden="true" class="bi bi-download"></i></button>
+                        <a href="/api/config/snapshots/${encodeURIComponent(s.id)}/download" class="btn btn-ghost btn-sm" 
+                                title="${this._esc(this.t('snap.download', 'Download'))}"><i aria-hidden="true" class="bi bi-download"></i></a>
                         ${s.lkg ? '' : `<button class="btn btn-ghost btn-sm" ${this._act('deleteSnapshot', [s.id])}
                                 title="${this._esc(this.t('common.delete', 'Delete'))}"><i aria-hidden="true" class="bi bi-trash"></i></button>`}
                     </td></tr>`;

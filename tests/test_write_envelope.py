@@ -400,3 +400,118 @@ def test_unguarded_writes_need_the_admin_account(tmp_path):
     assert r.status_code == 403 and "admin" in str(r.json())
     r = client.post("/api/devices/ctrl/write", json=body)       # the admin session
     assert r.status_code != 403
+
+
+@needs_tc
+def test_raw_write_refuses_a_register_a_command_owns(tmp_path):
+    """F-02 (3.83.0): a register with a live scale factor, or one a command
+    writes first, is written through the command — the raw path would encode
+    it without the scale factor and "verify" the wrong value."""
+    from tests.test_commands_api import _app, PLANT_YAML  # noqa: F401
+    from tests.test_commands import _Inverter
+    inv = _Inverter(sf=-2)
+    cfg, app, client = _app(tmp_path, {'pv-u1': inv})
+    r = client.post("/api/devices/pv-u1/write", json={"address": 40232, "value": 60})
+    assert r.status_code == 422, r.text
+    assert "commands/power_limit" in str(r.json())
+    assert inv.writes == []                      # nothing reached the device
+    r = client.post("/api/devices/pv-u1/write", json={"address": 40232, "value": 60, "lease_ms": 5000})
+    assert r.status_code == 422 and inv.writes == []
+
+
+@needs_tc
+def test_api_key_is_not_a_role_while_login_is_on(tmp_path, monkeypatch):
+    """F-04 (3.83.0): with login on, every operator must present the API key
+    on every write, so the key must never stand in for the admin role —
+    unguarded writes, secret exports and snapshot downloads stay admin-only."""
+    monkeypatch.setenv("API_KEY", "k")
+    client, fake = _envelope_app(tmp_path, operator=True)
+    client.post("/api/auth/logout")
+    r = client.post("/api/auth/login", json={"username": "op", "password": "op-pw"})
+    assert r.status_code == 200 and r.json()["role"] == "operator"
+    key = {"X-API-Key": "k"}
+    # declared writes: the operator's job, with the key
+    r = client.post("/api/devices/ctrl/write", headers=key,
+                    json={"address": 100, "value": 50, "register_type": "holding"})
+    assert r.status_code == 200, r.text
+    # unguarded: admin only, key or not
+    r = client.post("/api/devices/ctrl/write", headers=key,
+                    json={"address": 201, "value": 1, "register_type": "holding",
+                          "data_type": "uint32", "unguarded": True})
+    assert r.status_code == 403 and fake.reg.get(201) is None
+    # secrets and snapshots: admin only, key or not
+    assert client.get("/api/config/export?include_secrets=true", headers=key).status_code == 403
+    assert client.get("/api/config/export?include_identity=true", headers=key).status_code == 403
+    sid = client.post("/api/config/snapshots", headers=key, json={"label": "x"})
+    if sid.status_code in (200, 201):
+        s = (sid.json().get("snapshot") or sid.json()).get("id")
+        if s:
+            assert client.get(f"/api/config/snapshots/{s}/download", headers=key).status_code == 403
+    # the admin still can
+    client.post("/api/auth/logout")
+    client.post("/api/auth/login", json={"username": "admin", "password": "pw"})
+    assert client.get("/api/config/export?include_secrets=true", headers=key).status_code == 200
+
+
+def test_lease_revert_failure_log_is_edge_triggered(caplog):
+    """F-59 (3.83.0): one ERROR for the first failed revert, DEBUG for the
+    retries, a WARNING when it finally succeeds."""
+    import logging
+    mgr = WriteLeaseManager()
+    state = {"fail": True}
+
+    def flaky(is_current):
+        if state["fail"]:
+            raise OSError("device unreachable")
+    mgr.arm("d", "holding", 1, lease_ms=1, revert=flaky)
+    time.sleep(0.02)
+    with caplog.at_level(logging.DEBUG, logger="multibus.write_lease"):
+        mgr._sweep()
+        for lease in mgr._leases.values():
+            lease['expiry'] = 0
+        mgr._sweep()
+        for lease in mgr._leases.values():
+            lease['expiry'] = 0
+        state["fail"] = False
+        mgr._sweep()
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR and "revert FAILED" in r.getMessage()]
+    debugs = [r for r in caplog.records if r.levelno == logging.DEBUG and "still failing" in r.getMessage()]
+    warns = [r for r in caplog.records if r.levelno == logging.WARNING and "after earlier failures" in r.getMessage()]
+    assert len(errors) == 1 and len(debugs) == 1 and len(warns) == 1
+    assert mgr.snapshot() == []
+
+
+def test_clean_shutdown_reverts_live_leases():
+    """F-28 (3.83.0): stop() reverts every live lease while the devices are
+    still connected; a revert that fails stays on disk for boot recovery."""
+    mgr = WriteLeaseManager()
+    done, failing = [], []
+
+    def good(is_current):
+        done.append(1)
+
+    def bad(is_current):
+        failing.append(1)
+        raise OSError("device unreachable")
+    mgr.arm("d", "command", 40232, lease_ms=600_000, revert=good)
+    mgr.arm("e", "holding", 7, lease_ms=600_000, revert=bad)
+    mgr.stop(revert_now=True)
+    assert done == [1] and failing == [1]
+    keys = {(l['device'], l['address']) for l in mgr.snapshot()}
+    assert keys == {("e", 7)}                        # the failed one is kept
+
+
+@needs_tc
+def test_raw_write_refuses_what_the_encoder_would_clamp_and_audits_the_words(tmp_path):
+    """F-15 (3.83.0): 70000 into a uint16 used to be clamped to 65535, sent,
+    "verified" and audited as 70000."""
+    import json
+    client, fake = _envelope_app(tmp_path)
+    r = client.post("/api/devices/ctrl/write", json={"address": 120, "value": 70000, "register_type": "holding"})
+    assert r.status_code == 422 and "outside" in str(r.json())
+    assert fake.reg.get(120) is None
+    r = client.post("/api/devices/ctrl/write", json={"address": 120, "value": 123, "register_type": "holding"})
+    assert r.status_code == 200, r.text
+    rows = [json.loads(l) for l in (tmp_path / "audit.jsonl").read_text().splitlines() if l.strip()]
+    a = [x for x in rows if x.get("action") == "modbus write"][-1]
+    assert "words" in a["detail"]

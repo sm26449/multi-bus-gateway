@@ -1,3 +1,7 @@
+/* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
+ * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
 /* Rules — the declarative controller's page (docs/rules-design.md §6).
  *
  * One card per rule: state in words, the signal, want → actual per unit, the

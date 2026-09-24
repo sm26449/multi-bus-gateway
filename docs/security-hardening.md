@@ -43,7 +43,8 @@ reverse proxy. It is not designed to be exposed to the public internet.
       MQTT Explorer publish their own ports — bind them to `127.0.0.1:`
       or drop the services if another host provides them.
 - [ ] **IP allowlist**: `security.allowlist` (CIDRs) sits in front of
-      everything, `/health` included. Use it when the LAN has guests.
+      everything, `/health` included. Use it when the LAN has guests. It
+      fails closed: an entry that does not parse denies everyone.
 - [ ] **TLS**: terminate at your reverse proxy (see
       [install.md §G](install.md)) or in-process (`ui.tls_enabled` with
       `tls_cert`/`tls_key`). Behind a proxy set `ui.trusted_proxies` and
@@ -82,7 +83,9 @@ reverse proxy. It is not designed to be exposed to the public internet.
       reverts the device to its safe value.
 - [ ] Set an **`API_KEY`** for machine clients that write over HTTP; the
       key is required on every state-changing request but not on the login
-      itself, so browser users are unaffected.
+      itself, so browser users are unaffected. It is a gate, not a role:
+      with login on, raw writes, secret exports and snapshot downloads stay
+      admin-only whoever holds the key.
 
 ## 6. Data at rest
 
@@ -101,8 +104,11 @@ reverse proxy. It is not designed to be exposed to the public internet.
 ## 7. The image and the host
 
 - [ ] Run the published image by **tag** (`MBG_VERSION=X.Y.Z`); it is
-      built from a hash-pinned dependency set and carries SLSA provenance
-      and an SBOM. Verify with `docker pull` of the exact tag.
+      built from a hash-pinned dependency set, on a commit that passed the
+      test suite, lint, the vendor checksum and pip-audit, and carries an
+      in-image SLSA provenance and SBOM plus a Sigstore-signed build
+      provenance (3.83.0). Verify with
+      `gh attestation verify oci://ghcr.io/sm26449/multi-bus-gateway:X.Y.Z --owner sm26449`.
 - [ ] Keep the compose service's `cap_drop`/`no-new-privileges` block; the
       process runs as uid 10001 with no effective capabilities after the
       entrypoint's chown.

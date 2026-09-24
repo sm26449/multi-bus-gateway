@@ -122,7 +122,7 @@ snapshots itself:
   edit or a torn write can't brick an unattended box. Additionally, a corrupt
   file detected at load falls back to the in-process `.yaml.good` copy, the
   broken file is preserved as `config.yaml.bad`, and **saves are disabled**
-  until it's repaired (surfaced in `/api/status` → `config_status`).
+  until it's repaired (surfaced in `/api/status` → `config`).
 
 Restore, download, diff ("what changed since this snapshot") and delete are all
 in **Config → Backup & Restore → Snapshots & Rollback**.

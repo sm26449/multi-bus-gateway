@@ -73,6 +73,16 @@ class RegisterEncoder:
     def register_count(self, data_type: str) -> int:
         return self.REGISTER_COUNTS.get(data_type.lower(), 2)
 
+    @staticmethod
+    def int_range(data_type: str):
+        """(lo, hi) of the raw integer a ``data_type`` can carry, or None for
+        float types — the write paths check this BEFORE encoding so an
+        over-range setpoint is refused instead of clamped (F-12/F-15, 3.83.0)."""
+        dt = (data_type or 'uint16').lower()
+        if dt in ('float', 'float32', 'double'):
+            return None
+        return _INT_RANGES.get(dt, _INT_RANGES['int32'])
+
     def encode(self, value: Any, data_type: str, scale: float = 1.0,
                offset: float = 0.0) -> list[int]:
         """Encode ``value`` into a list of 16-bit registers for ``data_type``.

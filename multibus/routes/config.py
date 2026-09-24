@@ -175,6 +175,20 @@ def build(ctx) -> APIRouter:
                 changes["lockout_minutes"] = int(payload["lockout_minutes"])
         except (TypeError, ValueError) as e:
             raise HTTPException(status_code=422, detail={"errors": [f"invalid value: {e}"]})
+        # one name, one role: the resolver takes the last match, so a duplicate
+        # would silently turn the admin into a viewer (F-68, 3.83.0)
+        _names = {
+            "admin": (changes.get("auth_username", u.auth_username) or "").strip().lower(),
+            "viewer": (changes.get("viewer_username", u.viewer_username) or "").strip().lower(),
+            "operator": (changes.get("operator_username", u.operator_username) or "").strip().lower(),
+        }
+        _seen = {}
+        for _role, _n in _names.items():
+            if _n and _n in _seen:
+                raise HTTPException(status_code=422, detail={"errors": [
+                    f"username {_n!r} is used by both the {_seen[_n]} and the {_role} account"]})
+            if _n:
+                _seen[_n] = _role
         if changes.get("tls_cert") is not None:
             restart_needed = restart_needed or changes.get("tls_enabled", u.tls_enabled)
         # guard: enabling auth requires a real hashed admin password (the default
@@ -195,15 +209,29 @@ def build(ctx) -> APIRouter:
         # all valid → commit atomically
         _pw_rotated = any(k in changes for k in
                           ("auth_password", "viewer_password", "operator_password"))
+        # an account renamed or removed: its old name must not keep a live
+        # session or a passkey (F-16, 3.83.0)
+        _gone_users = [getattr(u, k) for k in ("auth_username", "viewer_username", "operator_username")
+                       if k in changes and getattr(u, k) and changes[k] != getattr(u, k)]
         for k, v in changes.items():
             setattr(u, k, v)
         config.save_yaml_config()
         _reissue = False
+        if _gone_users:
+            _pk = getattr(getattr(app.state, "ctx", None), "passkey_store", None)
+            for _old in _gone_users:
+                for _c in (_pk.list(user=_old) if _pk else []):
+                    _pk.delete(_c["id"], user=_old)
+                audit_log.append(user=getattr(request.state, "user", "") or "-",
+                                 ip=request.client.host if request.client else "-",
+                                 action="account removed or renamed", target=_old, status="ok",
+                                 detail={"passkeys_deleted": len(_pk.list(user=_old)) if _pk else 0})
         if auth_state is not None:
             auth_state.reload(config.ui)
             # a password change invalidates every existing session, so an old
-            # cookie can't outlive the rotation
-            if _pw_rotated:
+            # cookie can't outlive the rotation; so does a renamed or removed
+            # account
+            if _pw_rotated or _gone_users:
                 auth_state.revoke_all_sessions()
             # ...but the CALLER must not be logged out by their own save (the
             # old behavior 401'd their next request, which the UI misread as
@@ -211,7 +239,7 @@ def build(ctx) -> APIRouter:
             # fresh admin session: with auth previously ON only an admin
             # reaches this route; with auth previously OFF the caller just SET
             # the admin password, i.e. they ARE the admin.
-            _reissue = auth_state.enabled and (_pw_rotated or enabling)
+            _reissue = auth_state.enabled and (_pw_rotated or enabling or bool(_gone_users))
         resp = {"status": "ok", "restart_needed": restart_needed}
         if enabling:
             _pk = getattr(getattr(app.state, "ctx", None), "passkey_store", None)

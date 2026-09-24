@@ -2,6 +2,7 @@
 # Digest-pinned base image (Dependabot's docker ecosystem refreshes the pin);
 # the tag is kept for humans, the digest is what is built.
 FROM python:3.11-slim@sha256:da047cb8f9d1d98e5c070f5300ba9f7274e33b8fc0e5be5ed88740aed1b95ba9
+LABEL org.opencontainers.image.licenses="AGPL-3.0-or-later"
 
 # Dedicated non-root user. The entrypoint starts as root ONLY to chown the
 # mounted config volume (bind mounts arrive with host ownership — root on a

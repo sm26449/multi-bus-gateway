@@ -157,3 +157,84 @@ def test_rest_push_sink_and_test_endpoint(tmp_path):
     # test push attempts and reports a result (connection refused → ok False, no crash)
     tr = client.post("/api/devices/umg512/rest-push/test").json()
     assert tr["status"] == "ok" and tr["ok"] is False
+
+
+@needs_tc
+def test_export_redacts_nested_source_secrets_and_import_restores_them(tmp_path):
+    """F-05 (3.83.0): a "sanitized" export any viewer can download stripped
+    only connection.* and rest_push.*; http.headers, mqtt_in.password and
+    the credentials of installation sources went out in clear. The merge-
+    import must bring the live values back for a backup taken this way."""
+    import io
+    import zipfile
+    import yaml
+    _cfg, client = make_app(tmp_path)
+    cfg_path = tmp_path / "config.yaml"
+    data = yaml.safe_load(cfg_path.read_text()) or {}
+    data.setdefault("devices", []).append({
+        "id": "h1", "enabled": False, "template": "mqtt_json_generic",
+        "http": {"url": "http://192.0.2.7/api?token=HTTPTOKEN", "headers": {"Authorization": "Bearer HTTPSECRET"}},
+        "mqtt_in": {"broker": "b", "topic": "t", "password": "MQTTINPW"},
+        "sources": [{"id": "s1", "protocol": "http", "url": "http://user:SRCPW@192.0.2.8/x",
+                     "headers": {"X-Key": "SRCHEADER"}}]})
+    data["endpoints"] = [{"id": "ep1", "enabled": False, "groups": [
+        {"id": "g", "role": "inverter", "units": [1], "sources": [
+            {"id": "solar", "protocol": "http", "url": "http://192.0.2.9/solar?api_key=EPTOKEN",
+             "headers": {"Authorization": "Bearer EPSECRET"}}]}]}]
+    cfg_path.write_text(yaml.safe_dump(data, sort_keys=False))
+    r = client.get("/api/config/export")
+    assert r.status_code == 200
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    conf = yaml.safe_load(z.read("config.yaml"))
+    blob = yaml.dump(conf)
+    for s in ("HTTPTOKEN", "HTTPSECRET", "MQTTINPW", "SRCPW", "SRCHEADER", "EPTOKEN", "EPSECRET"):
+        assert s not in blob, s
+    # import the sanitized backup back over the live config: secrets return
+    from multibus.snapshots import write_bundle_files
+    zin = zipfile.ZipFile(io.BytesIO(r.content))
+    write_bundle_files(zin, cfg_dir=tmp_path, user_tpl_dir=tmp_path / "ut",
+                       registers_path_for=lambda d: tmp_path / "devices" / d / "selected_registers.json",
+                       replace_config=False)
+    after = yaml.safe_load(cfg_path.read_text())
+    h1 = next(d for d in after["devices"] if d["id"] == "h1")
+    assert h1["http"]["headers"] == {"Authorization": "Bearer HTTPSECRET"}
+    assert h1["http"]["url"] == "http://192.0.2.7/api?token=HTTPTOKEN"
+    assert h1["mqtt_in"]["password"] == "MQTTINPW"
+    assert h1["sources"][0]["url"] == "http://user:SRCPW@192.0.2.8/x"
+    assert h1["sources"][0]["headers"] == {"X-Key": "SRCHEADER"}
+    src = after["endpoints"][0]["groups"][0]["sources"][0]
+    assert src["url"] == "http://192.0.2.9/solar?api_key=EPTOKEN"
+    assert src["headers"] == {"Authorization": "Bearer EPSECRET"}
+
+
+@needs_tc
+def test_import_meets_the_live_validators_before_writing(tmp_path):
+    """F-18 (3.83.0): a backup with an allowlist entry that does not parse,
+    a non-http webhook, a non-boolean write flag or an off-LAN HTTP source is
+    refused before a byte is written; a clean one still imports."""
+    import io
+    import zipfile
+    import yaml
+    _cfg, client = make_app(tmp_path)
+    before = (tmp_path / "config.yaml").read_text()
+
+    def bundle(cfg):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("config.yaml", yaml.safe_dump(cfg))
+            z.writestr("manifest.json", '{"backup_version": 1}')
+        return buf.getvalue()
+    bad = [
+        {"security": {"allowlist": ["not-a-network"]}},
+        {"ui": {"trusted_proxies": ["10.0.0.0/33"]}},
+        {"alerts": {"webhook_url": "ftp://x/y"}},
+        {"security": {"allow_writes": "yes"}},
+        {"devices": [{"id": "h", "http": {"url": "http://8.8.8.8/x"}}]},
+    ]
+    for cfg in bad:
+        r = client.post("/api/config/import", content=bundle(cfg), headers={"Content-Type": "application/zip"})
+        assert r.status_code == 422, (cfg, r.text)
+    assert (tmp_path / "config.yaml").read_text() == before        # nothing written
+    r = client.post("/api/config/import", content=bundle({"security": {"allowlist": ["192.168.1.0/24"]}}),
+                    headers={"Content-Type": "application/zip"})
+    assert r.status_code == 200, r.text

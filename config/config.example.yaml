@@ -101,7 +101,7 @@ influxdb:
   # API token
   token: ""
   # Organization
-  org: ""
+  org: "multibus"
   # Bucket name
   bucket: "multibus"
   # Minimum write interval per measurement (seconds)
@@ -111,8 +111,8 @@ influxdb:
   # Store-and-forward buffer: points produced while InfluxDB is unreachable are
   # kept in RAM and replayed with their original timestamps on reconnect
   # (idempotent - InfluxDB dedupes on measurement+tags+timestamp).
-  buffer_minutes: 10
-  buffer_max_points: 50000
+  buffer_minutes: 120
+  buffer_max_points: 200000
 
 ui:
   # Web UI host

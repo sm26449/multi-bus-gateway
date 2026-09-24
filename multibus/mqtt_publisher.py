@@ -488,7 +488,7 @@ class MQTTPublisher:
         # the value keeps a fresh timestamp for HA/consumers
         if self.heartbeat_interval > 0:
             last = self.last_publish_at.get(topic, 0)
-            if time.time() - last >= self.heartbeat_interval:
+            if time.monotonic() - last >= self.heartbeat_interval:   # F-58: step-proof
                 return True
 
         return False
@@ -508,7 +508,7 @@ class MQTTPublisher:
             self.last_values[topic] = round(value, 3)
         else:
             self.last_values[topic] = value
-        self.last_publish_at[topic] = time.time()   # heartbeat reference
+        self.last_publish_at[topic] = time.monotonic()   # heartbeat reference (monotonic)
 
     def publish_topic(self, topic: str, payload: str,
                       retain: bool = True) -> bool:

@@ -107,7 +107,9 @@ def test_nested_pow_magnitude_bounded():
     assert ok                                         # syntactically valid
     with pytest.raises(ex.ExpressionError):
         ex.evaluate("(2**64)**64", lambda n: None)    # 2^64 base, exp 64 → too large
-    assert ex.evaluate("2 ** 64", lambda n: None) == 2 ** 64   # single level still fine
+    assert ex.evaluate("2 ** 60", lambda n: None) == 2 ** 60   # single level still fine
+    with pytest.raises(ex.ExpressionError):                     # 3.83.0: results are int64-sized
+        ex.evaluate("2 ** 64", lambda n: None)
 
 
 def test_stateful_prev_and_dt():
@@ -361,3 +363,21 @@ def test_saving_rejects_a_wildcard_topic_and_an_empty_enum(tmp_path):
     bad_enum = {"calculated": [{"name": "X", "expr": "1", "enum": {}}]}
     assert client.post("/api/devices/umg512/calculated",
                        json=bad_enum).status_code == 422
+
+
+def test_round_decimals_bounded_and_results_finite():
+    """F-08 (3.83.0): round(x, -10**8) made CPython build 10**(10**8) — a hang
+    of the poller or the rules thread; a non-finite or oversized result must
+    not leave the engine either (every sink chokes on inf/nan and >64-bit)."""
+    ok, err, _r = ex.validate_expression("round(_P, -100000000)")
+    assert ok is False and "round" in err               # rejected at save time
+    ok, _e, _r = ex.validate_expression("round(_P, _N)")  # a measurement as n
+    assert ok
+    with pytest.raises(ex.ExpressionError):
+        ex.evaluate("round(_P, _N)", lambda n: {'_P': 5.0, '_N': -100000000}[n])
+    assert ex.evaluate("round(_P, _N)", lambda n: {'_P': 5.126, '_N': 2}[n]) == 5.13
+    with pytest.raises(ex.ExpressionError):
+        ex.evaluate("1e308 * 10", lambda n: None)          # inf
+    with pytest.raises(ex.ExpressionError):
+        ex.evaluate("2 ** 64 * 2 ** 64", lambda n: None)   # 128-bit int
+    assert ex.evaluate("2 ** 62", lambda n: None) == 2 ** 62

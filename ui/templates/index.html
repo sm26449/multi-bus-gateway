@@ -1,4 +1,7 @@
 <!DOCTYPE html>
+<!-- Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
+     Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+     SPDX-License-Identifier: AGPL-3.0-or-later -->
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -1005,8 +1008,8 @@
                             <div class="settings-card-header">
                                 <h3><i aria-hidden="true" class="bi bi-journal-text"></i> <span data-i18n="audit.title">Audit Trail</span></h3>
                                 <div style="display:flex;gap:8px;align-items:center;">
-                                    <button class="btn btn-ghost btn-sm" data-action="_navigate" data-args='["/api/audit/export.csv"]'>
-                                        <i aria-hidden="true" class="bi bi-filetype-csv"></i> CSV</button>
+                                    <a class="btn btn-ghost btn-sm" href="/api/audit/export.csv" download="audit.csv">
+                                        <i aria-hidden="true" class="bi bi-filetype-csv"></i> CSV</a>
                                     <button class="btn btn-ghost btn-sm" data-action="loadAudit">
                                         <i aria-hidden="true" class="bi bi-arrow-repeat"></i> <span data-i18n="common.refresh">Refresh</span></button>
                                 </div>

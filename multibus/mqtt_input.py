@@ -57,6 +57,10 @@ def topic_matches(pattern: str, topic: str) -> bool:
     return len(pp) == len(tp)
 
 
+# the largest MQTT payload a source is allowed to carry (F-63, 3.83.0)
+MAX_PAYLOAD_BYTES = 64 * 1024
+
+
 class MqttInputClient:
     """MQTT subscriber with a ModbusClient/HttpClient-compatible surface."""
 
@@ -150,10 +154,18 @@ class MqttInputClient:
         self.messages += 1
         self.last_msg_ts = time.time()
         self.last_msg_mono = time.monotonic()
+        if msg.payload and len(msg.payload) > MAX_PAYLOAD_BYTES:
+            # a measurement is a few hundred bytes; a megabyte is not one
+            self.oversized_dropped = getattr(self, 'oversized_dropped', 0) + 1
+            if self.oversized_dropped in (1, 10, 100, 1000):
+                logger.warning("MQTT-in %s: payload of %d bytes dropped (cap %d, %d so far)",
+                               msg.topic, len(msg.payload), MAX_PAYLOAD_BYTES, self.oversized_dropped)
+            return
         raw = msg.payload.decode('utf-8', 'replace') if msg.payload else ''
         try:
             doc = json.loads(raw)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, RecursionError):
+            # RecursionError: a deliberately deep document (F-63, 3.83.0)
             doc = None
         regs = self._match(msg.topic)
         if not regs:
@@ -161,11 +173,17 @@ class MqttInputClient:
         data: Dict[int, Dict] = {}
         for r in regs:
             jp = getattr(r, 'json_path', '') or ''
-            if jp:
-                val = resolve_json_path(doc, jp) if doc is not None else None
-            else:
-                val = doc if isinstance(doc, (int, float, bool)) else raw
-            val = _coerce_numeric(val)
+            try:
+                if jp:
+                    val = resolve_json_path(doc, jp) if doc is not None else None
+                else:
+                    val = doc if isinstance(doc, (int, float, bool)) else raw
+                val = _coerce_numeric(val)
+            except (ValueError, TypeError, OverflowError, RecursionError) as e:
+                # one hostile field must not cost the message its other
+                # registers (F-63, 3.83.0)
+                logger.debug("MQTT-in %s: register %s skipped: %s", msg.topic, getattr(r, 'name', '?'), e)
+                continue
             if val is None:
                 continue
             # SHARED correction pipeline: nan/enum/bits/scale/offset/monotonic

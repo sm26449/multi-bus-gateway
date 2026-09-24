@@ -34,7 +34,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import socket
+import struct
 import threading
 import time
 from collections import deque
@@ -57,6 +59,12 @@ ValueProvider = Callable[[str], Optional[tuple]]
 # objects; the SimDevice shared block would otherwise serve register BITS to a
 # coil read instead of the illegal-address refusal a real meter gives.
 _BIT_FCS = (1, 2)
+
+
+# A push source (MQTT-in, HTTP) stamps on its own thread; a stamp taken a
+# moment after the rebuild read its clock is a race, not a corrupted stamp.
+# Anything further ahead than this is still refused (F-31, 3.83.0).
+FUTURE_TOLERANCE_S = 1.0
 
 
 @dataclass
@@ -345,6 +353,7 @@ class VirtualMeter:
         self.stats = VMeterStats()              # in-RAM query log + counters
         self._failover_active: dict[int, str] = {}   # addr → active source name
         self._encode_failed: set[int] = set()        # addrs warned unencodable (edge-triggered)
+        self._cap_warned = False                     # connection-cap warning (edge-triggered, F-60)
         # rows that have resolved at least once since this meter was built —
         # a never-resolved row has no last value to hold, so legacy mode must
         # fail the freshness verdict for it (external audit E1)
@@ -361,12 +370,18 @@ class VirtualMeter:
     def _got3(got) -> tuple[Any, Optional[float], Optional[float]]:
         """Normalize a provider result to (value, ts, bound) — providers may
         return 2-tuples (legacy) or 3-tuples (bound = source device's own
-        staleness threshold)."""
+        staleness threshold). A non-finite number (inf/nan from an MQTT
+        publisher or a runaway calculation) is no measurement: it becomes
+        MISSING here, so the on_stale policy judges it instead of a consumer
+        reading a float32 infinity as a plausible value (3.83.0)."""
         if not got:
             return None, None, None
+        value = got[0]
+        if isinstance(value, float) and not math.isfinite(value):
+            value = None
         if len(got) >= 3:
-            return got[0], got[1], got[2]
-        return got[0], got[1], None
+            return value, got[1], got[2]
+        return value, got[1], None
 
     def _span(self, reg: RegisterDef) -> int:
         return max(1, reg.length if reg.type == 'string'
@@ -380,7 +395,11 @@ class VirtualMeter:
         the served frame frozen with the stale-stop fail-safe disarmed."""
         try:
             words, ts, bound = self._resolve_row(reg)
-        except (TypeError, ValueError) as e:
+        except (TypeError, ValueError, OverflowError, struct.error) as e:
+            # OverflowError: an infinite or 1e300 source value (an MQTT
+            # publisher can send one) → float32 / int conversion; struct.error:
+            # a word outside the packer's range. Either one escaping here
+            # froze the served frame with the stale-stop disarmed (3.83.0).
             if reg.addr not in self._encode_failed:
                 self._encode_failed.add(reg.addr)
                 msg = (f"0x{reg.addr:04x}: unencodable source value ({e}) — "
@@ -499,7 +518,7 @@ class VirtualMeter:
         stamp (now-ts < 0 — a corrupted or mis-sourced monotonic stamp) is
         NEVER fresh: serving such frozen values as live into an ESS control
         loop is exactly the failure the freshness watchdog exists to prevent."""
-        return bool(ts) and 0.0 <= (now - ts) <= bound
+        return bool(ts) and -FUTURE_TOLERANCE_S <= (now - ts) <= bound
 
     def _rebuild_block(self) -> float:
         """Recompute (addr, words) for every register. Returns newest live ts.
@@ -612,9 +631,13 @@ class VirtualMeter:
                     continue
             if self.on_stale == "hold":
                 held = self._last_good.get(reg.addr)
-                # same future-timestamp guard: a held stamp from before a
-                # backward clock step must not extend the hold past max_hold_s
-                if held and self._is_fresh(now, held[1], self.max_hold_s):
+                # the hold window starts when the row went STALE (its stamp
+                # plus its freshness bound), not at the stamp itself — measured
+                # from the stamp, a row whose bound was >= max_hold_s never
+                # held at all (F-62, 3.83.0). Same future-timestamp guard: a
+                # held stamp from before a backward clock step must not extend
+                # the hold past max_hold_s.
+                if held and held[1] <= now and (now - (held[1] + (bound or 0.0))) <= self.max_hold_s:
                     out.append((reg.addr, held[0]))   # bounded hold
                     continue
             _mark_unavailable(reg)
@@ -674,8 +697,12 @@ class VirtualMeter:
             simdata.append(SimData(address=QUALITY_BASE, count=QUALITY_SPAN,
                                    values=0, datatype=DataType.REGISTERS))
         # id=0 → respond on ANY device id (a client may poll unit 240 etc.);
-        # SimCore routes every unknown id to device 0.
-        device = SimDevice(id=0, simdata=simdata)
+        # SimCore routes every unknown id to device 0. That is the historical
+        # default (a mis-addressed consumer still gets an answer). With
+        # transport.strict_unit_id: true only the configured unit_id answers
+        # (F-61, 3.83.0) — every other id gets the gateway-path exception.
+        strict = bool(self.t.transport.get("strict_unit_id", False))
+        device = SimDevice(id=unit if strict else 0, simdata=simdata)
 
         # ── always-on instrumentation: every read the consumer issues is
         #    recorded (addr, count, response sample, latency) into stats; a
@@ -829,6 +856,7 @@ class VirtualMeter:
     # on this socket (a silent connection grows it from the handshake on).
     _TCPI_LAST_DATA_RECV_OFF = 52
     IDLE_TIMEOUT_DEFAULT_S = 300
+    MAX_CONNECTIONS_DEFAULT = 16    # per meter; transport.max_connections (F-60, 3.83.0)
 
     @staticmethod
     def _idle_ms_from_tcp_info(info: bytes) -> Optional[int]:
@@ -859,10 +887,38 @@ class VirtualMeter:
         except (TypeError, ValueError):
             timeout_s = self.IDLE_TIMEOUT_DEFAULT_S
         srv, loop = self._server, self._server_loop
-        if timeout_s <= 0 or not srv or not loop:
+        if not srv or not loop:
+            return
+        # connection cap: pymodbus keeps an unbounded active_connections; a
+        # peer opening sockets and keeping each one just alive would hold FDs
+        # forever and starve the UI, MQTT and the Modbus client to the real
+        # meter. Beyond the cap, the surplus is closed (newest first).
+        try:
+            cap = int(self.t.transport.get("max_connections", self.MAX_CONNECTIONS_DEFAULT) or 0)
+        except (TypeError, ValueError):
+            cap = self.MAX_CONNECTIONS_DEFAULT
+        handlers = list(getattr(srv, "active_connections", {}).values())
+        if cap > 0 and len(handlers) > cap:
+            for handler in handlers[cap:]:
+                tr = getattr(handler, "transport", None)
+                if tr is None:
+                    continue
+                peer = tr.get_extra_info("peername")
+                if not getattr(self, '_cap_warned', False):
+                    self._cap_warned = True
+                    msg = f"more than {cap} client connections — closing the surplus ({peer} first)"
+                    self.stats.record_event("warn", "conn_cap", msg)
+                    logger.warning("virtual meter %s: %s", self.t.id, msg)
+                try:
+                    loop.call_soon_threadsafe(tr.close)
+                except RuntimeError:
+                    pass
+        elif getattr(self, '_cap_warned', False) and cap > 0 and len(handlers) <= cap // 2:
+            self._cap_warned = False
+        if timeout_s <= 0:
             return
         try:
-            for handler in list(getattr(srv, "active_connections", {}).values()):
+            for handler in handlers[:cap] if cap > 0 else handlers:
                 tr = getattr(handler, "transport", None)
                 sock = tr.get_extra_info("socket") if tr is not None else None
                 if sock is None:
@@ -1025,16 +1081,25 @@ class VirtualMeter:
                             logger.warning("virtual meter %s server thread died — restarting", self.t.id)
                             self.stats.record_event("error", "crash",
                                                     "server thread died — restarting")
-                        try:
-                            self._start_server()
-                            restart_fails = 0
-                        except Exception as e:        # noqa: BLE001
-                            restart_fails += 1
-                            self._running = False
-                            self.stats.record_event("error", "restart_failed",
-                                                    f"restart attempt {restart_fails} failed: {e}")
-                            logger.error("virtual meter %s restart failed (%d): %s",
-                                         self.t.id, restart_fails, e)
+                        # after three straight failures (a port already in use,
+                        # an interface that does not exist) retry every ~30 s,
+                        # and say so on the first failure and every tenth — not
+                        # on every tick into the event ring (F-32, 3.83.0)
+                        if restart_fails < 3 or tick % 30 == 0:
+                            try:
+                                self._start_server()
+                                if restart_fails:
+                                    logger.warning("virtual meter %s: server restarted after %d failed attempts",
+                                                   self.t.id, restart_fails)
+                                restart_fails = 0
+                            except Exception as e:        # noqa: BLE001
+                                restart_fails += 1
+                                self._running = False
+                                if restart_fails == 1 or restart_fails % 10 == 0:
+                                    self.stats.record_event("error", "restart_failed",
+                                                            f"restart attempt {restart_fails} failed: {e}")
+                                    logger.error("virtual meter %s restart failed (%d): %s",
+                                                 self.t.id, restart_fails, e)
                     else:
                         self._push_to_ctx()
                         # liveness probe (~every 10s): a thread can be alive but

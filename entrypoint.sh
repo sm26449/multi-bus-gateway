@@ -1,4 +1,7 @@
 #!/bin/sh
+# Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
+# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Root only long enough to hand the mounted config volume to the app user —
 # a bind mount arrives with HOST ownership (root on a fresh install, so the
 # non-root app could read but never write snapshots/saves) — then drop

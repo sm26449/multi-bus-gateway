@@ -17,6 +17,7 @@ Two guarantees live here, not in the caller:
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -90,10 +91,13 @@ class RuleDef:
 
 
 def _f(x, default=None):
+    """A finite float, or ``default`` — NaN and ±inf are not setpoints,
+    thresholds or clamps (F-30, 3.83.0)."""
     try:
-        return float(x)
+        v = float(x)
     except (TypeError, ValueError):
         return default
+    return v if math.isfinite(v) else default
 
 
 def _on_stale(v: Any) -> Any:
@@ -101,7 +105,7 @@ def _on_stale(v: Any) -> Any:
     if isinstance(v, bool) or v is None:
         return 'hold'
     if isinstance(v, (int, float)):
-        return float(v)
+        return float(v) if math.isfinite(float(v)) else str(v)   # 'inf'/'nan' fail validation
     t = str(v).strip()
     if re.fullmatch(r'-?\d+(\.\d+)?', t):
         return float(t)
@@ -160,7 +164,8 @@ def validate_rule_def(raw: Dict, *, validate_expr=None) -> List[str]:
     if isinstance(tgt, dict) and not (tgt.get('device') or (tgt.get('endpoint') and tgt.get('group'))):
         errors.append("target: a device, or an endpoint and a group")
     _os = raw.get('on_stale', 'hold')
-    if not (_os in ON_STALE or (isinstance(_os, (int, float)) and not isinstance(_os, bool))
+    if not (_os in ON_STALE
+            or (isinstance(_os, (int, float)) and not isinstance(_os, bool) and math.isfinite(_os))
             or (isinstance(_os, str) and re.fullmatch(r'-?\d+(\.\d+)?', _os.strip() or 'x'))):
         errors.append(f"on_stale: one of {', '.join(ON_STALE)}, or a number (the value to ask for while stale)")
     if raw.get('on_disable', 'safe') not in ON_DISABLE:

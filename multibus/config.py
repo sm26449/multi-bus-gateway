@@ -1789,7 +1789,6 @@ class Config:
         - A plausible load refreshes the ``<path>.good`` snapshot — but never
           with an implausible husk, so .good always holds a real selection.
         Returns the parsed dict, or None when nothing loadable exists."""
-        import shutil
         good = path.with_suffix(path.suffix + '.good')
 
         def _plausible(d) -> bool:
@@ -1803,7 +1802,7 @@ class Config:
         except Exception as e:  # noqa: BLE001
             bad = path.with_suffix(path.suffix + '.bad')
             try:
-                shutil.copyfile(path, bad)
+                _copy_private(path, bad)          # 0600 + atomic (F-39, 3.83.0)
                 logger.error(f"{label}: {e} — broken file copied to {bad}")
             except Exception:  # noqa: BLE001
                 logger.error(f"{label}: {e}")
@@ -1820,7 +1819,7 @@ class Config:
                     logger.error(f"{label}: snapshot load also failed: {e2}")
             return None
         try:
-            shutil.copyfile(path, good)
+            _copy_private(path, good)             # 0600 + atomic (F-39, 3.83.0)
         except Exception:  # noqa: BLE001
             pass
         return data
@@ -2105,12 +2104,17 @@ class Config:
             'INFLUXDB_PUBLISH_MODE': 'influxdb.publish_mode',
             'UI_PORT': 'ui.port',
             'UI_HOST': 'ui.host',
+            'MODBUS_STALE_AFTER_S': 'modbus.stale_after_s',
+            'ESPHOME_URL': 'esphome.url',
+            'ESPHOME_ENABLED': 'esphome.enabled',
+            'ESPHOME_USERNAME': 'esphome.username',
+            'ESPHOME_PASSWORD': 'esphome.password',
         }
         # Secret-bearing paths: report only that they are env-pinned, never the
         # value (this endpoint is readable without the API key). URL-valued
         # paths go through redact_url — an env URL can embed userinfo/tokens.
-        secret_paths = {'mqtt.password', 'influxdb.token'}
-        url_paths = {'influxdb.url'}
+        secret_paths = {'mqtt.password', 'influxdb.token', 'esphome.password'}
+        url_paths = {'influxdb.url', 'esphome.url'}
         for env_var, config_path in env_mappings.items():
             if os.getenv(env_var):
                 if config_path in secret_paths:

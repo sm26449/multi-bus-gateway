@@ -191,3 +191,24 @@ def test_first_run_provisions_hashed_admin_password(tmp_path, capsys):
     app._first_run_provision()
     assert (tmp_path / "config.yaml").read_text() == before
     assert "FIRST RUN" not in capsys.readouterr().out
+
+
+def test_json_self_heal_copies_are_private(tmp_path):
+    """F-39 (3.83.0): the .good/.bad copies of the register selection are
+    written 0600 and atomically, like every other file in the config dir."""
+    import json
+    import os
+    import stat
+    p = tmp_path / "config.yaml"
+    p.write_text("modbus:\n  host: 1.2.3.4\n")
+    c = Config(str(p))
+    sel = tmp_path / "selected_registers.json"
+    sel.write_text(json.dumps({"registers": [{"address": 1, "name": "a", "data_type": "uint16"}]}))
+    c._load_json_with_heal(sel, required_key="registers", label="selection")
+    good = tmp_path / "selected_registers.json.good"
+    assert good.exists()
+    assert stat.S_IMODE(os.stat(good).st_mode) == 0o600
+    sel.write_text("{not json")
+    c._load_json_with_heal(sel, required_key="registers", label="selection")
+    bad = tmp_path / "selected_registers.json.bad"
+    assert bad.exists() and stat.S_IMODE(os.stat(bad).st_mode) == 0o600

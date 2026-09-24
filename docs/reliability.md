@@ -18,8 +18,10 @@ Five principles run through everything:
 4. **Edge-triggered observability.** One warning on a transition, silence in
    between, a bounded event ring per subsystem — so a real incident is never
    buried under flapping.
-5. **Every persisted file is atomic, fsync'd and `0600`**, and the files
-   that can brick a boot carry a `.good`/`.bad` self-heal pair.
+5. **Every persisted file is atomic and fsync'd**; the ones that carry
+   secrets (`config.yaml`, sessions, passkeys, leases, snapshots) are
+   `0600` from creation, and the files that can brick a boot carry a
+   `.good`/`.bad` self-heal pair.
 
 These claims are load-tested, not just designed: the capacity campaign
 ([`loadtest/CAPACITY-REPORT.md`](../loadtest/CAPACITY-REPORT.md), re-validated
@@ -113,7 +115,7 @@ point into `multibus/` unless noted.
 | Cache + heartbeat clocks cleared on (re)connect → full republish; HA discovery re-published on reconnect and re-asserted periodically; stale discovery clears retried until they land | A broker restart leaving topics empty for days and ghost HA entities alive forever | `mqtt_publisher.py` |
 | **Retained-command drop** + retained clear at subscribe | The broker replaying a past write into hardware on every reconnect | `mqtt_publisher.py` |
 | Command worker thread (never paho's network thread), bounded queue with drop accounting, restarted after reconnect | Blocking Modbus I/O stalling every publish; a flood of stale writes; post-reconnect commands vanishing | `mqtt_publisher.py` |
-| Liveness always QoS 1 retained; TLS setup failure **fails closed**; `publish_drops` accounting | Losing the death notice; silent cleartext fallback; an outage invisible in stats | `mqtt_publisher.py` |
+| Gateway liveness (LWT/online) QoS 1 retained, per-device availability at the configured `mqtt.qos`; TLS setup failure **fails closed**; `publish_drops` accounting | Losing the death notice; silent cleartext fallback; an outage invisible in stats | `mqtt_publisher.py` |
 
 ### InfluxDB
 
@@ -129,7 +131,7 @@ point into `multibus/` unless noted.
 
 | Mechanism | Protects against | Lives in |
 |---|---|---|
-| Atomic writes everywhere (`tmp` → `fsync` → `rename`), `0600` from creation, one shared file lock across config writers | Torn files on power loss; secrets world-readable on a bind mount; two concurrent saves publishing a half-written mix | `config.py`, `snapshots.py`, `auth.py`, `passkeys.py`, … |
+| Atomic writes everywhere (`tmp` → `fsync` → `rename`), `0600` from creation for every file carrying secrets, one shared file lock across config writers | Torn files on power loss; secrets world-readable on a bind mount; two concurrent saves publishing a half-written mix | `config.py`, `snapshots.py`, `auth.py`, `passkeys.py`, … |
 | **Plausibility gate**: a config.yaml that parses but is a truncated husk routes through `.bad` + heal; `.good` is never refreshed by a file that lost devices (an intentional save refreshes it) | A cut file "loading successfully" and destroying the only recovery copy | `config.py` |
 | `.bad` copy + `.good` self-heal + **save blocking** until repaired, surfaced in `/api/status` and as an alert | A corrupt config silently becoming defaults, then a save permanently overwriting the user's real file | `config.py` |
 | The same `.good`/`.bad` contract on `selected_registers.json` — primary and per-device | A truncated selection silently emptying every poller | `config.py` |
@@ -153,7 +155,7 @@ mechanisms, layer by layer:
 | Sessions as SHA-256 token hashes (0600, atomic), sliding expiry, revoke-all on rotation, the caller's own session re-issued on a security save | Usable tokens on disk; stolen cookies outliving a rotation; the admin logging themselves out with their own save | `auth.py`, `routes/config.py` |
 | Passkeys: RP-ID/origin validation, one-shot server-side challenges, sign-count tracking, review-on-enable of passkeys enrolled while auth was off | Replay; a LAN attacker's passkey silently becoming a live admin credential | `passkeys.py`, `routes/auth_routes.py`, `routes/config.py` |
 | CSRF (`Sec-Fetch-Site`/`Origin` incl. port), opt-in CORS with credentials off, API key on all mutations and on the OTA-capable builder WebSocket (header or `mbg-api-key.<b64url>` subprotocol), WS connection cap + per-send timeouts | Drive-by state changes; wildcard-CORS liability; unauthenticated writes; key leakage via query params; FD exhaustion | `api.py`, `routes/builder_routes.py` |
-| **Write gating chain**: `allow_writes` → authenticated caller → per-IP rate limit → primary read-only → template allowlist (encoding from the template, never the caller) → NaN/Inf rejected → bounds → read-back verification → audit; the same chain re-applied to MQTT/HA commands; write entities advertised only when doubly enabled | An unattributable, unbounded, caller-encoded write to real hardware — from any path, including the broker | `api.py` |
+| **Write gating chain**: `allow_writes` → authenticated caller → per-IP rate limit → device write lock (the primary ships locked) → template allowlist (encoding from the template, never the caller) → NaN/Inf rejected → bounds → read-back verification → audit; the same chain re-applied to MQTT/HA commands; write entities advertised only when doubly enabled | An unattributable, unbounded, caller-encoded write to real hardware — from any path, including the broker | `api.py` |
 | **Dead-man write leases**: TTL auto-revert to the template's safe value, per-lease revert threads, revert failures retried loudly, leases persisted and fired on boot | A crashed controller leaving a dangerous setpoint standing — even across a gateway crash | `write_lease.py`, `api.py` |
 | Audit trail (every mutation incl. denials; bounded body capture; redaction; rotation at 0600; CSV formula-injection guard; admin-only) | No record of who changed what; the audit becoming where secrets leak; OOM via a giant body; spreadsheet injection | `audit.py`, `api.py`, `routes/system.py` |
 | Redaction everywhere (`redact_url`, role-based device redaction, sanitized exports, masked env overrides, builder YAML excluded from body capture) | Tokens/passwords in logs, exports, or the audit | `redact.py`, `api.py`, `snapshots.py` |

@@ -15,7 +15,7 @@ the images are built by CI from the tag.
   `.github/workflows/release.yml`, which builds and pushes two multi-arch
   images (linux/amd64 + linux/arm64) to the GitHub Container Registry:
   - `ghcr.io/sm26449/multi-bus-gateway` — tags `X.Y.Z`, `X.Y`, `latest`
-  - `ghcr.io/sm26449/multi-bus-gateway-serial-bridge` — tags `X.Y.Z`, `latest`
+  - `ghcr.io/sm26449/multi-bus-gateway-serial-bridge` — tags `X.Y.Z`, `X.Y`, `latest`
 - A GitHub Release with the changelog section as its notes.
 
 Versioning is semantic within the 3.x line: a fix → patch, a feature or a
@@ -57,7 +57,7 @@ changelog section as **breaking** and documented in `docs/upgrade-guide.md`.
   `MBG_VERSION=X.Y.Z docker compose pull && docker compose up -d`; the
   upgrade guide covers pinning and rolling back by tag.
 - A pre-release (`vX.Y.Z-rc1`) also publishes images; only tag one when you
-  want testers on it — `latest` moves with every tag the workflow builds.
+  want testers on it — `latest` moves only with non-prerelease tags (the workflow gates it).
 
 ## If a release is wrong
 

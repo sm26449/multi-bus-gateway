@@ -329,3 +329,15 @@ def test_snapshot_download_allowed_with_api_key(tmp_path, monkeypatch):
     assert client.get(f"/api/config/snapshots/{snap['id']}/download").status_code == 403
     assert client.get(f"/api/config/snapshots/{snap['id']}/download",
                       headers={"X-API-Key": "k"}).status_code == 200
+
+
+def test_boot_seatbelt_does_not_roll_back_on_a_non_file_error(store):
+    """F-26 (3.83.0): only a config that cannot be parsed or validated is the
+    LKG's business — an OSError (read-only volume, full disk) or a bug must
+    not restore months-old credentials and settings."""
+    cfg = store.cfg_dir / "config.yaml"
+    store.mark_lkg()
+    cfg.write_text("modbus: {host: 9.9.9.9}")
+    with pytest.raises(OSError):
+        boot_seatbelt(str(cfg), lambda: (_ for _ in ()).throw(OSError("read-only file system")))
+    assert "9.9.9.9" in cfg.read_text()            # untouched

@@ -1,3 +1,7 @@
+/* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
+ * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
 // Device Builder domain — augments JanitzaMonitor.prototype.
 // Drives an external ESPHome dashboard through /api/builder/* (backend proxy):
 // node list, YAML editor with server-side validation, compile/OTA with a live

@@ -1,3 +1,7 @@
+/* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
+ * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
 /* Canonical-host redirect (ui.canonical_url). Runs first in <head>, before
  * anything renders, and steers the browser to the canonical HTTPS host so TLS
  * and passkeys are the default. Client-side on purpose: the page loads first,

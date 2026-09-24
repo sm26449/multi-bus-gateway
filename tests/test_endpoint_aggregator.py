@@ -490,3 +490,20 @@ def test_what_an_inverter_is_told_is_never_summed():
     assert aggregation_rule("power_limit_enabled") is None
     assert aggregation_rule("controls_connected") is None
     assert aggregation_rule("power_active_total") == "sum"
+
+
+def test_unit_freshness_prefers_the_monotonic_stamp():
+    """F-58 (3.83.0): a wall-clock step (NTP) must not mark every unit
+    offline for an interval — freshness follows the store's monotonic stamp
+    when it carries one, the wall-clock stamp is the fallback."""
+    now = time.time()
+    mono = time.monotonic()
+    cfg = _Cfg(["u1", "u2"])
+    reg = _Reg({
+        # wall clock says an hour old (a backward NTP step), monotonic says 1 s: fresh
+        "u1": {1: {**_entry("power_active_total", 10000, ts=now - 3600), "mono": mono - 1}},
+        # wall clock says now (a forward step), monotonic says an hour: stale
+        "u2": {1: {**_entry("power_active_total", 12000, ts=now), "mono": mono - 3600}},
+    })
+    agg = compute_endpoint_aggregates(cfg, reg, "p", now=now)
+    assert agg["power_active_total"] == 10000 and agg["units_online"] == 1

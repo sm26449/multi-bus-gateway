@@ -1,5 +1,184 @@
 # Changelog
 
+## 3.83.0
+
+### 2026-09-24 — SECURITY: findings of an independent second-pass audit
+
+An independent audit of the public repository (Copilot, 2026-09-24) found
+what ours had missed. Every Critical and High finding is fixed here, each
+with a regression test that fails on 3.82.1. Upgrade before running a
+command with a lease on a production inverter.
+
+- **Critical — a crashed gateway un-curtailed a plant to 1 %.** A dead-man
+  lease taken by a *command* (`power_limit` with `lease_s`) was persisted
+  with a raw envelope; after a crash, boot recovery wrote the bare word
+  `100` into WMaxLimPct, which a SunSpec scale factor of −2 turns into a
+  1 % limit with the enable bit still set and no device-side timeout.
+  Recovery now runs the command's own `safe` recipe, exactly as the live
+  revert does.
+- **High — raw `/write` on a scale-factored register.** The declared write
+  path took the template's `scale` but not `scale_from`, so writing
+  `power_limit_pct = 60` sent the word 60 (0.6 %) and the read-back
+  "verified" it through the same wrong scale. A register with a live scale
+  factor, or one a command writes first, is refused with 422 and pointed
+  at the command — the Home Assistant face has always done this.
+- **High — a lease was not armed when the frames went out but the
+  read-back failed.** An `unverified` or `mismatch` command left the limit
+  on the device with no revert timer. The lease is armed whenever at least
+  one frame was sent.
+- **High — the API key doubled as the admin role.** With `API_KEY` set,
+  every operator must present the key on every write, and the key alone
+  unlocked raw (`unguarded`) writes, secret exports and full snapshot
+  downloads. With login on those are admin-only now; the key stands in
+  only on a box without login. `docs/API.md`, `SECURITY.md` and the
+  hardening checklist say so.
+- **High — the "sanitized" export leaked nested credentials.** Only
+  `connection.*` and `rest_push.*` were stripped; a device's `http.headers`
+  and `mqtt_in.password`, the credentials of multi-source devices and of
+  installation sources went out in clear in a backup any viewer could
+  download. Redaction now walks the whole `devices[]` and `endpoints[]`
+  trees (secret-named fields dropped, every URL redacted) and the
+  merge-import restores the live values for all of them.
+- **High — an infinite value froze a virtual meter with its fail-safe
+  disarmed.** `OverflowError` and `struct.error` escaped the row guard,
+  aborting the block rebuild; an MQTT publisher could trigger it. They are
+  caught, and a non-finite source value is treated as missing rather than
+  served as a float32 infinity.
+- **High — a device whose template did not load polled anyway with
+  `byte_order: big`.** A little-endian meter would have published
+  word-swapped garbage as if it were fine. The source stays idle and the
+  log says which template is missing.
+- **High — `round(x, -10**8)` hung the poller or the rules thread.**
+  CPython computes 10**|n| for it. The second argument of `round()` is
+  bounded (±15) at save time and at evaluation time, and a result that is
+  not finite or wider than 64 bits never leaves the expression engine.
+
+Medium findings fixed in the same release:
+
+- `override_s` (the seconds a controller may pause the rule that owns a
+  command) is bounded to 24 h and must be a finite number; the rule is
+  paused only once the command has passed every gate, so a rejected
+  command no longer silences a safety rule (F-09).
+- The Home Assistant number/select `set` path honours the device write
+  lock, like the HTTP and command faces (F-13).
+- Every `/api/` write body is capped at 8 MB before it is read (import
+  keeps its own 25 MB cap); a chunked body without a length is refused
+  (F-19).
+- The bundled broker refuses to start with the `.env.example` placeholder
+  secret or with a `mosquitto.conf` that still allows anonymous clients;
+  `.env.example` ships the four required secrets commented out instead of
+  with placeholder values (F-22, F-23).
+- `GET /api/commands/history` is admin-only while login is on, as
+  documented — it is the audit log filtered (F-33).
+- Documentation: the primary device is write-locked by default, not
+  "always read-only" (F-34); the Romanian manual's stack paragraph
+  described the pre-3.81.0 anonymous broker and an always-on MQTT
+  Explorer (F-35).
+
+More Medium findings fixed in the same release:
+
+- Command guard and verify reads use each register's own function code —
+  a guard on an input register was read with FC3 and could never hold
+  (F-14).
+- Renaming or removing an account revokes every session and deletes the
+  old name's passkeys (F-16); a passkey credential id belongs to one
+  account — re-registering it under another is refused with 409 instead of
+  replacing the owner's passkey (F-17).
+- `validate_template` rejects boolean addresses, non-finite scales,
+  offsets and write bounds, string registers longer than 125 words, and a
+  `write_safe` outside its own envelope (F-21).
+- The boot last-known-good seatbelt restores only when the config cannot
+  be parsed or validated; an OSError, ImportError or any other failure is
+  re-raised instead of rolling credentials and settings back (F-26).
+- The session store keeps at most 256 live sessions, oldest first (F-27).
+- A clean shutdown reverts every live dead-man lease before the devices
+  disconnect; a revert that fails stays on disk for boot recovery (F-28).
+- Rule definitions reject NaN and ±inf in `on_stale`, step values and
+  thresholds (F-30).
+- A source stamp up to one second ahead of the virtual meter's rebuild is a
+  thread race, not a corrupted stamp: it no longer causes a one-tick
+  meter stop (F-31). A virtual meter whose server cannot start (port in
+  use, bad interface) retries with backoff and logs on the first and every
+  tenth failure instead of flooding the event ring every tick; `bind` must
+  be an IP address (F-32).
+- VENDOR-DATA.md says what the bundled maps actually carry — the register's
+  short functional label, not the manual's prose (F-36).
+- The import route's disk and Modbus work runs off the event loop (F-38);
+  the `.good`/`.bad` self-heal copies of register selections are written
+  0600 and atomically (F-39).
+- A rule's release-to-safe reports the command's verdict: a safe recipe
+  that did not write or verify is logged and shown as FAILED, not as
+  "released to safe" (F-10).
+- Dead-man reverts are consistent on both paths: a revert runs even if
+  writes were disabled or the device locked after the limit was placed
+  (otherwise the limit would stay forever), and the raw-register revert is
+  audited like every other write (F-11).
+- Commands meet the written registers' own `write_*` envelope, refuse to
+  write input or discrete registers, and refuse a value the encoder would
+  have to clamp; the raw `/write` route refuses the clamp case too and its
+  audit record carries the words that went out (F-12, F-15).
+- A backup import or snapshot restore is checked with the live routes'
+  rules before a byte is written: allowlist and trusted-proxy entries must
+  parse, the webhook must be http(s), write flags must be booleans, HTTP
+  sources must be on the LAN unless allowed, rules must validate. A live
+  allowlist entry that does not parse now denies every client until fixed
+  instead of silently admitting everyone (F-18).
+- Saving a user template removes any other file carrying the same id, and
+  deleting one removes every file carrying it, so a hand-copied twin can no
+  longer shadow a tightened envelope or resurrect a deleted template (F-20).
+- The release workflow runs the test suite, lint, the vendor checksum and
+  pip-audit on the tagged commit before it builds, and publishes a
+  Sigstore-signed build provenance for both images, verifiable with
+  `gh attestation verify` (F-25).
+
+Low and informational findings fixed in the same release:
+
+- The serial-bridge container gets the gateway's privilege model
+  (`cap_drop: ALL` + the entrypoint's five capabilities, no-new-privileges,
+  digest-pinned base image) and its unauthenticated RS-485 endpoints sit
+  on a private internal network shared only with the gateway (F-24).
+- Virtual meters cap client connections per meter (`transport.
+  max_connections`, default 16; the surplus is closed) so a peer holding
+  sockets open cannot exhaust file descriptors (F-60); `transport.
+  strict_unit_id: true` makes a meter answer only its configured unit id
+  (F-61, opt-in — the default still answers any id, as before); the
+  `hold` window counts from the moment a row went stale, not from the
+  value's own timestamp, so rows whose freshness bound exceeded the hold
+  time hold at last (F-62).
+- MQTT-in sources cap the payload at 64 KB, survive a deliberately deep
+  document, and skip one hostile field instead of dropping the whole
+  message (F-63).
+- The last-known-good timer, unit freshness in installation aggregates
+  and the MQTT heartbeat use the monotonic clock, so an NTP step no longer
+  marks every unit offline or short-circuits the LKG deadline (F-58).
+- A failing lease revert logs one ERROR, then retries at debug level and
+  logs its recovery, instead of twenty ERROR lines a minute (F-59).
+- `mbg/rules/<id>/set` may disable a rule but never enable one (enabling
+  an armed rule is arming it, which stays with the API); a clamp must be a
+  finite non-negative number with an expiry of at most a week (F-74).
+- Command leases and raw-write leases live in separate namespaces, so a
+  raw leased write can never replace a command's recipe revert (F-75).
+- `/api/query/batch` is capped at 64 registers (F-70); the three account
+  names must differ (the resolver takes the last match, so a viewer named
+  like the admin silently demoted the admin) (F-68); the audit CSV and
+  snapshot downloads are plain links — the `_navigate` helper that let
+  markup send the browser anywhere is gone (F-66).
+- A bare `pytest` collects the suite like `python -m pytest` does
+  (`pythonpath = .` in pytest.ini) (F-45).
+- Every UI source, stylesheet, template, entrypoint and test carries the
+  AGPL header with an SPDX identifier; the image carries the OCI
+  `licenses` label; NOTICE credits the libraries bundled inside the
+  vendored esp-web-tools (F-37, F-78).
+- Documentation: route roles for `/api/endpoints/{id}/test` and
+  `/api/rules/validate`, the exempt POST list, the 30-day session cap,
+  the write-lock and write-info routes, the compose knobs (`STACK_BIND`,
+  `MBG_VERSION`, host ports), `.env` secrets marked required, the status
+  key name, the bridge image tags, MQTT Explorer behind its profile,
+  the `mbg/devices/<id>` prefix, "Verified against" footers, and the
+  0600/QoS claims in the reliability page now match the code; the example
+  config carries the code's InfluxDB defaults; `MODBUS_STALE_AFTER_S` and
+  `ESPHOME_*` appear in the environment-override listing (F-77).
+
 ## 3.82.1
 
 ### 2026-09-24 — documentation for the public release

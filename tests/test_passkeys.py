@@ -124,3 +124,17 @@ ui:
     assert c.post("/api/auth/passkey/register/begin", json={}).status_code == 401
     # status expune has_passkeys
     assert c.get("/api/auth/status").json()["has_passkeys"] is False
+
+
+def test_a_credential_id_belongs_to_one_account(tmp_path):
+    """F-17 (3.83.0): re-registering an existing credential id under another
+    account used to replace (destroy) the owner's passkey."""
+    import pytest
+    s = PasskeyStore(str(tmp_path / "pk.json"))
+    s.add(cred_id=b"cred-1", public_key=b"pub", sign_count=0, user="boss", role="admin", rp_id="gw.lan")
+    with pytest.raises(ValueError):
+        s.add(cred_id=b"cred-1", public_key=b"other", sign_count=0, user="ops", role="operator", rp_id="gw.lan")
+    assert s.count == 1 and s.list()[0]["user"] == "boss"
+    # the owner may re-register (a re-enrolment of the same authenticator)
+    s.add(cred_id=b"cred-1", public_key=b"pub2", sign_count=5, user="boss", role="admin", rp_id="gw.lan")
+    assert s.count == 1

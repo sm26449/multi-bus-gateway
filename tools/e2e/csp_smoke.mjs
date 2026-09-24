@@ -2,7 +2,7 @@
  * handlers, no inline script — and every action is a data-action attribute
  * dispatched by app-core.js. This checks, in a real browser: login under the
  * strict CSP, every top-level page, modal open/close through data-action,
- * change/input dispatch (data-on), data-with-value, the _navigate helper and
+ * change/input dispatch (data-on), data-with-value, the audit export link and
  * that the console shows no CSP violation, unknown data-action or page error.
  *
  *   MBG_URL=http://localhost:18090 MBG_USER=admin MBG_PASS=… node csp_smoke.mjs
@@ -86,7 +86,7 @@ if (kinds.length > 1) {
 await page.locator('#ruleModal [data-action="closeModal"]').first().click().catch(() => {});
 await page.waitForTimeout(200);
 
-// ---- 5. input dispatch (data-on="input") + _navigate on the audit card ------
+// ---- 5. input dispatch (data-on="input") + the audit export link -------------
 await page.click('[data-page="config"]'); await page.waitForTimeout(500);
 const secTab = page.locator('[data-cfgtab="security"]');
 if (await secTab.count()) { await secTab.first().click(); await page.waitForTimeout(400); }
@@ -96,14 +96,10 @@ if (await auditInput.count() && await auditInput.first().isVisible()) {
     await auditInput.first().fill('login');
     await page.waitForTimeout(700);
     check('data-on=input debounced audit reload', requests.some(u => u.includes('/api/audit')), requests.filter(u => u.includes('/api/audit')).slice(0, 2).join(' '));
-    const navBtn = page.locator('[data-action="_navigate"]').first();
-    const dl = page.waitForEvent('download', { timeout: 5000 }).catch(() => null);
-    requests.length = 0;
-    await navBtn.click();
-    await dl;
-    check('_navigate helper requests the audit export', requests.some(u => u.includes('/api/audit/export.csv')));
+    const csvLink = page.locator('a[href="/api/audit/export.csv"]').first();
+    check('audit export is a plain link (no navigation helper in markup)', await csvLink.count() === 1);
 } else {
-    check('audit filter visible (skipped input/_navigate checks)', false, 'not visible on this page');
+    check('audit filter visible (skipped input/export checks)', false, 'not visible on this page');
 }
 
 // ---- 6. the console: no CSP violation, no dead data-action, no page error ---

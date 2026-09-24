@@ -21,8 +21,7 @@ from tests.test_devices import write_config
 from tests.test_devices_api import needs_tc
 
 
-@pytest.fixture
-def clients(tmp_path):
+def _build_clients(tmp_path):
     from types import SimpleNamespace
     from fastapi.testclient import TestClient
     from multibus import auth as _a
@@ -47,7 +46,12 @@ ui:
         assert r.status_code == 200, r.text
         return c
     return SimpleNamespace(admin=login("boss", "pw"), op=login("ops", "op"),
-                           viewer=login("guest", "vw"), cfg=cfg)
+                           viewer=login("guest", "vw"), cfg=cfg, app=app)
+
+
+@pytest.fixture
+def clients(tmp_path):
+    return _build_clients(tmp_path)
 
 
 @needs_tc

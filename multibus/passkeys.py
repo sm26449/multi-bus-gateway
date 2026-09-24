@@ -140,6 +140,12 @@ class PasskeyStore:
                  "rp_id": rp_id, "label": label[:60] or "passkey",
                  "created": round(time.time(), 3)}
         with self._lock:
+            owner = next((c for c in self._creds if c["id"] == entry["id"]), None)
+            if owner is not None and owner.get("user") != user:
+                # an authenticator re-registering its credential id under
+                # another account would replace (destroy) the owner's passkey
+                # (F-17, 3.83.0)
+                raise ValueError("this passkey is already registered to another account")
             self._creds = [c for c in self._creds if c["id"] != entry["id"]]
             self._creds.append(entry)
             self._save()

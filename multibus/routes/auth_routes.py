@@ -181,9 +181,12 @@ def build_passkeys(ctx) -> APIRouter:
                 expected_origin=_origin(request, rp_id))
         except Exception as e:  # noqa: BLE001 — library raises many subtypes
             raise HTTPException(status_code=422, detail={"errors": [f"registration failed: {e}"]})
-        entry = store.add(cred_id=ver.credential_id, public_key=ver.credential_public_key,
-                          sign_count=ver.sign_count, user=user, role=meta["role"],
-                          rp_id=rp_id, label=meta["label"])
+        try:
+            entry = store.add(cred_id=ver.credential_id, public_key=ver.credential_public_key,
+                              sign_count=ver.sign_count, user=user, role=meta["role"],
+                              rp_id=rp_id, label=meta["label"])
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail={"errors": [str(e)]})
         ip = request.client.host if request.client else "-"
         audit.append(user=user, ip=ip, action="passkey registered",
                      target=entry["label"], status="ok", detail={"rp_id": rp_id})

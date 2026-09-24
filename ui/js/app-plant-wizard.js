@@ -1,3 +1,7 @@
+/* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
+ * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
 // Plant wizard — adding an INSTALLATION, in the order an operator knows the answers.
 //
 // 1. the installation: a name, how the datalogger is reached, its address,

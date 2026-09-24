@@ -261,3 +261,60 @@ def test_rule_set_over_mqtt_is_refused_on_an_anonymous_broker(tmp_path):
     cfg.mqtt.username = "gw"
     mq.topics['mbg/rules/ov-u1/set'](json.dumps({'clamp': {'max': 60}, 'source': 'nodered'}))
     assert rt.states[('ov-u1', 'pv-u1')].clamp['max'] == 60
+
+
+@needs_tc
+def test_override_is_bounded_and_a_rejected_command_does_not_pause_the_rule(tmp_path):
+    """F-09 (3.83.0): override_s used to be unbounded (a rule silenced for
+    years) and the rule was paused BEFORE the command was validated, so a
+    rejected command still disarmed the safety rule."""
+    inv = _Inverter(sf=-2)
+    cfg, app, client, clock, rt = _rule_app(tmp_path, {'pv-u1': inv}, mode='armed')
+    r = client.post("/api/devices/pv-u1/commands/power_limit", json={"value": 50, "override_s": 10**12})
+    assert r.status_code == 409 and inv.writes == []
+    r = client.post("/api/devices/pv-u1/commands/power_limit", json={"value": 50, "override_s": "nan"})
+    assert r.status_code == 409 and inv.writes == []
+    # a valid override with an invalid value: rejected, and the rule stays armed
+    r = client.post("/api/devices/pv-u1/commands/power_limit", json={"value": 500, "override_s": 60})
+    assert r.status_code == 422, r.text
+    assert inv.writes == [] and rt.owner_of('pv-u1', 'power_limit') == 'ov-u1'
+    assert not client.get("/api/rules/ov-u1").json()['live']['units']['pv-u1'].get('paused_until')
+    # the MQTT face is bounded the same way
+    assert rt.override('ov-u1', 10**12, who='t', via='mqtt') and rt.owner_of('pv-u1', 'power_limit') == 'ov-u1'
+    assert rt.override('ov-u1', float('nan'), who='t', via='mqtt')
+
+
+@needs_tc
+def test_mqtt_set_cannot_enable_a_rule_and_clamps_are_bounded(tmp_path):
+    """F-74 (3.83.0): the broker may disable a rule but never enable one
+    (enabling an armed rule is arming it); a clamp must be a finite,
+    non-negative number with a bounded expiry."""
+    inv = _Inverter(sf=-2)
+    mq = _Mqtt()
+    cfg, app, client, clock, rt = _rule_app(tmp_path, {'pv-u1': inv}, mqtt=mq, mode='armed')
+    setter = mq.topics['mbg/rules/ov-u1/set']
+    setter(json.dumps({'enabled': False, 'source': 'nodered'}))
+    assert client.get("/api/rules/ov-u1").json()['enabled'] is False
+    setter(json.dumps({'enabled': True, 'source': 'nodered'}))
+    assert client.get("/api/rules/ov-u1").json()['enabled'] is False    # refused
+    for bad in ({'clamp': {'max': 'nan'}}, {'clamp': {'max': -5}}, {'clamp': {'max': 60, 'expires_s': 1e12}},
+                {'clamp': {'max': float('inf')}} if False else {'clamp': {'max': 'inf'}}):
+        setter(json.dumps(bad))
+        assert not rt.states[('ov-u1', 'pv-u1')].clamp, bad
+    setter(json.dumps({'clamp': {'max': 60, 'expires_s': 3600}}))
+    assert rt.states[('ov-u1', 'pv-u1')].clamp['max'] == 60
+
+
+@needs_tc
+def test_a_failed_release_to_safe_is_reported_as_failed(tmp_path):
+    """F-10 (3.83.0): deleting an armed rule whose safe recipe cannot be
+    written must not log 'released to safe'."""
+    inv = _Inverter(sf=-2, write_ok=False)
+    cfg, app, client, clock, rt = _rule_app(tmp_path, {'pv-u1': inv}, mode='armed')
+    # make the rule believe it moved the unit away from safe
+    rt.states[('ov-u1', 'pv-u1')].commanded = {'value': 50}
+    r = client.delete("/api/rules/ov-u1")
+    assert r.status_code == 200
+    ev = [e for e in app.state.event_log.recent(50) if 'ov-u1' in str(e)] if hasattr(app.state, 'event_log') else []
+    texts = " ".join(str(e) for e in ev)
+    assert "FAILED" in texts and "released to safe" not in texts.replace("release to safe FAILED", "")

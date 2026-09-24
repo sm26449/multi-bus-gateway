@@ -36,6 +36,8 @@ import os
 import threading
 import time
 import zipfile
+
+import yaml
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -67,35 +69,55 @@ def _is_redaction_of(live_url, incoming_url) -> bool:
         return False
 
 
+# the field names a sanitized export drops wherever they sit under devices[]
+# or endpoints[] (the export side in api.py uses the same tuple)
+SECRET_FIELDS = ("password", "passwd", "token", "secret", "api_key", "apikey",
+                 "client_secret", "headers")
+
+
+def _reinject_secret_tree(incoming, live) -> None:
+    """Refill, in place, what a sanitized export stripped from ``incoming``:
+    every secret-named field that is absent or empty but present in the
+    matching ``live`` node, and every URL that is exactly the live URL's
+    redacted form. Walks dicts by key and lists of ``{id: …}`` items by id, so
+    a device's sources and an installation's groups and sources are covered
+    as well as the device itself (3.83.0)."""
+    if isinstance(incoming, dict) and isinstance(live, dict):
+        for k in SECRET_FIELDS:
+            if not incoming.get(k) and live.get(k):
+                incoming[k] = live[k]
+        if _is_redaction_of(live.get("url"), incoming.get("url")):
+            incoming["url"] = live["url"]
+        for k, v in incoming.items():
+            if k in SECRET_FIELDS:
+                continue
+            lv = live.get(k)
+            if isinstance(v, (dict, list)) and isinstance(lv, (dict, list)):
+                _reinject_secret_tree(v, lv)
+    elif isinstance(incoming, list) and isinstance(live, list):
+        live_by_id = {d.get("id"): d for d in live
+                      if isinstance(d, dict) and d.get("id") is not None}
+        for item in incoming:
+            if isinstance(item, dict) and item.get("id") in live_by_id:
+                _reinject_secret_tree(item, live_by_id[item.get("id")])
+
+
 def _merge_devices(live_list, incoming_list):
     """Merge the devices[] list per id: the incoming list is authoritative for
-    the device SET, but each device's stripped secret fields (connection
-    password/headers/url, rest_push headers/url) are refilled from the matching
-    live device when the incoming value is absent, empty, or the live value's
-    redacted form."""
-    live_by_id = {d.get("id"): d for d in live_list if isinstance(d, dict)}
-    out = []
-    for dev in incoming_list:
-        if not isinstance(dev, dict):
-            out.append(dev)
-            continue
-        live = live_by_id.get(dev.get("id"))
-        if live:
-            for sect, keys in (("connection", ("password", "headers")),
-                               ("rest_push", ("headers",))):
-                l_s, i_s = live.get(sect), dev.get(sect)
-                if isinstance(l_s, dict) and isinstance(i_s, dict):
-                    for key in keys:
-                        if not i_s.get(key) and l_s.get(key):
-                            i_s[key] = l_s[key]
-            # a sanitized export redacts URLs in place — importing that form
-            # would silently break the device (?api_key=*** is not a token)
-            for sect in ("connection", "rest_push"):
-                l_s, i_s = live.get(sect), dev.get(sect)
-                if isinstance(l_s, dict) and isinstance(i_s, dict):
-                    if _is_redaction_of(l_s.get("url"), i_s.get("url")):
-                        i_s["url"] = l_s["url"]
-        out.append(dev)
+    the device SET, but each device's stripped secret fields (connection /
+    http / mqtt_in / rest_push / sources[] passwords, headers, redacted URLs)
+    are refilled from the matching live device when the incoming value is
+    absent, empty, or the live value's redacted form."""
+    out = [dev for dev in incoming_list]
+    _reinject_secret_tree(out, live_list)
+    return out
+
+
+def _merge_endpoints(live_list, incoming_list):
+    """Same contract as _merge_devices for endpoints[]: the incoming set wins,
+    stripped source credentials come back from the live installation."""
+    out = [ep for ep in incoming_list]
+    _reinject_secret_tree(out, live_list)
     return out
 
 
@@ -118,6 +140,95 @@ def _reinject_stripped_secrets(merged, live):
         if isinstance(m_s, dict) and isinstance(l_s, dict):
             if _is_redaction_of(l_s.get("url"), m_s.get("url")):
                 m_s["url"] = l_s["url"]
+
+
+def validate_bundle(zf: zipfile.ZipFile, *, allow_nonlan: bool = False) -> List[str]:
+    """The checks the live routes make, applied to a backup or snapshot BEFORE
+    any of it is written (F-18, 3.83.0): an allowlist or trusted-proxy entry
+    that does not parse, a webhook that is not http(s), a write flag that is
+    not a boolean, an HTTP source outside the LAN, a rule that would not
+    validate. Returns the error list (empty = fine)."""
+    import ipaddress
+    from urllib.parse import urlsplit
+    errors: List[str] = []
+    names = zf.namelist()
+    if "config.yaml" in names:
+        try:
+            data = yaml.safe_load(zf.read("config.yaml")) or {}
+        except Exception as e:  # noqa: BLE001
+            return [f"config.yaml: not valid YAML ({e})"]
+        if not isinstance(data, dict):
+            return ["config.yaml: not a mapping"]
+        sec = data.get("security") or {}
+        if not isinstance(sec, dict):
+            errors.append("security: must be a mapping")
+            sec = {}
+        for k in ("allow_writes", "allow_nonlan_http_devices", "primary_write_locked"):
+            if k in sec and not isinstance(sec[k], bool):
+                errors.append(f"security.{k}: must be true or false")
+        al = sec.get("allowlist")
+        if al is not None:
+            if not isinstance(al, list):
+                errors.append("security.allowlist: must be a list of CIDRs")
+            else:
+                for entry in al:
+                    try:
+                        ipaddress.ip_network(str(entry).strip(), strict=False)
+                    except ValueError:
+                        errors.append(f"security.allowlist: {entry!r} is not an address or CIDR")
+        ui = data.get("ui") or {}
+        tp = ui.get("trusted_proxies") if isinstance(ui, dict) else None
+        if tp is not None:
+            if not isinstance(tp, list):
+                errors.append("ui.trusted_proxies: must be a list")
+            else:
+                for entry in tp:
+                    try:
+                        ipaddress.ip_network(str(entry).strip(), strict=False)
+                    except ValueError:
+                        errors.append(f"ui.trusted_proxies: {entry!r} is not an address or CIDR")
+        cu = ui.get("canonical_url") if isinstance(ui, dict) else None
+        if cu and not str(cu).startswith(("http://", "https://")):
+            errors.append("ui.canonical_url: must start with http:// or https://")
+        al_ = data.get("alerts") or {}
+        wh = al_.get("webhook_url") if isinstance(al_, dict) else None
+        if wh and not str(wh).startswith(("http://", "https://")):
+            errors.append("alerts.webhook_url: must start with http:// or https://")
+        nonlan = bool(sec.get("allow_nonlan_http_devices", allow_nonlan))
+        if not nonlan:
+            try:
+                from .discovery import lan_host_error
+            except Exception:  # noqa: BLE001
+                lan_host_error = None
+
+            def _urls(node, where):
+                if isinstance(node, dict):
+                    for k, v in node.items():
+                        if k == "url" and isinstance(v, str) and v.startswith(("http://", "https://")):
+                            host = urlsplit(v).hostname or ""
+                            err = lan_host_error(host) if lan_host_error else None
+                            if err:
+                                errors.append(f"{where}.url: {v!r} — {err} (set security.allow_nonlan_http_devices to allow it)")
+                        else:
+                            _urls(v, f"{where}.{k}")
+                elif isinstance(node, list):
+                    for i, v in enumerate(node):
+                        _urls(v, f"{where}[{i}]")
+            _urls(data.get("devices"), "devices")
+            _urls(data.get("endpoints"), "endpoints")
+            if isinstance(data.get("rest_push"), dict):
+                _urls(data.get("rest_push"), "rest_push")
+    if "rules.yaml" in names:
+        try:
+            from .rules import validate_rule_def
+            rdoc = yaml.safe_load(zf.read("rules.yaml")) or {}
+            rules = rdoc.get("rules") if isinstance(rdoc, dict) else rdoc
+            for i, raw in enumerate(rules or []):
+                for e in validate_rule_def(raw if isinstance(raw, dict) else {}):
+                    errors.append(f"rules.yaml[{i}]: {e}")
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"rules.yaml: {e}")
+    return errors
 
 
 def write_bundle_files(zf: zipfile.ZipFile, *, cfg_dir: Path, user_tpl_dir: Path,
@@ -164,6 +275,8 @@ def write_bundle_files(zf: zipfile.ZipFile, *, cfg_dir: Path, user_tpl_dir: Path
                     for k, v in over.items():
                         if k == "devices" and isinstance(v, list):
                             base[k] = _merge_devices(base.get(k) or [], v)
+                        elif k == "endpoints" and isinstance(v, list):
+                            base[k] = _merge_endpoints(base.get(k) or [], v)
                         elif isinstance(v, dict) and isinstance(base.get(k), dict):
                             _deep_merge(base[k], v)
                         else:
@@ -421,6 +534,16 @@ def boot_seatbelt(config_path: str, load_config) -> object:
     try:
         return load_config()
     except Exception as boot_err:  # noqa: BLE001
+        # Only a config that cannot be PARSED or VALIDATED is the LKG's
+        # business. A bug, an import error, a read-only volume or a full
+        # disk must not roll credentials, passkeys and months of settings
+        # back to the snapshot (F-26, 3.83.0) — re-raise those.
+        import yaml as _yaml
+        _restorable = (_yaml.YAMLError, ValueError, TypeError, KeyError, AttributeError)
+        if not isinstance(boot_err, _restorable) or isinstance(boot_err, (OSError, ImportError)):
+            logger.critical("config failed to load with %s — NOT a broken file, the LKG "
+                            "seatbelt does not apply: %s", type(boot_err).__name__, boot_err)
+            raise
         lkg = cfg_path.parent / "snapshots" / _LKG_ZIP
         if not lkg.exists():
             raise

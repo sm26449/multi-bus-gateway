@@ -39,8 +39,10 @@ class RegisterQuery(BaseModel):
 
 
 class RegisterBatchQuery(BaseModel):
-    """Request model for batch register query."""
-    registers: List[RegisterQuery]
+    """Request model for batch register query. The list is capped: a viewer
+    may call this route, and an unbounded batch is bus contention against
+    the pollers (F-70, 3.83.0)."""
+    registers: List[RegisterQuery] = Field(..., max_length=64)
     device_id: Optional[str] = None
 
 

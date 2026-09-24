@@ -1,3 +1,7 @@
+/* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
+ * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
 // calculated registers domain — augments JanitzaMonitor.prototype
 // A "calculated register" is a formula-derived measurement (e.g. PF = P / S)
 // that flows to every sink like a real one. The builder lets the user compose an

@@ -164,3 +164,24 @@ def test_mqtt_in_applies_scale():
     cli._on_message(None, None, SimpleNamespace(topic="sensors/x",
                                                 payload=b'{"power": 2300}', retain=False))
     assert got[1]["value"] == 230.0
+
+
+def test_hostile_payloads_do_not_cost_the_message_its_other_registers():
+    """F-63 (3.83.0): an oversized payload is dropped before parsing, a
+    100k-deep document does not raise past the parser, and a 400-digit
+    integer in one field no longer aborts the whole message."""
+    regs = [_reg(1, "power", "power", "sensors/x", "W"),
+            _reg(2, "voltage", "voltage", "sensors/x", "V")]
+    cli = mi.MqttInputClient({"topic": "sensors/x"}, regs)
+    captured = {}
+    cli.publish_callback = lambda pg, data: captured.update({"pg": pg, "data": data})
+    big = b'{"power": ' + b'9' * 400 + b', "voltage": 231.2}'
+    cli._on_message(None, None, SimpleNamespace(topic="sensors/x", payload=big))
+    assert captured["data"][2]["value"] == 231.2 and 1 not in captured["data"]
+    captured.clear()
+    deep = b'{"power": ' + b'[' * 30000 + b']' * 30000 + b'}'      # under the size cap, over the recursion limit
+    cli._on_message(None, None, SimpleNamespace(topic="sensors/x", payload=deep))
+    assert cli.messages == 1 + 1                      # counted, nothing published, no raise
+    oversized = b'{"voltage": 1}' + b' ' * mi.MAX_PAYLOAD_BYTES
+    cli._on_message(None, None, SimpleNamespace(topic="sensors/x", payload=oversized))
+    assert cli.oversized_dropped == 1 and not captured

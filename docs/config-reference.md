@@ -31,7 +31,7 @@ the keys listed below, with defaults for anything missing) — but see the
 If `config.yaml` fails to parse at boot, the gateway restores the last-known-good
 snapshot instead of running on defaults, keeps the broken file as
 `config.yaml.bad`, and disables saves until it is repaired (visible in
-`/api/status` → `config_status`).
+`/api/status` → `config`).
 
 ## Environment variables
 
@@ -93,8 +93,12 @@ Consumed by `docker-compose.yml` for the bundled services — set them in `.env`
 |----------|---------|---------|
 | `MQTT_BROKER_PORT` / `MQTT_WS_PORT` | `1883` / `9001` | host-port mapping of the bundled broker (distinct from the gateway's `MQTT_PORT` override, which targets an EXTERNAL broker) |
 | `MQTT_EXPLORER_PORT` | `4000` | MQTT Explorer web UI |
-| `DOCKER_INFLUXDB_INIT_USERNAME` / `_PASSWORD` / `_ORG` / `_BUCKET` / `_ADMIN_TOKEN` | `admin` / change-me / `multibus` / `multibus` / change-me | InfluxDB first-boot self-setup; paste the token into Config → InfluxDB |
-| `GF_SECURITY_ADMIN_PASSWORD` | change-me | Grafana `admin` login |
+| `DOCKER_INFLUXDB_INIT_USERNAME` / `_PASSWORD` / `_ORG` / `_BUCKET` / `_ADMIN_TOKEN` | `admin` / **required** / `multibus` / `multibus` / **required** | InfluxDB first-boot self-setup; no built-in password or token since 3.81.0 — `docker compose up` refuses to start without them; paste the token into Config → InfluxDB |
+| `GF_SECURITY_ADMIN_PASSWORD` | **required** | Grafana `admin` login (no built-in default since 3.81.0) |
+| `MQTT_USERNAME` / `MQTT_PASSWORD` | `mbg` / **required** | the bundled broker's only account; the broker refuses the `.env.example` placeholder (3.83.0) |
+| `STACK_BIND` | `0.0.0.0` | host interface the bundled broker, InfluxDB and Grafana bind to; `127.0.0.1` keeps them host-local |
+| `MBG_VERSION` | `latest` | image tag for the gateway and the serial bridge: a version, a minor line (`3.83`) or `latest` |
+| `MQTT_BROKER_PORT` / `MQTT_WS_PORT` / `INFLUXDB_HOST_PORT` / `GRAFANA_HOST_PORT` / `MQTT_EXPLORER_PORT` | `1883` / `9001` / `8086` / `3000` / `4000` | host ports of the bundled services (Explorer only with `--profile debug`, on 127.0.0.1) |
 | `PV_STACK_NETWORK` | `pv-stack-network` | name of the docker network (created by the base file; joined as external by the overlay) |
 | `BRIDGE_EXCLUDE` | *(empty)* | serial adapters the bridge must never expose (`rtu-bridge` profile) |
 | `SERIAL_BRIDGE_URL` | `http://mbg-serial-bridge:7000` | where the gateway reaches the bridge's control API |
@@ -215,7 +219,7 @@ its interval — the two numbers an interval is chosen from.
 
 | Key | Default | Notes |
 |-----|---------|-------|
-| `allowlist` | `[]` (open) | IPs/CIDRs allowed to reach the HTTP API/UI. Loopback and the docker gateway are always allowed. |
+| `allowlist` | `[]` (open) | IPs/CIDRs allowed to reach the HTTP API/UI. Loopback and the docker gateway are always allowed. An entry that does not parse **denies every client** until it is fixed (3.83.0) — the API refuses such an entry, so this only happens to a hand-edited file. |
 | `allow_nonlan_http_devices` | `false` (opt-in) | SSRF guard: HTTP/JSON device URLs must point at a private LAN host unless this is true |
 | `allow_writes` | `false` (opt-in) | master **arming** switch for Modbus writes (FC5/6/15/16). When armed, any device that is not `write_locked` can be written — declared registers with their template encoding + whatever guards were declared; undeclared registers via the raw path (`unguarded: true` in the payload). Every write is authenticated, rate-limited and audited. |
 | `primary_write_locked` | `true` | per-device write LOCK for the primary. Read-only used to be hardcoded; it is now this flag, defaulting to locked so the historical behavior survives upgrades. Unlock deliberately. Non-primary devices carry `write_locked` in their `devices[]`/`endpoints:` entry (default unlocked) — toggle from the device's Outputs tab. |
@@ -597,7 +601,7 @@ calculated:
 
 Existing devices are **not** re-seeded when a template gains derived
 measurements — a device's selection is a copy taken once. Carry them over with
-a migration (see `scripts/migrate_p3_fronius_pf_status.py` for the Fronius one).
+a migration (the 3.75 Fronius one shipped as a one-off script and is no longer in the tree).
 
 See also: [MANUAL.md](MANUAL.md) · [upgrade-guide.md](upgrade-guide.md) ·
 [canonical-fields.md](canonical-fields.md) · [csv-import.md](csv-import.md) ·

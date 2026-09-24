@@ -47,6 +47,7 @@ _ALGO = "pbkdf2_sha256"
 _ITERATIONS = 600_000              # OWASP 2023 floor for PBKDF2-HMAC-SHA256
 SESSION_TTL_S = 7 * 24 * 3600      # 7-day sliding session (slides on each request)
 SESSION_MAX_S = 30 * 24 * 3600     # absolute cap: a session ends 30 days after login however busy
+MAX_SESSIONS = 256                 # live sessions kept; the oldest go first (F-27, 3.83.0)
 _MIN_ITERATIONS = 100_000          # a stored hash below this floor is refused (hand-edited store)
 _COOKIE_REFRESH_S = 3600           # re-issue the cookie at most this often per session
 COOKIE_NAME = "janitza_session"
@@ -254,8 +255,21 @@ class AuthState:
         token = secrets.token_urlsafe(32)
         with self._lock:
             self._sessions[_token_key(token)] = (role, time.time() + SESSION_TTL_S, username, time.time())
+            self._prune_locked()
             self._save_sessions_locked()
         return token, role
+
+    def _prune_locked(self) -> None:
+        """Drop expired sessions and, beyond MAX_SESSIONS, the oldest — a
+        client logging in on every request could otherwise grow the store
+        (and the fsync'd file) without bound. Caller holds _lock."""
+        now = time.time()
+        for k in [k for k, v in self._sessions.items() if float(v[1]) <= now]:
+            del self._sessions[k]
+        if len(self._sessions) > MAX_SESSIONS:
+            oldest = sorted(self._sessions.items(), key=lambda kv: float(kv[1][3]) if len(kv[1]) > 3 else 0.0)
+            for k, _v in oldest[:len(self._sessions) - MAX_SESSIONS]:
+                del self._sessions[k]
 
     def role_for(self, token: str) -> Optional[str]:
         """Validate a session token; slides the expiry. Returns role or None."""

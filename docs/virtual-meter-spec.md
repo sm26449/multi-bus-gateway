@@ -204,3 +204,18 @@ SCADA to read in one poll:
   `age_s`.
 - The document-level `complete` flag is true only when every data row is
   good; `stale_fields[]` lists the offenders.
+
+## Transport options (template `transport:`)
+
+| key | default | meaning |
+|---|---|---|
+| `port` | `1502` | TCP port the meter listens on (the instance overrides it) |
+| `bind` | `0.0.0.0` | interface to bind; `127.0.0.1` keeps the meter host-local |
+| `unit_id` | `1` | the unit id shown to the operator and, with `strict_unit_id`, enforced |
+| `strict_unit_id` | `false` | `true` → only the configured unit id is answered; every other id gets the gateway-path exception. The default answers any id (a mis-addressed consumer still gets data — the historical behaviour) (3.83.0) |
+| `max_connections` | `16` | client connections per meter; the surplus is closed on the next tick, so a peer keeping sockets open cannot exhaust file descriptors (3.83.0) |
+| `idle_timeout_s` | `300` | a connection with no request for this long is closed (`0` disables) |
+
+The `hold` policy's window starts when a row goes **stale** (its stamp plus
+its freshness bound), not at the stamp itself, so a row whose bound exceeds
+`max_hold_s` still holds for the full window (3.83.0).

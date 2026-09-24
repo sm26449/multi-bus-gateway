@@ -13,16 +13,18 @@ the API key are opt-in; **login is enabled automatically on a fresh install**
    including `/health` and `/metrics`.
 2. **API key** (`API_KEY` env, honoured as `JANITZA_API_KEY` for
    back-compat) — when set, every state-changing request
-   (POST/PUT/PATCH/DELETE) must send `X-API-Key: <key>`. Three POSTs are
-   exempt: `/api/query/register`, `/api/query/batch` (read-only) and
-   `/api/auth/logout` (ending your own session is not a state change).
+   (POST/PUT/PATCH/DELETE) must send `X-API-Key: <key>`. The exempt POSTs
+   are the read-only queries (`/api/query/register`, `/api/query/batch`),
+   the login flows (`/api/auth/login`, the passkey `login/begin` and
+   `login/finish`) and `/api/auth/logout` (ending your own session is not
+   a state change) — see `_open_writes` in `multibus/api.py`.
    The builder command stream (`WS /api/builder/stream/…` — it can flash
    firmware OTA) requires the key too: send `X-API-Key` (non-browser
    clients), or the WebSocket subprotocol `mbg-api-key.<base64url(key)>`
    (browsers cannot set custom WS headers; a query param would leak the
    key into access logs). The UI does this automatically.
 3. **Login** (`ui.auth.enabled`) — session-cookie auth (`janitza_session`,
-   HttpOnly, SameSite=Lax, 7-day sliding TTL). Passwords are PBKDF2-SHA256
+   HttpOnly, SameSite=Lax, 7-day sliding TTL, 30-day absolute cap). Passwords are PBKDF2-SHA256
    (600 000 iterations). Login is rate-limited per client IP
    (`lockout_threshold` / `lockout_minutes`). Passkey (WebAuthn) login is an
    alternative to the password.
@@ -30,9 +32,12 @@ the API key are opt-in; **login is enabled automatically on a fresh install**
 When login is enabled, three roles exist. The **Role** column in the tables
 below is the *minimum* role required. With login disabled, endpoints are open
 (modulo allowlist/API key) with two deliberate exceptions: snapshot download
-and secrets/identity export return 403 unless an admin session or a valid
-API key proves intent — a config bundle full of tokens must never be one
-anonymous GET away:
+and secrets/identity export return 403 unless a valid API key proves intent
+— a config bundle full of tokens must never be one anonymous GET away. With
+login enabled those two, and raw (`unguarded`) writes, are **admin only**:
+the API key is a gate for machine clients, never a substitute for a role —
+every operator must present it on every write, so it cannot also unlock
+what the operator role withholds (3.83.0).
 
 | Role | May do |
 |---|---|
@@ -110,7 +115,7 @@ device create/edit/delete refuses their ids.
 | POST | `/api/endpoints` | Create: validate → persist → materialize N devices → seed each from the template → hot-start | admin |
 | PUT | `/api/endpoints/{id}` | Update. An edit that changes what the units are built from re-materializes them; an edit that only changes endpoint-level settings (name, `aggregates`, unit display names) keeps every poller running. Routing identity (topic prefix / bucket / tag) stays fixed, and flags the form omits (`write_locked`, `aggregates`, `http_output`, `rest_push`, per-unit ids/names) are preserved | admin |
 | DELETE | `/api/endpoints/{id}` | Delete the endpoint and stop its units (register files kept; blocked while a virtual meter sources a unit) | admin |
-| POST | `/api/endpoints/{id}/test` | Probe every unit on the shared endpoint, one answer each. Opens another Modbus client — dataloggers serve only a few at once | operator |
+| POST | `/api/endpoints/{id}/test` | Probe every unit on the shared endpoint, one answer each. Opens another Modbus client — dataloggers serve only a few at once | admin |
 
 The per-unit sinks (`/api/devices/{unit}/http-output`, `/rest-push`) and the
 write lock are declared once and apply to the whole endpoint: one endpoint, one
@@ -132,7 +137,9 @@ rather than silently reading the primary's bucket.
 
 | Method | Path | Description | Role |
 |---|---|---|---|
-| POST | `/api/devices/{id}/write` | Write a value (FC5 coil / FC6·FC16 holding). Requires `security.allow_writes: true` **and** an authenticated caller (login or API key). Primary device always read-only; register must be declared writable in the template; `write_min`/`write_max` bounds enforced; encoding comes from the template row, never the caller; per-IP rate limit (`write_rate_limit_per_s`); read-back verification; audit-logged. Optional `lease_ms` arms a dead-man lease that reverts to the template's `write_safe` value | operator |
+| POST | `/api/devices/{id}/write` | Write a value (FC5 coil / FC6·FC16 holding). Requires `security.allow_writes: true` **and** an authenticated caller (login or API key). Primary device read-only unless unlocked; register must be declared writable in the template; `write_min`/`write_max` bounds enforced; encoding comes from the template row, never the caller; a register with a live scale factor (`scale_from`) or one a command writes first (WMaxLimPct) is refused with 422 — write it through the command; `unguarded: true` (no envelope) is admin only; per-IP rate limit (`write_rate_limit_per_s`); read-back verification; audit-logged. Optional `lease_ms` arms a dead-man lease that reverts to the template's `write_safe` value | operator |
+| POST | `/api/devices/{id}/write-lock` | `{locked: true|false}` — the per-device write lock (the primary ships locked via `security.primary_write_locked`); every face honours it. Audited | admin |
+| GET | `/api/devices/{id}/write-info/{register_type}/{address}` | What a write to this register would be allowed to do: the lock state and the register's envelope (writability, bounds, allowed values, safe value) — the UI's write dialog reads it | operator |
 | GET | `/api/writes/leases` | Active write leases with time remaining | viewer |
 
 ## Registers & values
@@ -272,11 +279,11 @@ enabled; dashboard errors surface as 502 with the reason.
 
 | Method | Path | Description | Role |
 |---|---|---|---|
-| GET | `/api/config/export?include_secrets=&include_identity=` | Download a ZIP backup (config.yaml, per-device registers, user templates, virtual_meters.yaml). Secrets and host/port identity are **stripped by default**; including them requires the admin role or the API key, and is audit-logged | viewer (sanitized) / admin (with secrets) |
+| GET | `/api/config/export?include_secrets=&include_identity=` | Download a ZIP backup (config.yaml, per-device registers, user templates, virtual_meters.yaml). Secrets and host/port identity are **stripped by default** — wherever they sit: device connection/http/mqtt_in/rest_push blocks, every source, every installation source; including them requires the admin role (the API key stands in only while login is off), and is audit-logged | viewer (sanitized) / admin (with secrets) |
 | POST | `/api/config/import?apply=` | Restore a ZIP backup (raw body, ≤25 MB, ZIP-bomb guarded, path-traversal safe). Sanitized backups are **merged** over the live config so stripped secrets survive. Takes a `pre-import` snapshot first | admin |
 | GET | `/api/config/snapshots` | Automatic + manual snapshots, newest first (LKG on top) | viewer |
 | POST | `/api/config/snapshots` | Take a manual snapshot (`{note}`) | admin |
-| GET | `/api/config/snapshots/{sid}/download` | Download a snapshot ZIP (full-fidelity, secrets included → admin or API key) | admin |
+| GET | `/api/config/snapshots/{sid}/download` | Download a snapshot ZIP (full-fidelity, secrets included → admin; the API key stands in only while login is off) | admin |
 | GET | `/api/config/snapshots/{sid}/diff?against=live` | Semantic, secrets-masked diff vs live or another snapshot | viewer |
 | POST | `/api/config/snapshots/{sid}/restore?apply=` | Roll back to a snapshot (takes a `pre-restore` snapshot first; config.yaml replaced verbatim) | admin |
 | DELETE | `/api/config/snapshots/{sid}` | Delete a snapshot (`lkg` is protected) | admin |
@@ -345,7 +352,7 @@ New rules are **shadow** (they decide and say so, never write); arming needs
 | GET | `/api/rules` | Every rule with `live`: `state` in words (`normal`, a step label, `true`/`false`, `stale`), `signal`, per-unit `want` / `commanded` / `actual` (+ age) / `clamp` / `paused_until` / `failures`, `last` decision, `error` when it cannot run | viewer |
 | GET | `/api/rules/{id}` | One rule, same shape | viewer |
 | POST / PUT / DELETE | `/api/rules`, `/api/rules/{id}` | Create, edit, delete. Validated in words: target exists and offers the command (enabled, not an alias), signal parses and names its device (`device.register`, hyphenated ids allowed), steps ascending with a `release_below` under the first, `normal` present, timing bounds, one armed owner per target+command. Deleting or un-arming a rule that moved its target away from the command's `safe` values restores them first (`on_disable: safe`) | admin (armed: + writes on) |
-| POST | `/api/rules/validate` | The rule as a body → what it would see and want **now**: `signal`, `signal_age_s`, `stale`, `state`, `want`, per-unit `actual`. No state kept | viewer |
+| POST | `/api/rules/validate` | The rule as a body → what it would see and want **now**: `signal`, `signal_age_s`, `stale`, `state`, `want`, per-unit `actual`. No state kept | admin |
 | POST | `/api/rules/{id}/mode` | `{mode: shadow\|armed}` — arming is explicit and audited (`rule armed`); shadow releases the target | admin |
 | POST | `/api/rules/{id}/enable` | `{enabled: bool}` — disabling applies `on_disable` | admin |
 | POST / DELETE | `/api/rules/{id}/clamp` | `{max, expires_s}` — a ceiling on the numeric want; never expires *into* a step (holds until the signal is under `release_below`) | admin |

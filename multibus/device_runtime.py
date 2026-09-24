@@ -44,8 +44,15 @@ def driver_for(config, template_registry, dev_cfg, src, regs, groups, allow_nonl
     from .modbus_client import ModbusClient
     # Decode order resolves from the SOURCE's template (falling back to the
     # device's), through the one resolver both boot and runtime use — so a
-    # restart is byte-identical.
-    bo = template_registry.byte_order_for(src.template or dev_cfg.template)
+    # restart is byte-identical. A template the device DECLARES but the
+    # registry could not load (file gone, parse error) must not fall back to
+    # 'big' — a little-endian meter would then publish word-swapped garbage
+    # as if it were fine (3.83.0); the source stays idle and says why.
+    tid = src.template or dev_cfg.template
+    if tid and template_registry.get(tid) is None:
+        raise ValueError(f"template {tid!r} is not loaded (missing or failed to parse) — "
+                         "not polling with a default byte order")
+    bo = template_registry.byte_order_for(tid)
     multi = len(dev_cfg.sources or []) > 1
     return ModbusClient(config=src.connection, registers=regs, poll_groups=groups,
                         byte_order=bo,

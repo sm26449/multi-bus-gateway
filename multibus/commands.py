@@ -243,8 +243,23 @@ def plan_frames(cmd: CommandDef, params: Dict[str, Any], regs: Dict[str, Any],
         reg = regs.get(w.get('register'))
         if reg is None:
             raise ValueError(f"unknown register '{w.get('register')}' in writes")
-        rtype = getattr(reg, 'register_type', 'holding') or 'holding'
+        rtype = (getattr(reg, 'register_type', 'holding') or 'holding').lower()
+        if rtype not in ('holding', 'coil'):
+            # input / discrete registers cannot be written; before 3.83.0 they
+            # went out as FC16 to whatever sat at that address (F-12)
+            raise ValueError(f"register '{reg.name}' is {rtype} — not writable")
         val = evaluate(w.get('value'), params)
+        # the register's own envelope applies to a command as it does to a
+        # raw write — in engineering units, before scaling (F-12, 3.83.0)
+        _num = isinstance(val, (int, float)) and not isinstance(val, bool)
+        wmin, wmax, wallowed = (getattr(reg, 'write_min', None), getattr(reg, 'write_max', None),
+                                getattr(reg, 'write_allowed', None))
+        if _num and wmin is not None and float(val) < float(wmin):
+            raise ValueError(f"{reg.name}: {val} is below the register minimum {wmin}")
+        if _num and wmax is not None and float(val) > float(wmax):
+            raise ValueError(f"{reg.name}: {val} is above the register maximum {wmax}")
+        if _num and wallowed and float(val) not in [float(x) for x in wallowed]:
+            raise ValueError(f"{reg.name}: {val} is not in the register's allowed set {wallowed}")
         if rtype == 'coil':
             words = [1 if val else 0]
         else:
@@ -252,6 +267,9 @@ def plan_frames(cmd: CommandDef, params: Dict[str, Any], regs: Dict[str, Any],
             dtype = (reg.data_type or 'uint16').lower()
             if not dtype.startswith('float'):
                 raw = int(round(raw))
+                rng = RegisterEncoder.int_range(dtype)
+                if rng and not (rng[0] <= raw <= rng[1]):
+                    raise ValueError(f"{reg.name}: {val} encodes to {raw}, outside {dtype} [{rng[0]}, {rng[1]}]")
             words = encoder.encode(raw, dtype, 1.0, offset=0.0)
         items.append({'register': reg.name, 'address': int(reg.address), 'type': rtype,
                       'value': val, 'words': words})
@@ -288,27 +306,43 @@ def _block_for(regs: Dict[str, Any], names: List[str]) -> Optional[Tuple[int, in
 
 
 def _read_named(conn, regs, names: List[str], parser: RegisterParser, sf_names: List[str]):
-    """Read every named register (plus the scale factors they need) in ONE
-    block and decode each. Returns ({name: value}, {sf_name: raw}) or None."""
+    """Read every named register (plus the scale factors they need) in one
+    block per register type and decode each. Returns ({name: value},
+    {sf_name: raw}) or None. Holding registers go out as FC3, input
+    registers as FC4 — a guard on an input register used to be read with
+    FC3 and could never hold (F-14, 3.83.0)."""
     need = list(dict.fromkeys(list(names) + list(sf_names)))
-    blk = _block_for(regs, need)
-    if blk is None:
+    if not need:
         return {}, {}
-    words = conn.read_registers(blk[0], blk[1])
-    if not words or len(words) < blk[1]:
-        return None
+    by_type: Dict[str, List[str]] = {}
+    for n in need:
+        r = regs.get(n)
+        if r is None:
+            raise ValueError(f"unknown register '{n}'")
+        by_type.setdefault((getattr(r, 'register_type', 'holding') or 'holding').lower(), []).append(n)
+    words_of: Dict[str, Tuple[int, List[int]]] = {}
+    for rtype, group in by_type.items():
+        blk = _block_for(regs, group)
+        if blk is None:
+            continue
+        words = conn.read_registers(blk[0], blk[1], register_type=rtype)
+        if not words or len(words) < blk[1]:
+            return None
+        words_of[rtype] = (blk[0], list(words))
+
+    def _words(n):
+        r = regs[n]
+        rtype = (getattr(r, 'register_type', 'holding') or 'holding').lower()
+        base, words = words_of[rtype]
+        c = RegisterParser.REGISTER_COUNTS.get((r.data_type or 'uint16').lower(), 1)
+        off = int(r.address) - base
+        return words[off:off + c]
     sf: Dict[str, Any] = {}
     for n in sf_names:
-        r = regs[n]
-        c = RegisterParser.REGISTER_COUNTS.get((r.data_type or 'uint16').lower(), 1)
-        off = int(r.address) - blk[0]
-        sf[n] = parser.parse_value(words[off:off + c], r.data_type or 'int16', nan=None)
+        sf[n] = parser.parse_value(_words(n), regs[n].data_type or 'int16', nan=None)
     out: Dict[str, Any] = {}
     for n in names:
-        r = regs[n]
-        c = RegisterParser.REGISTER_COUNTS.get((r.data_type or 'uint16').lower(), 1)
-        off = int(r.address) - blk[0]
-        out[n] = _decode(r, words[off:off + c], parser, sf)
+        out[n] = _decode(regs[n], _words(n), parser, sf)
     return out, sf
 
 

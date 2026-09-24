@@ -15,6 +15,7 @@ survive a restart (clamps, overrides) in ``rules_state.json``.
 from __future__ import annotations
 
 import json
+import math
 import logging
 import re
 import threading
@@ -30,6 +31,11 @@ from .rules import (NORMAL, STALE, Decision, RuleDef, RuleState, parse_rule_def,
                     validate_rule_def)
 
 logger = logging.getLogger(__name__)
+
+# the longest a controller may pause a rule for one command (F-09, 3.83.0):
+# an unbounded override_s left a safety rule silenced for years
+MAX_OVERRIDE_S = 24 * 3600.0
+MAX_CLAMP_EXPIRES_S = 7 * 24 * 3600.0   # F-74
 
 MQTT_ROOT = 'mbg/rules'
 SWEEP_MIN_INTERVAL_S = 60.0
@@ -492,15 +498,25 @@ class RulesRuntime:
             return
         who = str(body.get('source') or 'mqtt')
         if 'enabled' in body:
-            self.set_enabled(rid, bool(body['enabled']), who=who, via='mqtt')
+            # the broker may DISABLE a rule (a controller taking over) but
+            # never enable one: enabling an armed rule is arming it, and
+            # arming stays with the API and the UI (F-74, 3.83.0)
+            if bool(body['enabled']):
+                logger.warning("rule %s: enable over MQTT refused — arming stays with the API", rid)
+            else:
+                self.set_enabled(rid, False, who=who, via='mqtt')
         if 'clamp' in body:
             c = body['clamp']
             if c is None:
                 self.clear_clamp(rid, who=who, via='mqtt')
             elif isinstance(c, dict) and c.get('max') is not None:
-                self.set_clamp(rid, float(c['max']), c.get('expires_s'), who=who, via='mqtt')
-        if body.get('override_s'):
-            self.override(rid, float(body['override_s']), who=who, via='mqtt')
+                errs = self.set_clamp(rid, c.get('max'), c.get('expires_s'), who=who, via='mqtt')
+                if errs:
+                    logger.warning("rule %s: clamp over MQTT rejected — %s", rid, errs[0])
+        if body.get('override_s') is not None:
+            errs = self.override(rid, body['override_s'], who=who, via='mqtt')
+            if errs:
+                logger.warning("rule %s: override over MQTT rejected — %s", rid, errs[0])
 
     # ── operations (API, UI, MQTT) ───────────────────────────────────────────
 
@@ -623,6 +639,21 @@ class RulesRuntime:
         return errs
 
     def set_clamp(self, rid: str, max_value: float, expires_s=None, *, who='?', via='api') -> List[str]:
+        # a clamp is a setpoint ceiling: a finite, non-negative number, with a
+        # finite expiry of at most a week (F-74, 3.83.0)
+        try:
+            max_value = float(max_value)
+        except (TypeError, ValueError):
+            return ["clamp max must be a number"]
+        if not math.isfinite(max_value) or max_value < 0:
+            return ["clamp max must be a finite, non-negative number"]
+        if expires_s not in (None, 0, ''):
+            try:
+                expires_s = float(expires_s)
+            except (TypeError, ValueError):
+                return ["clamp expires_s must be a number"]
+            if not math.isfinite(expires_s) or expires_s < 0 or expires_s > MAX_CLAMP_EXPIRES_S:
+                return [f"clamp expires_s must be within 0..{int(MAX_CLAMP_EXPIRES_S)} seconds"]
         with self._lock:
             if rid not in self.rules:
                 return ["no such rule"]
@@ -646,6 +677,12 @@ class RulesRuntime:
         return []
 
     def override(self, rid: str, seconds: float, *, who='?', via='api') -> List[str]:
+        try:
+            seconds = float(seconds)
+        except (TypeError, ValueError):
+            return ["override_s must be a number"]
+        if seconds != seconds or seconds < 0 or seconds > MAX_OVERRIDE_S:
+            return [f"override_s must be within 0..{int(MAX_OVERRIDE_S)} seconds"]
         with self._lock:
             if rid not in self.rules:
                 return ["no such rule"]
@@ -692,13 +729,21 @@ class RulesRuntime:
                     and abs(float(st.commanded[p]) - float(rule.safe_params[p])) <= rule.tolerance:
                 continue
             params = dict(rule.params); params.update(rule.safe_params)
+            outcome, reason = 'released to safe', ''
             try:
-                self._run_command(cfg, client, rule.target['command'], params,
-                                  who=f"rule {rule.id}", ip='-', via=f"rule:{rule.id}:release")
+                _code, res = self._run_command(cfg, client, rule.target['command'], params,
+                                               who=f"rule {rule.id}", ip='-', via=f"rule:{rule.id}:release")
+                if (res or {}).get('status') not in ('success', 'mismatch'):
+                    # the verdict is the truth, not the attempt (F-10, 3.83.0)
+                    outcome, reason = 'release to safe FAILED', str((res or {}).get('reason') or (res or {}).get('status'))
             except Exception as e:  # noqa: BLE001
-                logger.warning("rule %s release on %s: %s", rule.id, cfg.id, e)
+                outcome, reason = 'release to safe FAILED', str(e)
+            if reason:
+                logger.warning("rule %s release on %s: %s", rule.id, cfg.id, reason)
             if self.event_log is not None:
-                self.event_log.add('info', f"rule:{rule.id}", f"{rule.label or rule.id} · {cfg.id}: released to safe — {why}")
+                self.event_log.add('info' if not reason else 'warn', f"rule:{rule.id}",
+                                   f"{rule.label or rule.id} · {cfg.id}: {outcome} — {why}"
+                                   + (f" ({reason})" if reason else ''))
 
     def evaluate_now(self, raw: Dict) -> Dict:
         """What the rule would see and want right now, with no state kept —

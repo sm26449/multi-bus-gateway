@@ -96,6 +96,7 @@ services:
       - SERIAL_BRIDGE_URL
     networks:
       - monitoring
+      - serial
     # no depends_on: `up -d multi-bus-gateway` starts EXACTLY the gateway
     # (the boot network-probe waits for the broker anyway), so the overlay
     # scenario never drags a second broker onto a host that has one
@@ -125,6 +126,10 @@ services:
       - sh
       - -c
       - >-
+        case "$$MQTT_PASSWORD" in *change-me*|"")
+          echo "MQTT_PASSWORD is empty or the .env.example placeholder — set a real secret in .env (3.83.0)"; exit 1;; esac;
+        if grep -qE '^[[:space:]]*allow_anonymous[[:space:]]+true' /mosquitto/config/mosquitto.conf;
+        then echo "mosquitto.conf still allows anonymous clients — a pre-3.81.0 config; set allow_anonymous false"; exit 1; fi;
         if [ -f /mosquitto/data/passwd ];
         then mosquitto_passwd -b /mosquitto/data/passwd "$$MQTT_USERNAME" "$$MQTT_PASSWORD";
         else mosquitto_passwd -c -b /mosquitto/data/passwd "$$MQTT_USERNAME" "$$MQTT_PASSWORD";
@@ -261,18 +266,33 @@ services:
     device_cgroup_rules:
       - 'c 188:* rmw'
       - 'c 166:* rmw'
+    # the same privilege model as the gateway (3.83.0): the entrypoint's
+    # root phase chowns /data and drops to uid 10002; nothing after that
+    # can regain a capability
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
     ports:
       # control API for host-side debug only; the gateway reaches both the
-      # API and the data ports over the internal network by name
+      # API and the data ports over the private bridge network by name
       - "127.0.0.1:7000:7000"
     networks:
-      - monitoring
+      # its RS-485 endpoints are unauthenticated Modbus: only the gateway
+      # shares this internal network with it (3.83.0), not every co-tenant
+      - serial
     profiles:
       - rtu-bridge
 
 # The base file is STANDALONE and COMPLETE: `docker compose up -d` needs
 # nothing but this repo and brings up the full solution (gateway + MQTT
-# broker + MQTT Explorer + InfluxDB + Grafana + ESPHome). The network it
+# broker + InfluxDB + Grafana + ESPHome; MQTT Explorer only with --profile debug). The network it
 # creates carries the ecosystem name (pv-stack-network), so anything you add
 # later can join it by name. Already RUNNING a stack on that network? Use
 # the overlay and start only the gateway services:
@@ -282,6 +302,10 @@ networks:
   monitoring:
     name: ${PV_STACK_NETWORK:-pv-stack-network}
     driver: bridge
+  serial:
+    # gateway ↔ serial bridge only; internal = no route to the outside
+    driver: bridge
+    internal: true
 
 volumes:
   mosquitto-data:

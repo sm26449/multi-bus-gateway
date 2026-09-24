@@ -14,7 +14,7 @@ touches your configuration (the loader is additive-forward across 3.x — see
 
 ```bash
 # published image: pin the release in .env, pull it, restart on it
-sed -i 's/^#\? *MBG_VERSION=.*/MBG_VERSION=3.80.1/' .env
+sed -i 's/^#\? *MBG_VERSION=.*/MBG_VERSION=3.83.0/' .env
 docker compose pull multi-bus-gateway
 docker compose up -d multi-bus-gateway
 
@@ -22,14 +22,13 @@ docker compose up -d multi-bus-gateway
 git pull && docker compose build multi-bus-gateway && docker compose up -d multi-bus-gateway
 ```
 
-`MBG_VERSION` accepts a version (`3.80.1`), a minor line (`3.80`) or
+`MBG_VERSION` accepts a version (`3.83.0`), a minor line (`3.83`) or
 `latest`; `docker compose build` ignores it. Naming the service keeps the
 bundled broker/InfluxDB untouched. Running the RTU bridge? It carries the
 same tag, so pull and restart it in the same breath:
 `docker compose --profile rtu-bridge pull && docker compose --profile
-rtu-bridge up -d`. (The bridge image is tagged `X.Y.Z` and `latest` only —
-with a minor-line pin such as `3.80`, pull the gateway and the bridge
-separately.)
+rtu-bridge up -d`. (The bridge image carries the same `X.Y.Z`, `X.Y` and
+`latest` tags as the gateway, so one `MBG_VERSION` pins both.)
 
 After the restart, `docker compose logs multi-bus-gateway` shows the new
 version in `Loaded config from config/config.yaml` and the UI title bar; the
@@ -111,8 +110,12 @@ reversible, and writes the bundle verbatim through the validated writer.
 **A backup ZIP on a fresh host** — the disaster-recovery path of
 [MANUAL.md §15](MANUAL.md#15-config-safety-snapshots-rollback-backup): bring
 up a fresh gateway, log in with the first-run password, **Config → Backup &
-Restore → Import** the ZIP. The import merges over the live config (stripped
-secrets survive), takes a `pre-import` snapshot, and with more than one
+Restore → Import** the ZIP. The import first checks the bundle with the
+same rules the settings pages apply (allowlist and proxy entries must
+parse, the webhook must be http(s), HTTP sources must be on the LAN, rules
+must validate — a bad bundle is refused before anything is written), then
+merges over the live config (stripped secrets survive, wherever they sit),
+takes a `pre-import` snapshot, and with more than one
 device may answer `restart_required` — then
 `docker compose restart multi-bus-gateway`. A sanitized export asks you to
 re-enter secrets; `passkeys.json` is only honoured from a with-secrets
@@ -199,8 +202,8 @@ Removing the gateway completely, in the order that leaves nothing behind:
    ```bash
    docker compose --profile rtu-bridge down -v      # containers, network, AND the named volumes
    rm -rf ./config                                  # your configuration, snapshots, audit trail
-   docker image rm ghcr.io/sm26449/multi-bus-gateway:3.80.1 \
-                   ghcr.io/sm26449/multi-bus-gateway-serial-bridge:3.80.1
+   docker image rm ghcr.io/sm26449/multi-bus-gateway:3.83.0 \
+                   ghcr.io/sm26449/multi-bus-gateway-serial-bridge:3.83.0
    ```
    `down -v` deletes `influxdb-data` and `grafana-data` — export what you
    want to keep first. Without `-v` the volumes stay for a later reinstall.
@@ -219,7 +222,7 @@ Removing the gateway completely, in the order that leaves nothing behind:
    What to look for: `<mqtt.topic_prefix>/#` (default `multibus/umg512` —
    values, `status`, `availability`, `alert`, `vmeter/<id>/state`,
    `pq/event`), each non-primary device's own prefix (default pattern
-   `meters/<id>`), `mbg/#` (endpoint aggregates `mbg/endpoints/<id>/…`),
+   `mbg/devices/<id>`), `mbg/#` (endpoint aggregates `mbg/endpoints/<id>/…`),
    and the discovery configs under `mqtt.ha_discovery.prefix` (default
    `homeassistant`): `homeassistant/+/mbg_dev_<device>/+/config` for
    devices, `homeassistant/sensor/multibus/+/config` for the primary's
@@ -253,4 +256,4 @@ See also: [install.md](install.md) · [troubleshooting.md](troubleshooting.md) �
 [upgrade-guide.md](upgrade-guide.md) · [releasing.md](releasing.md) ·
 [reliability.md](reliability.md)
 
-Verified against 3.80.1
+Verified against 3.83.0

@@ -279,3 +279,22 @@ def test_bundled_templates_load_without_canonical_warnings(tmp_path):
     assert mgr.load_errors == {}
     assert mgr.load_warnings == {}, mgr.load_warnings
 
+
+
+def test_validate_template_rejects_bool_addresses_non_finite_scales_and_unsafe_safe_values():
+    """F-21 (3.83.0): the validator used to accept `address: true`, `scale:
+    inf`, 999999-word strings and a write_safe outside the envelope."""
+    def one(extra):
+        row = {"address": 40092, "name": "x", "label": "x", "unit": "", "data_type": "int16",
+               "register_type": "holding"}
+        row.update(extra)
+        return validate_template(_sunspec_stub([row]))
+    assert one({"address": True})
+    assert one({"scale": float("inf")})
+    assert one({"scale": True})
+    assert one({"offset": float("nan")})
+    assert one({"data_type": "string:999999"})
+    assert one({"writable": True, "write_min": 0, "write_max": 100, "write_safe": 150})
+    assert one({"writable": True, "write_allowed": [0, 1], "write_safe": 7})
+    assert one({"writable": True, "write_min": float("nan")})
+    assert one({"writable": True, "write_min": 0, "write_max": 100, "write_safe": 100}) == []

@@ -692,6 +692,11 @@ class VirtualMeterManager:
         if not (0 <= unit_id <= 255):
             return {"error": "unit must be 0..255"}
         bind = (payload.get("bind") or "0.0.0.0").strip()
+        try:
+            import ipaddress
+            ipaddress.ip_address(bind)
+        except ValueError:
+            return {"error": "bind must be an IP address (0.0.0.0 for every interface, 127.0.0.1 for host-local)"}
         raw_regs = payload.get("registers") or []
         if not raw_regs:
             return {"error": "at least one register is required"}

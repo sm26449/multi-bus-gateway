@@ -482,3 +482,77 @@ def test_config_good_copy_is_private(tmp_path):
     _copy_private(src, dst)
     assert dst.read_text() == src.read_text()
     assert stat.S_IMODE(dst.stat().st_mode) == 0o600
+
+
+@needs_tc
+def test_api_write_bodies_are_capped(tmp_path):
+    """F-19 (3.83.0): every /api/ write body is capped before it is read
+    (8 MB; import keeps its own 25 MB), and a chunked body without a
+    Content-Length is refused — one oversized POST could OOM the process."""
+    _cfg, client = make_app(tmp_path)
+    r = client.post("/api/rules", content=b"[" + b"1," * (5 * 1024 * 1024) + b"1]",
+                    headers={"Content-Type": "application/json"})
+    assert r.status_code == 413
+    r = client.post("/api/rules", content=b"{}", headers={"Content-Type": "application/json"})
+    assert r.status_code != 413
+    r = client.post("/api/config/import", content=b"x" * (9 * 1024 * 1024),
+                    headers={"Content-Type": "application/zip"})
+    assert r.status_code != 413                          # import's own cap is 25 MB
+
+
+def test_bundled_broker_refuses_placeholders_and_anonymous_conf():
+    """F-22 / F-23 (3.83.0): the compose start command refuses the
+    .env.example placeholder secret and a pre-3.81.0 mosquitto.conf that
+    still allows anonymous clients; the example env ships no secret values."""
+    import yaml
+    d = yaml.safe_load(open("docker-compose.yml"))
+    cmd = d["services"]["mosquitto"]["command"][-1]
+    assert "change-me" in cmd and "allow_anonymous" in cmd and "exit 1" in cmd
+    env = open(".env.example").read()
+    for key in ("MQTT_PASSWORD", "DOCKER_INFLUXDB_INIT_PASSWORD",
+                "DOCKER_INFLUXDB_INIT_ADMIN_TOKEN", "GF_SECURITY_ADMIN_PASSWORD"):
+        live = [ln for ln in env.splitlines() if ln.startswith(key + "=")]
+        assert not live, f"{key} must ship commented out, not with a placeholder value"
+
+
+@needs_tc
+def test_usernames_must_differ_across_roles(tmp_path):
+    """F-68 (3.83.0): the resolver takes the last match (viewer > operator >
+    admin), so a viewer named like the admin silently demoted the admin."""
+    _cfg, client = make_app(tmp_path)
+    r = client.post("/api/config/ui-security", json={"viewer_username": "admin", "viewer_password": "vw-secret-1"})
+    assert r.status_code == 422 and "admin" in str(r.json())
+    r = client.post("/api/config/ui-security", json={"operator_username": "Ops", "operator_password": "op-secret-1",
+                                                     "viewer_username": "ops", "viewer_password": "vw-secret-1"})
+    assert r.status_code == 422
+    r = client.post("/api/config/ui-security", json={"viewer_username": "guest", "viewer_password": "vw-secret-1"})
+    assert r.status_code == 200, r.text
+
+
+@needs_tc
+def test_session_store_is_bounded():
+    """F-27 (3.83.0): beyond MAX_SESSIONS the oldest sessions go first."""
+    from multibus.config import UIConfig
+    ui = UIConfig(auth_enabled=True, auth_username="admin", auth_password=auth.hash_password("pw"))
+    st = auth.AuthState(ui)
+    tokens = [st.login("1.2.3.4", "admin", "pw")[0] for _ in range(auth.MAX_SESSIONS + 10)]
+    assert len(st._sessions) == auth.MAX_SESSIONS
+    assert st.role_for(tokens[0]) is None and st.role_for(tokens[-1]) == "admin"
+
+
+@needs_tc
+def test_renaming_an_account_revokes_its_sessions_and_passkeys(tmp_path):
+    """F-16 (3.83.0): an account removed or renamed must not keep a live
+    session or an enrolled passkey under its old name."""
+    from tests.test_operator_role import clients as _clients_fixture  # noqa: F401  (harness lives there)
+    from tests.test_operator_role import _build_clients
+    acc = _build_clients(tmp_path)
+    pk = acc.app.state.ctx.passkey_store
+    pk.add(cred_id=b"c-guest", public_key=b"pub", sign_count=0, user="guest", role="viewer", rp_id="gw.lan")
+    pk.add(cred_id=b"c-boss", public_key=b"pub", sign_count=0, user="boss", role="admin", rp_id="gw.lan")
+    r = acc.admin.post("/api/config/ui-security", json={"viewer_username": "guest2"})
+    assert r.status_code == 200, r.text
+    assert acc.viewer.get("/api/config/ui-security").status_code == 401   # the old viewer session is gone
+    assert acc.op.get("/api/config/ui-security").status_code == 401       # every session was revoked
+    assert acc.admin.get("/api/config/ui-security").status_code == 200    # the caller got a fresh one
+    assert [c["user"] for c in pk.list()] == ["boss"]             # guest's passkey deleted, boss's kept

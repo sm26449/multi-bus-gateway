@@ -288,7 +288,7 @@ def test_a_lease_runs_the_safe_recipe_when_the_controller_goes_quiet(tmp_path):
     lease = next(l for l in mgr.snapshot() if l['device'] == 'pv-u1')
     assert lease['address'] == 40232 and 0 < lease['remaining_s'] <= 5
     # fire the revert as the dead-man would (the lease is still current)
-    mgr._leases[('pv-u1', 'holding', 40232)]['revert'](lambda: True)
+    mgr._leases[('pv-u1', 'command', 40232)]['revert'](lambda: True)
     assert inv.writes[-1][1] == [10000, 0, 0, 0, 0]          # safe: 100 %, revert 0, enable cleared
     vias = [x['detail']['via'] for x in _audit(tmp_path) if x.get('action') == 'command']
     assert vias[-1] == 'lease-revert'
@@ -444,3 +444,105 @@ def test_an_anonymous_broker_gets_no_writes_over_mqtt(tmp_path):
     cfg.mqtt.username = "gw"
     mq.topics['pv/inverters/1/cmd/power_limit']('{"limit_pct": 55, "source": "ov"}')
     assert len(inv.writes) > before                     # authenticated broker: acted on
+
+
+@needs_tc
+def test_crash_recovery_of_a_command_lease_runs_the_safe_recipe(tmp_path):
+    """F-01 (3.83.0): a lease taken by a command and left on disk by a crash
+    must revert through the command's safe recipe — a raw write of the safe
+    value would land the bare word 100 in WMaxLimPct, which a scale factor of
+    -2 turns into a 1 % limit with the enable bit still set."""
+    inv = _Inverter(sf=-2)
+    cfg, app, client = _app(tmp_path, {'pv-u1': inv})
+    r = client.post("/api/devices/pv-u1/commands/power_limit", json={"value": 40, "lease_s": 600})
+    assert r.status_code == 200 and inv.writes[-1][1][0] == 4000
+    rec = json.loads((tmp_path / "write_leases.json").read_text())
+    assert rec and rec[0]['command'] == 'power_limit' and rec[0]['device'] == 'pv-u1'
+    # "crash": a fresh process boots on the same config dir with the record still there
+    inv2 = _Inverter(sf=-2, limit_raw=4000, ena=1)
+    cfg2, app2, client2 = _app(tmp_path, {'pv-u1': inv2})
+    mgr = app2.state.lease_manager
+    lease = next(l for l in mgr.snapshot() if l['device'] == 'pv-u1')
+    mgr._leases[('pv-u1', 'command', 40232)]['revert'](lambda: True)
+    # the recipe: 100 % encoded through the SF (10000), revert 0, enable cleared
+    assert inv2.writes[-1] == (40232, [10000, 0, 0, 0, 0]), inv2.writes
+    assert not any(w == (40232, [100]) for w in inv2.writes)
+    vias = [x['detail']['via'] for x in _audit(tmp_path) if x.get('action') == 'command']
+    assert vias[-1] == 'lease-revert'
+
+
+@needs_tc
+def test_an_unverified_command_still_arms_the_lease(tmp_path):
+    """F-03 (3.83.0): frames that went out are on the device whatever the
+    read-back said; a dead controller must not leave that limit in place."""
+    inv = _Inverter(sf=-2, answer_after=False)  # writes land, the read-back does not answer
+    cfg, app, client = _app(tmp_path, {'pv-u1': inv})
+    r = client.post("/api/devices/pv-u1/commands/power_limit", json={"value": 40, "lease_s": 300})
+    assert r.status_code == 200 and r.json()['status'] == 'unverified', r.text
+    assert inv.writes[-1][1][0] == 4000
+    leases = [l for l in app.state.lease_manager.snapshot() if l['device'] == 'pv-u1']
+    assert leases and 0 < leases[0]['remaining_s'] <= 300
+
+
+@needs_tc
+def test_the_ha_register_write_honours_the_device_write_lock(tmp_path, caplog):
+    """F-13 (3.83.0): the HA number/select `set` path checked writability
+    and bounds but not the device's write lock, which the HTTP and command
+    faces honour."""
+    import logging
+    inv = _Inverter(sf=-2)
+    cfg, app, client = _app(tmp_path, {'pv-u1': inv})
+    dev = app.state.registry.find('pv-u1')[1]
+    reg = next(r for r in app.state.template_registry.get('fronius_sunspec_inverter').registers
+               if r.name == 'power_limit_pct')
+    dev.write_locked = True
+    with caplog.at_level(logging.WARNING):
+        app.state.mqtt_write_command('pv-u1', reg, '60')
+    assert inv.writes == []
+    assert any("write-locked" in r.getMessage() for r in caplog.records)
+    caplog.clear()
+    dev.write_locked = False
+    with caplog.at_level(logging.WARNING):
+        app.state.mqtt_write_command('pv-u1', reg, '60')
+    # unlocked: the same request goes on to the command (WMaxLimPct travels with its enable)
+    assert not any("write-locked" in r.getMessage() for r in caplog.records)
+    assert inv.writes and inv.writes[-1][1][0] == 6000
+
+
+@needs_tc
+def test_command_history_is_admin_only(tmp_path):
+    """F-33 (3.83.0): the history is the audit log filtered — API.md says admin."""
+    from multibus import auth as _authmod
+    from multibus.api import create_api
+    inv = _Inverter(sf=-2)
+    cfg = write_config(tmp_path, extra_yaml=PLANT_YAML)
+    cfg.ui.auth_enabled = True
+    cfg.ui.auth_username, cfg.ui.auth_password = "admin", _authmod.hash_password("pw")
+    cfg.ui.viewer_username, cfg.ui.viewer_password = "guest", _authmod.hash_password("vw")
+    cfg.ui.operator_username, cfg.ui.operator_password = "ops", _authmod.hash_password("op")
+    devices = [(d, _Facade(inv) if d.id == 'pv-u1' else None) for d in cfg.devices]
+    app, _ = create_api(cfg, None, None, None, devices=devices)
+    for user, pw, code in (("admin", "pw", 200), ("guest", "vw", 403), ("ops", "op", 403)):
+        c = TestClient(app, raise_server_exceptions=False)
+        assert c.post("/api/auth/login", json={"username": user, "password": pw}).status_code == 200
+        assert c.get("/api/commands/history").status_code == code, user
+
+
+@needs_tc
+def test_a_lease_revert_runs_even_after_writes_were_disabled(tmp_path):
+    """F-11 (3.83.0): the dead-man restores the template's safe value even
+    if writes were switched off or the device locked after the limit was
+    placed — otherwise the limit would stay forever."""
+    inv = _Inverter(sf=-2)
+    cfg, app, client = _app(tmp_path, {'pv-u1': inv})
+    r = client.post("/api/devices/pv-u1/commands/power_limit", json={"value": 40, "lease_s": 60})
+    assert r.status_code == 200 and inv.writes[-1][1][0] == 4000
+    cfg.security.allow_writes = False
+    app.state.registry.find('pv-u1')[1].write_locked = True
+    app.state.lease_manager._leases[('pv-u1', 'command', 40232)]['revert'](lambda: True)
+    assert inv.writes[-1][1] == [10000, 0, 0, 0, 0]
+    vias = [x['detail']['via'] for x in _audit(tmp_path) if x.get('action') == 'command']
+    assert vias[-1] == 'lease-revert'
+    # a normal command still meets the gates
+    r = client.post("/api/devices/pv-u1/commands/power_limit", json={"value": 40})
+    assert r.status_code == 403

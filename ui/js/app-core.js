@@ -1,5 +1,9 @@
+/* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
+ * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
 /**
- * Janitza UMG 512-PRO Monitor - Frontend Application
+ * Multi-Bus Gateway - Frontend Application
  */
 
 // Utility: Debounce function
@@ -733,7 +737,6 @@ Object.assign(JanitzaMonitor.prototype, {
 
     // Small DOM helpers reachable from markup (data-action) so no template
     // needs an inline handler for a one-liner.
-    _navigate(url) { window.location = url; },
     _selectEl(el) { el.select(); },
     _removeRow(el) { const tr = el.closest('tr'); if (tr) tr.remove(); },
     _clearHtml(id) { const el = document.getElementById(id); if (el) el.innerHTML = ''; },

@@ -1082,12 +1082,13 @@ canonic) sunt opt-in — activează-le din **Config → Security** pe măsură c
 expunerea crește. Apărare în adâncime: fiecare strat se aplică independent.
 
 > **Stack-ul inclus are ușile lui.** Compose-ul implicit expune și broker-ul
-> (`1883`/`9001`, anonim implicit — adaugă credențiale cu rețeta de două
-> linii din `mosquitto/config/mosquitto.conf`), MQTT Explorer (`4000`,
-> viewer neautentificat), InfluxDB (`8086`) și Grafana (`3000`, login
-> `admin` / `GF_SECURITY_ADMIN_PASSWORD` din `.env`). Dincolo de un LAN de
-> încredere: pune credențiale pe broker, schimbă parolele change-me și
-> scoate mapările de porturi de care n-ai nevoie.
+> (`1883`/`9001`; de la 3.81.0 refuză clienții anonimi și cere
+> `MQTT_USERNAME`/`MQTT_PASSWORD` în `.env`, iar de la 3.83.0 refuză
+> placeholder-ul din `.env.example`), InfluxDB (`8086`) și Grafana (`3000`,
+> login `admin` / `GF_SECURITY_ADMIN_PASSWORD` din `.env`). MQTT Explorer
+> nu pornește decât cu `--profile debug` și ascultă doar pe `127.0.0.1:4000`.
+> Dincolo de un LAN de încredere: setează secretele obligatorii, pune
+> `STACK_BIND=127.0.0.1` și scoate mapările de porturi de care n-ai nevoie.
 
 ### 16.1 Login & roluri
 

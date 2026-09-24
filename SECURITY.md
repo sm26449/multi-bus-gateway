@@ -57,7 +57,8 @@ Defense in depth — every layer applies independently:
    re-issued as the session slides) persisted as SHA-256 token hashes (0600).
 3. **Optional API key** (`API_KEY`) required on every state-changing HTTP
    request and on the OTA-capable builder WebSocket (header or
-   `mbg-api-key.<base64url>` subprotocol).
+   `mbg-api-key.<base64url>` subprotocol). A gate for machine clients, never
+   a role: with login on it cannot unlock what the operator role withholds.
 4. **Optional IP allowlist** in front of everything, including `/health`.
 5. **Hardware-write gating chain**: `security.allow_writes` (default off)
    AND an authenticated caller AND a template allowlist entry (writability,

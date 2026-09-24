@@ -67,11 +67,11 @@ Companion documents:
 git clone https://github.com/sm26449/multi-bus-gateway.git
 cd multi-bus-gateway
 
-# 2) Create your environment file (optional — everything is configurable in the UI)
+# 2) Create your environment file — REQUIRED: the four stack secrets have no defaults
 cp .env.example .env
 
 # 3) Start the COMPLETE stack — gateway + MQTT broker (mosquitto) +
-#    MQTT Explorer + InfluxDB + Grafana + ESPHome. Everything the product
+#    InfluxDB + Grafana + ESPHome (MQTT Explorer only with --profile debug). Everything the product
 #    needs ships in this one file; nothing external to install.
 docker compose up -d
 
@@ -102,7 +102,7 @@ docker compose -f docker-compose.yml -f docker-compose.external-network.yml \
 ```
 
 Ports published by the default compose file: `8080` (UI/API), `1883` +
-`9001` (bundled MQTT + WebSockets), `4000` (MQTT Explorer), `8086`
+`9001` (bundled MQTT + WebSockets), `4000` (MQTT Explorer, `--profile debug` only, on 127.0.0.1), `8086`
 (InfluxDB), `3000` (Grafana), `1502–1512` (virtual-meter range, grow via
 `VMETER_PORT_START/END`), and `502` (standard Modbus, for consumers that
 insist on it — drop it if the host already uses it). The containers run **non-root** (gateway uid 10001; the
@@ -1087,8 +1087,9 @@ default**.
    scale, and `offset` — inverted on write, `raw = (value − offset) ×
    scale`, including on the safety revert) always comes from the template
    row, never from the caller.
-4. The **primary device is always read-only**; HTTP/JSON devices and
-   input/discrete registers can't be written.
+4. The **primary device is write-locked by default**
+   (`security.primary_write_locked`; unlock it from its Outputs tab, on
+   purpose); HTTP/JSON devices and input/discrete registers can't be written.
 5. Per-IP rate limit (`security.write_rate_limit_per_s`, default 10/s).
 
 `POST /api/devices/<id>/write` with `{"address": ..., "value": ...}` writes
@@ -1169,7 +1170,10 @@ commands:
 
 The binding, on a group of an installation or on a device (what *you*
 declare; `faces` default to all three, `lease_s > 0` arms the dead-man of
-§14 with the command's `safe` parameters):
+§14 with the command's `safe` parameters — the lease is armed as soon as a
+frame went out, whatever the read-back said, and its revert runs the safe
+recipe even if writes were disabled or the device locked in the meantime,
+at expiry, at a clean shutdown, and after a crash at the next boot):
 
 ```yaml
 commands:
@@ -1484,8 +1488,8 @@ Config → **Backup & Snapshots**.
 - **Backup export/import (ZIP)** — for portability between hosts. The
   export **strips secrets** (MQTT/Influx credentials, password hashes,
   webhook/REST-push headers) and host identity by default;
-  `include_secrets=true` requires the admin role or the API key and is
-  audit-logged. Import (raw ZIP body, ≤25 MB) **merges** over the live
+  `include_secrets=true` requires the admin role (the API key stands in
+  only while login is off) and is audit-logged. Import (raw ZIP body, ≤25 MB) **merges** over the live
   config so stripped secrets survive, and takes a `pre-import` snapshot
   first. Snapshots, by contrast, are full-fidelity local restore points —
   downloading one is gated like a with-secrets export.
@@ -1545,8 +1549,9 @@ applies independently.
 > unauthenticated viewer — off unless `--profile debug`, host-local when on),
 > InfluxDB (`8086`) and Grafana (`3000`,
 > login `admin` / `GF_SECURITY_ADMIN_PASSWORD` from `.env`). On anything
-> beyond a trusted LAN, set broker credentials, change the change-me
-> passwords, and drop the port mappings you don't need.
+> beyond a trusted LAN, set the four required secrets in `.env` (the
+> broker refuses the example placeholder), keep `STACK_BIND=127.0.0.1`,
+> and drop the port mappings you don't need.
 
 ### 16.1 Login & roles
 
