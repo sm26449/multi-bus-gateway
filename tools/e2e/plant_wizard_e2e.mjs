@@ -84,7 +84,7 @@ try {
   const opts = await body().locator('select[data-f="template"] option').allInnerTexts();
   check('a manual inverter group over Solar API offers only HTTP inverter templates',
         opts.length >= 2 && opts.slice(1).every(o => /http/.test(o) && /inverter/i.test(o)) && !opts.some(o => /Janitza|Zigbee|BLE|SunSpec meter/.test(o)), opts.join(' | '));
-  await body().locator('button[onclick^="app.plantWizRemoveGroup"]').last().click(); await page.waitForTimeout(400);
+  await body().locator('button[data-action="plantWizRemoveGroup"]').last().click(); await page.waitForTimeout(400);
   await page.click('#plantWizNext'); await page.waitForTimeout(700);
 
   // ---- step 3: how often --------------------------------------------------

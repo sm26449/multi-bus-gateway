@@ -266,3 +266,16 @@ def test_zero_scale_is_rejected():
          "scale": 0},
     ])
     assert any("scale must not be 0" in e for e in validate_template(data))
+
+
+def test_bundled_templates_load_without_canonical_warnings(tmp_path):
+    """The canonical-name lint must not flag registers that are documented but
+    not curated (no defaults → never polled, never a topic or a field), such
+    as the SunSpec scale factors a Symo never answers. Before 3.82.1 the
+    Templates page carried an amber warning for the Fronius inverter map."""
+    from multibus.device_template import TemplateRegistry
+    mgr = TemplateRegistry(user_dir=tmp_path)
+    mgr.reload()
+    assert mgr.load_errors == {}
+    assert mgr.load_warnings == {}, mgr.load_warnings
+

@@ -4,7 +4,7 @@
 
 Every built-in device map, with its Modbus transport (function code + byte/word order), the exact register table, and the **source it was verified against**. We do not fabricate maps — each entry cites its provenance. **Confidence varies by entry:** some are *vendor-verified* (confirmed against the manufacturer manual or a field-tested driver — e.g. ABB B23 vs the ABB manual, Schneider iEM3000 vs volkszaehler/mbmd, Carlo Gavazzi EM24 vs Victron), while others are *community-sourced* and their description says to verify against your specific unit's manual before billing-grade use (e.g. the Eastron SDM entries). Read each entry's Source line. `scale` is a divisor — engineering value = raw / scale.
 
-**13 device maps.**
+**16 device maps.**
 
 | Map | Vendor | Model | Registers | Transport |
 |---|---|---|---|---|
@@ -16,7 +16,10 @@ Every built-in device map, with its Modbus transport (function code + byte/word 
 | [Eastron SDM120 (single-phase)](#eastron-sdm120-single-phase) | Eastron | SDM120 Modbus | 10 | FC04 / big |
 | [Eastron SDM630 (3-phase)](#eastron-sdm630-3-phase) | Eastron | SDM630 Modbus V2 | 29 | FC04 / big |
 | [Fronius Smart Meter 65A-3 (RTU)](#fronius-smart-meter-65a-3-rtu) | Fronius | Smart Meter 65A-3 | 30 | FC03 / little |
-| [Fronius SunSpec inverter (int+SF, via datalogger)](#fronius-sunspec-inverter-intsf-via-datalogger) | Fronius | Symo / Primo / Eco (SunSpec 103) | 61 | FC03 / big |
+| [Fronius inverter (Solar API / HTTP-JSON)](#fronius-inverter-solar-api--http-json) | — | — | 7 | FC03 / big |
+| [Fronius inverter, per-phase AC (Solar API / HTTP-JSON)](#fronius-inverter-per-phase-ac-solar-api--http-json) | — | — | 6 | FC03 / big |
+| [Fronius installation (Solar API site totals)](#fronius-installation-solar-api-site-totals) | — | — | 9 | FC03 / big |
+| [Fronius SunSpec inverter (int+SF, via datalogger)](#fronius-sunspec-inverter-intsf-via-datalogger) | Fronius | Symo / Primo / Eco (SunSpec 103) | 69 | FC03 / big |
 | [Fronius SunSpec meter (int+SF, via datalogger)](#fronius-sunspec-meter-intsf-via-datalogger) | Fronius | Smart Meter 63A/50kA (SunSpec 203) | 48 | FC03 / big |
 | [Generic MQTT (JSON)](#generic-mqtt-json) | Generic | MQTT JSON source | 3 | FC03 / big |
 | [Schneider iEM3000 (3-phase)](#schneider-iem3000-3-phase) | Schneider Electric | iEM3155 / iEM3255 / iEM3455 / iEM3555 | 22 | FC03 / big |
@@ -252,9 +255,86 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 4096 / 0x1000 | `firmware_rev` | Firmware / revision | uint16 | 1.0 | — | slow |
 | 20480 / 0x5000 | `serial` | Serial / ID (ASCII) | string:7 | 1.0 | — | slow |
 
+## Fronius inverter (Solar API / HTTP-JSON)
+
+**id** `fronius_solar_api_inverter` · **vendor** — · **model** — · **version** — · **registers** 7
+
+- **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
+
+> ONE HTTP request per inverter to the DataManager's Solar API (GetInverterRealtimeData.cgi?Scope=Device&DeviceId=${unit_id}&DataCollection=CommonInverterData).
+
+Measured on a production DataManager 2026-09-12: 54 ms median per call (25 calls, worst 197 ms) against 1945-2376 ms for a single Modbus read of the same box, and those calls over live Modbus polling caused zero overruns and left Modbus latency unchanged - the web server answers from the cache it fills off its own RS-485 side. That cache refreshes about every 2.6 s, so polling faster than 5 s buys nothing real.
+
+This collection carries ONE ac voltage and ONE ac current, not per phase: the per-phase values live in a different collection (3PInverterData) and would cost a second request. They stay on Modbus, together with the four things the Solar API cannot give at all - power factor, reactive and apparent power, the SunSpec event flags, and the per-string MPPT block.
+
+NIGHT BEHAVIOUR, measured 2026-09-12 19:31: when an inverter stops producing, the DataManager OMITS PAC, FAC, UAC and IAC from the response entirely — it does not return them as zero, and the call still succeeds with Status.Code 0. Only UDC, IDC and the energy counters remain. So this source simply stops offering those fields at dusk, which is correct and needs no special handling: under the source model a field nobody offers falls to whichever source still does, and a SunSpec source beside this one keeps supplying them all night. Do not 'fix' the absence by defaulting them to zero — a fabricated zero is indistinguishable from a real one.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 1 / 0x0001 | `power_active_total` | Total active power | float | 1 | W | realtime |
+| 2 / 0x0002 | `frequency` | Frequency | float | 1 | Hz | realtime |
+| 3 / 0x0003 | `voltage_ln_avg` | AC voltage | float | 1 | V | realtime |
+| 4 / 0x0004 | `current_total` | Total AC current | float | 1 | A | realtime |
+| 5 / 0x0005 | `voltage_dc` | DC voltage | float | 1 | V | realtime |
+| 6 / 0x0006 | `current_dc` | DC current | float | 1 | A | realtime |
+| 7 / 0x0007 | `energy_active_generated` | Total energy generated | float | 1 | Wh | normal |
+
+## Fronius inverter, per-phase AC (Solar API / HTTP-JSON)
+
+**id** `fronius_solar_api_inverter_3p` · **vendor** — · **model** — · **version** — · **registers** 6
+
+- **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
+
+> ONE HTTP request per inverter to the DataManager's Solar API (GetInverterRealtimeData.cgi?Scope=Device&DeviceId=${unit_id}&DataCollection=3PInverterData): the three line-to-neutral voltages and the three phase currents that CommonInverterData does not carry.
+
+Why a second source (2026-09-14): the over-voltage protection (Node-RED OV, the gateway's ov-u* rules, alertd's ANRE rules) keys on max(L1, L2, L3). On SunSpec those live in the 'normal' block, and four inverters sharing one datalogger could not sweep that block under ~25 s (measured 21-33 s at a 20 s interval, sources flapping ok/degraded ~50 times per unit per 3 h). This call costs the web server ~54 ms and does not touch the Modbus side, so the phase voltages arrive every 5 s and the SunSpec block can slow to 60 s for the things only it carries (PF, VA/var, event flags, temperatures, MPPT).
+
+The addresses are the SunSpec model-101/103 addresses of the same points on purpose: the field's identity (HA unique_id, InfluxDB address tag) does not change with the source that happens to own it. Declare this source BEFORE the SunSpec one so it owns the six fields; keep stale_after_s so SunSpec fills them when the DataManager's web server stalls or sleeps at night.
+
+NIGHT: like CommonInverterData, the DataManager omits UAC_*/IAC_* once the inverter stops producing (the call still succeeds); the fields then fall to the SunSpec source. Do not default them to zero.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 40072 / 0x9C88 | `current_l1` | L1 current | float | 1 | A | realtime |
+| 40073 / 0x9C89 | `current_l2` | L2 current | float | 1 | A | realtime |
+| 40074 / 0x9C8A | `current_l3` | L3 current | float | 1 | A | realtime |
+| 40079 / 0x9C8F | `voltage_l1_n` | L1-N voltage | float | 1 | V | realtime |
+| 40080 / 0x9C90 | `voltage_l2_n` | L2-N voltage | float | 1 | V | realtime |
+| 40081 / 0x9C91 | `voltage_l3_n` | L3-N voltage | float | 1 | V | realtime |
+
+## Fronius installation (Solar API site totals)
+
+**id** `fronius_solar_api_site` · **vendor** — · **model** — · **version** — · **registers** 9
+
+- **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
+
+> The whole INSTALLATION in one call — GetPowerFlowRealtimeData.fcgi — not a device on a bus.
+
+Measured on a production DataManager 2026-09-13: 89 ms per call, and the values behind it refresh every 2.5-3.3 s. Polling faster than about 2 s returns the same number twice; the datalogger polls its own RS-485 side on its own rhythm and we cannot outrun it.
+
+What makes this worth a source of its own: house load, autonomy and self-consumption are NOT derivable from the inverters. Nothing in an inverter's register map knows what the house consumed. Sum the inverters and you get generation; you still cannot say how much of it stayed on site.
+
+Grid and battery power ship UNTICKED. A meter wired at the grid connection reports the same flow first-hand and faster (measured: 1.1 s against 2.5 s here), so taking it from the site view would be a slower second copy. Tick them only when there is no such meter.
+
+Sign convention follows the source: grid negative while exporting, battery negative while charging. Flipping it would make our number disagree with the inverter's own display.
+
+The URL carries no ${unit_id}: an installation is one thing, so this group holds exactly one unit.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 1 / 0x0001 | `power_pv` | PV generation | float | 1 | W | realtime |
+| 2 / 0x0002 | `power_load` | House load | float | 1 | W | realtime |
+| 3 / 0x0003 | `power_grid` | Grid power | float | 1 | W | realtime |
+| 4 / 0x0004 | `power_battery` | Battery power | float | 1 | W | realtime |
+| 5 / 0x0005 | `autonomy` | Autonomy | float | 1 | % | realtime |
+| 6 / 0x0006 | `self_consumption` | Self-consumption | float | 1 | % | realtime |
+| 7 / 0x0007 | `energy_today` | Energy today | float | 1 | Wh | normal |
+| 8 / 0x0008 | `energy_year` | Energy this year | float | 1 | Wh | normal |
+| 9 / 0x0009 | `energy_lifetime` | Energy lifetime | float | 1 | Wh | normal |
+
 ## Fronius SunSpec inverter (int+SF, via datalogger)
 
-**id** `fronius_sunspec_inverter` · **vendor** Fronius · **model** Symo / Primo / Eco (SunSpec 103) · **version** 2.2.0 · **registers** 61
+**id** `fronius_sunspec_inverter` · **vendor** Fronius · **model** Symo / Primo / Eco (SunSpec 103) · **version** 2.2.0 · **registers** 69
 
 - **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
 - **Source / provenance:** SunSpec Information Models (int+SF); register map verified live against a production Fronius fleet (raw-frame decode parity, 2026-09-11)
@@ -309,6 +389,14 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 40115 / 0x9CB3 | `vendor_event_flags_2` | Vendor event flags word 2 | uint32 | 1 | — | normal |
 | 40117 / 0x9CB5 | `vendor_event_flags_3` | Vendor event flags word 3 | uint32 | 1 | — | normal |
 | 40119 / 0x9CB7 | `vendor_event_flags_4` | Vendor event flags word 4 | uint32 | 1 | — | normal |
+| 40227 / 0x9D23 | `controls_model_id` | SunSpec model id (123) | uint16 | 1 | — | controls |
+| 40231 / 0x9D27 | `controls_connected` | Connected (model 123) | uint16 | 1 | — | controls |
+| 40232 / 0x9D28 | `power_limit_pct` | Active power limit | uint16 | 1 | % | controls |
+| 40233 / 0x9D29 | `power_limit_win_s` | Power limit window | uint16 | 1 | s | controls |
+| 40234 / 0x9D2A | `power_limit_revert_s` | Power limit reverts after | uint16 | 1 | s | controls |
+| 40235 / 0x9D2B | `power_limit_ramp_s` | Power limit ramp time | uint16 | 1 | s | controls |
+| 40236 / 0x9D2C | `power_limit_enabled` | Power limit enabled | uint16 | 1 | — | controls |
+| 40250 / 0x9D3A | `wmaxlimpct_sf` | WMaxLimPct Scale Factor | int16 | 1 | — | controls |
 | 40255 / 0x9D3F | `dca_mppt_sf` | DCA MPPT Scale Factor | int16 | 1 | — | slow |
 | 40256 / 0x9D40 | `dcv_mppt_sf` | DCV MPPT Scale Factor | int16 | 1 | — | slow |
 | 40257 / 0x9D41 | `dcw_mppt_sf` | DCW MPPT Scale Factor | int16 | 1 | — | slow |

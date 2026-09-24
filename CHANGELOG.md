@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.82.1
+
+### 2026-09-24 — documentation for the public release
+
+- README (English and Romanian): the opening says what the gateway is and
+  where it runs — the author's own PV site since the 3.0.0 release, with
+  the hardware named and the less-exercised parts called out — and the
+  Janitza ancestry moved to a History section at the end.
+- Device catalog regenerated: it had been generated before the three
+  Fronius Solar API maps existed, so it listed 13 of the 16 bundled
+  templates; the READMEs quoted 11. One number everywhere now.
+- Screenshots recaptured from the current UI (installations, unit
+  workspace, commands, rules); the visual guide gained sections for the
+  pages that did not exist when it was written, and the capture script
+  (`tools/e2e/capture_docs_screenshots.mjs`) is in the repository so the
+  images can be regenerated consistently.
+- The plant-wizard e2e script selected a button by its former inline
+  handler; it uses the `data-action` attribute now.
+- The Templates page showed an amber "non-canonical field names" warning
+  for the bundled Fronius SunSpec inverter map: three scale-factor
+  registers that no hardware in the field implements are deliberately
+  left out of the curated set, and the lint mistook "not curated" for
+  "routed". Registers without defaults are skipped by the lint now.
+
 ## 3.82.0
 
 ### 2026-09-23 — the browser runs no inline script

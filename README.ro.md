@@ -1,17 +1,5 @@
 # Multi-Bus Gateway
 
-> **Ancestry.** Multi-Bus Gateway 3.0.0 is the direct successor of the
-> *Janitza UMG 512 Modbus/MQTT monitor* project — the same field-tested
-> engine, generalized into a protocol gateway: multiple southbound sources
-> (Modbus TCP/RTU, HTTP/JSON, MQTT), device-template catalog, composite
-> virtual meters with an in-band quality convention, and an operator UI
-> with commissioning diagnostics. The Janitza UMG 512-PRO remains a
-> first-class supported device (bundled template + verified register map).
-
-> fost *Janitza UMG 512-PRO Monitor* — gateway de protocol multi-sursă:
-> Modbus TCP/RTU · HTTP/JSON · MQTT → MQTT / InfluxDB / metere Modbus
-> virtuale / HTTP-JSON / REST
-
 [🇬🇧 English](README.md) | 🇷🇴 **Română**
 
 [![Release](https://img.shields.io/github/v/release/sm26449/multi-bus-gateway?sort=semver)](https://github.com/sm26449/multi-bus-gateway/releases)
@@ -23,13 +11,24 @@
 > **Gateway de protocol software — achiziție, verificare, monitorizare și
 > rutare de date. Retrofit, nu înlocuire.**
 
-Citește contoare și senzori existenți — prin **Modbus TCP**, **Modbus RTU**,
-**HTTP/JSON** (Solar API, Shelly, Tasmota…) sau **MQTT** — și rutează datele
-către **MQTT, InfluxDB/Grafana, Home Assistant, REST și feed-uri JSON**. În
-plus, unic: re-servește sursele fizice ca **metere Modbus virtuale**
-(Carlo Gavazzi EM24, Fronius Smart Meter, SunSpec), astfel încât Victron,
-Fronius și orice PLC/SCADA văd fiecare meterul pe care îl așteaptă. Totul
-într-un container, pe hardware pe care îl deții.
+Multi-Bus Gateway citește echipamentele pe care le ai deja — contoare de
+energie, invertoare PV, senzori — prin **Modbus TCP**, **Modbus RTU**,
+**HTTP/JSON** (Fronius Solar API, Shelly, Tasmota…) sau **MQTT** și rutează
+datele către **MQTT, InfluxDB/Grafana, Home Assistant și feed-uri
+REST/JSON**. Poate re-servi orice sursă ca **meter Modbus virtual** (Carlo
+Gavazzi EM24, Fronius Smart Meter, SunSpec), astfel încât un Victron GX, un
+invertor Fronius sau un PLC vede meterul pe care îl așteaptă. Un container,
+hardware-ul tău.
+
+**Unde rulează.** Este gateway-ul din spatele instalației fotovoltaice a
+autorului, în funcțiune continuă de la versiunea 3.0.0 din iulie 2026 — și,
+ca monitor Janitza din care a crescut, din martie 2026: un Janitza UMG
+512-PRO citit la 250 ms, patru invertoare Fronius citite prin Solar API și
+SunSpec, cu comenzi de limitare a puterii și reguli, un Fronius Smart Meter
+pe RTU și un EM24 virtual pe care un Victron Ekrano GX îl folosește drept
+contor de rețea. Circa 130 MB RAM. Mai puțin exersate până acum: puntea
+serială pentru RS-485 la distanță, Device Builder-ul ESP32 și înregistratorul
+PQ, care are un singur contor în spate. Vezi [Istoric](#istoric).
 
 - 🔌 **Retrofit în loc de înlocuire** — digitalizezi echipamente deja
   instalate; **zero hardware nou**.
@@ -100,11 +99,13 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
 - **MQTT-in** — abonare la un broker; valoare din payload JSON (`json_path`)
   sau payload brut; topic per registru cu wildcard-uri `+`/`#`.
 - **Template-uri de dispozitiv** — harta de registre ca fișier JSON portabil;
-  16 hărți incluse, field-tested, cu proveniență documentată
+  16 hărți incluse, cu proveniență documentată
   ([catalog](docs/device-catalog.md)): Janitza UMG 512-PRO (4.126 registre),
   ABB B21/B23, Carlo Gavazzi EM24, Eastron SDM120/SDM630, Schneider iEM3000,
-  Fronius Smart Meter 65A-3 + 3 hărți MQTT (Zigbee2MQTT, Theengs BLE, JSON
-  generic). Editor + upload + export + **import CSV**
+  Fronius Smart Meter 65A-3, invertor și contor Fronius SunSpec, trei hărți
+  Fronius Solar API (invertor, invertor pe faze, instalație) și trei hărți
+  MQTT (Zigbee2MQTT, Theengs BLE, JSON generic). Proveniența și gradul de
+  încredere sunt scrise în catalog, la fiecare hartă. Editor + upload + export + **import CSV**
   ([ghid](docs/csv-import.md)).
 - **Nume canonice de câmpuri** — nume uniforme de registre pe orice dispozitiv
   (`voltage_l1_n` peste tot), deci topicele MQTT și field-urile InfluxDB sunt
@@ -475,11 +476,21 @@ Ai găsit un bug sau vrei o funcționalitate? Deschide un issue pe
 Hărțile de registre contribuite (template-uri, CSV) sunt binevenite — cu
 proveniență verificabilă, vezi [docs/device-catalog.md](docs/device-catalog.md).
 
-## Authors
+## Istoric
 
-**Stefan Maldaianu** - [sm26449@diysolar.ro](mailto:sm26449@diysolar.ro)
+Multi-Bus Gateway 3.0.0 (iulie 2026) este succesorul direct al proiectului
+[Janitza UMG 512 Modbus/MQTT monitor](https://github.com/sm26449/janitza-monitor)
+(martie 2026): același motor de citire, verificat în teren, generalizat
+într-un gateway de protocol — surse multiple, catalog de template-uri,
+metere virtuale compozite cu bloc de calitate in-band și o interfață de
+operator cu diagnostice de punere în funcțiune. Janitza UMG 512-PRO rămâne
+un dispozitiv de primă clasă (template inclus, hartă de registre
+verificată). Fiecare versiune de atunci este în [changelog](CHANGELOG.md).
 
-**Claude** (Anthropic) - Pair programming partner
+## Autori
+
+Construit de **Stefan Maldaianu** ([sm26449@diysolar.ro](mailto:sm26449@diysolar.ro)),
+cu asistență la dezvoltare din partea Claude (Anthropic).
 
 ## License
 

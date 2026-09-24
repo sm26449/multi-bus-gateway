@@ -1,16 +1,17 @@
 # Ghid vizual al interfeței — Multi-Bus Gateway
 
-> Ghid în română, cu capturi din versiunea 3.35 (august 2026). Paginile
-> Rules, Templates și instalațiile cu mai multe unități au apărut după aceste
-> capturi; referința la zi este [MANUAL.md](MANUAL.md) (engleză).
+> Ghid în română, cu capturi din versiunea 3.82 (septembrie 2026): include
+> instalațiile cu mai multe unități, pagina unei unități, comenzile și regulile
+> (§19–§22). Referința completă, la zi, este [MANUAL.md](MANUAL.md) (engleză).
 
 Un tur ilustrat al fiecărei pagini, sub-pagini și tab din interfața web, cu note
 explicative pentru operator/integrator. Capturile sunt făcute pe o **instanță
 demo completă** cu date vii (simulatoare de metere Modbus din `loadtest/`,
-broker MQTT + InfluxDB efemere, conturi demo): trei surse Modbus TCP —
-un meter principal și două EM24 — plus un meter virtual EM24 servit mai
-departe, exact fluxul unui deployment real, fără nicio informație de
-producție. Bara de sus e identică peste tot: navigarea între pagini,
+broker MQTT + InfluxDB efemere, conturi demo): un meter principal Janitza și
+două EM24 pe Modbus TCP, o instalație Fronius cu trei invertoare citite prin
+Solar API și SunSpec (simulate) plus totalurile de site, un meter virtual EM24
+servit mai departe și o regulă în mod shadow — exact fluxul unui deployment
+real, fără nicio informație de producție. Bara de sus e identică peste tot: navigarea între pagini,
 indicatorii de stare (dispozitive / MQTT / InfluxDB / vmeter — verde = ok),
 selectorul de limbă și comutatorul de temă (clar/întunecat).
 
@@ -34,24 +35,25 @@ intervalele grupurilor de poll, versiunea și ora ultimului update.
 
 ---
 
-## 2. Măsurători (Monitor)
+## 2. Monitor live (tab-ul Monitor al unei unități)
 
 ![Monitor](img/guide/02-monitor.png)
 
-Lista completă a măsurătorilor selectate pentru dispozitivul curent, în format
-tabelar — nume, valoare, unitate, adresă/registru, grup de poll. E vederea de
-lucru: cauți un registru, îl vezi actualizându-se live. Selectorul de dispozitiv
-(sus) schimbă contextul; căutarea filtrează instant. De aici editezi o măsurătoare
-sau adaugi una nouă (adresă Modbus, json_path pentru HTTP/MQTT).
+Din 3.5x, Monitor și History sunt tab-uri în **spațiul de lucru al unității**
+(Devices → unitate), nu pagini separate. Monitor desenează în timp real până la
+șase valori alese din lista din stânga (căutare instant, grupate pe categorii),
+cu min/max și zoom; tabelul de sub grafic arată valoarea curentă a fiecărei
+măsurători urmărite. Lista completă a măsurătorilor, cu editare (adresă Modbus,
+`json_path` pentru HTTP/MQTT, grup de poll), este în tab-ul **Measurements**.
 
 ---
 
-## 3. Istoric (History)
+## 3. Istoric (tab-ul History al unei unități)
 
 ![History](img/guide/03-history.png)
 
 Grafice pe intervale din datele stocate în InfluxDB — alegi registrele de afișat
-și fereastra de timp. Util pentru a vedea evoluția (tensiuni, putere) fără a
+din lista din stânga, fereastra de timp (1 h … 90 d) și pasul de agregare. Util pentru a vedea evoluția (tensiuni, putere) fără a
 deschide Grafana. Comparațiile sunt pe aceeași unitate (axă comună corectă).
 
 ---
@@ -60,20 +62,16 @@ deschide Grafana. Comparațiile sunt pe aceeași unitate (axă comună corectă)
 
 ![Devices](img/guide/04-devices.png)
 
-Toate sursele southbound (Tier 2), cu sănătatea live a fiecăreia. De aici
-**adaugi un dispozitiv** (deschide wizard-ul — vezi §18), **editezi** conexiunea,
-sau intri în **registrele** unui dispozitiv. Fiecare rând arată protocolul
-(Modbus TCP/RTU, HTTP/JSON, MQTT), adresa, starea de conectare și numărul de
-măsurători selectate. Dispozitivul primar apare primul.
-
-Unitățile unei **endpointuri** (un template + un endpoint + N unit id-uri) stau
-grupate sub rândul endpointului. Butonul de deschidere de pe acel rând duce la
-**pagina endpointului**: starea ei (`online` / `partial` / `offline`) și
-recensământul unităților, grila de totaluri publicate pe `mbg/endpoints/<id>/…`,
-tabelul unităților (sănătate, ultima citire, cadență, erori — cu redenumire și
-intrare în fiecare unitate), comutatorul de totaluri și cardul de ieșiri.
-Identitatea de rutare a endpointului e fixată după creare; sink-urile per unitate se
-declară o singură dată și se aplică întregii endpointuri.
+Toate sursele, cu sănătatea live a fiecăreia: dispozitivele de sine
+stătătoare (aici meterul principal Janitza și cele două EM24) și
+**instalațiile** (aici „Sunfield PV”), ale căror unități stau grupate sub rândul
+instalației, cu pe ce cale sunt citite (`solar_api` HTTP la 2 s + `sunspec`
+Modbus TCP la 20 s). Fiecare rând arată protocolul, adresa, starea de conectare,
+numărul de măsurători și unde publică (topic MQTT, bucket InfluxDB). De aici
+**adaugi un dispozitiv** (wizard-ul din §18), **adaugi o instalație** (wizard
+în patru pași: adresa datalogger-ului, ce s-a găsit pe el, cadențe, revizuire),
+**editezi** conexiunea sau intri în spațiul de lucru al unei unități (§20).
+Butonul de deschidere de pe rândul instalației duce la pagina ei (§19).
 
 ---
 
@@ -243,6 +241,63 @@ topicul din ce publică brokerul, nu-l tastezi orb). Pasul 2 alege template-ul
 
 ---
 
+## 19. Pagina instalației
+
+![Installation](img/guide/19-installation.png)
+
+O **instalație** este un datalogger cu grupurile lui: aici trei invertoare și
+totalurile de site. Cardul de sus spune dacă e online, câte unități răspund,
+producția de acum, energia de azi, autonomia, și **pe ce căi este citită**
+(fiecare sursă cu cadență, latență și procentul de citiri eșuate din ultimele
+5 minute) și unde publică. Sub „What it holds”, fiecare grup are tabelul
+unităților (putere, tensiuni AC/DC, limită activă, sănătate, ultima citire, pe
+ce sursă răspunde), totalurile grupului publicate pe `pv/inverters/summary/…`
+și, când template-ul le oferă, butonul **Commands…** care trimite aceeași
+comandă tuturor unităților grupului.
+
+---
+
+## 20. Spațiul de lucru al unei unități
+
+![Unit overview](img/guide/20-unit-overview.png)
+
+Fiecare unitate a unei instalații are propria pagină, cu tab-uri: Overview
+(starea, sursele care o alimentează și câte câmpuri aduce fiecare, valorile
+live grupate pe categorii), Read via, Outputs, Measurements, Calculated,
+Commands, Logs, Monitor, History, Energy. Firul de navigare din antet duce
+înapoi la instalație și la lista de dispozitive.
+
+---
+
+## 21. Comenzi (tab-ul Commands)
+
+![Commands](img/guide/21-unit-outputs-commands.png)
+
+Comenzile pe care template-ul le declară pentru această unitate — aici limita
+de putere activă a unui invertor SunSpec și „Restore full power”. Fiecare card
+spune ce registre scrie, sub ce condiții de gardă (`controls_model_id = 123`)
+și ce verifică la citirea înapoi; parametrii au limite și valori implicite.
+**Test** face o rulare pe uscat, **Run** cere confirmare. Aceleași comenzi
+sunt acceptate pe MQTT (`…/cmd/power_limit`) și din Home Assistant; fiecare
+rulare apare în „Recent commands” și în jurnalul de audit.
+
+---
+
+## 22. Reguli
+
+![Rules](img/guide/22-rules.png)
+
+O regulă urmărește o valoare live (aici maximul tensiunilor celor trei
+invertoare), așteaptă să se stabilizeze și cere unui grup sau unei unități o
+comandă: trepte (`steps`, ca aici: peste 250 V limita coboară la 80 %, peste
+251 V la 70 %, peste 252,5 V la 60 %, revine sub 249 V) sau o condiție. O
+regulă nouă rulează în **shadow** — decide și spune ce ar face, dar nu scrie
+nimic — până o **armezi**. Tabelul arată per unitate starea, ce vrea regula și
+ce a citit înapoi; „Decisions” deschide istoricul deciziilor, „Clamp…” și
+„Pause…” sunt intervențiile operatorului.
+
+---
+
 ## Note
 
 - **Roluri**: un *viewer* vede toate paginile (read-only); un *operator* poate
@@ -253,8 +308,9 @@ topicul din ce publică brokerul, nu-l tastezi orb). Pasul 2 alege template-ul
 - **Limbă**: EN + RO incluse; se adaugă altele copiind un fișier din
   `ui/languages/`.
 
-*Capturi generate pe versiunea 3.35.2, pe o instanță demo efemeră
-(simulatoare `loadtest/sim_devices.py` + broker/Influx de unică folosință,
-Playwright la 1440×950, login demo). Când UI-ul se schimbă vizibil,
+*Capturi generate pe versiunea 3.82, pe o instanță demo efemeră
+(simulatoare de metere și invertoare + broker/Influx de unică folosință,
+Playwright la 1440×950, login demo) cu
+`tools/e2e/capture_docs_screenshots.mjs`. Când UI-ul se schimbă vizibil,
 re-generează-le la fel — mediul demo se ridică în câteva minute și
 capturile rămân publicabile (zero date de producție).*

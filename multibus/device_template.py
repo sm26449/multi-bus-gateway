@@ -631,8 +631,13 @@ class TemplateRegistry:
                             # plumbing registers (e.g. SunSpec scale factors)
                             # whose defaults disable BOTH sinks never become a
                             # topic or a field — naming them canonically buys
-                            # nothing, so the lint skips them
-                            d = r.defaults or {}
+                            # nothing, so the lint skips them. A register with
+                            # no defaults at all is not curated (nobody polls
+                            # it unless an operator opts in), so it is not
+                            # routed either.
+                            d = r.defaults
+                            if not d:
+                                return False
                             return ((d.get('mqtt') or {}).get('enabled', True)
                                     or (d.get('influxdb') or {}).get('enabled', True))
                         nc = non_canonical([r.name for r in t.registers if _routed(r)])

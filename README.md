@@ -1,13 +1,5 @@
 # Multi-Bus Gateway
 
-> **Ancestry.** Multi-Bus Gateway 3.0.0 is the direct successor of the
-> *Janitza UMG 512 Modbus/MQTT monitor* project — the same field-tested
-> engine, generalized into a protocol gateway: multiple southbound sources
-> (Modbus TCP/RTU, HTTP/JSON, MQTT), device-template catalog, composite
-> virtual meters with an in-band quality convention, and an operator UI
-> with commissioning diagnostics. The Janitza UMG 512-PRO remains a
-> first-class supported device (bundled template + verified register map).
-
 🇬🇧 **English** | [🇷🇴 Română](README.ro.md)
 
 [![Release](https://img.shields.io/github/v/release/sm26449/multi-bus-gateway?sort=semver)](https://github.com/sm26449/multi-bus-gateway/releases)
@@ -19,13 +11,23 @@
 > **A software-defined protocol gateway — acquire, verify, monitor and
 > route field data. Retrofit, don't replace.**
 
-It reads existing meters and sensors — over **Modbus TCP**, **Modbus RTU**,
-**HTTP/JSON** (Solar API, Shelly, Tasmota…) or **MQTT** — and routes the
-data to **MQTT, InfluxDB/Grafana, Home Assistant, REST and JSON feeds**.
-And, uniquely, it re-serves the physical sources as **virtual Modbus
-meters** (Carlo Gavazzi EM24, Fronius Smart Meter, SunSpec), so Victron,
-Fronius and any PLC/SCADA each see the meter they expect. Everything runs
-in one container, on hardware you own.
+Multi-Bus Gateway reads the equipment you already have — energy meters, PV
+inverters, sensors — over **Modbus TCP**, **Modbus RTU**, **HTTP/JSON**
+(Fronius Solar API, Shelly, Tasmota…) or **MQTT**, and routes the data to
+**MQTT, InfluxDB/Grafana, Home Assistant and REST/JSON feeds**. It can also
+re-serve any source as a **virtual Modbus meter** (Carlo Gavazzi EM24,
+Fronius Smart Meter, SunSpec), so a Victron GX, a Fronius inverter or a
+PLC sees the meter it expects. One container, your hardware.
+
+**Where it runs.** This is the gateway behind the author's own PV
+installation, in continuous operation since the 3.0.0 release in July 2026
+— and, as the Janitza monitor it grew out of, since March 2026: a Janitza
+UMG 512-PRO polled at 250 ms, four Fronius inverters read through Solar API
+and SunSpec with power-limit commands and rules, a Fronius Smart Meter over
+RTU, and a virtual EM24 that a Victron Ekrano GX consumes as its grid
+meter. About 130 MB of RAM. Less exercised so far: the serial bridge for
+remote RS-485, the ESP32 Device Builder, and the PQ recorder, which has a
+single meter behind it. See [History](#history) for where it came from.
 
 - 🔌 **Retrofit instead of replacement** — digitize installed equipment;
   **zero new hardware**.
@@ -97,12 +99,14 @@ all the same. No vendor lock-in, no per-box cost.
 - **MQTT-in** — subscribe to a broker; value from the JSON payload
   (`json_path`) or the bare payload; per-register topics with `+`/`#`
   wildcards.
-- **Device templates** — the register map as a portable JSON file; 11
-  bundled, field-tested maps with documented provenance
+- **Device templates** — the register map as a portable JSON file; 16
+  bundled maps with documented provenance
   ([catalog](docs/device-catalog.md)): Janitza UMG 512-PRO (4,126
   registers), ABB B21/B23, Carlo Gavazzi EM24, Eastron SDM120/SDM630,
-  Schneider iEM3000, Fronius Smart Meter 65A-3 + 3 MQTT maps (Zigbee2MQTT,
-  Theengs BLE, generic JSON).
+  Schneider iEM3000, Fronius Smart Meter 65A-3, Fronius SunSpec inverter
+  and meter, three Fronius Solar API maps (inverter, per-phase inverter,
+  site) and three MQTT maps (Zigbee2MQTT, Theengs BLE, generic JSON).
+  Provenance and confidence are stated per map in the catalog.
   In-UI editor + upload + export + **CSV/YAML import**
   ([CSV](docs/csv-import.md), [YAML](docs/yaml-import.md)). Per-register
   status decode (`enum`/`bits` → text, e.g. the EM24/Fronius identity
@@ -286,7 +290,7 @@ with the credentials from `.env`; the gateway logs in with the same pair
 from the first boot) and InfluxDB self-configures. Want minimal?
 `docker compose up -d multi-bus-gateway mosquitto`. Your own broker or
 Influx? Repoint the gateway from the UI whenever you like — the bundled
-ones are ordinary containers. Pin a release with `MBG_VERSION=3.82.0` in
+ones are ordinary containers. Pin a release with `MBG_VERSION=3.82.1` in
 `.env`; every install path in detail: [docs/install.md](docs/install.md),
 day-two operations: [docs/operations.md](docs/operations.md).
 
@@ -498,11 +502,21 @@ Found a bug or have a feature request? Please open an issue on
 Contributed register maps (templates, CSV) are welcome — with verifiable
 provenance, see [docs/device-catalog.md](docs/device-catalog.md).
 
+## History
+
+Multi-Bus Gateway 3.0.0 (July 2026) is the direct successor of the
+[Janitza UMG 512 Modbus/MQTT monitor](https://github.com/sm26449/janitza-monitor)
+(March 2026): the same field-tested polling engine, generalized into a
+protocol gateway — multiple southbound sources, a device-template catalog,
+composite virtual meters with an in-band quality convention, and an
+operator UI with commissioning diagnostics. The Janitza UMG 512-PRO remains
+a first-class device (bundled template, verified register map). Every
+release since is in the [changelog](CHANGELOG.md).
+
 ## Authors
 
-**Stefan Maldaianu** - [sm26449@diysolar.ro](mailto:sm26449@diysolar.ro)
-
-**Claude** (Anthropic) - Pair programming partner
+Built by **Stefan Maldaianu** ([sm26449@diysolar.ro](mailto:sm26449@diysolar.ro)),
+with development assistance from Claude (Anthropic).
 
 ## License
 

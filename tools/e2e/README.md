@@ -201,3 +201,18 @@ is a refusal, which must be shown.
 ```bash
 MBG_URL=http://localhost:18087 ENDPOINT=sunfield CHROMIUM_PATH=<chrome> node power_limit_e2e.mjs
 ```
+
+## Docs screenshots
+
+`capture_docs_screenshots.mjs` regenerates every image the documentation embeds
+(`docs/img/guide/01…22*.png` at 1440×950 and `docs/img/vm-logs.png` at 2×) from
+a running gateway, always in the same viewport, light theme and language, so
+they never drift from the interface. Point it at a throwaway demo instance
+seeded with a primary meter (selected registers), a couple of units, an
+installation with an inverter group that offers commands, a virtual meter with a
+client reading it, a rule and a snapshot — never at production.
+
+```bash
+MBG_URL=http://localhost:18090 MBG_USER=admin MBG_PASS=… CHROME_PATH=<chrome> \
+  node capture_docs_screenshots.mjs          # SUNSPEC_HOST/PORT for the scan panel
+```
