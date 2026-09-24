@@ -14,7 +14,7 @@ touches your configuration (the loader is additive-forward across 3.x — see
 
 ```bash
 # published image: pin the release in .env, pull it, restart on it
-sed -i 's/^#\? *MBG_VERSION=.*/MBG_VERSION=3.83.0/' .env
+sed -i 's/^#\? *MBG_VERSION=.*/MBG_VERSION=3.83.1/' .env
 docker compose pull multi-bus-gateway
 docker compose up -d multi-bus-gateway
 
@@ -22,7 +22,7 @@ docker compose up -d multi-bus-gateway
 git pull && docker compose build multi-bus-gateway && docker compose up -d multi-bus-gateway
 ```
 
-`MBG_VERSION` accepts a version (`3.83.0`), a minor line (`3.83`) or
+`MBG_VERSION` accepts a version (`3.83.1`), a minor line (`3.83`) or
 `latest`; `docker compose build` ignores it. Naming the service keeps the
 bundled broker/InfluxDB untouched. Running the RTU bridge? It carries the
 same tag, so pull and restart it in the same breath:
@@ -202,8 +202,8 @@ Removing the gateway completely, in the order that leaves nothing behind:
    ```bash
    docker compose --profile rtu-bridge down -v      # containers, network, AND the named volumes
    rm -rf ./config                                  # your configuration, snapshots, audit trail
-   docker image rm ghcr.io/sm26449/multi-bus-gateway:3.83.0 \
-                   ghcr.io/sm26449/multi-bus-gateway-serial-bridge:3.83.0
+   docker image rm ghcr.io/sm26449/multi-bus-gateway:3.83.1 \
+                   ghcr.io/sm26449/multi-bus-gateway-serial-bridge:3.83.1
    ```
    `down -v` deletes `influxdb-data` and `grafana-data` — export what you
    want to keep first. Without `-v` the volumes stay for a later reinstall.

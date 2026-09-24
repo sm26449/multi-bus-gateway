@@ -735,6 +735,17 @@ Object.assign(JanitzaMonitor.prototype, {
         return s;
     },
 
+    // Repoint a live element's delegated action (a shared modal's Save button
+    // serves several editors). Never set a handler attribute from script: the CSP
+    // refuses a handler attribute set from script exactly like a static one
+    // — the endpoint modal's Save was dead that way in 3.82.0–3.83.0.
+    _setAction(el, method, args = []) {
+        if (!el) return;
+        el.removeAttribute('onclick');
+        el.dataset.action = method;
+        if (args.length) el.dataset.args = JSON.stringify(args); else delete el.dataset.args;
+    },
+
     // Small DOM helpers reachable from markup (data-action) so no template
     // needs an inline handler for a one-liner.
     _selectEl(el) { el.select(); },

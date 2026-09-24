@@ -592,7 +592,7 @@ Object.assign(JanitzaMonitor.prototype, {
         document.getElementById('endpointFeedback').textContent = '';
         const save = document.querySelector('#endpointModal [data-endpoint-save]')
             || document.querySelector('#endpointModal .btn-primary');
-        if (save) { save.innerHTML = `<i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}`; save.setAttribute('onclick', `app.saveSource('${this._esc(endpointId)}')`); }
+        if (save) { save.innerHTML = `<i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}`; this._setAction(save, 'saveSource', [endpointId]); }
         this.openModal('endpointModal');
     },
 
@@ -771,7 +771,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <div id="cmdOut" role="status" aria-live="polite" style="margin-top:8px;font-size:12.5px;"></div>`;
         document.getElementById('endpointFeedback').textContent = '';
         const save = document.querySelector('#endpointModal [data-endpoint-save]');
-        if (save) { save.setAttribute('onclick', 'app.runCommand(false)'); save.innerHTML = `<i aria-hidden="true" class="bi bi-send"></i> ${t('commands.run', 'Run')}`; }
+        if (save) { this._setAction(save, 'runCommand', [false]); save.innerHTML = `<i aria-hidden="true" class="bi bi-send"></i> ${t('commands.run', 'Run')}`; }
         this.openModal('endpointModal');
     },
 
@@ -892,7 +892,7 @@ Object.assign(JanitzaMonitor.prototype, {
             </fieldset>` : ''}`;
         document.getElementById('endpointFeedback').textContent = '';
         const save = document.querySelector('#endpointModal [data-endpoint-save]');
-        if (save) { save.innerHTML = `<i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}`; save.setAttribute('onclick', `app.saveGroup('${this._esc(endpointId)}')`); }
+        if (save) { save.innerHTML = `<i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}`; this._setAction(save, 'saveGroup', [endpointId]); }
         this.openModal('endpointModal');
     },
 
@@ -1326,7 +1326,7 @@ Object.assign(JanitzaMonitor.prototype, {
             ${sinkToggles}`;
             document.getElementById('endpointFeedback').textContent = '';
             const _save = document.querySelector('#endpointModal [data-endpoint-save]');
-            if (_save) _save.setAttribute('onclick', 'app.saveEndpoint()');
+            if (_save) this._setAction(_save, 'saveEndpoint');
             this.openModal('endpointModal');
             return;
         }
@@ -1378,7 +1378,7 @@ Object.assign(JanitzaMonitor.prototype, {
         // the modal shell is shared with the source editor, which repoints this
         // button — reclaim it, or Save would still be saving a source
         const _save = document.querySelector('#endpointModal [data-endpoint-save]');
-        if (_save) { _save.setAttribute('onclick', 'app.saveEndpoint()'); _save.innerHTML = `<i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}`; }
+        if (_save) { this._setAction(_save, 'saveEndpoint'); _save.innerHTML = `<i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}`; }
         this.openModal('endpointModal');
     },
 

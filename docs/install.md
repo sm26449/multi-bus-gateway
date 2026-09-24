@@ -44,7 +44,7 @@ git clone https://github.com/sm26449/multi-bus-gateway.git && cd multi-bus-gatew
 
 # 2) Environment — uncomment and set the four REQUIRED secrets (the broker refuses a placeholder), optionally pin a release
 cp .env.example .env
-echo 'MBG_VERSION=3.83.0' >> .env      # a version, a minor line (3.83) or latest
+echo 'MBG_VERSION=3.83.1' >> .env      # a version, a minor line (3.83) or latest
 
 # 3) Pull and start the COMPLETE stack
 docker compose pull
@@ -147,7 +147,7 @@ docker run -d --name multi-bus-gateway --restart unless-stopped \
   -p 8080:8080 -p 1502-1512:1502-1512 -p 502:502 \
   --sysctl net.ipv4.ip_unprivileged_port_start=0 \
   --env-file .env -v "$PWD/config:/app/config" \
-  ghcr.io/sm26449/multi-bus-gateway:3.83.0
+  ghcr.io/sm26449/multi-bus-gateway:3.83.1
 docker logs multi-bus-gateway | grep -A3 'FIRST RUN'
 ```
 

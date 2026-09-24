@@ -20,6 +20,9 @@ except Exception:      # pragma: no cover
 needs_tc = pytest.mark.skipif(TestClient is None, reason="fastapi testclient unavailable")
 
 _INLINE_HANDLER = re.compile(r'\son[a-z]+\s*=\s*["\']', re.I)
+# a handler attribute set from script is an inline handler too — the CSP
+# refuses it exactly like a static one (found by the commands e2e, 3.83.1)
+_DYNAMIC_HANDLER = re.compile(r'setAttribute\(\s*["\']on[a-z]+["\']', re.I)
 _INLINE_SCRIPT = re.compile(r'<script(?![^>]*\ssrc=)[^>]*>', re.I)
 _JS_URL = re.compile(r'javascript:', re.I)
 
@@ -33,6 +36,7 @@ def test_no_inline_event_handlers_in_ui():
         with open(path, encoding="utf-8") as f:
             src = f.read()
         hits = [m.group(0) for m in _INLINE_HANDLER.finditer(src)]
+        hits += [m.group(0) for m in _DYNAMIC_HANDLER.finditer(src)]
         assert not hits, f"{path}: inline handlers {hits[:3]} — use data-action / _act()"
 
 

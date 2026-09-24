@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.83.1
+
+### 2026-09-24 — the shared modal's Save button was dead under the strict CSP
+
+- The installation, group, source and command editors share one modal
+  whose Save/Run button was repointed from script with a handler
+  attribute. The `script-src 'self'` policy of 3.82.0 refuses such a
+  handler exactly like a static one, so since 3.82.0 saving an
+  installation, a group or a source, and running a command from its
+  dialog, did nothing (the console said why; the page did not). The button
+  is repointed through the delegated `data-action` now, and the CSP guard
+  test also catches handlers set with `setAttribute`. Found by the
+  commands end-to-end script during the 3.83.0 verification.
+
 ## 3.83.0
 
 ### 2026-09-24 — SECURITY: findings of an independent second-pass audit

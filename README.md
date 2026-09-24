@@ -290,7 +290,7 @@ with the credentials from `.env`; the gateway logs in with the same pair
 from the first boot) and InfluxDB self-configures. Want minimal?
 `docker compose up -d multi-bus-gateway mosquitto`. Your own broker or
 Influx? Repoint the gateway from the UI whenever you like — the bundled
-ones are ordinary containers. Pin a release with `MBG_VERSION=3.83.0` in
+ones are ordinary containers. Pin a release with `MBG_VERSION=3.83.1` in
 `.env`; every install path in detail: [docs/install.md](docs/install.md),
 day-two operations: [docs/operations.md](docs/operations.md).
 
