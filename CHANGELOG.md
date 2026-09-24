@@ -13,6 +13,9 @@
   is repointed through the delegated `data-action` now, and the CSP guard
   test also catches handlers set with `setAttribute`. Found by the
   commands end-to-end script during the 3.83.0 verification.
+- A command-API test shared a class-level list between fake drivers and
+  was polluted by another test's rules thread under random ordering; the
+  release gate caught it on its first run. The list is per instance now.
 
 ## 3.83.0
 

@@ -51,11 +51,13 @@ class _Drv:
     def __init__(self, inv):
         self.connection = inv
         self.connected = True
-
-    swept: list = []            # every read-back sweep any fake driver ran
+        # the read-back sweeps THIS driver ran — per instance: a class-level
+        # list was polluted by an earlier test's rules thread sweeping its
+        # own units, flaky under random order (found by the 3.83.1 release gate)
+        self.swept = []
 
     def poll_now(self, group=None):
-        _Drv.swept.append(group)
+        self.swept.append(group)
         return 1
 
     def get_stats(self):
@@ -363,14 +365,14 @@ def test_a_revert_timer_arms_a_read_back_after_it_fires(tmp_path, monkeypatch):
         def start(self): pass
         def cancel(self): pass
     monkeypatch.setattr(apimod.threading, 'Timer', _Timer)
-    _Drv.swept.clear()
     inv = _Inverter(sf=-2)
     cfg, app, client = _app(tmp_path, {'pv-u1': inv})
+    drv = app.state.registry.find('pv-u1')[2].parts[1][1]    # this app's fake Modbus driver
     r = client.post("/api/devices/pv-u1/commands/power_limit", json={"value": 95, "revert_s": 120})
     assert r.status_code == 200 and r.json()['status'] == 'success'
     mine = [a for a in armed if getattr(a[1], '__name__', '') == '_reread_after_revert']
     assert [a[0] for a in mine] == [125.0]                  # revert_s + the first offset
-    assert _Drv.swept == ['controls']                       # the write's own read-back
+    assert drv.swept == ['controls']                       # the write's own read-back
     interval, fn, args = mine[0]
     assert args[:3] == ('pv-u1', 'power_limit', 'controls')
     # the series chains: each sweep arms the next at the remaining offsets
@@ -382,7 +384,7 @@ def test_a_revert_timer_arms_a_read_back_after_it_fires(tmp_path, monkeypatch):
             break
         interval, fn, args = nxt[0]; seen.append(interval)
     assert seen == [125.0, 15.0, 40.0, 120.0]               # 5, 20, 60, 180 s past the mark
-    assert _Drv.swept == ['controls'] * 5                   # the write's, then four more
+    assert drv.swept == ['controls'] * 5                   # the write's, then four more
     # a command without a revert timer arms nothing
     armed.clear()
     r = client.post("/api/devices/pv-u1/commands/power_limit", json={"value": 100, "revert_s": 0})
@@ -406,9 +408,9 @@ def test_a_new_command_replaces_the_pending_read_back_series(tmp_path, monkeypat
         def start(self): pass
         def cancel(self): cancelled.append(self)
     monkeypatch.setattr(apimod.threading, 'Timer', _Timer)
-    _Drv.swept.clear()
     inv = _Inverter(sf=-2)
     cfg, app, client = _app(tmp_path, {'pv-u1': inv})
+    drv = app.state.registry.find('pv-u1')[2].parts[1][1]    # this app's fake Modbus driver
     for value in (80, 70, 80):
         r = client.post("/api/devices/pv-u1/commands/power_limit", json={"value": value, "revert_s": 600})
         assert r.status_code == 200 and r.json()['status'] == 'success'
@@ -418,13 +420,13 @@ def test_a_new_command_replaces_the_pending_read_back_series(tmp_path, monkeypat
     # each command cancelled the previous series (the dead-man lease cancels its own timers too)
     assert len(series) == 3 and [t for t in cancelled if t in series] == series[:2]
     assert [t.args[4] for t in series] == [1, 2, 3]              # generations
-    assert _Drv.swept == ['controls'] * 3                        # only the writes' own read-backs so far
+    assert drv.swept == ['controls'] * 3                        # only the writes' own read-backs so far
     # a callback of the superseded series does nothing and arms nothing
     series[0].fn(*series[0].args)
-    assert _Drv.swept == ['controls'] * 3 and len(series_timers()) == 3
+    assert drv.swept == ['controls'] * 3 and len(series_timers()) == 3
     # the current series runs and chains at the same generation
     series[2].fn(*series[2].args)
-    assert _Drv.swept == ['controls'] * 4
+    assert drv.swept == ['controls'] * 4
     assert series_timers()[-1].args[4] == 3 and len(series_timers()) == 4
 
 
