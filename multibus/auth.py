@@ -16,7 +16,9 @@
 #
 """Optional login/auth for the UI/API — sessions, password hashing, lockout.
 
-Off by default (this appliance targets a trusted LAN). When ``ui.auth.enabled``
+A fresh install is auth-ON: first run generates an admin password and enables
+login (main.py:_first_run_provision). Only a pre-existing config without the
+``ui.auth`` section is off (the config-level default). When ``ui.auth.enabled``
 is set, the API middleware requires a valid session cookie for everything
 except the login page, the login endpoint and static assets; a read-only
 ``viewer`` role is limited to GET requests. Passwords are stored as PBKDF2

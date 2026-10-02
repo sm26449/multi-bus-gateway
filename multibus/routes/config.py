@@ -20,6 +20,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from ._models import InfluxDBConfigUpdate, ModbusConfigUpdate, MQTTConfigUpdate
+from ._shared import secrets_visible as _secrets_visible
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +34,11 @@ def build(ctx) -> APIRouter:
 
     @r.get("/api/config")
     async def get_config(request: Request):
-        """Get current configuration. URLs are redacted for viewer AND operator
-        — only admin sees raw URL-embedded secrets (same convention as
-        /api/devices)."""
+        """Get current configuration. URL-embedded secrets are redacted unless
+        the caller is a proven admin (login on) or presents the API key (login
+        off) — same gate as the with-secrets export."""
         data = config.to_dict()
-        if getattr(request.state, "role", None) in ("viewer", "operator"):
+        if not _secrets_visible(request, auth_state, ctx.api_key):
             from ..redact import redact_url
             _inf = data.get("influxdb")
             if isinstance(_inf, dict) and _inf.get("url"):
@@ -304,9 +305,10 @@ def build(ctx) -> APIRouter:
 
     @r.get("/api/config/influxdb")
     async def get_influxdb_config(request: Request):
-        """Get InfluxDB configuration (URL redacted for viewer + operator)."""
+        """Get InfluxDB configuration (URL redacted unless the caller proves
+        admin or presents the API key — it can carry credentials)."""
         _url = config.influxdb.url
-        if getattr(request.state, "role", None) in ("viewer", "operator") and _url:
+        if _url and not _secrets_visible(request, auth_state, ctx.api_key):
             from ..redact import redact_url
             _url = redact_url(str(_url))
         return {
@@ -321,9 +323,17 @@ def build(ctx) -> APIRouter:
 
     @r.post("/api/config/influxdb")
     async def update_influxdb_config(update: InfluxDBConfigUpdate):
-        """Update InfluxDB configuration."""
+        """Update InfluxDB configuration. A URL that round-trips the GET's
+        redacted form unchanged keeps the stored value — otherwise a settings
+        save made from a redacted view would overwrite the real credentials."""
         try:
-            config.update_influxdb(**update.model_dump())
+            _payload = update.model_dump()
+            _cur = config.influxdb.url or ""
+            if _cur and _payload.get("url"):
+                from ..redact import redact_url
+                if _payload["url"] == redact_url(str(_cur)) != _cur:
+                    _payload["url"] = _cur
+            config.update_influxdb(**_payload)
             config.save_yaml_config()
             return {"status": "ok", "message": "InfluxDB config updated. Apply to reconnect."}
         except Exception as e:

@@ -243,6 +243,12 @@ def _lookup(resolve, name):
 
 def _eval(node, ctx):
     if isinstance(node, ast.Constant):
+        # defense-in-depth, mirrors the validate-time rule: a tree that never
+        # went through validate_expression (hand-edited registers file, an
+        # imported backup) must not evaluate string constants — 'A' * 10**8
+        # would allocate the string before any result-size cap could fire
+        if not isinstance(node.value, (int, float, bool)):
+            raise ExpressionError("only numeric constants allowed")
         return node.value
     if isinstance(node, ast.Name):
         if node.id == 'dt':

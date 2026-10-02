@@ -18,6 +18,22 @@
 closure routes still living in api.py)."""
 from __future__ import annotations
 
+import hmac
+
+
+def secrets_visible(request, auth_state, api_key: str) -> bool:
+    """True when the caller may see URL-embedded secrets in a GET response.
+
+    Mirrors the with-secrets export gate: a proven admin when login is on, or
+    a presented valid API key when login is off. ``role is None`` (auth off)
+    is NOT admin — on an API_KEY-"secured" box the key guards writes only, so
+    an anonymous GET must receive the redacted form (the old
+    ``role not in ("viewer", "operator")`` check handed it the secrets)."""
+    if auth_state is not None and auth_state.enabled:
+        return getattr(request.state, "role", None) == "admin"
+    return bool(api_key) and hmac.compare_digest(
+        request.headers.get("X-API-Key", ""), api_key)
+
 
 def device_influx(config, device: str):
     """Resolve a device OR ENDPOINT id to its (bucket, device_tag) for InfluxDB

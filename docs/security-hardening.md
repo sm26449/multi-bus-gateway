@@ -66,7 +66,11 @@ reverse proxy. It is not designed to be exposed to the public internet.
       `mbg/rules/+/set` can act on hardware. The gateway refuses those
       features while its own broker session is anonymous, but it cannot
       see who published — the broker's ACL is the authentication. Restrict
-      publish rights on those topics to the controllers that need them.
+      publish rights on those topics to the controllers that need them:
+      a ready-made scaffold ships as `mosquitto/config/acl.example`
+      (read-only telemetry account + named control accounts; copy to
+      `acl`, add `acl_file /mosquitto/config/acl` to `mosquitto.conf`,
+      add the users with `mosquitto_passwd` on the data volume).
 - [ ] Retained commands are never replayed into hardware; still, clear
       retained `cmd/#` topics when you retire a controller
       ([mqtt-contract.md](mqtt-contract.md), cleanup section).

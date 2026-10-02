@@ -72,6 +72,19 @@ class WriteLeaseManager:
         if not revert_now:
             return
         with self._lock:
+            # Force-expire every live lease FIRST: the revert callables gate on
+            # the is_current() predicate, which requires expiry <= now. Before
+            # this, a clean shutdown handed them un-expired leases, every
+            # revert returned without writing, and the lease file was emptied
+            # anyway — no safe value on the wire AND nothing left for boot
+            # recovery, while the log claimed "reverted" (audit 2026-10-01).
+            # A concurrent renewal still wins: it bumps gen, so the predicate
+            # (pinned to the gen captured below) goes False and the write is
+            # skipped — exactly the sweeper's semantics.
+            now = time.monotonic()
+            for v in self._leases.values():
+                if v['expiry'] > now:
+                    v['expiry'] = now
             pending = [(k, dict(v)) for k, v in self._leases.items()]
         deadline = time.monotonic() + max(0.0, timeout_s)
         for key, lease in pending:
@@ -86,7 +99,13 @@ class WriteLeaseManager:
                     if cur is not None and cur['gen'] == lease['gen']:
                         del self._leases[key]
                         self._persist_locked()
-                logger.warning("WRITE-LEASE reverted at shutdown device=%s %s addr=%s", key[0], key[1], key[2])
+                        logger.warning("WRITE-LEASE reverted at shutdown device=%s %s addr=%s",
+                                       key[0], key[1], key[2])
+                    else:
+                        # renewed or cleared while we were reverting — the
+                        # newer lease stays on disk for boot recovery
+                        logger.warning("WRITE-LEASE superseded during shutdown revert "
+                                       "device=%s %s addr=%s (kept)", key[0], key[1], key[2])
             except Exception as e:  # noqa: BLE001
                 logger.error("WRITE-LEASE shutdown revert failed (kept for boot recovery) device=%s addr=%s: %s",
                              key[0], key[2], e)

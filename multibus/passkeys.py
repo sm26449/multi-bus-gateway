@@ -119,6 +119,16 @@ class PasskeyStore:
             logger.exception("passkey store unreadable — starting empty")
             self._creds = []
 
+    def reload(self) -> None:
+        """Re-read the registry from disk. A snapshot restore rewrites
+        passkeys.json behind the live process; without a reload the store
+        keeps serving the pre-restore credentials AND the next ``_save()``
+        (any login's sign-count update) would overwrite the restored file
+        with the stale list."""
+        with self._lock:
+            self._creds = []
+            self._load()
+
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".json.tmp")

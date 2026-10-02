@@ -471,6 +471,24 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 and parts[3] and parts[3] != "restorable"
                 and parts[4] in ("rest-push", "calculated") and parts[5] == "test"):
             return True
+        # template-declared COMMANDS — the bounded form of a live write, and on
+        # a command-fronted register (Fronius WMaxLimPct) the ONLY form: /write
+        # 422s there and points at the command, which used to 403 the operator,
+        # so the role's headline job (curtail the inverter) needed admin.
+        # normalize_params enforces the template's min/max/allowed per
+        # parameter, so this is as bounded as the /write envelope. The GROUP
+        # fan-out route stays admin-only (blast radius).
+        # /api/devices/<id>/commands/<name> and .../commands/<name>/dry-run,
+        # plus the 3.72.0 aliases /api/devices/<id>/actions/power_limit
+        if (len(parts) == 6 and parts[1] == "api" and parts[2] == "devices"
+                and parts[3] and parts[3] != "restorable"
+                and ((parts[4] == "commands" and parts[5])
+                     or (parts[4] == "actions" and parts[5] == "power_limit"))):
+            return True
+        if (len(parts) == 7 and parts[1] == "api" and parts[2] == "devices"
+                and parts[3] and parts[3] != "restorable"
+                and parts[4] == "commands" and parts[5] and parts[6] == "dry-run"):
+            return True
         return False
 
     @app.middleware("http")
@@ -1587,8 +1605,27 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                         if getattr(r, 'register_type', 'holding') != 'holding':
                             continue
                         rule = _write_rule(d, r.address, 'holding')
-                        if rule is not None and rule.writable:
-                            wrules[r.address] = rule
+                        if rule is None or not rule.writable:
+                            continue
+                        # advertise only what the write handler would accept:
+                        # a scale_from or command-fronted register writes
+                        # THROUGH its command, so without an enabled HA-faced
+                        # value command the entity would be dead — or, worse,
+                        # a raw write with the wrong scale (audit 2026-10)
+                        _name = getattr(r, 'name', '')
+                        _cmds = _commands_for(d)
+                        _ha_cmd = any(
+                            c['enabled'] and c['faces'].get('ha', True)
+                            and c['def'].writes and c['def'].value_param is not None
+                            and c['def'].writes[0].get('register') == _name
+                            for c in _cmds)
+                        _fronted = any(
+                            c['def'].writes
+                            and c['def'].writes[0].get('register') == _name
+                            for c in _cmds)
+                        if (getattr(rule, 'scale_from', None) or _fronted) and not _ha_cmd:
+                            continue
+                        wrules[r.address] = rule
                 mqtt_publisher.publish_device_discovery(
                     d.id, d.name, d.mqtt_topic_prefix, regs, model=d.template,
                     write_rules=wrules)
@@ -1725,6 +1762,20 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             except (TypeError, ValueError):
                 logger.warning("HA command REJECTED (non-numeric %r): device=%s", payload, device_id)
             return
+        # Mirror the HTTP route (3.83.0): a register whose engineering value
+        # depends on a live scale factor, or that ANY command writes first,
+        # never takes a raw write — the raw path would encode it without the
+        # scale factor and "verify" the wrong value. When the fronting
+        # command was disabled or not HA-faced this used to fall through to
+        # the raw (wrong) write instead of refusing.
+        _fronting = next((c['def'].name for c in _commands_for(dev_cfg)
+                          if c['def'].writes
+                          and c['def'].writes[0].get('register') == getattr(register, 'name', '')), None)
+        if getattr(rule, 'scale_from', None) or _fronting:
+            logger.warning("MQTT write REJECTED (register is written through the command %s): "
+                           "device=%s addr=%s", _fronting or "<scale_from>",
+                           device_id, register.address)
+            return
         enum_map = getattr(register, 'enum', None)
         if enum_map:                                   # select: label → code
             value = next((int(k) for k, v in enum_map.items() if str(v) == payload), None)
@@ -1750,25 +1801,49 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             logger.warning("MQTT write REJECTED (%s > max %s): device=%s addr=%s",
                            value, rule.write_max, device_id, register.address)
             return
+        # the exact-allowlist guard the HTTP route enforces — a [0, 1] select
+        # must not accept 2 just because it arrived over the broker
+        if (getattr(rule, 'write_allowed', None)
+                and value not in [float(v) for v in rule.write_allowed]):
+            logger.warning("MQTT write REJECTED (%s not in allowed set %s): device=%s addr=%s",
+                           value, rule.write_allowed, device_id, register.address)
+            return
         if not _write_rate_ok('mqtt:' + device_id):
             logger.warning("MQTT write RATE-LIMITED: device=%s", device_id)
             return
         data_type = (rule.data_type or 'uint16').lower()
         scale = float(rule.scale if rule.scale is not None else 1.0)
         offset = float(getattr(rule, 'offset', 0.0) or 0.0)
-        ok, err, _words = client.write_value(register.address, 'holding', data_type,
-                                             value, scale=scale, offset=offset)
-        logger.warning("MODBUS WRITE %s (via HA): device=%s addr=%s dtype=%s value=%r%s",
-                       "OK" if ok else "FAILED", device_id, register.address, data_type,
-                       value, "" if ok else f" err={err}")
-        if ok:                                          # write-then-refresh
+        # what the encoder would have to clamp is refused here (F-15, 3.83.0,
+        # same as HTTP): a clamped word is a value nobody asked for
+        from .encoder import RegisterEncoder as _Enc
+        _rng = _Enc.int_range(data_type)
+        if _rng is not None:
             try:
-                raw = client.read_register(register.address, data_type, 'holding')
-                if raw is not None:
-                    _push_readback_to_store(device_id, register.address,
-                                            float(raw) / (scale or 1.0) + offset)
-            except Exception:  # noqa: BLE001
-                pass
+                _raw = int(round((float(value) - offset) * scale))
+            except (TypeError, ValueError):
+                _raw = None
+            if _raw is not None and not (_rng[0] <= _raw <= _rng[1]):
+                logger.warning("MQTT write REJECTED (%s encodes to %s, outside %s [%s, %s]): "
+                               "device=%s addr=%s", value, _raw, data_type,
+                               _rng[0], _rng[1], device_id, register.address)
+                return
+        # under _cmd_lock so a raw HA write cannot land between a command's
+        # guard read and its writes (or writes and verify) on the same device
+        with _cmd_lock:
+            ok, err, _words = client.write_value(register.address, 'holding', data_type,
+                                                 value, scale=scale, offset=offset)
+            logger.warning("MODBUS WRITE %s (via HA): device=%s addr=%s dtype=%s value=%r%s",
+                           "OK" if ok else "FAILED", device_id, register.address, data_type,
+                           value, "" if ok else f" err={err}")
+            if ok:                                          # write-then-refresh
+                try:
+                    raw = client.read_register(register.address, data_type, 'holding')
+                    if raw is not None:
+                        _push_readback_to_store(device_id, register.address,
+                                                float(raw) / (scale or 1.0) + offset)
+                except Exception:  # noqa: BLE001
+                    pass
         try:
             audit_log.append(user="ha-mqtt", ip="mqtt", action="modbus write",
                              status="ok" if ok else "fail",
@@ -2799,9 +2874,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 raise HTTPException(status_code=422, detail={"errors": [
                     f"value {payload.get('value')} encodes to {_raw}, outside {data_type} "
                     f"[{_rng[0]}, {_rng[1]}]"]})
-        ok, err, words = client.write_value(address, rtype, data_type,
-                                            payload.get('value'), scale=scale,
-                                            offset=_w_offset, prefer_fc6=prefer_fc6)
+        # under _cmd_lock so a raw write cannot land inside a command's
+        # guard-read → write → verify sequence on the same device
+        with _cmd_lock:
+            ok, err, words = client.write_value(address, rtype, data_type,
+                                                payload.get('value'), scale=scale,
+                                                offset=_w_offset, prefer_fc6=prefer_fc6)
         _who = getattr(request.state, "user", None) or ("api-key" if _api_key else "anon")
         _src = request.client.host if request.client else "?"
         logger.warning("MODBUS WRITE %s: by=%s@%s device=%s addr=%s type=%s dtype=%s value=%r words=%s%s",
@@ -4429,26 +4507,73 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 user_tpl_dir=_Path(getattr(template_registry, "user_dir", _UDIR)),
                 registers_path_for=config.device_registers_path,
                 replace_config=False)
-            _reload_from_disk(apply)
+            s["_identity_rotated"] = _reload_from_disk(apply)
             return s
         try:
             # N fsyncs and a full Modbus reconnect: off the event loop (F-38, 3.83.0)
             summary = await asyncio.to_thread(_import_on_disk)
         except ValueError as e:
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+        _rotated = summary.pop("_identity_rotated", False)
         summary["note"] = ("imported; a restart is recommended so newly-added "
                            "devices start polling") if len(config.devices) > 1 else "imported"
         logger.info(f"config import: {summary}")
-        return {"status": "ok", **summary}
+        resp = {"status": "ok", **summary}
+        if _rotated:
+            return _reissued_response(request, resp)
+        return resp
 
-    def _reload_from_disk(apply: bool = True) -> None:
+    def _identity_fields() -> tuple:
+        """The ui.auth fields that make up login identity — compared around a
+        disk reload to detect that an import/restore rotated credentials."""
+        u = config.ui
+        return (u.auth_enabled, u.auth_username, u.auth_password,
+                getattr(u, "viewer_username", "") or "",
+                getattr(u, "viewer_password", "") or "",
+                getattr(u, "operator_username", "") or "",
+                getattr(u, "operator_password", "") or "")
+
+    def _reload_from_disk(apply: bool = True) -> bool:
         """Reload config + registries from disk and hot-apply — the shared tail
-        of backup import and snapshot restore (restart-lite)."""
+        of backup import and snapshot restore (restart-lite). Returns True when
+        the reload rotated identity: all sessions were revoked, so the caller
+        should re-issue its own cookie (like update_ui_security does)."""
+        _before = _identity_fields()
         config.load()
         # hot-apply imported login settings so a backup that enables/disables auth
         # or rotates credentials takes effect immediately (the middleware reads
         # auth_state live) — matches update_ui_security(), not a restart-only change
         auth_state.reload(config.ui)
+        # Identity rotated by the bundle: pre-existing cookies must not outlive
+        # it. update_ui_security() revokes on rotation, but import/restore reach
+        # reload() directly and used to skip the revocation — "restored last
+        # week's snapshot to kick the attacker" left the attacker's session
+        # valid for up to 30 days.
+        revoked = False
+        if _identity_fields() != _before:
+            n = auth_state.revoke_all_sessions()
+            revoked = True
+            logger.warning("import/restore rotated identity — "
+                           f"{n} session(s) revoked")
+        # The bundle may carry its own passkeys.json (full-fidelity snapshots
+        # do): re-read the live store, else assertions keep validating against
+        # the pre-restore credentials and the next sign-count update would
+        # overwrite the restored file with the stale list.
+        _pk = getattr(getattr(app.state, "ctx", None), "passkey_store", None)
+        if _pk is not None:
+            _pk.reload()
+            # prune credentials whose account no longer exists — mirrors the
+            # ui-security rename/remove pruning (F-16); login_finish refuses
+            # them too, so this is defense-in-depth plus registry hygiene
+            _live = {u for u in (auth_state.admin_user, auth_state.operator_user,
+                                 auth_state.viewer_user) if u}
+            for _c in _pk.list():
+                if _c.get("user") not in _live:
+                    _pk.delete(_c["id"])
+                    audit_log.append(user="-", ip="-", action="passkey pruned",
+                                     target=str(_c.get("user", "")), status="ok",
+                                     detail={"reason": "account absent after import/restore",
+                                             "label": _c.get("label", "")})
         template_registry.reload()
         if apply:
             # rebuild device runtime like a restart-lite: reconnect primary +
@@ -4463,6 +4588,23 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             if influxdb_publisher:
                 influxdb_publisher.update_config(config.influxdb)
                 influxdb_publisher.update_registers(config.selected_registers)
+        return revoked
+
+    def _reissued_response(request: Request, resp: Dict) -> Response:
+        """JSON response carrying a fresh admin cookie — after an identity
+        rotation revoked every session, the admin DOING the import/restore
+        must not be logged out by their own action (same pattern as
+        update_ui_security). Only for a caller who WAS a logged-in admin:
+        an anonymous caller importing a bundle that turns auth ON must log
+        in with the imported credentials, not be handed a session."""
+        out = JSONResponse(resp)
+        if auth_state.enabled and getattr(request.state, "role", None) == "admin":
+            token = auth_state.mint_session("admin", auth_state.admin_user)
+            secure = bool(config.ui.tls_enabled) or request.url.scheme == "https"
+            out.set_cookie(_auth.COOKIE_NAME, token, httponly=True,
+                           samesite="lax", secure=secure,
+                           max_age=_auth.SESSION_TTL_S, path="/")
+        return out
 
     # --- Config snapshots: list / create / download / delete / restore ---
 
@@ -4561,15 +4703,18 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     replace_config=True)
         except (ValueError, zipfile.BadZipFile) as e:
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
-        _reload_from_disk(apply)
+        _rotated = _reload_from_disk(apply)
         event_log.add("warn", "snapshots", f"config rolled back to snapshot {sid}")
         logger.warning(f"config restored from snapshot {sid}: {summary}")
         # _reload_from_disk hot-applies the PRIMARY only; non-primary devices are
         # reconstructed on the next restart, so tell the operator when one is
         # needed (more than one device present) rather than leave it implicit.
         restart_required = len(config.devices) > 1
-        return {"status": "ok", "restored": sid, "restart_required": restart_required,
+        resp = {"status": "ok", "restored": sid, "restart_required": restart_required,
                 **summary}
+        if _rotated:
+            return _reissued_response(request, resp)
+        return resp
 
     # --- Auth (login / logout / status) ---
 

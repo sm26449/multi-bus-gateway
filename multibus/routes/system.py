@@ -25,6 +25,8 @@ from typing import Dict
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
+from ._shared import secrets_visible as _secrets_visible
+
 _TEST_FIRE_COOLDOWN_S = 10.0
 _HDR_MASK = "••••••"      # ●●●●●● — masked header value
 
@@ -115,7 +117,7 @@ def build(ctx) -> APIRouter:
         the real URL to edit it)."""
         a = config.alerts or {}
         _webhook = a.get("webhook_url", "") or ""
-        if _webhook and getattr(request.state, "role", None) not in (None, "admin"):
+        if _webhook and not _secrets_visible(request, auth_state, api_key):
             from ..redact import redact_url
             _webhook = redact_url(_webhook)
         return {
@@ -140,6 +142,14 @@ def build(ctx) -> APIRouter:
         a = dict(config.alerts or {})
         errors = []
         url = str(payload.get("webhook_url", a.get("webhook_url", "")) or "").strip()
+        # a URL that round-trips the GET's redacted form unchanged keeps the
+        # stored value (same convention as the masked headers below) — else a
+        # save made from a redacted view would wipe the real token
+        _cur = str(a.get("webhook_url", "") or "")
+        if url and _cur:
+            from ..redact import redact_url
+            if url == redact_url(_cur) != _cur:
+                url = _cur
         if url and not (url.startswith("http://") or url.startswith("https://")):
             errors.append("webhook_url must start with http:// or https://")
         body = payload.get("webhook_body", a.get("webhook_body"))

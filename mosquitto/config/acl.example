@@ -1,0 +1,49 @@
+# Mosquitto ACL scaffold for the Multi-Bus Gateway bundled stack.
+#
+# WHY: with `mqtt.allow_write_entities` on, whoever can publish to
+# `<prefix>/cmd/#`, the HA `.../set` topics or `mbg/rules/+/set` can act on
+# hardware. The gateway cannot see WHO published — the broker's ACL is the
+# authentication (security-hardening.md §4). Out of the box every consumer
+# shares one user with full publish rights; this file splits that into a
+# read-only telemetry account and named accounts for the writers.
+#
+# ACTIVATE:
+#   1) copy:    cp acl.example acl            (same directory, mounted :ro)
+#   2) enable:  add `acl_file /mosquitto/config/acl` to mosquitto.conf
+#   3) users:   add the extra users on the DATA volume (they survive restarts;
+#               the first user is re-written from .env each start):
+#                 docker exec -it mbg-mosquitto \
+#                   mosquitto_passwd /mosquitto/data/passwd mbg-telemetry
+#                 docker exec -it mbg-mosquitto \
+#                   mosquitto_passwd /mosquitto/data/passwd mbg-control
+#   4) restart the mosquitto container.
+#
+# Mosquitto semantics: `write` = publish, `read` = subscribe. Once an
+# acl_file is set, anything not matched is DENIED for that user.
+
+# ── the gateway itself (MQTT_USERNAME from .env) ─────────────────────────────
+# Publishes all telemetry/discovery and subscribes its own command topics.
+# Replace `mbg` with your MQTT_USERNAME.
+user mbg
+topic readwrite #
+
+# ── read-only consumers: dashboards, Telegraf, MQTT Explorer ────────────────
+# Telemetry in, nothing out. Point Home Assistant here too if you do not use
+# the HA write entities.
+user mbg-telemetry
+topic read #
+
+# ── controllers: Node-RED, Home Assistant with write entities ───────────────
+# Everything readable, publish ONLY on the write faces they drive. Narrow the
+# patterns to your real topic prefixes (config-reference.md: topic patterns);
+# `%c`/`%u` substitution is also available for per-client trees.
+user mbg-control
+topic read #
+# template commands (mqtt-contract.md §Commands): <dev or group prefix>/cmd/<name>
+topic write +/cmd/+
+topic write +/+/cmd/+
+# HA write entities (…/set under a unit prefix) — only with allow_write_entities
+topic write +/+/set
+topic write +/+/+/set
+# rule control (disable / clamp / override; arming stays API/UI-only)
+topic write mbg/rules/+/set

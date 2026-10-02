@@ -256,24 +256,32 @@ class RulesRuntime:
 
     # ── one tick ─────────────────────────────────────────────────────────────
 
-    def _signal(self, rule: RuleDef, now: float) -> Tuple[Any, Optional[float]]:
+    def _signal(self, rule: RuleDef, now: float) -> Tuple[Any, Optional[float], Optional[float]]:
+        """Returns (value, age_s, sample_mono). ``sample_mono`` is the OLDEST
+        input's raw monotonic stamp — the stable identity of this reading.
+        It must travel to RuleState.evaluate unchanged: reconstructing it as
+        now-age jitters by the walk time between two clock reads, so every
+        tick looked like a new sample — the debounce counted ticks, and the
+        max_step plausibility guard confirmed a spike against ITSELF on the
+        next tick (the 2026-09-18 273 V incident class; audit 2026-10-01)."""
         expr = rule.signal if rule.kind == 'steps' else rule.when
         resolve = self._resolver_factory({})
         try:
             tree = expressions.compile_expression(_prepare(expr))
             val = expressions.evaluate_tree(tree, _wrap_resolver(resolve))
         except expressions.MissingValue:
-            return None, None
+            return None, None, None
         except expressions.ExpressionError as e:
             logger.debug("rule %s: %s", rule.id, e)
-            return None, None
+            return None, None, None
         # the store stamps every value with a monotonic time; a value without
         # one has no known age and is treated as stale (fail closed)
         mono = [m for m in (getattr(resolve, 'touched_mono', None) or []) if m is not None]
-        age = (self._mono() - min(mono)) if mono else None
+        smono = min(mono) if mono else None
+        age = (self._mono() - smono) if smono is not None else None
         if rule.kind == 'condition':
-            return bool(val), age
-        return val, age
+            return bool(val), age, smono
+        return val, age, smono
 
     def _actual(self, rule: RuleDef, cfg) -> Tuple[Any, Optional[float], Optional[float]]:
         rb = rule.target.get('_readback')
@@ -298,7 +306,7 @@ class RulesRuntime:
         with self._lock:
             rules = [r for r in self.rules.values() if r.enabled and r.id not in self.errors]
         for rule in rules:
-            signal, age = self._signal(rule, now)
+            signal, age, s_mono = self._signal(rule, now)
             for cfg, client in self._targets(rule):
                 key = (rule.id, cfg.id)
                 st = self.states.get(key)
@@ -306,7 +314,7 @@ class RulesRuntime:
                     st = self.states[key] = RuleState(rule)
                 actual, a_age, a_stale = self._actual(rule, cfg)
                 d = st.evaluate(now, signal, age, actual=actual, actual_age_s=a_age, actual_stale_s=a_stale,
-                                sample_ts=(self._mono() - age) if age is not None else None)
+                                sample_ts=s_mono)
                 self._act(rule, cfg, client, st, d, now)
                 out.append({'rule': rule.id, 'device': cfg.id, **d.to_dict()})
             self._publish_state(rule)
@@ -756,7 +764,7 @@ class RulesRuntime:
         if e:
             return {'errors': [e]}
         now = self._clock()
-        signal, age = self._signal(rule, now)
+        signal, age, _s_mono = self._signal(rule, now)
         out = {'signal': signal, 'signal_age_s': None if age is None else round(age, 1),
                'stale': signal is None or (age is not None and age > rule.stale_after_s), 'units': {}}
         probe = RuleState(rule)

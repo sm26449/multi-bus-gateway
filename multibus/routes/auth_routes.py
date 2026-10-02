@@ -14,13 +14,15 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-"""Login/logout/status — session cookie auth (optional, off by default).
+"""Login/logout/status — session cookie auth (enabled with a generated
+password on first run; off only for pre-existing configs without ui.auth).
 
 Moved verbatim from create_api(). The enforcement middleware stays in api.py
 (middlewares are app-level, not router-level); these are just the endpoints.
 """
 from __future__ import annotations
 
+import hmac
 from typing import Dict
 
 from fastapi import APIRouter, Body, HTTPException, Request
@@ -259,13 +261,32 @@ def build_passkeys(ctx) -> APIRouter:
             audit.append(user=entry["user"], ip=ip, action="login (passkey)",
                          status="verification failed")
             raise HTTPException(status_code=401, detail={"error": "invalid_passkey"})
+        # The (user, role) frozen in the credential blob at ENROLLMENT time is
+        # a claim, not an authorization: the account may have been renamed,
+        # removed or re-roled since — config import and snapshot restore
+        # rewrite identity without passing through the ui-security pruning.
+        # Resolve the LIVE account and mint its CURRENT role; a passkey whose
+        # username no longer exists is a dead credential. Matching mirrors
+        # authenticate(): constant-time, last (least-privileged) match wins.
+        live_role = None
+        for _u, _rl in ((auth_state.admin_user, "admin"),
+                        (auth_state.operator_user, "operator"),
+                        (auth_state.viewer_user, "viewer")):
+            if _u and hmac.compare_digest(
+                    str(entry["user"]).encode("utf-8"), _u.encode("utf-8")):
+                live_role = _rl
+        if live_role is None:
+            auth_state._record_failure(ip)
+            audit.append(user=entry["user"], ip=ip, action="login (passkey)",
+                         status="account gone")
+            raise HTTPException(status_code=401, detail={"error": "invalid_passkey"})
         auth_state._clear_failures(ip)
         store.update_sign_count(entry["id"], ver.new_sign_count)
-        token = auth_state.mint_session(entry["role"], entry["user"])
+        token = auth_state.mint_session(live_role, entry["user"])
         audit.append(user=entry["user"], ip=ip, action="login (passkey)",
-                     status="ok", detail={"role": entry["role"], "label": entry["label"]})
+                     status="ok", detail={"role": live_role, "label": entry["label"]})
         secure = bool(config.ui.tls_enabled) or request.url.scheme == "https"
-        resp = JSONResponse({"status": "ok", "role": entry["role"]})
+        resp = JSONResponse({"status": "ok", "role": live_role})
         resp.set_cookie(_auth.COOKIE_NAME, token, httponly=True, samesite="lax",
                         secure=secure, max_age=_auth.SESSION_TTL_S, path="/")
         return resp

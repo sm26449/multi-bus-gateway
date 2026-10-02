@@ -1,5 +1,90 @@
 # Changelog
 
+## 3.84.0
+
+### 2026-10-02 — SECURITY: third-pass audit — sessions survive restore, MQTT write parity, lease shutdown revert
+
+A combined pass: a full six-dimension internal audit plus the verification
+of two further external audits. Every confirmed finding is fixed here, each
+with a regression test. Two of them sit exactly on the arm-the-rules path,
+so upgrade before arming a protection rule.
+
+- **High — a clean shutdown never wrote the lease's safe value.** `stop()`
+  handed each revert an *un-expired* lease, the `is_current()` gate inside
+  every production revert skipped the write, and the lease file was emptied
+  anyway — the inverter stayed at its limit with nothing left for boot
+  recovery, while the log claimed "reverted at shutdown". Leases are now
+  force-expired under the lock before the revert fires, and only a revert
+  that actually ran removes the lease from disk (a renewal that lands
+  mid-revert wins and survives).
+- **High — the rules debounce and max_step guard counted ticks, not
+  samples.** The sample identity was reconstructed as `now − age`, which
+  jitters by the walk time between two clock reads, so every tick looked
+  like a new sample: the debounce was satisfied by one reading held in the
+  store, and the plausibility guard confirmed a one-sample artefact (the
+  2026-09-18 273 V class) against itself on the next tick. The raw
+  monotonic stamp of the oldest input now travels to the rule state
+  unchanged.
+- **High — import/restore rotated identity without revoking sessions.**
+  The ui-security card revokes every session on a password rotation
+  (F-16); backup import and snapshot restore reached `auth_state.reload()`
+  directly and skipped it, so a stolen cookie survived "I restored last
+  week's snapshot to kick the attacker" for up to 30 days. Both paths now
+  revoke on any identity change and re-issue the calling admin's session.
+- **High — passkeys were a second identity plane that restore missed.**
+  Passkey login minted the role frozen in the credential blob at
+  enrollment, without checking that the account still exists; a snapshot
+  restore rewrote `passkeys.json` without reloading the live store (the
+  next sign-count update would overwrite the restored file with the stale
+  list); an import that renamed an account left its passkeys able to mint
+  sessions. Login now resolves the LIVE account (constant-time, 401 when
+  it is gone), the store reloads on import/restore, and credentials of
+  vanished accounts are pruned, mirroring the ui-security path.
+- **Medium — MQTT/HA writes bypassed two HTTP validations.** The HA
+  command handler enforced `write_min`/`write_max` but not the
+  `write_allowed` exact set, and let the encoder silently CLAMP an
+  out-of-range word onto the wire; a `scale_from` register with no
+  enabled HA-faced command fell through to a raw write with the static
+  scale — the same bug class the HTTP route was cured of in 3.83.0. The
+  MQTT face now runs the full HTTP envelope (allowed set, encoded-range
+  refusal, scale_from/command-fronted refusal), raw writes on both faces
+  take the command lock (no write can land inside a command's
+  guard-read → write → verify sequence), and discovery no longer
+  advertises a number the handler would refuse.
+- **Medium — rules: a signal of unknown age was fresh forever.** A value
+  without a monotonic stamp (an unstamped calc input) set
+  `last_valid_ts = now`, freezing an armed rule in its current want
+  instead of going stale — the documented fail-closed, implemented
+  fail-open. Unknown age now ages out after `stale_after_s` like any dead
+  signal.
+- **Medium — operator could not curtail a command-fronted inverter.**
+  `/write` on WMaxLimPct answers 422 "use the command" and the command
+  answered 403 to the operator — the role's headline job needed admin (or
+  broker credentials). Template commands, their dry-runs and the
+  power_limit device alias are the operator's now (`normalize_params`
+  bounds every parameter, so they are as enveloped as `/write`); the
+  group fan-out stays admin.
+- **Low — secret-bearing config GETs trusted `role=None`.**
+  `/api/config`, `/api/config/influxdb` and `/api/config/alerts` redacted
+  URL-embedded secrets for viewer/operator but handed them to ANY caller
+  on an auth-off + API_KEY box (the key guards only writes). They now use
+  the with-secrets export gate — proven admin, or the API key presented —
+  and a settings save that round-trips the redacted form keeps the stored
+  secret instead of overwriting it.
+- **Low — a hand-edited calculated expression dodged the whitelist.**
+  `calc_engine.load()` discarded the validation verdict and compiled with
+  a bare `ast.parse`, so a registers file edited on disk (or imported)
+  could evaluate `'A' * 10**8` every poll — a memory DoS, no RCE. Invalid
+  entries now keep their slot (index addressing is preserved) but never
+  evaluate, and the evaluator itself refuses non-numeric constants.
+- Mosquitto: the stale "anonymous access" header that contradicted the
+  active `allow_anonymous false` is gone, and the ACL scaffold the
+  hardening checklist §4 asked for ships as `mosquitto/config/acl.example`
+  (read-only telemetry account + named control accounts).
+- Docs: `auth.py`/`auth_routes.py` no longer claim login is "off by
+  default" (first run generates a password and enables it);
+  `docs/API.md` command rows reflect the operator role.
+
 ## 3.83.1
 
 ### 2026-09-24 — the shared modal's Save button was dead under the strict CSP

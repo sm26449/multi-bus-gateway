@@ -93,13 +93,26 @@ class CalcEngine:
                 enum=e.get('enum') or None,
             )
             _ok, _err, refs = expressions.validate_expression(e.get('expr', ''))
+            # An entry that fails validation is kept IN PLACE but marked
+            # invalid — the API save path 422s before it lands here, so this
+            # only catches a hand-edited registers file or an imported backup
+            # that dodged route validation. It must not be dropped (synthetic
+            # addresses are index-based — dropping would shift later calcs to
+            # different addresses) and must not be evaluated (the whitelist
+            # lives in validate; a bare ast.parse would run it anyway).
+            if not _ok:
+                logger.warning("calc %s: invalid expression skipped (%s)",
+                               reg.name, _err)
             # compile the AST ONCE here (not per poll) — the hot path reuses it
-            try:
-                _tree = expressions.compile_expression(e.get('expr', ''))
-            except Exception:  # noqa: BLE001 — invalid expr: evaluate() will surface it
-                _tree = None
+            _tree = None
+            if _ok:
+                try:
+                    _tree = expressions.compile_expression(e.get('expr', ''))
+                except Exception:  # noqa: BLE001 — invalid expr: evaluate() will surface it
+                    _tree = None
             built.append({'expr': e.get('expr', ''), 'decimals': e.get('decimals'),
                           'poll_group': reg.poll_group, '_reg': reg, '_tree': _tree,
+                          '_invalid': not _ok,
                           '_refs': refs, '_state': {'prev': {}, 'ts_mono': None}})
         self.store[device_id] = built
         return built
@@ -166,6 +179,8 @@ class CalcEngine:
         for e in entries:
             if not _wildcard and e['poll_group'] != poll_group:
                 continue
+            if e.get('_invalid'):
+                continue              # failed validation at load() — never evaluate
             st = e['_state']
             # dt for rate/integral formulas is on the MONOTONIC clock — a wall
             # step (NTP/chrony, e.g. the 2026-07-28 +138s jump) between two calc

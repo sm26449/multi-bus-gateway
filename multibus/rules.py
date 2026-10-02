@@ -375,13 +375,16 @@ class RuleState:
             if v is None or (sv.get('min') is not None and v < float(sv['min'])) \
                     or (sv.get('max') is not None and v > float(sv['max'])):
                 valid = False
-        if valid and (signal_age_s is None or signal_age_s <= r.stale_after_s):
-            self.last_valid_ts = now - (signal_age_s or 0.0)
-        else:
-            if valid:
-                self.last_valid_ts = now - signal_age_s
-            else:
-                self.ignored += 1
+        # A signal whose age is UNKNOWN (no monotonic stamp on any input —
+        # e.g. a calc register fed by unstamped values) must never advance
+        # last_valid_ts: "now" would make it fresh forever and freeze an
+        # armed rule in its current want. Fail closed, as the module
+        # docstring promises — with no stamp it goes stale after
+        # stale_after_s like any dead signal (audit 2026-10-01).
+        if valid and signal_age_s is not None:
+            self.last_valid_ts = now - signal_age_s
+        elif not valid:
+            self.ignored += 1
         stale = self.last_valid_ts is None or (now - self.last_valid_ts) > r.stale_after_s
         if stale:
             if self.state != STALE:
