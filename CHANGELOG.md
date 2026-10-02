@@ -2,6 +2,45 @@
 
 ## 3.84.0
 
+### 2026-10-02 — rules: clocks, stale semantics, threshold clears
+
+The audit's remaining rules-layer findings, fixed with regression tests:
+
+- **Rule timing runs on the monotonic clock now.** The rate-limit,
+  reassert and staleness windows were measured on the wall clock: a chrony
+  step backward (the 2026-07-28 +138 s jump class) froze them — including
+  the reassert that restores a Fronius limit after RvrtTms — and a step
+  forward prematurely expired overrides and clamps. `evaluate()` takes the
+  interval clock plus a separate `wall` for Decision timestamps and the
+  wall-persisted absolutes (`paused_until`, clamp expiry), which the UI
+  shows as dates and which must survive restarts as wall time.
+- **Threshold clears are delivered.** Alarm and "back to normal" share a
+  rate-limit key, so within `min_interval_s` the clear was swallowed and
+  alarm→normal→alarm delivered only the first alarm. Band *transitions*
+  (edge-triggered by design) now bypass the per-key limit; and a
+  danger-only threshold (no warning bound) gets the same clear-side
+  deadband every other band has, instead of flapping on every harvest.
+- **Rules persistence is crash-safe.** `rules_state.json` (operator clamps
+  — setpoint ceilings! — and overrides) was written non-atomically and a
+  torn file silently loaded as empty; `rules.yaml` was replaced without
+  fsync, so a power loss could leave it empty — and an unreadable
+  rules.yaml silently disabled EVERY rule with only a log line. Both files
+  write temp+fsync+replace now, an unreadable rules.yaml raises an alert,
+  a corrupt state file warns that clamps were lost, and a hand-edited
+  duplicate rule id says which copy wins.
+- Recovering from STALE straight into the dead band restored the pre-stale
+  state only AFTER the desired-state computation had already produced a
+  synthetic 'stale' state (severity 99, duplicate warn events,
+  ping-ponging with the restore every tick); the restore runs first now.
+- The operator clamp caps `on_stale` fixed/safe wants too (they used to
+  bypass it); a `fast` (emergency) step and a stale safe want no longer
+  sit out the `min_interval_s` window a routine step opened moments
+  earlier.
+- A command verify/guard rule against a non-numeric read-back (an enum
+  decoded to text) answers a `rejected` verdict instead of raising a 500
+  out of the face; the alert rate-limit memo is bounded (it grew one entry
+  per key forever).
+
 ### 2026-10-02 — data path: the audit's correctness findings
 
 The same audit's data-path findings, fixed with regression tests:

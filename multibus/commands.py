@@ -359,12 +359,32 @@ def _check(rule: Dict, got: Any, params: Dict[str, Any]) -> Optional[str]:
                 return f"{name} is {got:g}, expected {want:g}" + (f" ± {tol:g}" if tol else '')
         elif str(got) != str(want):
             return f"{name} is {got!r}, expected {want!r}"
-    if 'in' in rule and got not in rule['in'] and float(got) not in [float(x) for x in rule['in']]:
-        return f"{name} is {got!r}, expected one of {rule['in']}"
-    if 'min' in rule and float(got) < float(rule['min']):
-        return f"{name} is {got:g}, below {rule['min']}"
-    if 'max' in rule and float(got) > float(rule['max']):
-        return f"{name} is {got:g}, above {rule['max']}"
+    # a NON-NUMERIC read-back (an enum decoded to text, a string register)
+    # against a numeric in/min/max rule is a VERDICT, not a crash: float(got)
+    # used to raise out of run_command and answer 500 at the face instead of
+    # 'rejected' (audit 2026-10-01)
+    if 'in' in rule:
+        ok = got in rule['in']
+        if not ok:
+            try:
+                ok = float(got) in [float(x) for x in rule['in']]
+            except (TypeError, ValueError):
+                ok = False
+        if not ok:
+            return f"{name} is {got!r}, expected one of {rule['in']}"
+    return _check_minmax(rule, got, name)
+
+
+def _check_minmax(rule: Dict, got: Any, name) -> Optional[str]:
+    if 'min' in rule or 'max' in rule:
+        try:
+            g = float(got)
+        except (TypeError, ValueError):
+            return f"{name} is {got!r}, not numeric (rule expects a number)"
+        if 'min' in rule and g < float(rule['min']):
+            return f"{name} is {g:g}, below {rule['min']}"
+        if 'max' in rule and g > float(rule['max']):
+            return f"{name} is {g:g}, above {rule['max']}"
     return None
 
 

@@ -287,6 +287,13 @@ class RuleState:
         self._sample_ts: Optional[float] = None
         self._deb_sample_ts: Optional[float] = None      # the sample the debounce last counted
         self.guarded: int = 0                            # samples held by the guard
+        # display/absolute-time clock for this evaluation (see evaluate():
+        # `now` measures intervals, `_wall` stamps Decisions and compares the
+        # wall-persisted absolutes paused_until / clamp.expires_at)
+        self._wall: float = 0.0
+        # the current want came from a `fast` step or an on_stale safe value —
+        # the emergency path is exempt from the min_interval rate limit
+        self._urgent: bool = False
 
     # ── public knobs ──
     def set_clamp(self, max_value: float, expires_at: Optional[float]) -> None:
@@ -348,7 +355,9 @@ class RuleState:
     def _transition(self, state: str, want: Optional[Dict[str, Any]], now: float) -> bool:
         changed = state != self.state or want != self.want
         if changed:
-            self.state, self.want, self.since = state, want, now
+            # `since` is display-facing → wall time (evaluate keeps _wall == now
+            # when no separate wall clock was given)
+            self.state, self.want, self.since = state, want, self._wall or now
             if want != self.commanded:
                 self.pending = True
         return changed
@@ -357,8 +366,16 @@ class RuleState:
     def evaluate(self, now: float, signal: Any, signal_age_s: Optional[float],
                  actual: Any = None, actual_age_s: Optional[float] = None,
                  actual_stale_s: Optional[float] = None,
-                 sample_ts: Optional[float] = None) -> Decision:
+                 sample_ts: Optional[float] = None,
+                 wall: Optional[float] = None) -> Decision:
+        """``now`` is the INTERVAL clock (the runtime passes monotonic, so an
+        NTP/chrony step can neither freeze the rate-limit and reassert windows
+        nor prematurely expire them — the 2026-07-28 +138 s jump class);
+        ``wall`` is the display/absolute clock for Decision timestamps and the
+        wall-persisted paused_until / clamp expiry. Omitted (unit tests), wall
+        follows now — one abstract clock, as before."""
         r = self.rule
+        self._wall = wall if wall is not None else now
         self.last_signal = signal
         # the identity of this sample: the rule ticks faster than the signal is
         # polled, so several evaluations see the same reading — the guard and
@@ -396,13 +413,24 @@ class RuleState:
                     want, why = self._want_for(dict(r.safe_params)), 'asking for safe'
                 else:                                  # a fixed value: fail closed while blind
                     want, why = self._want_for({r.param: float(r.on_stale)}), f'asking for {r.param} {r.on_stale:g}'
+                # the operator's clamp caps the stale want too (it used to be
+                # bypassed — a numeric on_stale above the ceiling went out
+                # uncapped). Cap only: expiry is NOT judged while blind — the
+                # never-expire-into-a-high-signal guard can't see the signal.
+                if (want is not None and self.clamp is not None
+                        and isinstance(want.get(r.param), (int, float))
+                        and want[r.param] > self.clamp['max']):
+                    want = dict(want, **{r.param: self.clamp['max']})
                 self._transition(STALE, want, now)
+                # a stale SAFE/fixed want is the fail-closed emergency path —
+                # it must not sit out a rate-limit window (audit 2026-10-01)
+                self._urgent = r.on_stale != 'hold'
                 self._deb_target, self._deb_count = None, 0
                 return self._act(now, 'stale', 'signal stale — ' + why,
                                  signal, actual, changed=True, actual_age_s=actual_age_s, actual_stale_s=actual_stale_s)
             return self._act(now, 'stale', f'signal stale for {int(now - (self.stale_since or now))} s', signal, actual)
         if not valid:
-            return Decision(now, 'ignored', 'sample outside the valid range', self.state, signal, self.want, actual)
+            return Decision(self._wall, 'ignored', 'sample outside the valid range', self.state, signal, self.want, actual)
         self.stale_since = None
         # 1b. plausibility: a reading that jumps more than signal_valid.max_step
         # from the last accepted one is held until the NEXT sample confirms it
@@ -413,7 +441,15 @@ class RuleState:
         if r.kind == 'steps':
             guard = self._guard(_f(signal), new_sample)
             if guard is not None:
-                return Decision(now, 'ignored', guard, self.state, signal, self.want, actual)
+                return Decision(self._wall, 'ignored', guard, self.state, signal, self.want, actual)
+        # back from stale: restore the pre-stale state BEFORE computing the
+        # desired — _desired's dead-band branch keeps `self.state`, and with
+        # the restore after it, recovering straight into the dead band yielded
+        # a synthetic 'stale' state (severity 99, warn events) ping-ponging
+        # with this restore every tick (audit 2026-10-01). The debounce still
+        # decides where we really are.
+        if self.state == STALE:
+            self.state = self._pre_stale[0] if self._pre_stale else NORMAL
         # 2. desired
         if r.kind == 'steps':
             d_state, base, fast = self._desired(_f(signal))
@@ -423,11 +459,8 @@ class RuleState:
             d_state = 'true' if truth else 'false'
             base = dict((outcome or {}).get('params') or {}) if outcome is not None else None
             fast = False
-        d_want = self._apply_clamp(self._want_for(base) if base is not None else None, now, _f(signal) if r.kind == 'steps' else None)
+        d_want = self._apply_clamp(self._want_for(base) if base is not None else None, self._wall, _f(signal) if r.kind == 'steps' else None)
         d_base = base
-        if self.state == STALE:
-            # back from stale: the debounce decides where we really are
-            self.state = self._pre_stale[0] if self._pre_stale else NORMAL
         # 3. debounce
         key = (d_state, tuple(sorted((d_want or {}).items())))
         changed = False
@@ -439,6 +472,7 @@ class RuleState:
                 self._deb_target, self._deb_count = None, 0
                 self._base = d_base
                 changed = self._transition(d_state, d_want, now)
+                self._urgent = fast
             else:
                 if self._deb_target != key:
                     self._deb_target, self._deb_count = key, 1
@@ -450,6 +484,7 @@ class RuleState:
                     self._deb_target, self._deb_count = None, 0
                     self._base = d_base
                     changed = self._transition(d_state, d_want, now)
+                    self._urgent = False
                 else:
                     return self._act(now, 'hold', f'debounce {self._deb_count}/{r.timing.debounce} towards {d_state}', signal, actual)
         # 4. act on the want (rate limit), else 5. the closed loop
@@ -478,10 +513,12 @@ class RuleState:
     def _act(self, now: float, forced: Optional[str], reason: str, signal, actual, *, changed: bool = False,
              actual_age_s: Optional[float] = None, actual_stale_s: Optional[float] = None) -> Decision:
         r = self.rule
-        if self.paused_until is not None and now < self.paused_until:
-            return Decision(now, 'hold', f'paused by an override for {int(self.paused_until - now)} s', self.state, signal, self.want, actual, changed)
+        ts = self._wall or now                     # Decision stamps are wall time
+        if self.paused_until is not None and ts < self.paused_until:
+            # paused_until is a wall-persisted absolute → compared on the wall clock
+            return Decision(ts, 'hold', f'paused by an override for {int(self.paused_until - ts)} s', self.state, signal, self.want, actual, changed)
         if self.want is None:
-            return Decision(now, forced or 'idle', reason or 'nothing to ask', self.state, signal, None, actual, changed)
+            return Decision(ts, forced or 'idle', reason or 'nothing to ask', self.state, signal, None, actual, changed)
         p = r.param
         fresh = actual is not None and not (actual_stale_s is not None and actual_age_s is not None and actual_age_s > actual_stale_s)
         if self.pending:
@@ -489,39 +526,44 @@ class RuleState:
                     and abs(float(actual) - float(self.want[p])) <= r.tolerance:
                 # the device already holds it: nothing to send, nothing to burn on the wire
                 self.pending, self.commanded = False, dict(self.want)
-                return Decision(now, forced or 'idle', (reason + ' — ' if reason else '') + 'read-back already matches, nothing to send',
+                return Decision(ts, forced or 'idle', (reason + ' — ' if reason else '') + 'read-back already matches, nothing to send',
                                 self.state, signal, self.want, actual, changed)
-            if self.last_cmd_ts is not None and r.timing.min_interval_s > 0 \
+            # the emergency path (a `fast` step, a stale safe/fixed want) is
+            # exempt from the rate limit: a curtail must not wait out the
+            # window a routine step opened 20 s ago (audit 2026-10-01)
+            if not self._urgent and self.last_cmd_ts is not None and r.timing.min_interval_s > 0 \
                     and now - self.last_cmd_ts < r.timing.min_interval_s:
-                return Decision(now, 'hold', f'rate limit — {int(r.timing.min_interval_s - (now - self.last_cmd_ts))} s to go', self.state, signal, self.want, actual, changed)
+                return Decision(ts, 'hold', f'rate limit — {int(r.timing.min_interval_s - (now - self.last_cmd_ts))} s to go', self.state, signal, self.want, actual, changed)
             return self._send(now, 'run', (reason + ' — ' if reason else '') + f'{self.state}: want {self._said(self.want)}', signal, actual, changed)
         if forced:
-            return Decision(now, forced, reason, self.state, signal, self.want, actual, changed)
+            return Decision(ts, forced, reason, self.state, signal, self.want, actual, changed)
         # closed loop: only when we have commanded something and can read it back
         if self.commanded is None or not isinstance(self.want.get(p), (int, float)):
-            return Decision(now, 'idle', 'holding', self.state, signal, self.want, actual)
+            return Decision(ts, 'idle', 'holding', self.state, signal, self.want, actual)
         if not fresh:
             self.drift_since = None
-            return Decision(now, 'sweep', 'read-back missing or old — asking for a sweep', self.state, signal, self.want, actual)
+            return Decision(ts, 'sweep', 'read-back missing or old — asking for a sweep', self.state, signal, self.want, actual)
         if abs(float(actual) - float(self.want[p])) > r.tolerance:
             if self.drift_since is None:
                 self.drift_since = now
             if r.timing.reassert_s > 0 and now - self.drift_since >= r.timing.reassert_s:
                 if self.last_cmd_ts is not None and r.timing.min_interval_s > 0 and now - self.last_cmd_ts < r.timing.min_interval_s:
-                    return Decision(now, 'hold', 'drift seen, rate limit', self.state, signal, self.want, actual)
+                    return Decision(ts, 'hold', 'drift seen, rate limit', self.state, signal, self.want, actual)
                 self.drift_since = None
                 return self._send(now, 'reassert', f'read-back {actual:g} ≠ want {self.want[p]:g} for {int(r.timing.reassert_s)} s', signal, actual, False)
-            return Decision(now, 'idle', f'read-back {actual:g} ≠ want {self.want[p]:g}, watching', self.state, signal, self.want, actual)
+            return Decision(ts, 'idle', f'read-back {actual:g} ≠ want {self.want[p]:g}, watching', self.state, signal, self.want, actual)
         self.drift_since = None
-        return Decision(now, 'idle', 'read-back matches', self.state, signal, self.want, actual)
+        return Decision(ts, 'idle', 'read-back matches', self.state, signal, self.want, actual)
 
     def _send(self, now: float, action: str, reason: str, signal, actual, changed: bool) -> Decision:
         self.pending = False
         self.commanded = dict(self.want) if self.want else None
-        self.last_cmd_ts = now
+        self.last_cmd_ts = now                     # interval clock: rate limit base
+        self._urgent = False                       # the emergency send happened
+        ts = self._wall or now
         if self.rule.mode != 'armed':
-            return Decision(now, 'shadow', f'would {action} — {reason}', self.state, signal, self.want, actual, changed)
-        return Decision(now, action, reason, self.state, signal, self.want, actual, changed)
+            return Decision(ts, 'shadow', f'would {action} — {reason}', self.state, signal, self.want, actual, changed)
+        return Decision(ts, action, reason, self.state, signal, self.want, actual, changed)
 
     @staticmethod
     def _said(want: Dict[str, Any]) -> str:

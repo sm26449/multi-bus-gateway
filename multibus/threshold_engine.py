@@ -95,6 +95,15 @@ class ThresholdEngine:
         if cur in ("warning_low", "danger_low") and wl is not None \
                 and v < wl + self._deadband(wl):
             return "warning_low"         # not yet cleared on the low side
+        # danger-ONLY configs (no warning bound on that side) used to have no
+        # clear-side hysteresis at all: a value flapping around dh generated a
+        # band transition on every harvest (audit 2026-10-01)
+        if cur == "danger_high" and wh is None and dh is not None \
+                and v > dh - self._deadband(dh):
+            return "danger_high"
+        if cur == "danger_low" and wl is None and dl is not None \
+                and v < dl + self._deadband(dl):
+            return "danger_low"
         return "normal"
 
     # ── evaluation ───────────────────────────────────────────────────────────

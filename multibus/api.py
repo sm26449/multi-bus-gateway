@@ -912,8 +912,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                                 label=(reg.label or reg.name),
                                 unit=getattr(reg, 'unit', ''))
                             if ev:
+                                # band CHANGES are edge-triggered: the clear
+                                # must not be swallowed by the per-key rate
+                                # limit the alarm just armed
                                 alert_mgr.fire(ev['severity'], ev['key'],
-                                               ev['source'], ev['message'])
+                                               ev['source'], ev['message'],
+                                               transition=True)
                 if alert_mgr.sig_threshold:
                     # drop band state for registers/devices that went away, so a
                     # removed threshold can't leave a stuck alarm behind

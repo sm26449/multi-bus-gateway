@@ -119,16 +119,28 @@ class AlertManager:
         return items[:n]
 
     # ── firing ────────────────────────────────────────────────────────────
-    def fire(self, severity: str, key: str, source: str, message: str) -> None:
-        """Emit an alert, unless disabled or rate-limited for this key."""
+    def fire(self, severity: str, key: str, source: str, message: str,
+             transition: bool = False) -> None:
+        """Emit an alert, unless disabled or rate-limited for this key.
+
+        ``transition=True`` marks an EDGE-TRIGGERED event (a threshold band
+        change): it bypasses the per-key rate limit, because alarm and its
+        "back to normal" share the key — within min_interval_s the clear was
+        swallowed, and alarm→normal→alarm delivered only the first alarm
+        (audit 2026-10-01). The emitter already fires only on change, so the
+        flap rate is bounded by its own hysteresis, not by this limit."""
         if not self.enabled:
             return
         now = time.time()
         with self._lock:
             last = self._last_fire.get(key)
-            if last is not None and (now - last) < self.min_interval_s:
+            if not transition and last is not None and (now - last) < self.min_interval_s:
                 return
             self._last_fire[key] = now
+            # one entry per key ever fired — bound it (churny keys leak)
+            if len(self._last_fire) > 1024:
+                for k in sorted(self._last_fire, key=self._last_fire.get)[:256]:
+                    del self._last_fire[k]
         alert = {"ts": round(now, 1), "severity": severity, "source": source,
                  "message": message, "key": key, "host": socket.gethostname()}
         with self._lock:

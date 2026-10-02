@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import math
 import logging
+import os
 import re
 import threading
 import time
@@ -81,21 +82,39 @@ class RuleStore:
 
     def __init__(self, path: Path):
         self.path = Path(path)
+        # why the last load returned [] although the file EXISTS — the runtime
+        # raises an alert on it: every armed protection rule silently
+        # vanishing behind one unreadable file is an operator emergency, not
+        # a log line (audit 2026-10-01)
+        self.load_error: Optional[str] = None
 
     def load(self) -> List[Dict]:
+        self.load_error = None
         try:
             data = yaml.safe_load(self.path.read_text(encoding='utf-8')) or {}
         except FileNotFoundError:
             return []
         except Exception as e:  # noqa: BLE001
             logger.error("rules.yaml unreadable: %s", e)
+            self.load_error = str(e)
             return []
         rules = data.get('rules') if isinstance(data, dict) else data
-        return [r for r in (rules or []) if isinstance(r, dict)]
+        out = [r for r in (rules or []) if isinstance(r, dict)]
+        if not out and (rules or data):
+            self.load_error = "rules.yaml exists but holds no rule entries"
+        return out
 
     def save(self, rules: List[Dict]) -> None:
+        # temp + fsync + replace: a power loss mid-save must leave either the
+        # old file or the new one, never a torn/empty rules.yaml whose next
+        # load would silently disable every armed rule
         tmp = self.path.with_suffix('.yaml.tmp')
-        tmp.write_text(yaml.safe_dump({'rules': rules}, sort_keys=False, allow_unicode=True), encoding='utf-8')
+        payload = yaml.safe_dump({'rules': rules}, sort_keys=False, allow_unicode=True)
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
         tmp.replace(self.path)
 
 
@@ -140,11 +159,22 @@ class RulesRuntime:
     def load(self) -> None:
         with self._lock:
             raws = self.store.load()
+            if self.store.load_error:
+                # every armed protection rule silently vanishing behind one
+                # unreadable file is an operator emergency, not a log line
+                self._alert('error', 'rules:store',
+                            f'rules.yaml could not be loaded — ALL rules are '
+                            f'inactive until it is repaired: {self.store.load_error}')
             persisted = self._load_state()
             self.rules, self.raw, self.errors = {}, {}, {}
             keep = {}
             for raw in raws:
                 rid = str(raw.get('id', '') or '')
+                if rid in self.rules:
+                    # hand-edited rules.yaml with a duplicate id: the API
+                    # upsert refuses these, so say which copy wins here
+                    logger.warning("rules.yaml: duplicate rule id %r — "
+                                   "the LAST definition wins", rid)
                 errs = validate_rule_def(raw, validate_expr=_validate_expr)
                 rule = parse_rule_def(raw)
                 self.raw[rid] = raw
@@ -214,7 +244,15 @@ class RulesRuntime:
     def _load_state(self) -> Dict:
         try:
             return json.loads(self._state_path.read_text(encoding='utf-8')) or {}
-        except Exception:  # noqa: BLE001
+        except FileNotFoundError:
+            return {}
+        except Exception as e:  # noqa: BLE001
+            # operator clamps (setpoint ceilings!) and overrides silently
+            # vanishing is worth more than a debug line
+            logger.error("rules_state.json unreadable — clamps/overrides lost: %s", e)
+            self._alert('warn', 'rules:state',
+                        f'rules_state.json unreadable — operator clamps and '
+                        f'overrides were lost ({e})')
             return {}
 
     def _save_state(self) -> None:
@@ -223,7 +261,15 @@ class RulesRuntime:
             if st.clamp or st.paused_until:
                 data[f"{rid}:{dev}"] = {'clamp': st.clamp, 'paused_until': st.paused_until}
         try:
-            self._state_path.write_text(json.dumps(data), encoding='utf-8')
+            # temp + fsync + replace — a crash mid-write used to leave a torn
+            # file whose next load silently dropped every clamp/override
+            tmp = self._state_path.with_suffix('.json.tmp')
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(json.dumps(data))
+                f.flush()
+                os.fsync(f.fileno())
+            tmp.replace(self._state_path)
         except Exception as e:  # noqa: BLE001
             logger.warning("rules_state.json: %s", e)
 
@@ -302,6 +348,13 @@ class RulesRuntime:
 
     def tick(self, now: Optional[float] = None) -> List[Dict]:
         now = self._clock() if now is None else now
+        # The state machine's INTERVAL math (rate limit, reassert, staleness,
+        # debounce identity) runs on the monotonic clock — a chrony step (the
+        # 2026-07-28 +138 s jump) froze or prematurely expired those windows
+        # on the wall clock, delaying the reassert that restores a Fronius
+        # limit after RvrtTms (audit 2026-10-01). `now` stays the wall clock
+        # for Decision timestamps and the wall-persisted paused_until/clamp.
+        mono_now = self._mono()
         out = []
         with self._lock:
             rules = [r for r in self.rules.values() if r.enabled and r.id not in self.errors]
@@ -313,8 +366,8 @@ class RulesRuntime:
                 if st is None:
                     st = self.states[key] = RuleState(rule)
                 actual, a_age, a_stale = self._actual(rule, cfg)
-                d = st.evaluate(now, signal, age, actual=actual, actual_age_s=a_age, actual_stale_s=a_stale,
-                                sample_ts=s_mono)
+                d = st.evaluate(mono_now, signal, age, actual=actual, actual_age_s=a_age, actual_stale_s=a_stale,
+                                sample_ts=s_mono, wall=now)
                 self._act(rule, cfg, client, st, d, now)
                 out.append({'rule': rule.id, 'device': cfg.id, **d.to_dict()})
             self._publish_state(rule)
@@ -352,8 +405,9 @@ class RulesRuntime:
                 self._alerted[key] = False
         elif d.action == 'sweep':
             last = self._last_sweep.get(cfg.id, 0.0)
-            if now - last >= SWEEP_MIN_INTERVAL_S:
-                self._last_sweep[cfg.id] = now
+            _m = self._mono()                  # interval: step-immune
+            if _m - last >= SWEEP_MIN_INTERVAL_S:
+                self._last_sweep[cfg.id] = _m
                 try:
                     self._poll_now(cfg, client, rule.target.get('_readback_group') or '')
                 except Exception:  # noqa: BLE001

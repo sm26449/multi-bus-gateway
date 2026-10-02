@@ -90,8 +90,8 @@ def _steps_rule(**over):
            "mode": "armed", "signal": "voltage", "stale_after_s": 60,
            "every_s": 2, "target": {"command": "power_limit", "param": "value"},
            "signal_valid": {"min": 100, "max": 300, "max_step": 10},
-           "steps": [{"above": 253, "value": 60}],
-           "release_below": 250, "base": {"value": 100}}
+           "steps": [{"at": 253, "value": 60, "label": "High"}],
+           "release_below": 250, "normal": {"value": 100}}
     raw.update(over)
     return parse_rule_def(raw)
 
@@ -586,3 +586,141 @@ def test_poller_sf_map_is_shared_across_poll_groups():
     from multibus.value_decode import apply_corrections
     v = apply_corrections(600, pb.registers[0], siblings=pb._sf_last_good)
     assert v == 60.0
+
+
+# ── rules: clocks, stale semantics, thresholds, alerts ───────────────────────
+
+def test_rate_limit_runs_on_the_interval_clock_not_the_wall():
+    """A chrony step backward must not freeze the min_interval/reassert
+    windows: evaluate takes `now` (interval clock = monotonic in production)
+    and a separate `wall` for display/absolutes."""
+    from multibus.rules import RuleState
+    st = RuleState(_steps_rule(mode="armed", signal_valid={"min": 100, "max": 300},
+                               timing={"every_s": 2, "debounce": 1, "min_interval_s": 30}))
+    # reach the step and send once (debounce 1)
+    d = st.evaluate(100.0, 254.0, 0.5, sample_ts=1.0, wall=5000.0)
+    assert d.action == "run" and d.ts == 5000.0        # Decision stamped wall
+    # signal returns to normal; the wall clock STEPS BACK 10 000 s
+    d = st.evaluate(110.0, 240.0, 0.5, sample_ts=2.0, wall=-5000.0)
+    # want changed → pending; 10 s on the interval clock → still rate-limited
+    assert d.action == "hold" and "rate limit" in d.reason
+    # 31 s on the interval clock → sends, however broken the wall clock is
+    d = st.evaluate(131.0, 240.0, 0.5, sample_ts=3.0, wall=-4979.0)
+    assert d.action == "run"
+
+
+def test_paused_until_is_compared_on_the_wall_clock():
+    """An operator override is an absolute wall time (persisted, shown in the
+    UI as a date) — it must expire by the wall, not by uptime."""
+    from multibus.rules import RuleState
+    st = RuleState(_steps_rule(mode="armed", timing={"debounce": 1}))
+    st.paused_until = 2000.0                            # wall epoch
+    d = st.evaluate(100.0, 254.0, 0.5, sample_ts=1.0, wall=1990.0)
+    assert d.action == "hold" and "paused" in d.reason
+    d = st.evaluate(102.0, 254.0, 0.5, sample_ts=2.0, wall=2001.0)
+    assert d.action == "run"                            # the override expired
+
+
+def test_recovery_from_stale_into_the_dead_band_restores_the_pre_stale_state():
+    """_desired used to run BEFORE the pre-stale restore: recovering straight
+    into the dead band yielded a synthetic 'stale' state ping-ponging with the
+    restore every tick."""
+    from multibus.rules import RuleState, STALE
+    st = RuleState(_steps_rule(timing={"debounce": 1, "every_s": 2}))
+    st.evaluate(0.0, 254.0, 0.5, sample_ts=1.0)         # into the step
+    assert st.state == "High"
+    st.evaluate(100.0, None, None)                      # 100 s silent → stale
+    assert st.state == STALE
+    # back, but in the dead band (release_below 250 < 251 < first step 253)
+    for i, t in enumerate((102.0, 104.0, 106.0)):
+        d = st.evaluate(t, 251.0, 0.5, sample_ts=10.0 + i)
+        assert d.state != STALE, f"synthetic stale state at t={t}"
+    assert st.state == "High"                           # held, not 'stale'
+
+
+def test_stale_fixed_want_is_capped_by_the_operator_clamp():
+    from multibus.rules import RuleState, STALE
+    st = RuleState(_steps_rule(on_stale=40.0))
+    st.set_clamp(25.0, None)
+    st.evaluate(0.0, 240.0, 0.5, sample_ts=1.0)
+    d = st.evaluate(100.0, None, None)                  # stale → fixed want 40
+    assert st.state == STALE and d.want["value"] == 25.0  # capped, not 40
+
+
+def test_fast_step_is_exempt_from_the_rate_limit():
+    """The emergency path must not wait out the window a routine step opened
+    moments earlier."""
+    from multibus.rules import RuleState
+    rule = _steps_rule(mode="armed",
+                       timing={"every_s": 2, "debounce": 1, "min_interval_s": 60})
+    rule.steps[0].fast = False
+    from multibus.rules import Step
+    rule.steps.append(Step(at=260.0, value=10.0, label="Emergency", fast=True))
+    st = RuleState(rule)
+    d = st.evaluate(100.0, 254.0, 0.5, sample_ts=1.0)   # routine step sends
+    assert d.action == "run"
+    d = st.evaluate(110.0, 261.0, 0.5, sample_ts=2.0)   # 10 s later: EMERGENCY
+    assert d.action == "run", d.reason                   # not 'hold — rate limit'
+
+
+def test_threshold_transitions_bypass_the_alert_rate_limit():
+    """Alarm and its clear share the key: within min_interval_s the clear was
+    swallowed, and alarm→normal→alarm delivered only the first alarm."""
+    from multibus.alerts import AlertManager
+    am = AlertManager({"enabled": True, "min_interval_s": 300, "mqtt": True},
+                      mqtt_publisher=object())
+    fired = []
+    am._publish_mqtt = lambda a: fired.append(a["message"])
+    am.fire("warn", "thr:d:1", "V", "over", transition=True)
+    am.fire("info", "thr:d:1", "V", "back to normal", transition=True)
+    am.fire("warn", "thr:d:1", "V", "over again", transition=True)
+    assert fired == ["over", "back to normal", "over again"]
+    # non-transition fires keep the limit
+    am.fire("warn", "lat:d", "D", "slow")
+    am.fire("warn", "lat:d", "D", "slow again")
+    assert "slow again" not in fired and "slow" in fired
+
+
+def test_danger_only_thresholds_clear_with_hysteresis():
+    """With only dangerHigh configured there was NO clear-side deadband: a
+    value flapping around dh transitioned on every harvest."""
+    from multibus.threshold_engine import ThresholdEngine
+    eng = ThresholdEngine(deadband_pct=2.0)
+    th = {"enabled": True, "dangerHigh": 100.0}
+    assert eng.evaluate("k", 101.0, th)                  # → danger_high
+    assert eng.evaluate("k", 99.5, th) is None           # inside the deadband: holds
+    ev = eng.evaluate("k", 97.0, th)                     # past it: clears
+    assert ev and ev["band"] == "normal"
+
+
+def test_rule_store_save_is_atomic_and_flags_unreadable_files(tmp_path):
+    from multibus.rules_runtime import RuleStore
+    store = RuleStore(tmp_path / "rules.yaml")
+    store.save([{"id": "r1", "kind": "steps"}])
+    assert store.load() and store.load_error is None
+    (tmp_path / "rules.yaml").write_text("rules: [this is: not: yaml")
+    assert store.load() == [] and store.load_error     # flagged, not silent
+
+
+def test_rules_state_file_is_written_atomically(tmp_path, monkeypatch):
+    from multibus.rules_runtime import RulesRuntime
+    rt = RulesRuntime.__new__(RulesRuntime)
+    rt._state_path = tmp_path / "rules_state.json"
+    rt.states = {}
+    from multibus.rules import RuleState
+    st = RuleState(_steps_rule())
+    st.paused_until = 123.0
+    rt.states[("r", "d")] = st
+    rt._save_state()
+    assert not (tmp_path / "rules_state.tmp").exists()
+    assert "123.0" in (tmp_path / "rules_state.json").read_text()
+
+
+def test_command_check_answers_a_verdict_for_non_numeric_readback():
+    """float(got) used to raise out of run_command → 500 at the face instead
+    of 'rejected'."""
+    from multibus.commands import _check
+    assert "not numeric" in _check({"read": "mode", "min": 0}, "Standby", {})
+    assert "expected one of" in _check({"read": "mode", "in": [0, 1]}, "Standby", {})
+    assert _check({"read": "mode", "in": [0, 1]}, 1, {}) is None
+    assert _check({"read": "mode", "in": ["Standby"]}, "Standby", {}) is None
