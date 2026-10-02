@@ -234,7 +234,7 @@ services:
   # Grafana — dashboards over the same InfluxDB; part of the complete stack.
   grafana:
     # pinned (Dependabot bumps it) — same reasoning as the esphome pin above
-    image: grafana/grafana:13.0.2
+    image: grafana/grafana:13.2.2
     container_name: mbg-grafana
     logging: *default-logging
     restart: unless-stopped
