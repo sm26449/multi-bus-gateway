@@ -620,30 +620,17 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     updateDropzoneHint() {
-        const hint = document.getElementById('dropzoneHint');
         const dropzone = document.getElementById('monitorDropzone');
-        const hasData = Object.keys(this.monitorData).length > 0;
-
-        if (hint) {
-            hint.classList.toggle('hidden', hasData);
-        }
         if (dropzone) {
-            dropzone.classList.toggle('has-data', hasData);
+            dropzone.classList.toggle('has-data', Object.keys(this.monitorData).length > 0);
         }
     },
 
     updateMonitorTable() {
         const tbody = document.getElementById('monitorTableBody');
-        const emptyMsg = document.getElementById('monitorTableEmpty');
-        const hasData = Object.keys(this.monitorData).length > 0;
-
-        if (emptyMsg) {
-            emptyMsg.classList.toggle('hidden', hasData);
-        }
-
         if (!tbody) return;
 
-        if (!hasData) {
+        if (Object.keys(this.monitorData).length === 0) {
             tbody.innerHTML = '';
             return;
         }

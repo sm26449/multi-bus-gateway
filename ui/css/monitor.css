@@ -195,11 +195,6 @@
     overflow-y: auto;
 }
 
-.monitor-table-container {
-    flex: 1;
-    overflow-y: auto;
-}
-
 /* Monitor Table */
 .monitor-table {
     width: 100%;

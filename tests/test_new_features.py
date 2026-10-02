@@ -347,11 +347,10 @@ def test_history_and_energy_503_without_influx():
 
 def test_influx_unit_heuristic_precedence():
     from types import SimpleNamespace
-    from multibus.influxdb_publisher import InfluxDBPublisher
-    pub = InfluxDBPublisher.__new__(InfluxDBPublisher)
+    from multibus.influxdb_publisher import get_measurement
     def m(unit, name=""):
         r = SimpleNamespace(influxdb_measurement="", unit=unit, name=name)
-        return InfluxDBPublisher._get_measurement(pub, r)
+        return get_measurement(r)
     assert m("VA") == "power_apparent"       # was misclassified as voltage
     assert m("kVA") == "power_apparent"
     assert m("varh") == "energy_reactive"    # was power_reactive

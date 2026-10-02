@@ -549,8 +549,8 @@ def _ensure_self_signed(cert_path: str, key_path: str):
                 .subject_name(name).issuer_name(name)
                 .public_key(keyobj.public_key())
                 .serial_number(x509.random_serial_number())
-                .not_valid_before(_dt.datetime.utcnow() - _dt.timedelta(days=1))
-                .not_valid_after(_dt.datetime.utcnow() + _dt.timedelta(days=3650))
+                .not_valid_before(_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=1))
+                .not_valid_after(_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=3650))
                 .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), False)
                 .sign(keyobj, hashes.SHA256()))
         # 0600 from creation, like every other secret-bearing writer

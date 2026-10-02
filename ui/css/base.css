@@ -399,16 +399,6 @@ body {
     background: var(--accent-hover);
 }
 
-.btn-success {
-    background: rgba(50, 215, 75, 0.2);
-    color: var(--success-text);
-    border: 1px solid var(--success);
-}
-
-.btn-success:hover {
-    background: rgba(50, 215, 75, 0.3);
-}
-
 .btn-danger {
     background: rgba(255, 69, 58, 0.2);
     color: var(--danger-text);
@@ -417,16 +407,6 @@ body {
 
 .btn-danger:hover {
     background: rgba(255, 69, 58, 0.3);
-}
-
-.btn-warning {
-    background: rgba(255, 159, 10, 0.2);
-    color: var(--orange);
-    border: 1px solid var(--orange);
-}
-
-.btn-warning:hover {
-    background: rgba(255, 159, 10, 0.3);
 }
 
 .btn-ghost {
@@ -944,13 +924,7 @@ input[type="time"].input {
     color: var(--text-tertiary);
     margin-bottom: 12px;
 }
-
-/* TEXT always uses the -text inks (AA contrast on both themes); the base
-   status tokens stay for borders/fills where 3:1 suffices (a11y audit). */
-.text-success { color: var(--success-text); }
 .text-danger { color: var(--danger-text); }
-.text-warning { color: var(--warning-text); }
-.text-accent { color: var(--accent-text); }
 
 .badge {
     display: inline-block;

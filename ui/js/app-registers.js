@@ -1079,37 +1079,9 @@ Object.assign(JanitzaMonitor.prototype, {
                 });
             }
 
-            // Add to history
-            this.queryHistory.unshift({
-                address: data.address,
-                value: displayValue,
-                dataType: data.data_type,
-                timestamp: data.timestamp,
-                description: regInfo?.description
-            });
-
-            this.renderQueryHistory();
-
         } catch (error) {
             resultDiv.innerHTML = `<div class="result-error"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> Error: ${this._esc(error.message)}</div>`;
         }
-    },
-
-    renderQueryHistory() {
-        const container = document.getElementById('queryHistory');
-        if (!container) return;
-        container.innerHTML = '';
-
-        this.queryHistory.slice(0, 20).forEach(item => {
-            const div = document.createElement('div');
-            div.className = 'history-item';
-            div.innerHTML = `
-                <span class="address">${this._esc(item.address)}</span>
-                <span class="value">${this._esc(item.value)}</span>
-                <span class="time">${new Date(item.timestamp).toLocaleTimeString()}</span>
-            `;
-            container.appendChild(div);
-        });
     },
 
     renderSelectedRegistersList() {
@@ -1124,11 +1096,6 @@ Object.assign(JanitzaMonitor.prototype, {
             }
             return true;
         });
-        const countEl = document.getElementById('registerCount');
-        if (countEl) {
-            const total = this.selectedRegisters.length, shown = filtered.length;
-            countEl.textContent = shown === total ? `${total} measurement${total !== 1 ? 's' : ''}` : `${shown} of ${total} measurements`;
-        }
         this._updateRegTabCounts();
         if (filtered.length === 0) {
             container.innerHTML = `<div class="empty-state">${this.selectedRegisters.length === 0
@@ -1290,11 +1257,6 @@ Object.assign(JanitzaMonitor.prototype, {
             this.updateDashboard();
             this.saveSelectedRegisters();
         }
-    },
-
-    removeRegister(address) {
-        this.selectedRegisters = this.selectedRegisters.filter(r => r.address !== address);
-        this.renderSelectedRegistersList();
     },
 
     async saveSelectedRegisters() {

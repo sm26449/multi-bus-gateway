@@ -2,6 +2,37 @@
 
 ## 3.84.0
 
+### 2026-10-02 — dead code: the audit's pruning list
+
+Everything below was grep-verified unreferenced (including from tests,
+the UI's fetch calls and the docs) before deletion:
+
+- Python: `MQTTPublisher.publish_status`, `InfluxDBPublisher.write_single`
+  (+ its `_get_measurement`/`_get_tags` delegation shims — the one test
+  using them now calls the module-level function),
+  `RegisterParser.parse_registers`, `Config.get_registers_by_poll_group`,
+  `RegisterEncoder.register_count` (call sites read `REGISTER_COUNTS`
+  directly), `EsphomeClient.unarchive`. The test-seam trio
+  (`_EndpointArbiter.turn`, `PqRecorder.ring`, the `_should_publish`/
+  `_confirm_publish` lock-wrappers) stays — tests exercise them.
+- JS: `removeRegister` (the live path is `removeRegisterFromTable`), the
+  query-history feature remnant (`renderQueryHistory`, its unbounded
+  state and its vanished `#queryHistory` element), `renderStatusDetails`
+  (~70 lines re-rendered into a container deleted long ago, on every
+  status poll while on Settings), `updateSettingsStatusDots`, and the
+  null-guarded writes to the departed `#registerCount`, `#dropzoneHint`
+  and `#monitorTableEmpty` elements.
+- CSS: 39 rule blocks whose classes appear nowhere in the HTML/JS — the
+  old config-page layout (`config-form*`, `connection-*`, `danger-zone*`,
+  `poll-group-*`, `json-preview`, `apply-config-banner`), `threshold-grid*`,
+  `widget-badge/tall`, `status-card*`, `btn-success/warning`,
+  `text-accent/success/warning` and friends (−237 lines). `chart-area`
+  stays: `chart-${...}` class names are composed dynamically.
+- i18n: 63 keys no code references anymore, removed from en and ro
+  together (1496 keys, parity intact).
+- `datetime.utcnow()` (deprecated) → `datetime.now(timezone.utc)` in the
+  self-signed-cert validity window.
+
 ### 2026-10-02 — i18n: the hardcoded-English sweep
 
 - `t()` learned `{name}` interpolation, so the three sentences that were

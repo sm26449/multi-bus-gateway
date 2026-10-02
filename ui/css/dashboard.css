@@ -135,14 +135,6 @@
     color: var(--text-secondary);
 }
 
-.widget-badge {
-    font-size: 10px;
-    padding: 2px 6px;
-    background: var(--bg-tertiary);
-    border-radius: 4px;
-    color: var(--text-tertiary);
-}
-
 /* Widget Edit Button */
 .widget-edit-btn {
     width: 24px;
@@ -579,38 +571,6 @@
     }
 }
 
-/* ==================== THRESHOLDS MODAL ==================== */
-.threshold-section {
-    margin-bottom: 20px;
-    padding-bottom: 16px;
-    border-bottom: 1px solid var(--border);
-}
-
-.threshold-section:last-child {
-    border-bottom: none;
-    margin-bottom: 0;
-}
-
-.threshold-section h4 {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-primary);
-    margin-bottom: 12px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.threshold-section h4 i {
-    color: var(--accent-text);
-}
-
-.threshold-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 12px;
-}
-
 .threshold-grid-half {
     grid-template-columns: repeat(2, 1fr);
 }
@@ -634,12 +594,6 @@
     color: var(--text-tertiary);
     margin-top: 8px;
     font-style: italic;
-}
-
-@media (max-width: 768px) {
-    .threshold-grid {
-        grid-template-columns: repeat(2, 1fr);
-    }
 }
 
 /* Live values are clickable → recent-history modal */

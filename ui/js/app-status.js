@@ -382,10 +382,6 @@ Object.assign(JanitzaMonitor.prototype, {
             // Store for status page
             this.status = status;
 
-            if (this.currentPage === 'config') {
-                this.renderStatusDetails();
-            }
-
             // Recovered: tell the user once (the heartbeat is our liveness probe).
             if (this._statusLost) {
                 this._statusLost = false;
@@ -650,79 +646,4 @@ Object.assign(JanitzaMonitor.prototype, {
         } finally { if (btn) { btn.disabled = false; btn.innerHTML = orig; } }
     },
 
-    renderStatusDetails() {
-        const container = document.getElementById('statusDetails');
-        if (!container || !this.status) return;
-
-        const modbus = this.status.modbus || {};
-        const mqtt = this.status.mqtt || {};
-        const influx = this.status.influxdb || {};
-
-        container.innerHTML = `
-            <div class="status-block">
-                <h4>
-                    <span class="status-indicator ${modbus.connected ? 'ok' : 'error'}"></span>
-                    Modbus
-                </h4>
-                <div class="detail-row">
-                    <span class="label">${this.t('lbl.host', "Host")}</span>
-                    <span class="value">${this._esc(modbus.host)}:${modbus.port}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="label">${this.t('lbl.successfulReads', "Successful reads")}</span>
-                    <span class="value">${modbus.successful_reads || 0}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="label">${this.t('lbl.failedReads', "Failed reads")}</span>
-                    <span class="value">${modbus.failed_reads || 0}</span>
-                </div>
-            </div>
-
-            <div class="status-block">
-                <h4>
-                    <span class="status-indicator ${mqtt.connected ? 'ok' : (mqtt.enabled ? 'error' : '')}"></span>
-                    MQTT ${mqtt.enabled ? '' : '(Disabled)'}
-                </h4>
-                <div class="detail-row">
-                    <span class="label">${this.t('lbl.broker', "Broker")}</span>
-                    <span class="value">${this._esc(mqtt.broker)}:${mqtt.port}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="label">${this.t('lbl.published', "Published")}</span>
-                    <span class="value">${mqtt.messages_published || 0}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="label">${this.t('lbl.skipped', "Skipped")}</span>
-                    <span class="value">${mqtt.messages_skipped || 0}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="label">${this.t('lbl.mode', "Mode")}</span>
-                    <span class="value">${this._esc(mqtt.publish_mode || '-')}</span>
-                </div>
-            </div>
-
-            <div class="status-block">
-                <h4>
-                    <span class="status-indicator ${influx.connected ? 'ok' : (influx.enabled ? 'error' : '')}"></span>
-                    InfluxDB ${influx.enabled ? '' : '(Disabled)'}
-                </h4>
-                <div class="detail-row">
-                    <span class="label">URL</span>
-                    <span class="value">${this._esc(influx.url || '-')}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="label">${this.t('lbl.bucket', "Bucket")}</span>
-                    <span class="value">${this._esc(influx.bucket || '-')}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="label">${this.t('lbl.writes', "Writes")}</span>
-                    <span class="value">${influx.writes_total || 0}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="label">${this.t('lbl.mode', "Mode")}</span>
-                    <span class="value">${this._esc(influx.publish_mode || '-')}</span>
-                </div>
-            </div>
-        `;
-    }
 });

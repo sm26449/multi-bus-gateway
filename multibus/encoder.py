@@ -70,9 +70,6 @@ class RegisterEncoder:
             regs = list(reversed(regs))
         return regs
 
-    def register_count(self, data_type: str) -> int:
-        return self.REGISTER_COUNTS.get(data_type.lower(), 2)
-
     @staticmethod
     def int_range(data_type: str):
         """(lo, hi) of the raw integer a ``data_type`` can carry, or None for

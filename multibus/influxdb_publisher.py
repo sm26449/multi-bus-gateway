@@ -630,13 +630,6 @@ class InfluxDBPublisher:
             self.last_values[key] = value
             self.last_write_time[key] = time.time()
 
-    def _get_measurement(self, register: SelectedRegister) -> str:
-        return get_measurement(register)
-
-    def _get_tags(self, register: SelectedRegister,
-                  device_tag: Optional[str] = None) -> Dict[str, str]:
-        return get_tags(register, device_tag)
-
     def _build_point(self, register: SelectedRegister, safe_val: Any, ts: float,
                      poll_group: Optional[str] = None,
                      extra_tags: Dict[str, str] = None,
@@ -821,40 +814,6 @@ class InfluxDBPublisher:
                                           device_tag=device_tag)
                 self._deliver(point, ts, bucket=bucket)
                 self._confirm_write(address, value, device_id)
-
-        except Exception as e:
-            self.writes_failed += 1
-            logger.error(f"InfluxDB write error: {e}")
-            self._handle_write_error(e)
-
-    def write_single(self, register: SelectedRegister, value: Any,
-                     extra_tags: Dict[str, str] = None, ts: float = None,
-                     bucket: Optional[str] = None,
-                     device_tag: Optional[str] = None,
-                     device_id: str = ""):
-        """Write a single register value."""
-        if not self.config.enabled:
-            return
-
-        if not self._should_write(register.address, value, device_id):
-            self.writes_skipped += 1
-            return
-
-        # Validate value
-        if isinstance(value, (int, float)):
-            safe_val = self._safe_float(value)
-            if safe_val is None:
-                return
-        else:
-            safe_val = value
-
-        try:
-            ts = ts or time.time()
-            point = self._build_point(register, safe_val, ts,
-                                      extra_tags=extra_tags,
-                                      device_tag=device_tag)
-            self._deliver(point, ts, bucket=bucket)
-            self._confirm_write(register.address, value, device_id)
 
         except Exception as e:
             self.writes_failed += 1

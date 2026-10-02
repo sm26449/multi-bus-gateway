@@ -188,12 +188,6 @@ class EsphomeDashboard:
         if status != 200:
             raise EsphomeError(f"ESPHome archive {configuration} -> HTTP {status}")
 
-    def unarchive(self, configuration: str) -> None:
-        status, _ = self._request("POST", "/unarchive",
-                                  {"configuration": configuration}, body=b"")
-        if status != 200:
-            raise EsphomeError(f"ESPHome unarchive {configuration} -> HTTP {status}")
-
     def import_node(self, args: Dict[str, Any]) -> str:
         """Adopt an mDNS-importable node: the dashboard writes a minimal YAML
         wrapping the device's advertised package. Returns the new file name.

@@ -26,7 +26,6 @@ class JanitzaMonitor {
         this.valueHistory = {};  // Pentru chart widget - stochează ultimele N valori
         this.allRegisters = {};
         this.selectedRegisters = [];
-        this.queryHistory = [];
         this.currentPage = 'dashboard';
         // First-run prompt state: show a "connect your meter" modal only on a
         // genuinely unconfigured system (Modbus never connected), never on a

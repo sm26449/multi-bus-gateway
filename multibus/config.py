@@ -2016,15 +2016,6 @@ class Config:
         self._load_selected_registers()
         logger.info(f"Saved {len(registers)} selected registers")
 
-    def get_registers_by_poll_group(self) -> Dict[str, List[SelectedRegister]]:
-        """Group selected registers by poll group."""
-        groups = {}
-        for reg in self.selected_registers:
-            if reg.poll_group not in groups:
-                groups[reg.poll_group] = []
-            groups[reg.poll_group].append(reg)
-        return groups
-
     def to_dict(self) -> Dict:
         """Export config as dictionary."""
         return {

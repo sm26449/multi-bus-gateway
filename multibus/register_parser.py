@@ -17,7 +17,7 @@
 """Register parser for Janitza UMG 512-PRO Modbus data."""
 
 import struct
-from typing import List, Optional, Any, Dict
+from typing import List, Optional, Any
 
 
 class RegisterParser:
@@ -275,26 +275,3 @@ class RegisterParser:
         r = self._canon(registers[:4])
         return ((r[0] << 48) | (r[1] << 32) | (r[2] << 16) | r[3])
 
-    def parse_registers(self, all_registers: Dict[int, List[int]],
-                        register_configs: List[Dict]) -> Dict[int, Any]:
-        """
-        Parse multiple registers based on configuration.
-
-        Args:
-            all_registers: Dict mapping address -> register values
-            register_configs: List of register configurations with address, data_type
-
-        Returns:
-            Dict mapping address -> parsed value
-        """
-        results = {}
-
-        for config in register_configs:
-            address = config['address']
-            data_type = config.get('data_type', 'float')
-
-            if address in all_registers:
-                value = self.parse_value(all_registers[address], data_type)
-                results[address] = value
-
-        return results

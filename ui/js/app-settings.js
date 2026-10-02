@@ -161,9 +161,6 @@ Object.assign(JanitzaMonitor.prototype, {
             // Show ENV override warnings
             this.showEnvOverrides(envOverrides);
 
-            // Update status dots
-            this.updateSettingsStatusDots();
-
             // Toggle settings body visibility based on enabled
             this.toggleSettingsBody('mqtt', mqtt.enabled);
             this.toggleSettingsBody('influx', influx.enabled);
@@ -352,14 +349,6 @@ Object.assign(JanitzaMonitor.prototype, {
         });
     },
 
-    updateSettingsStatusDots() {
-        const modbusDot = document.getElementById('modbusStatusDot');
-        if (modbusDot && this.status) {
-            const connected = this.status.modbus?.connected;
-            modbusDot.className = `status-dot ${connected ? 'connected' : 'disconnected'}`;
-        }
-    },
-
     toggleSettingsBody(service, enabled) {
         const body = document.getElementById(`${service}SettingsBody`);
         if (body) {
@@ -456,7 +445,6 @@ Object.assign(JanitzaMonitor.prototype, {
             if (fb) { fb.textContent = '✓ ' + this.t('settings.saved', 'Saved & applied'); fb.className = 'save-feedback ok'; setTimeout(() => { if (fb.classList.contains('ok')) fb.textContent = ''; }, 4000); }
             // Refresh connection state after the reconnect.
             await this.loadStatus();
-            this.updateSettingsStatusDots();
         } catch (e) {
             if (fb) { fb.textContent = this.t('settings.saveFailed', 'Save failed'); fb.className = 'save-feedback err'; }
         } finally {

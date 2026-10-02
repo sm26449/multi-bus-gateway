@@ -612,11 +612,6 @@ class MQTTPublisher:
             topic = self._build_topic(register, topic_prefix)
             self.publish_if_changed(topic, value)
 
-    def publish_status(self, status: str):
-        """Publish application status."""
-        topic = f"{self.config.topic_prefix}/status"
-        self.publish(topic, status, retain=True)
-
     def publish_ha_discovery(self) -> int:
         """Publish Home Assistant MQTT autodiscovery configs."""
         if not self.connected or not self.config.ha_discovery_enabled:
