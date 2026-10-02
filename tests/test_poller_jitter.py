@@ -47,7 +47,10 @@ def test_no_jitter_fires_immediately(monkeypatch):
         p.stop()                             # real primitive: sets the stop event
         return True
 
+    # the jitter pre-wait sleeps on _stop_event; the cadence wait sleeps on
+    # _wake (stop-only _stop_event is never cleared — the poll_now/stop race)
     monkeypatch.setattr(p._stop_event, "wait", fake_wait)
+    monkeypatch.setattr(p._wake, "wait", fake_wait)
     p.connection.read_registers.return_value = [0]
     p.run()
     # the only wait is the end-of-loop cadence wait, never a jitter pre-wait
@@ -107,7 +110,7 @@ def test_the_wait_is_the_interval_minus_the_sweep(monkeypatch):
         p.stop()
         return True
 
-    monkeypatch.setattr(p._stop_event, "wait", fake_wait)
+    monkeypatch.setattr(p._wake, "wait", fake_wait)   # the cadence wait
     p.run()
     assert waits == [2.0]                     # 5 - 3, not 5
     assert p.last_cycle_s == 3.0
@@ -128,7 +131,7 @@ def test_a_sweep_that_outruns_its_interval_still_gets_a_breather(monkeypatch):
         p.stop()
         return True
 
-    monkeypatch.setattr(p._stop_event, "wait", fake_wait)
+    monkeypatch.setattr(p._wake, "wait", fake_wait)   # the cadence wait
     p.run()
     assert waits == [0.5]                     # 10% of the interval, never 0
     assert p.overruns == 1

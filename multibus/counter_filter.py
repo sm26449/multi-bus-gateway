@@ -71,13 +71,21 @@ class MonotonicFilter:
             # needs the same coherent confirmation as a downward one; real
             # post-gap catch-up growth confirms in reset_confirm reads.
             if (self._last > 0 and value > self._last * 1.5 + self.noise):
-                if (self._regressions == 0 or self._reset_first is None
-                        or not (abs(value - self._reset_first)
-                                <= max(self.noise, 0.05 * abs(value)))):
-                    self._reset_first = value
-                    self._regressions = 1
+                # Coherence here is ASCENDING continuation, not tight spread:
+                # a real counter that grows >50 % per read (freshly reset, an
+                # EV session counter near zero) keeps climbing, while a
+                # flipped-word glitch falls back on the next read and restarts
+                # the count. The old spread test (±5 % of the value) could
+                # never be satisfied by steady growth >5 %/read, so the
+                # baseline froze FOREVER on a fast-growing counter (audit
+                # 2026-10-01, verified by execution: 100, 210, 440, 920 … →
+                # every read after the first dropped, indefinitely).
+                if (self._regressions and self._reset_first is not None
+                        and value >= self._reset_first - self.noise):
+                    self._regressions += 1         # still climbing → coherent
                 else:
-                    self._regressions += 1
+                    self._regressions = 1          # first suspect, or fell back
+                self._reset_first = value          # next read must not be below this
                 if self._regressions >= self.reset_confirm:
                     self._last = value
                     self._regressions = 0

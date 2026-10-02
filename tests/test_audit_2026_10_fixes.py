@@ -463,3 +463,126 @@ def test_calc_engine_marks_invalid_entries_and_skips_them(tmp_path, monkeypatch)
     assert built[1]["_invalid"] is False and built[1]["_tree"] is not None
     # addresses keep their index-based slots (golden routing invariant)
     assert built[1]["_reg"].address == built[0]["_reg"].address + 1
+
+
+# ── datapath: counter filter, vmeter stats, MQTT input, endpoint aggregates ──
+
+def test_monotonic_filter_does_not_freeze_a_fast_growing_counter():
+    """Steady growth >50 %/read (a freshly reset counter, an EV session near
+    zero) used to trip the upward-jump guard forever: the ±5 % spread test can
+    never be met by >5 %/read growth and only accepted values advanced the
+    baseline. Ascending continuation now confirms."""
+    from multibus.counter_filter import MonotonicFilter
+    f = MonotonicFilter(reset_confirm=3)
+    out = [f.feed(v) for v in (100, 210, 440, 920, 1900, 3900)]
+    assert out[0] == 100
+    assert any(v is not None for v in out[1:]), "baseline froze"
+
+
+def test_monotonic_filter_still_drops_the_lone_flipped_word():
+    from multibus.counter_filter import MonotonicFilter
+    f = MonotonicFilter(reset_confirm=3)
+    f.feed(1_000_000)
+    assert f.feed(2_148_483_648) is None          # glitch held
+    assert f.feed(1_000_100) == 1_000_100         # normal resumes at once
+    assert f.feed(2_200_000_000) is None          # next lone spike held again
+
+
+def test_vmeter_req_rate_decays_to_zero_when_traffic_stops():
+    """The window used to anchor on the LAST traffic bucket, so a vanished
+    consumer showed its old req/s forever (and an alert rule on req_rate
+    never saw 0)."""
+    import time as _time
+    from multibus.virtual_meter import VMeterStats
+    st = VMeterStats()
+    old = int(_time.time()) - 3600
+    st.rate.append((old, 50))                      # traffic an hour ago
+    assert st.req_rate(window_s=10) == 0.0
+
+
+def test_mqtt_input_scales_a_scale_from_register():
+    """apply_corrections ran without `siblings` here, so a scale_from register
+    on an MQTT source was unconditionally dropped (sf_missing) — despite the
+    shared-pipeline claim."""
+    from types import SimpleNamespace as NS
+    from multibus import mqtt_input as mi
+    from multibus.config import SelectedRegister
+
+    def reg(addr, name, **kw):
+        return SelectedRegister(address=addr, name=name, label=name, unit="",
+                                data_type="float", poll_group="normal",
+                                topic="sensors/x", json_path=name, **kw)
+    regs = [reg(1, "pct", scale_from="pct_sf"), reg(2, "pct_sf")]
+    cli = mi.MqttInputClient({"topic": "sensors/x"}, regs)
+    got = {}
+    cli.publish_callback = lambda pg, data: got.update(data)
+    # SF arrives in the SAME message as its dependent: prescan must catch it
+    cli._on_message(None, None, NS(topic="sensors/x",
+                                   payload=b'{"pct": 600, "pct_sf": -1}'))
+    assert got and got[1]["value"] == 60.0         # 600 × 10^-1
+
+
+def test_mqtt_input_update_registers_unsubscribes_removed_topics():
+    from multibus import mqtt_input as mi
+    from multibus.config import SelectedRegister
+
+    def reg(addr, name, topic):
+        return SelectedRegister(address=addr, name=name, label=name, unit="",
+                                data_type="float", poll_group="normal",
+                                topic=topic, json_path=name)
+    cli = mi.MqttInputClient({"topic": ""}, [reg(1, "a", "t/a"), reg(2, "b", "t/b")])
+    calls = {"sub": [], "unsub": []}
+    cli._client = SimpleNamespace(subscribe=lambda t: calls["sub"].append(t),
+                                  unsubscribe=lambda t: calls["unsub"].append(t))
+    cli.connected = True
+    cli.update_registers([reg(1, "a", "t/a")])
+    assert calls["unsub"] == ["t/b"] and "t/a" in calls["sub"]
+
+
+def test_endpoint_influx_buffers_during_an_outage():
+    """The old `connected` gate dropped the endpoint's own series while every
+    unit's series was buffered and replayed — a permanent hole in the
+    installation total after each outage."""
+    pytest.importorskip("influxdb_client")
+    from multibus.endpoint_aggregator import EndpointAggregator
+
+    class _Influx:
+        connected, publish_mode = False, "changed"     # OUTAGE
+        def __init__(self): self.points = []
+        def write_point(self, p, ts=None, bucket=None): self.points.append(bucket)
+
+    ix = _Influx()
+    agg = EndpointAggregator.__new__(EndpointAggregator)
+    agg._get_influx = lambda: ix
+    agg._influx_last = {}
+    agg._ensured = set()
+    agg._publish_influx({"influxdb": {"enabled": True, "bucket": "b"}},
+                        "plant", {"power_active_total": 1.0})
+    assert ix.points, "aggregate was dropped instead of buffered"
+
+
+def test_poller_sf_map_is_shared_across_poll_groups():
+    """A *_SF register in one poll group must still scale its dependents in
+    another: the refs set and last-good memo are device-wide now."""
+    from multibus.modbus_client import RegisterPoller
+    from multibus.config import SelectedRegister
+
+    def reg(addr, name, group, **kw):
+        return SelectedRegister(address=addr, name=name, label=name, unit="",
+                                data_type="int16", poll_group=group, **kw)
+    shared_refs = {"w_sf"}
+    shared_memo = {}
+    # group A polls only the SF; group B polls only the dependent
+    pa = RegisterPoller.__new__(RegisterPoller)
+    pb = RegisterPoller.__new__(RegisterPoller)
+    for p, regs in ((pa, [reg(10, "w_sf", "slow")]),
+                    (pb, [reg(20, "w", "normal", scale_from="w_sf")])):
+        p._sf_refs = shared_refs
+        p._sf_last_good = shared_memo
+        p.registers = regs
+    # group A's prescan records the exponent into the shared memo …
+    pa._sf_last_good["w_sf"] = -1
+    # … and group B's corrections see it
+    from multibus.value_decode import apply_corrections
+    v = apply_corrections(600, pb.registers[0], siblings=pb._sf_last_good)
+    assert v == 60.0

@@ -101,10 +101,17 @@ class _EndpointArbiter:
             # and keeps it from being paid twice when many are.
             gap = self.min_gap
             if gap > 0:
-                left = self._free_at - time.monotonic()
-                if left > 0:
-                    self.gap_waited_s += left
+                # loop: a bare wait() is cut short by any peer's release/
+                # timeout notify, which used to shave the cooldown — min_gap
+                # exists for masters that brown out under back-to-back
+                # transactions, so it must be strict (audit 2026-10-01)
+                _gap_t0 = time.monotonic()
+                while True:
+                    left = self._free_at - time.monotonic()
+                    if left <= 0:
+                        break
                     self._cv.wait(left)
+                self.gap_waited_s += time.monotonic() - _gap_t0
             self._waiting.popleft()
             self._busy = True
             self.turns += 1
@@ -540,21 +547,31 @@ class ModbusConnection:
         return client
 
     def connect(self) -> bool:
-        """Establish the Modbus connection (TCP or RTU serial)."""
-        try:
-            if self.client:
-                try:
-                    self.client.close()
-                except Exception:  # noqa: BLE001
-                    pass
-            self.client = self._new_client()
-            self.connected = self.client.connect()
-            if self.connected:
-                logger.info(f"Modbus connected to {_endpoint(self.config)}")
-            return self.connected
-        except Exception as e:
-            logger.error(f"Modbus connection error: {e}")
-            return False
+        """Establish the Modbus connection (TCP or RTU serial).
+
+        Under the transport lock, like disconnect() and the in-read reconnect:
+        on a shared endpoint this swaps ``tp.client`` for every sibling unit,
+        and an unlocked swap could close the client another unit was mid-
+        transaction on. connect() stays a FORCED reopen (callers use it to
+        retire a wedged socket for all siblings — pinned by
+        test_shared_transport); it just can't land mid-transaction anymore.
+        The class comment always promised this; connect() was the one path
+        that didn't keep it (audit 2026-10-01)."""
+        with self.lock:
+            try:
+                if self.client:
+                    try:
+                        self.client.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                self.client = self._new_client()
+                self.connected = self.client.connect()
+                if self.connected:
+                    logger.info(f"Modbus connected to {_endpoint(self.config)}")
+                return self.connected
+            except Exception as e:
+                logger.error(f"Modbus connection error: {e}")
+                return False
 
     def disconnect(self):
         """Give up this unit's claim on the access point, closing the socket
@@ -853,7 +870,9 @@ class RegisterPoller(threading.Thread):
     def __init__(self, name: str, interval: int, registers: List[SelectedRegister],
                  connection: ModbusConnection, parser: RegisterParser,
                  publish_callback: Callable, device_id: str = "",
-                 startup_jitter_s: float = 0.0):
+                 startup_jitter_s: float = 0.0,
+                 sf_refs: Optional[set] = None,
+                 sf_last_good: Optional[Dict[str, float]] = None):
         # Multi-device: tag the thread + logs with the device so several devices'
         # identically-named poll groups (realtime/normal/slow) are distinguishable.
         super().__init__(daemon=True,
@@ -887,6 +906,12 @@ class RegisterPoller(threading.Thread):
         # set to sweep NOW instead of at the next cadence tick — a write's
         # read-back should reach the outputs in seconds, not at the next hour
         self._kick = threading.Event()
+        # the cadence wait sleeps on THIS event; both stop() and poll_now()
+        # set it. poll_now used to wake the wait through _stop_event and then
+        # CLEAR it — a real stop() landing between the `running` check and
+        # that clear was erased, leaving an unkillable poller that a register
+        # reload would then run alongside the new set (audit 2026-10-01)
+        self._wake = threading.Event()
         self._in_wait = False
 
         # Poll rate tracking
@@ -917,9 +942,16 @@ class RegisterPoller(threading.Thread):
         # `scale_from`, plus their last-good raw exponents. The last-good dict
         # bridges batches/cycles — a dependent may sit in an earlier group
         # than its SF, and a failed group read must not unscale survivors.
-        self._sf_refs = {r.scale_from for r in registers
-                         if getattr(r, 'scale_from', '')}
-        self._sf_last_good: Dict[str, float] = {}
+        # DEVICE-WIDE when the client provides them (sf_refs/sf_last_good):
+        # the refs/memo used to be rebuilt per poll GROUP, so an operator who
+        # moved the *_SF register to a different group than its dependents
+        # silently killed the dependents forever — the SF poller had no
+        # dependents in ITS group so it never recorded the exponent, and the
+        # dependents' group never saw the SF register (audit 2026-10-01).
+        self._sf_refs = sf_refs if sf_refs is not None else {
+            r.scale_from for r in registers if getattr(r, 'scale_from', '')}
+        self._sf_last_good: Dict[str, float] = (
+            sf_last_good if sf_last_good is not None else {})
 
         # Data-readiness gate: drop an all-zero frame (sleepy device) — opt-in.
         self._drop_all_zero = bool(getattr(
@@ -1254,14 +1286,13 @@ class RegisterPoller(threading.Thread):
                     self._kick.clear()
                     continue
                 self._in_wait = True
-                self._stop_event.wait(
+                self._wake.wait(
                     max(self.interval * 0.1, 0.05, self.interval - elapsed))
                 self._in_wait = False
-                # poll_now() wakes this wait through the stop event; a real
-                # stop() cleared `running` first, so it is never mistaken for a kick
-                if self._kick.is_set() and self.running:
-                    self._kick.clear()
-                    self._stop_event.clear()
+                self._wake.clear()
+                self._kick.clear()
+                # _stop_event is stop-only and never cleared here: the while
+                # condition re-checks it, so a stop that raced a kick wins
         finally:
             # Close the loop we created so its FDs don't leak — every register
             # reload spawns fresh poller threads, each with a fresh event loop.
@@ -1276,12 +1307,13 @@ class RegisterPoller(threading.Thread):
     def stop(self):
         self.running = False
         self._stop_event.set()
+        self._wake.set()                       # interrupt the cadence wait too
 
     def poll_now(self) -> None:
         """Sweep at the next opportunity instead of at the cadence tick."""
         self._kick.set()
         if self._in_wait:                      # wake the cadence wait now
-            self._stop_event.set()
+            self._wake.set()
 
 
 class ModbusClient:
@@ -1371,6 +1403,15 @@ class ModbusClient:
                 registers_by_group[group_name] = []
             registers_by_group[group_name].append(reg)
 
+        # SunSpec scale factors are a DEVICE-wide contract: compute the
+        # referenced-SF set over every register and share one last-good memo
+        # across the groups, so an SF polled in one group still scales its
+        # dependents in another (a fresh start re-seeds, like the per-group
+        # filters)
+        device_sf_refs = {r.scale_from for r in self.registers
+                          if getattr(r, 'scale_from', '')}
+        device_sf_last_good: Dict[str, float] = {}
+
         # Create poller for each group with registers
         for group_name, regs in registers_by_group.items():
             if group_name not in self.poll_groups:
@@ -1390,6 +1431,8 @@ class ModbusClient:
                 publish_callback=self.publish_callback,
                 device_id=self.device_id,
                 startup_jitter_s=getattr(self.config, 'startup_jitter_s', 0.0),
+                sf_refs=device_sf_refs,
+                sf_last_good=device_sf_last_good,
             )
             poller.start()
             self.pollers.append(poller)

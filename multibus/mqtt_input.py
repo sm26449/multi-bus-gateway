@@ -31,7 +31,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
-from .counter_filter import MonotonicFilter
+from .counter_filter import DailyCounterFilter, MonotonicFilter
 from .http_client import resolve_json_path, _coerce_numeric
 from .value_decode import apply_corrections
 
@@ -90,6 +90,16 @@ class MqttInputClient:
         # monotonic-counter guards, per register (same as the pollers);
         # re-seeded on reload since a fresh input is built each time
         self._counter_filters: Dict[int, MonotonicFilter] = {}
+        self._daily_filters: Dict[int, DailyCounterFilter] = {}
+        # SunSpec dynamic scale factors, same contract as the pollers: the
+        # names any register's scale_from references, plus their last-good
+        # exponents. apply_corrections used to run here without `siblings`,
+        # so a scale_from register on an MQTT source was unconditionally
+        # dropped (sf_missing) — contradicting the shared-pipeline claim
+        # (audit 2026-10-01).
+        self._sf_refs = {getattr(r, 'scale_from', '') for r in registers
+                         if getattr(r, 'scale_from', '')}
+        self._sf_last_good: Dict[str, float] = {}
 
     # ── register/topic mapping ────────────────────────────────────────────
     def _reg_topic(self, reg) -> str:
@@ -170,7 +180,10 @@ class MqttInputClient:
         regs = self._match(msg.topic)
         if not regs:
             return
-        data: Dict[int, Dict] = {}
+        # extract each register's raw value once; SF registers are recorded
+        # FIRST so same-message dependents scale on this message's exponent
+        # (the pollers do the same prescan per batch)
+        extracted: list = []
         for r in regs:
             jp = getattr(r, 'json_path', '') or ''
             try:
@@ -186,17 +199,30 @@ class MqttInputClient:
                 continue
             if val is None:
                 continue
-            # SHARED correction pipeline: nan/enum/bits/scale/offset/monotonic
-            # — this path used to apply only scale+offset, so a Shelly/Tasmota
-            # energy counter over MQTT had zero rollover protection while HA
-            # was told total_increasing (external audit). Undeclared registers
-            # pass through unchanged.
+            if (self._sf_refs and getattr(r, 'name', '') in self._sf_refs
+                    and isinstance(val, (int, float)) and not isinstance(val, bool)
+                    and abs(val) <= 10):
+                self._sf_last_good[r.name] = val
+            extracted.append((r, val))
+        data: Dict[int, Dict] = {}
+        for r, val in extracted:
+            # SHARED correction pipeline: nan/enum/bits/scale/scale_from/
+            # offset/monotonic/daily — the full poller sequence. This path
+            # used to skip `siblings` (so a scale_from register on an MQTT
+            # source was dropped as sf_missing) and `daily` (so daily: true
+            # was silently ignored on this transport) (audit 2026-10-01).
             _cf = None
             if getattr(r, 'monotonic', False):
                 _cf = self._counter_filters.get(r.address)
                 if _cf is None:
                     _cf = self._counter_filters[r.address] = MonotonicFilter()
-            val = apply_corrections(val, r, counter_filter=_cf)
+            _df = None
+            if getattr(r, 'daily', False):
+                _df = self._daily_filters.get(r.address)
+                if _df is None:
+                    _df = self._daily_filters[r.address] = DailyCounterFilter()
+            val = apply_corrections(val, r, counter_filter=_cf,
+                                    siblings=self._sf_last_good, daily_filter=_df)
             if val is None:
                 continue                  # sentinel/decode/filter → hold last-good
             data[r.address] = {'value': val, 'register': r, 'ts': self.last_msg_ts, 'mono': self.last_msg_mono}
@@ -247,13 +273,26 @@ class MqttInputClient:
         """No-op: MQTT input is push-driven (messages arrive on the paho loop)."""
 
     def update_registers(self, registers: list, poll_groups: dict = None):
+        old_subs = set(self._subscriptions())
         self.registers = registers
         self._by_topic = self._index()
         # a live register swap can re-map an address to a different field —
         # a stale monotonic baseline would then reject the new counter
         self._counter_filters.clear()
+        self._daily_filters.clear()
+        self._sf_refs = {getattr(r, 'scale_from', '') for r in registers
+                         if getattr(r, 'scale_from', '')}
+        self._sf_last_good.clear()
         if self._client and self.connected:
-            for t in self._subscriptions():
+            new_subs = set(self._subscriptions())
+            # removed topics used to stay subscribed forever — their
+            # deliveries matched nothing, pure broker/CPU waste
+            for t in old_subs - new_subs:
+                try:
+                    self._client.unsubscribe(t)
+                except Exception:  # noqa: BLE001
+                    pass
+            for t in new_subs:
                 try:
                     self._client.subscribe(t)
                 except Exception:  # noqa: BLE001

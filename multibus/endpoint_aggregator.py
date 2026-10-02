@@ -338,8 +338,13 @@ class EndpointAggregator(threading.Thread):
     def _publish_influx(self, endpoint: Dict, pid: str, agg: Dict[str, Any],
                         sub: str = ""):
         influx = self._get_influx()
-        if influx is None or not getattr(influx, "connected", False):
+        if influx is None:
             return
+        # Deliberately NO `connected` gate: write_point routes through the
+        # replay buffer precisely so points survive an InfluxDB outage. The
+        # old gate dropped the endpoint's own series on the floor while every
+        # unit's series was buffered and replayed — the installation total had
+        # a permanent hole after each outage (audit 2026-10-01).
         ix = endpoint.get("influxdb") or {}
         # An installation that has switched InfluxDB off means it: the units
         # stopped writing, and its totals must stop too. They did not, and with
@@ -357,7 +362,11 @@ class EndpointAggregator(threading.Thread):
         # A derived name may be a bucket nobody has created, and a write to a
         # missing bucket is simply lost. Ensure it once, then remember — this
         # runs on every aggregate cycle.
-        if bucket and bucket not in self._ensured:
+        # only while connected — offline, the attempt can't succeed; the write
+        # below still buffers, and the bucket is ensured on a later cycle once
+        # the connection is back (a derived bucket created mid-outage can lose
+        # the replay that races the ensure — the steady state self-heals)
+        if bucket and bucket not in self._ensured and getattr(influx, "connected", False):
             try:
                 fn = getattr(influx, 'ensure_bucket', None)
                 if callable(fn):

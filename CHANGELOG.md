@@ -2,6 +2,49 @@
 
 ## 3.84.0
 
+### 2026-10-02 — data path: the audit's correctness findings
+
+The same audit's data-path findings, fixed with regression tests:
+
+- **The vmeter supervisor's restart backoff never engaged — or never let
+  go.** Bind errors surface on the server thread, so `_start_server()`
+  rarely raises: `restart_fails` stayed 0 and a meter whose port was taken
+  restarted every second, spamming the event ring — exactly what F-32
+  claimed to fix; and with the tick counter frozen while the server was
+  down, three sync failures could lock the `tick % 30` gate shut forever.
+  A start whose server never comes up now counts as a failed attempt, and
+  retries follow a monotonic deadline (every tick ×3, then ~30 s).
+- **A fast-growing energy counter froze forever.** The upward-jump guard's
+  ±5 % spread test can never be satisfied by steady growth >5 %/read and
+  only accepted values advanced the baseline — a freshly reset counter (or
+  an EV session counter near zero) was held indefinitely, serving a stale
+  value to HA's total_increasing and the vmeters. Ascending continuation
+  now confirms; a lone flipped-word spike is still dropped.
+- **`connect()` swapped the shared transport's client without the lock**
+  the class comment promised: on a multi-unit endpoint one unit's
+  reconnect could close the client a sibling was mid-transaction on.
+- **Endpoint aggregates were dropped during an InfluxDB outage** instead
+  of buffered: the `connected` gate bypassed the replay buffer that exists
+  precisely for this, so every outage left a permanent hole in the
+  installation's totals while the units' series replayed fine.
+- **A `*_SF` register in a different poll group silently killed its
+  dependents.** The SunSpec refs/last-good memo lived per poll group; the
+  dependents' group never saw the exponent and dropped every read as
+  sf_missing, with only a DEBUG line. The memo is device-wide now.
+- **MQTT-input parity**: `scale_from` registers on an MQTT source were
+  unconditionally dropped (corrections ran without `siblings`) and
+  `daily: true` was ignored on this transport; both now run the full
+  poller pipeline, and topics removed by a register swap are unsubscribed
+  instead of delivering into nothing forever.
+- A `poll_now()` kick racing a real `stop()` could erase the stop (the
+  kick path cleared the shared stop event) and leave an unkillable poller
+  double-polling after a register reload; the cadence wait sleeps on its
+  own wake event now and the stop event is never cleared.
+- The endpoint arbiter's `min_gap` cooldown could be cut short by any
+  peer's release/timeout notify; it is strict now. A vmeter's `req_rate`
+  anchors its window on *now*, so a vanished consumer decays to 0 instead
+  of showing its last rate forever.
+
 ### 2026-10-02 — SECURITY: third-pass audit — sessions survive restore, MQTT write parity, lease shutdown revert
 
 A combined pass: a full six-dimension internal audit plus the verification

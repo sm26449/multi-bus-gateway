@@ -225,14 +225,18 @@ class VMeterStats:
 
     def req_rate(self, window_s: int = 10) -> float:
         """Average requests/sec over the last window_s seconds. Silent seconds
-        count as zero (buckets only exist for seconds that had traffic)."""
+        count as zero (buckets only exist for seconds that had traffic). The
+        window is anchored to NOW, not to the last traffic bucket — anchored
+        there, a consumer that vanished kept showing its old req/s forever in
+        status/MQTT, and an alert rule on req_rate never saw 0 (audit
+        2026-10-01)."""
         with self._lock:
             buckets = list(self.rate)
             if self._cur_sec:
                 buckets.append((self._cur_sec, self._cur_cnt))
         if not buckets:
             return 0.0
-        cutoff = buckets[-1][0] - window_s + 1
+        cutoff = int(time.time()) - window_s + 1
         recent = sum(c for (s, c) in buckets if s >= cutoff)
         return round(recent / window_s, 2)
 
@@ -1054,6 +1058,16 @@ class VirtualMeter:
         restart_fails = 0
         probe_fails = 0
         tick = 0
+        # F-32 follow-up (audit 2026-10-01): the old gate was
+        # `restart_fails < 3 or tick % 30 == 0`, which broke both ways. Bind
+        # errors (port in use, bad interface) surface on the SERVER thread,
+        # so _start_server() rarely raises — restart_fails stayed 0 and the
+        # meter restarted every tick; and with tick frozen while the server
+        # was down, three sync failures could lock the gate shut forever.
+        # Now: a start whose server never comes up counts as a failed attempt
+        # on the next pass, and retries follow a monotonic deadline.
+        next_retry_at = 0.0           # when the next (re)start attempt may run
+        pending_start = False         # a start ran; not yet seen alive
         port = int(self.t.transport.get("port", 1502))
         clock_guard = self._clock_guard
         while not self._stop.is_set():
@@ -1077,21 +1091,30 @@ class VirtualMeter:
                     # (re)start a server the manager just retired, or it orphans
                     # an unsupervised listener on the port
                     if not self._alive() and not self._stop.is_set():
-                        if self._running and not (self._server_thread and self._server_thread.is_alive()):
+                        if (not pending_start and self._running
+                                and not (self._server_thread and self._server_thread.is_alive())):
                             logger.warning("virtual meter %s server thread died — restarting", self.t.id)
                             self.stats.record_event("error", "crash",
                                                     "server thread died — restarting")
-                        # after three straight failures (a port already in use,
-                        # an interface that does not exist) retry every ~30 s,
-                        # and say so on the first failure and every tenth — not
-                        # on every tick into the event ring (F-32, 3.83.0)
-                        if restart_fails < 3 or tick % 30 == 0:
+                        now = time.monotonic()
+                        if pending_start:
+                            # the previous start "succeeded" but the server
+                            # never came up — the bind failed on its thread
+                            pending_start = False
+                            restart_fails += 1
+                            if restart_fails == 1 or restart_fails % 10 == 0:
+                                self.stats.record_event("error", "restart_failed",
+                                                        f"restart attempt {restart_fails}: server did not come up "
+                                                        "(port in use / bad interface?)")
+                                logger.error("virtual meter %s restart failed (%d): server did not come up",
+                                             self.t.id, restart_fails)
+                            # after three straight failures retry every ~30 s —
+                            # not on every tick (F-32, 3.83.0)
+                            next_retry_at = now + (30.0 if restart_fails >= 3 else 0.0)
+                        if now >= next_retry_at:
                             try:
                                 self._start_server()
-                                if restart_fails:
-                                    logger.warning("virtual meter %s: server restarted after %d failed attempts",
-                                                   self.t.id, restart_fails)
-                                restart_fails = 0
+                                pending_start = True      # success is judged next pass, by _alive()
                             except Exception as e:        # noqa: BLE001
                                 restart_fails += 1
                                 self._running = False
@@ -1100,7 +1123,15 @@ class VirtualMeter:
                                                             f"restart attempt {restart_fails} failed: {e}")
                                     logger.error("virtual meter %s restart failed (%d): %s",
                                                  self.t.id, restart_fails, e)
+                                next_retry_at = now + (30.0 if restart_fails >= 3 else 0.0)
                     else:
+                        if pending_start or restart_fails:
+                            if restart_fails:
+                                logger.warning("virtual meter %s: server restarted after %d failed attempts",
+                                               self.t.id, restart_fails)
+                            pending_start = False
+                            restart_fails = 0
+                            next_retry_at = 0.0
                         self._push_to_ctx()
                         # liveness probe (~every 10s): a thread can be alive but
                         # wedged. If it stops accepting connections for 3 probes
