@@ -21,6 +21,7 @@ import os
 import re
 import threading
 import time
+import weakref
 from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -119,6 +120,11 @@ class RuleStore:
 
 
 class RulesRuntime:
+    # every live runtime, for test teardown: a leaked background thread from
+    # one test used to sweep ITS units while a later test ran (the 9162777
+    # flake fixed one victim; conftest stops the source for all of them)
+    _instances = weakref.WeakSet()
+
     def __init__(self, *, config_dir: Path, resolver_factory: Callable, find_device: Callable,
                  endpoint_devices: Callable, commands_for: Callable, run_command: Callable,
                  poll_now: Callable, event_log=None, alert_mgr=None, mqtt=None, audit_log=None,
@@ -153,6 +159,7 @@ class RulesRuntime:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.last_tick: Optional[float] = None
+        RulesRuntime._instances.add(self)
 
     # ── loading and binding ──────────────────────────────────────────────────
 

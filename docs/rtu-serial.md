@@ -105,7 +105,9 @@ The map lives in `/data/portmap.json` inside the `serial-bridge-data` volume.
 ## 4. Security
 
 - Bridge data ports bind to the **internal Docker network only**; never publish
-  7001–7099 to the LAN. The control API binds to `127.0.0.1`.
+  7001–7099 to the LAN. The control API is published on the host's
+  `127.0.0.1:7000` only (inside the container it listens on all interfaces of
+  the internal network — compose does the host-local binding).
 - Direct mode gives MBG `/dev` access; bridge mode does not (MBG stays
   unprivileged) — prefer the bridge on shared/exposed hosts.
 - RTU has no authentication of its own — treat network reachability to the bus

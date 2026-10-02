@@ -21,3 +21,24 @@ def _isolate_shared_endpoints():
     yield
     mc._TRANSPORTS.clear()
     mc._ARBITERS.clear()
+
+
+@pytest.fixture(autouse=True)
+def _stop_leaked_rules_runtimes():
+    """Stop every rules thread the test started (or leaked).
+
+    The 9162777 flake's root cause was a leaked rules thread from an earlier
+    test still sweeping its own units under random ordering; that fix
+    immunized one victim — this closes the class: any runtime whose thread is
+    still alive after the test is stopped before the next one runs.
+    """
+    yield
+    try:
+        from multibus.rules_runtime import RulesRuntime
+        for rt in list(RulesRuntime._instances):
+            try:
+                rt.stop()
+            except Exception:  # noqa: BLE001 — teardown must never fail a test
+                pass
+    except Exception:  # noqa: BLE001
+        pass

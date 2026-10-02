@@ -12,10 +12,16 @@ services:
     build: .
     # The published multi-arch image; `docker compose pull` + `up -d` runs a
     # release without a local build, `docker compose build` overrides it.
+    # NOTE: with only this compose file (no repo checkout), run `compose pull`
+    # FIRST — a bare `up -d` would try the local build and fail confusingly.
     image: ghcr.io/sm26449/multi-bus-gateway:${MBG_VERSION:-latest}
     container_name: multi-bus-gateway
     logging: *default-logging
     restart: unless-stopped
+    # a minimal init as PID 1: python handles SIGTERM itself (graceful
+    # shutdown is in main.py), but nothing reaped zombies if a subprocess
+    # ever forks (the serial-bridge already runs tini)
+    init: true
     ports:
       - "${UI_PORT:-8080}:${UI_PORT:-8080}"
       # Virtual meters — publish a contiguous range so they are reachable on the
@@ -178,7 +184,10 @@ services:
   #     starts the gateway alone, or set ESPHOME_ENABLED=false in .env — the
   #     section stays hidden-but-configurable either way.
   esphome:
-    image: ghcr.io/esphome/esphome:latest
+    # pinned (Dependabot bumps it): a bad upstream release must not land on
+    # every `compose pull` — mosquitto/influxdb were already pinned, these two
+    # floated (audit 2026-10-01)
+    image: ghcr.io/esphome/esphome:2026.5.3
     container_name: esphome
     logging: *default-logging
     restart: unless-stopped
@@ -224,7 +233,8 @@ services:
 
   # Grafana — dashboards over the same InfluxDB; part of the complete stack.
   grafana:
-    image: grafana/grafana:latest
+    # pinned (Dependabot bumps it) — same reasoning as the esphome pin above
+    image: grafana/grafana:13.0.2
     container_name: mbg-grafana
     logging: *default-logging
     restart: unless-stopped

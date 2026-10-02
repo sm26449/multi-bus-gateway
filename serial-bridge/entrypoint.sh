@@ -8,6 +8,9 @@
 set -e
 if [ "$(id -u)" = "0" ]; then
     chown bridge:bridge /data
-    exec setpriv --reuid=bridge --regid=bridge --init-groups "$@"
+    # --no-new-privs, like the gateway's entrypoint: compose sets
+    # no-new-privileges too, but the image documents standalone `docker run`,
+    # where this is the only place the drop is made final (audit 2026-10-01)
+    exec setpriv --reuid=bridge --regid=bridge --init-groups --no-new-privs "$@"
 fi
 exec "$@"

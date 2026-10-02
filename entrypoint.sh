@@ -9,7 +9,14 @@
 # is nothing to fix up: exec straight through.
 set -e
 if [ "$(id -u)" = "0" ]; then
-    chown -R mbg:mbg /app/config
+    # Only when the mount actually arrived with foreign ownership: a recursive
+    # chown over a config dir full of snapshots/buffer files on EVERY start is
+    # slow and wears SD cards — and, best-effort, so a deliberately read-only
+    # config mount doesn't fail the boot (audit 2026-10-01).
+    if [ "$(stat -c %u /app/config)" != "$(id -u mbg)" ]; then
+        chown -R mbg:mbg /app/config 2>/dev/null \
+            || echo "entrypoint: /app/config not chown-able (read-only mount?) — continuing" >&2
+    fi
     # --no-new-privs: nothing this process starts can regain privilege (setuid
     # binaries, file capabilities) — the drop is final (3.80.0)
     exec setpriv --reuid=mbg --regid=mbg --init-groups --no-new-privs "$@"

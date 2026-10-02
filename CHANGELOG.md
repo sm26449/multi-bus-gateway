@@ -2,6 +2,31 @@
 
 ## 3.84.0
 
+### 2026-10-02 — infra: the serial-bridge joins CI, pins, teardown
+
+- **The serial-bridge image is built and Trivy-scanned in CI** — it never
+  was: a broken Dockerfile or a debian CVE surfaced first on release day.
+  Same HIGH/CRITICAL gate as the gateway image.
+- Grafana and ESPHome are **pinned** in docker-compose.yml (13.0.2 /
+  2026.5.3) instead of `:latest` — a bad upstream release no longer lands
+  on every `compose pull`; Dependabot's new `docker-compose` ecosystem
+  keeps the pins moving (the `docker` ecosystem only watches Dockerfiles).
+- The gateway's entrypoint chowns the config volume **only when it arrived
+  with foreign ownership** (a recursive chown over snapshots and buffer
+  files on every start is slow and wears SD cards) and tolerates a
+  read-only config mount instead of failing the boot; the serial-bridge
+  entrypoint gets `--no-new-privs` for standalone `docker run` parity;
+  `init: true` on the gateway service reaps would-be zombies.
+- **Leaked rules threads are stopped between tests**: the 9162777 flake's
+  root cause was an earlier test's rules thread still sweeping its units
+  under random ordering — that fix immunized one victim; an autouse
+  teardown now stops every live runtime after each test.
+- `--timeout=120` moved into pytest.ini addopts (a bare local `pytest`
+  could hang forever); requirements.txt caps the next MAJOR of
+  fastapi/uvicorn/pydantic for bare-metal installs (the image ships the
+  hash-pinned lock regardless); rtu-serial.md states the control-API
+  binding precisely (host-local publish, not an in-container bind).
+
 ### 2026-10-02 — UI: correctness and accessibility
 
 The audit's frontend findings — first the bugs, then the access gaps:

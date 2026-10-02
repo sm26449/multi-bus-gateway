@@ -80,3 +80,20 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
+
+  bridge-image-scan:
+    # the serial-bridge image was never built or scanned in CI — a broken
+    # Dockerfile or a debian CVE surfaced first at release time (audit
+    # 2026-10-01); same gate as the gateway image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build
+        run: docker build -t multi-bus-gateway-serial-bridge:ci ./serial-bridge
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: multi-bus-gateway-serial-bridge:ci
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
