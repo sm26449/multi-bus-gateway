@@ -1576,8 +1576,11 @@ daily stays logged in until the cap), persisted as SHA-256 token hashes in
 `config/sessions.json` — a container restart keeps you logged in.
 Rotating any password revokes **every** session (an old cookie can't outlive
 the rotation) — except the author's: the security save re-issues your own
-session, so changing passwords never logs *you* out mid-task. The audit
-trail is admin-only.
+session, so changing passwords never logs *you* out mid-task. The same holds
+when a backup import or a snapshot restore changes credentials (3.84.0): all
+sessions are revoked, the restoring admin's is re-issued, the passkey
+registry is reloaded from the restored file, and passkeys of accounts that no
+longer exist are pruned. The audit trail is admin-only.
 
 ### 16.2 Passkeys (WebAuthn)
 

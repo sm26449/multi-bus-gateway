@@ -38,6 +38,44 @@ informational: loading never depends on it, so the compatibility contract is
 exactly the above. (Device *templates* additionally carry a `schema_version`,
 and newer template schemas are rejected with a clear error.)
 
+## 3.84.0 — audit hardening: what you may notice after upgrading
+
+No config migration. Behaviour changes an operator can observe:
+
+- **Restoring a snapshot (or importing a backup) that changes credentials
+  now logs every session out** — including other browsers/devices. The
+  admin doing the restore keeps their session (it is re-issued). This
+  closes the gap where a stolen cookie survived "restore last week's
+  snapshot to kick the attacker". Passkeys of accounts that no longer
+  exist are pruned, and a passkey login now carries the account's
+  *current* role, not the one frozen at enrollment.
+- **Home Assistant may lose a number/select entity** it should never have
+  had: discovery no longer advertises a writable register whose value
+  depends on a live scale factor (`scale_from`) or that a command writes
+  first, unless an enabled HA-faced command fronts it. Writing those raw
+  produced wrongly-scaled values; use the command entity instead. HA
+  writes also enforce the template's `write_allowed` set and refuse
+  values the encoder would have silently clamped — a payload that
+  "worked" before by being mangled is now rejected (see the gateway log).
+- **The operator role can run template commands** (`POST
+  /api/devices/{id}/commands/{name}`, dry-run, and the power-limit
+  alias). Group fan-out stays admin-only.
+- On a login-off box "secured" with `API_KEY`, the config GETs
+  (`/api/config`, `/api/config/influxdb`, `/api/config/alerts`) now
+  REDACT URL-embedded secrets unless the key is presented — a script that
+  read the raw webhook/Influx URL anonymously must send `X-API-Key`.
+  A settings save that round-trips the redacted form keeps the stored
+  secret.
+- Rule timing (rate limit, reassert, staleness) runs on the monotonic
+  clock: an NTP step no longer delays a reassert or expires an override
+  early. `fast` steps and stale safe-wants are exempt from
+  `min_interval_s`. Operator clamps now also cap `on_stale` wants.
+- A clean container stop now really writes every active write-lease's
+  safe value (it used to skip the write and still clear the lease file).
+- The bundled broker ships an ACL scaffold (`mosquitto/config/acl.example`)
+  — opt-in, see security-hardening §4. Grafana and ESPHome are pinned in
+  compose instead of `:latest`.
+
 ## 3.81.0 — the bundled stack requires credentials (breaking)
 
 Only installs that run the **bundled** `docker-compose.yml` stack are

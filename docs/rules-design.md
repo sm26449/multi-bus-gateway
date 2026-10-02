@@ -167,7 +167,9 @@ the pause is visible on the Rules page. In **shadow** the target stays
    reaches a step, fast or not; a real jump costs one poll interval.
 4. **Rate limit**: a command less than `min_interval_s` after the previous one
    is `hold (rate limit)`; the desired is kept and applied on the next tick
-   that allows it.
+   that allows it. The emergency paths are exempt (3.84.0): a `fast` step and
+   a stale safe/fixed want never sit out the window a routine step opened —
+   a curtail must not wait behind a courtesy limit.
 5. **Closed loop**: with nothing new to ask, compare `actual` (the read-back
    register's value and age) with the want. Off by more than the command's
    verify tolerance for longer than `reassert_s` → `reassert`. This replaces
@@ -184,6 +186,17 @@ the pause is visible on the Rules page. In **shadow** the target stays
    `Decision` (ring of 200 per rule, event log, MQTT event); a retained
    **state** carries mode, state, signal, want, actual, since, clamp, last
    decision and reason.
+
+**Clocks** (3.84.0): all interval timing — rate limit, reassert, staleness,
+debounce sample identity — runs on the **monotonic** clock, so an NTP/chrony
+step can neither freeze the reassert that restores a limit after `RvrtTms`
+nor prematurely expire an override. Wall time is used only for Decision
+timestamps and the persisted absolutes (`paused_until`, clamp `expires_at`),
+which the UI shows as dates and which must survive restarts. Operator clamps
+also cap `on_stale` wants (cap only — clamp *expiry* is not judged while the
+signal is blind). `rules.yaml` and `rules_state.json` are written
+temp+fsync+replace, and an unreadable `rules.yaml` raises an alert instead of
+silently disabling every rule.
 
 The runtime (`rules_runtime.py`) is one thread ticking at the smallest
 `every_s`, evaluating every enabled rule against the store, then executing

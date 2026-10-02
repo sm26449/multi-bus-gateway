@@ -33,7 +33,11 @@ reverse proxy. It is not designed to be exposed to the public internet.
       `ui.trusted_proxies` so each client gets its own lockout bucket and
       its own audit identity.
 - [ ] Sessions slide for 7 days and end after 30 regardless. Rotating any
-      password revokes every session.
+      password revokes every session — through the Security card, a backup
+      import or a snapshot restore alike (3.84.0); the admin performing the
+      change keeps a freshly-issued session. Passkeys of renamed/removed
+      accounts are pruned on every path, and a passkey login carries the
+      account's CURRENT role.
 
 ## 3. Network exposure
 

@@ -1114,7 +1114,11 @@ un restart de container te ține logat. Rotirea oricărei parole revocă
 **fiecare** sesiune (un cookie vechi nu poate supraviețui rotației) — cu
 excepția autorului: salvarea de securitate îți re-emite propria sesiune,
 deci schimbarea parolelor nu te scoate niciodată *pe tine* din cont în
-mijlocul treburii. Audit trail-ul e doar pentru admin.
+mijlocul treburii. La fel și când un import de backup sau o restaurare de
+snapshot schimbă credențialele (3.84.0): toate sesiunile sunt revocate, cea
+a adminului care restaurează e re-emisă, registrul de passkeys e reîncărcat
+din fișierul restaurat, iar passkey-urile conturilor dispărute sunt șterse.
+Audit trail-ul e doar pentru admin.
 
 ### 16.2 Passkey-uri (WebAuthn)
 

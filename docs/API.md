@@ -280,12 +280,12 @@ enabled; dashboard errors surface as 502 with the reason.
 | Method | Path | Description | Role |
 |---|---|---|---|
 | GET | `/api/config/export?include_secrets=&include_identity=` | Download a ZIP backup (config.yaml, per-device registers, user templates, virtual_meters.yaml). Secrets and host/port identity are **stripped by default** — wherever they sit: device connection/http/mqtt_in/rest_push blocks, every source, every installation source; including them requires the admin role (the API key stands in only while login is off), and is audit-logged | viewer (sanitized) / admin (with secrets) |
-| POST | `/api/config/import?apply=` | Restore a ZIP backup (raw body, ≤25 MB, ZIP-bomb guarded, path-traversal safe). Sanitized backups are **merged** over the live config so stripped secrets survive. Takes a `pre-import` snapshot first | admin |
+| POST | `/api/config/import?apply=` | Restore a ZIP backup (raw body, ≤25 MB, ZIP-bomb guarded, path-traversal safe). Sanitized backups are **merged** over the live config so stripped secrets survive. Takes a `pre-import` snapshot first. A bundle that rotates identity revokes every session (the calling admin's is re-issued in the response cookie) and prunes passkeys of gone accounts | admin |
 | GET | `/api/config/snapshots` | Automatic + manual snapshots, newest first (LKG on top) | viewer |
 | POST | `/api/config/snapshots` | Take a manual snapshot (`{note}`) | admin |
 | GET | `/api/config/snapshots/{sid}/download` | Download a snapshot ZIP (full-fidelity, secrets included → admin; the API key stands in only while login is off) | admin |
 | GET | `/api/config/snapshots/{sid}/diff?against=live` | Semantic, secrets-masked diff vs live or another snapshot | viewer |
-| POST | `/api/config/snapshots/{sid}/restore?apply=` | Roll back to a snapshot (takes a `pre-restore` snapshot first; config.yaml replaced verbatim) | admin |
+| POST | `/api/config/snapshots/{sid}/restore?apply=` | Roll back to a snapshot (takes a `pre-restore` snapshot first; config.yaml replaced verbatim). Identity rotation revokes every session (caller re-issued), reloads the passkey registry from the restored file and prunes gone accounts | admin |
 | DELETE | `/api/config/snapshots/{sid}` | Delete a snapshot (`lkg` is protected) | admin |
 
 ## Status & observability

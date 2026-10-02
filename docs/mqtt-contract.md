@@ -149,10 +149,17 @@ non-primary Modbus device's writable holding registers are advertised as HA
 `number` (or `select`, when the register has an enum map) entities with
 `command_topic` = `<state topic>/set`. The gateway subscribes to it; the
 payload is the number, or the option label for a select. Every write is
-re-validated (writability, bounds, rate limit) and audited; a register that a
-template command writes first (e.g. `WMaxLimPct`) is executed *through* that
-command. Retained commands are ignored and cleared. Code: `multibus/api.py`
-— `_mqtt_write_command`; `multibus/mqtt_publisher.py` — `_write_entity_config`.
+re-validated with the FULL HTTP envelope (3.84.0): writability,
+`write_min`/`write_max`, the exact `write_allowed` set, a pre-check that
+refuses any value the encoder would have to clamp, the rate limit — and
+audited. A register that a template command writes first (e.g. `WMaxLimPct`)
+is executed *through* that command; one with `scale_from`, or whose fronting
+command is disabled or not HA-faced, is refused rather than written with the
+static scale — and discovery does not advertise such registers in the first
+place. Raw writes take the command lock, so one can never land inside a
+command's guard-read → write → verify sequence. Retained commands are ignored
+and cleared. Code: `multibus/api.py` — `_mqtt_write_command`;
+`multibus/mqtt_publisher.py` — `_write_entity_config`.
 
 ## Rules — `mbg/rules/<rule_id>/…`
 
