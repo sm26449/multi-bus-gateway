@@ -1,8 +1,17 @@
 # Multi-Bus Gateway
 # Digest-pinned base image (Dependabot's docker ecosystem refreshes the pin);
 # the tag is kept for humans, the digest is what is built.
-FROM python:3.11-slim@sha256:da047cb8f9d1d98e5c070f5300ba9f7274e33b8fc0e5be5ed88740aed1b95ba9
+FROM python:3.11-slim@sha256:bab1b7ef4b450c81002278d035eff85ebe394ae94df904f7a3ba14f7e16e487b
 LABEL org.opencontainers.image.licenses="AGPL-3.0-or-later"
+
+# Debian security fixes newer than the base image's last rebuild: the digest
+# pin keeps the build reproducible, but a fixed CVE (pcre2/openssl class) can
+# sit published for days before the official image rebuilds — Trivy rightly
+# fails the gate on it. A dist-upgrade of the ~120 base packages closes that
+# window; Dependabot's digest bumps keep this layer close to a no-op.
+RUN apt-get update \
+    && apt-get dist-upgrade -y --no-install-recommends \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Dedicated non-root user. The entrypoint starts as root ONLY to chown the
 # mounted config volume (bind mounts arrive with host ownership — root on a
