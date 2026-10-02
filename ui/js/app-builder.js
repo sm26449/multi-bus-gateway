@@ -420,7 +420,7 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!box) return;
         const results = d.results || [];
         if (!results.length) {
-            box.innerHTML = `<div class="settings-card" style="padding:12px;color:var(--text-secondary);">${this.t('devices.scanNone', 'No devices answered on')} ${d.scanned} ${this.t('devices.scanHosts', 'hosts.')}</div>`;
+            box.innerHTML = `<div class="settings-card" style="padding:12px;color:var(--text-secondary);">${this.t('devices.scanNone', 'No devices answered on {n} hosts.', { n: d.scanned })}</div>`;
             return;
         }
         const managed = new Set(((nodesInfo && nodesInfo.configured) || []).map(n => n.name));
@@ -445,7 +445,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="device-row-actions">${action}</div>
             </div>`;
         }).join('') + `</div>
-        <div class="field-hint" style="margin-top:6px;">${d.scanned} ${this.t('devices.scanHosts', 'hosts.')} · ${d.elapsed_s}s</div>`;
+        <div class="field-hint" style="margin-top:6px;">${this.t('devices.scanHosts', '{n} hosts.', { n: d.scanned })} · ${d.elapsed_s}s</div>`;
         box.querySelectorAll('button[data-scan-imp]').forEach(b => b.addEventListener('click', () =>
             this._builderImportNode(importable[parseInt(b.dataset.scanImp, 10)], b)));
     },

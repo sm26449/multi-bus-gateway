@@ -178,10 +178,10 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div class="empty-state-icon"><i class="bi bi-graph-up" aria-hidden="true"></i></div>
                     <div class="empty-state-title">${this.t('msg.noMonitored', "No measurements monitored")}</div>
                     <div class="empty-state-desc">
-                        Add measurements to monitoring to see real-time data.
+                        ${this.t('monitor.emptyDesc', 'Add measurements to monitoring to see real-time data.')}
                     </div>
                     <button class="empty-state-action" ${this._act('_jumpToRegisters', ['view'])}>
-                        📋 Browse Registers
+                        📋 ${this.t('monitor.browseRegisters', 'Browse Registers')}
                     </button>
                 </div>
             `;

@@ -360,7 +360,7 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!box) return;
         const results = d.results || [];
         if (!results.length) {
-            box.innerHTML = `<div class="settings-card" style="padding:12px;color:var(--text-secondary);">${this.t('devices.scanNone', 'No devices answered on')} ${d.scanned} ${this.t('devices.scanHosts', 'hosts.')}</div>`;
+            box.innerHTML = `<div class="settings-card" style="padding:12px;color:var(--text-secondary);">${this.t('devices.scanNone', 'No devices answered on {n} hosts.', { n: d.scanned })}</div>`;
             return;
         }
         const rows = results.map(r => {

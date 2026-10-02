@@ -399,8 +399,10 @@ Object.assign(JanitzaMonitor.prototype, {
         catch (e) { return {}; }
     },
 
-    t(key, fallback) {
-        return (this._t && this._t[key]) || fallback || key;
+    t(key, fallback, params) {
+        let s = (this._t && this._t[key]) || fallback || key;
+        if (params) s = s.replace(/\{(\w+)\}/g, (m, name) => name in params ? String(params[name]) : m);
+        return s;
     },
 
     async setLanguage(code, persist = true) {
@@ -1040,7 +1042,7 @@ Object.assign(JanitzaMonitor.prototype, {
             if (msg.timestamp) {
                 const lastUpdateEl = document.getElementById('lastUpdate');
                 if (lastUpdateEl) {
-                    lastUpdateEl.textContent = 'Last update: ' + new Date(msg.timestamp).toLocaleTimeString();
+                    lastUpdateEl.textContent = this.t('status.lastUpdate', 'Last update:') + ' ' + new Date(msg.timestamp).toLocaleTimeString();
                 }
             }
 

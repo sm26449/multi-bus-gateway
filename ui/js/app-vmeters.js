@@ -48,7 +48,8 @@ Object.assign(JanitzaMonitor.prototype, {
         const noFree = pr.next_free == null;
         const canAdd = opts && !noFree;
         const portHint = (pr.start != null)
-            ? `published range ${pr.start}–${pr.end}${pr.used && pr.used.length ? ' · used: ' + pr.used.join(', ') : ''}`
+            ? this.t('vmeter.portRange', 'published range {start}–{end}', { start: pr.start, end: pr.end })
+              + (pr.used && pr.used.length ? ' · ' + this.t('vmeter.portUsed', 'used: {list}', { list: pr.used.join(', ') }) : '')
             : '';
         // add-instance is a modal now; keep the picker data for it
         this._vmAddCtx = { devices, primaryId, templates, configured, pr };
@@ -56,10 +57,10 @@ Object.assign(JanitzaMonitor.prototype, {
             <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
               <button class="btn btn-primary btn-sm" id="vmAddInstanceBtn" ${canAdd ? '' : 'disabled'}>
                 <i aria-hidden="true" class="bi bi-plus-lg"></i> ${this.t('vmeter.addInstance', 'Add instance')}</button>
-              ${portHint ? `<span style="color:var(--text-secondary);font-size:12px;">${noFree ? '<span style="color:#e08e0b;">No free port in range — widen VMETER_PORT_END.</span> ' : ''}${portHint}</span>` : ''}
+              ${portHint ? `<span style="color:var(--text-secondary);font-size:12px;">${noFree ? `<span style="color:#e08e0b;">${this.t('vmeter.noFreePort', 'No free port in range — widen VMETER_PORT_END.')}</span> ` : ''}${portHint}</span>` : ''}
             </div>`;
         const cards = !insts.length
-            ? '<p style="color:var(--text-secondary);">No virtual meters configured. Use “Add instance”.</p>'
+            ? `<p style="color:var(--text-secondary);">${this.t('vmeter.noneConfigured', 'No virtual meters configured. Use “Add instance”.')}</p>`
             : insts.map(m => {
             const mid = this._esc(m.template);
             // One status component app-wide (same pill as the Outputs sinks) —
@@ -67,9 +68,9 @@ Object.assign(JanitzaMonitor.prototype, {
             const badge = m.state === 'ok'
                 ? `<span class="sink-pill ok">${this.t('vmeter.listening', 'listening')}</span>`
                 : m.state === 'stale'
-                ? `<span class="sink-pill warn" title="source stale — meter stopped responding (consumer fail-safe)">${this.t('vmeter.stale', 'stale')}</span>`
+                ? `<span class="sink-pill warn" title="${this.t('vmeter.staleTip', 'source stale — meter stopped responding (consumer fail-safe)')}">${this.t('vmeter.stale', 'stale')}</span>`
                 : m.state === 'down'
-                ? `<span class="sink-pill bad" title="enabled but not serving — crashed or failed to start">${this.t('vmeter.down', 'down')}</span>`
+                ? `<span class="sink-pill bad" title="${this.t('vmeter.downTip', 'enabled but not serving — crashed or failed to start')}">${this.t('vmeter.down', 'down')}</span>`
                 : (m.enabled ? `<span class="sink-pill warn">${this.t('vmeter.starting', 'starting…')}</span>`
                              : `<span class="sink-pill off">${this.t('vmeter.disabled', 'disabled')}</span>`);
             const prev = Object.entries(m.preview || {})
@@ -81,7 +82,7 @@ Object.assign(JanitzaMonitor.prototype, {
             const connRows = conns.length
                 ? conns.map(c => `<tr><td style="padding:2px 14px 2px 0;color:var(--text-secondary);font-family:monospace;">${this._esc(c.ip)}${c.port ? ':' + c.port : ''}</td>`
                     + `<td style="padding:2px 0;color:var(--text-secondary);font-variant-numeric:tabular-nums;white-space:nowrap;" title="connection uptime">up ${this._dur(c.connected_s)}</td></tr>`).join('')
-                : '<tr><td style="color:var(--text-secondary);">no active connections</td></tr>';
+                : `<tr><td style="color:var(--text-secondary);">${this.t('vmeter.noConns', 'no active connections')}</td></tr>`;
             const summary = `:${m.port ?? '—'} · ${conns.length} conn${conns.length === 1 ? '' : 's'}`
                 + (m.running ? ` · ${m.requests ?? 0} req · ${m.req_rate ?? 0}/s` : '');
             const t = this.t.bind(this);
@@ -93,19 +94,19 @@ Object.assign(JanitzaMonitor.prototype, {
                   <div><div style="color:var(--text-secondary);font-size:11.5px;">${this.t('lbl.serving', "Serving")}</div><b>:${m.port ?? '—'}</b> · unit <b>${m.unit_id ?? 1}</b></div>
                   <div><div style="color:var(--text-secondary);font-size:11.5px;">${this.t('lbl.status', "Status")}</div>${badge}</div>
                   <div><div style="color:var(--text-secondary);font-size:11.5px;">${this.t('lbl.throughput', "Throughput")}</div><b>${m.running ? (m.requests ?? 0) : '—'}</b> req · <b>${m.running ? (m.req_rate ?? 0) : 0}</b>/s</div>
-                  <div><div style="color:var(--text-secondary);font-size:11.5px;">${this.t('lbl.freshness', "Freshness")}</div>stale after <b>${m.stale_after_s ?? 15}s</b> · <b>${this._fmtInterval(m.update_interval_s ?? 1)}</b> refresh</div>
+                  <div><div style="color:var(--text-secondary);font-size:11.5px;">${this.t('lbl.freshness', "Freshness")}</div>${this.t('vmeter.freshness', 'stale after <b>{s}s</b> · <b>{refresh}</b> refresh', { s: m.stale_after_s ?? 15, refresh: this._fmtInterval(m.update_interval_s ?? 1) })}</div>
                   ${m.errors ? `<div style="color:var(--danger-text,#c0392b);"><div style="font-size:11.5px;">${this.t('lbl.errors', "Errors")}</div><b>${m.errors}</b></div>` : ''}
                 </div>
                 ${m.last_error ? `<div style="color:var(--warning-text,#c77700);font-size:12.5px;margin-bottom:10px;" title="${this._esc(m.last_error.message || '')}"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> ${this._esc(m.last_error.kind || '')}${m.last_error.ts ? ` <span style="color:var(--text-secondary);">· ${this._relTime(m.last_error.ts)}</span>` : ''}</div>` : ''}
                 <div style="font-size:12.5px;margin-bottom:14px;">
-                  <div style="color:var(--text-secondary);margin-bottom:4px;"><i aria-hidden="true" class="bi bi-plug"></i> Connections (${conns.length})</div>
+                  <div style="color:var(--text-secondary);margin-bottom:4px;"><i aria-hidden="true" class="bi bi-plug"></i> ${t('vmeter.connections', 'Connections ({n})', { n: conns.length })}</div>
                   <table>${connRows}</table></div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;">
                   <button class="btn btn-sm" data-vm-editinst="${mid}"><i aria-hidden="true" class="bi bi-sliders"></i> ${t('common.edit', 'Edit')}</button>
                   <button class="btn btn-ghost btn-sm" data-vm-del="${mid}"><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>
                 </div>`;
             const live = prev
-                ? `<div style="font-size:13px;"><div style="color:var(--text-secondary);margin-bottom:6px;">Live values served (source → served value)</div><table>${prev}</table></div>`
+                ? `<div style="font-size:13px;"><div style="color:var(--text-secondary);margin-bottom:6px;">${this.t('vmeter.liveServed', 'Live values served (source → served value)')}</div><table>${prev}</table></div>`
                 : `<p style="color:var(--text-secondary);">${this.t('msg.noLiveValues', "No live values yet.")}</p>`;
             return `
             <div class="settings-card vm-acc" data-mid="${mid}" style="margin-bottom:12px;">

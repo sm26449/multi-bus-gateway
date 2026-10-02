@@ -2,6 +2,23 @@
 
 ## 3.84.0
 
+### 2026-10-02 — i18n: the hardcoded-English sweep
+
+- `t()` learned `{name}` interpolation, so the three sentences that were
+  glued from fragments (lockout minutes, scan-result counts, rule
+  confirmations) are single translatable keys with placeholders — word
+  order is the translator's again.
+- 73 new keys cover what rendered in English even in Romanian: the
+  statusbar, the enum-builder modal, the virtual-meter page and its
+  instance/delete modals, the raw-config and customize-dashboard modals,
+  the History page's hints/axis notes/empty states, the Monitor and
+  Dashboard empty states, and the register editor's header and footer.
+- The phase-convention options carried Romanian wording in the ENGLISH
+  base ("maro / negru / gri"); the English labels are English now and the
+  Romanian wording lives in ro.json, where it belongs. Option values are
+  untouched, so saved configs read back identically.
+- en.json and ro.json remain in full key parity (1559 keys).
+
 ### 2026-10-02 — infra: the serial-bridge joins CI, pins, teardown
 
 - **The serial-bridge image is built and Trivy-scanned in CI** — it never

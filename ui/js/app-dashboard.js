@@ -424,10 +424,10 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div class="empty-state-icon"><i class="bi bi-bar-chart" aria-hidden="true"></i></div>
                     <div class="empty-state-title">${this.t('msg.noWidgets', "No widgets on dashboard")}</div>
                     <div class="empty-state-desc">
-                        Add measurements to your dashboard to monitor values in real-time.
+                        ${this.t('dash.emptyDesc', 'Add measurements to your dashboard to monitor values in real-time.')}
                     </div>
                     <button class="empty-state-action" ${this._act('_jumpToRegisters', ['primary'])}>
-                        📋 Go to Measurements
+                        📋 ${this.t('dash.goMeasurements', 'Go to Measurements')}
                     </button>
                 </div>
             `;
@@ -599,10 +599,10 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div class="empty-state-icon"><i class="bi bi-bar-chart" aria-hidden="true"></i></div>
                     <div class="empty-state-title">${this.t('msg.noWidgets', "No widgets on dashboard")}</div>
                     <div class="empty-state-desc">
-                        Add measurements to your dashboard to monitor values in real-time.
+                        ${this.t('dash.emptyDesc', 'Add measurements to your dashboard to monitor values in real-time.')}
                     </div>
                     <button class="empty-state-action" ${this._act('_jumpToRegisters', ['primary'])}>
-                        📋 Go to Measurements
+                        📋 ${this.t('dash.goMeasurements', 'Go to Measurements')}
                     </button>
                 </div>
             `;

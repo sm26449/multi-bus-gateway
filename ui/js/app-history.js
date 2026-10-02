@@ -97,7 +97,7 @@ Object.assign(JanitzaMonitor.prototype, {
             }).join('');
             if (info) info.textContent = new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
             this.drawEnergyBars(canvas, d);
-        } catch (e) { if (info) info.textContent = 'Query failed'; }
+        } catch (e) { if (info) info.textContent = this.t('history.queryFailed', 'Query failed'); }
     },
 
     // ── Energy field picker: which cumulative counters to total, per device,
@@ -285,7 +285,7 @@ Object.assign(JanitzaMonitor.prototype, {
             this.loadHistory();
         }).catch(() => {
             const l = document.getElementById('histRegList');
-            if (l) l.innerHTML = '<div style="padding:20px;color:var(--text-secondary);">Could not load measurements.</div>';
+            if (l) l.innerHTML = `<div style="padding:20px;color:var(--text-secondary);">${this.t('history.loadRegsFailed', 'Could not load measurements.')}</div>`;
         });
     },
 
@@ -366,11 +366,11 @@ Object.assign(JanitzaMonitor.prototype, {
         const leg = document.getElementById('histLegend');
         if (!canvas) return;
         if (!names.length) {
-            if (info) info.textContent = 'Click measurements in the list to add them to the chart.';
+            if (info) info.textContent = this.t('history.pickHint', 'Click measurements in the list to add them to the chart.');
             this._histSeries = null; this._clearCanvas(canvas); if (leg) leg.innerHTML = '';
             return;
         }
-        if (info) info.textContent = 'Loading…';
+        if (info) info.textContent = this.t('common.loading', 'Loading…');
         const single = names.length === 1;
         const colors = this._histColors();
         // Sequence guard: rapid range/register changes fire overlapping queries;
@@ -394,13 +394,13 @@ Object.assign(JanitzaMonitor.prototype, {
                 });
             });
             if (!series.length) {
-                if (info) info.textContent = 'No data in range';
+                if (info) info.textContent = this.t('history.noData', 'No data in range');
                 this._histSeries = null; this._clearCanvas(canvas); if (leg) leg.innerHTML = '';
                 return;
             }
             this._histSeries = series;
             const total = series.reduce((a, s) => a + s.mean.length, 0);
-            const res = every !== selEvery ? ` · ${every} (raised for ${range.replace('-', '')})` : ` · ${every}`;
+            const res = every !== selEvery ? ' · ' + this.t('history.resRaised', '{every} (raised for {range})', { every, range: range.replace('-', '') }) : ` · ${every}`;
             if (info) {
                 let axisNote = '';
                 if (series.length > 1) {
@@ -409,21 +409,21 @@ Object.assign(JanitzaMonitor.prototype, {
                     // that a small-magnitude series may be dwarfed.
                     const units = [...new Set(series.map(s => (s.unit || '').trim()).filter(Boolean))];
                     if (units.length <= 1) {
-                        axisNote = ' · shared Y axis (same-unit)';
+                        axisNote = ' · ' + this.t('history.sharedAxis', 'shared Y axis (same-unit)');
                         info.classList.remove('history-mixed-units');
                     } else {
-                        axisNote = ` · ⚠ shared Y axis · mixed units (${units.join(', ')}) — not directly comparable`;
+                        axisNote = ' · ⚠ ' + this.t('history.mixedUnits', 'shared Y axis · mixed units ({units}) — not directly comparable', { units: units.join(', ') });
                         info.classList.add('history-mixed-units');
                     }
                 } else {
                     info.classList.remove('history-mixed-units');
                 }
-                info.textContent = `${series.length} series · ${total} pts${res}${axisNote}`;
+                info.textContent = `${this.t('history.seriesPts', '{n} series · {pts} pts', { n: series.length, pts: total })}${res}${axisNote}`;
             }
             this._renderHistory(this._histHoverX || null);
         } catch (e) {
             if (seq !== this._histSeq) return;         // a newer load owns the UI now
-            if (info) info.textContent = typeof e === 'string' ? e : 'Query failed';
+            if (info) info.textContent = typeof e === 'string' ? e : this.t('history.queryFailed', 'Query failed');
         }
     },
 

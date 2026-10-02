@@ -736,7 +736,7 @@ Object.assign(JanitzaMonitor.prototype, {
                               mask: reg.mask != null ? '0x' + Number(reg.mask).toString(16) : '',
                               shift: reg.shift != null ? String(reg.shift) : '' };
         document.getElementById('enumBuilderTitle').textContent =
-            `Decode states · ${reg.name || reg.label || ('0x' + Number(reg.address || 0).toString(16))}`;
+            `${this.t('enum.title', 'Decode states')} · ${reg.name || reg.label || ('0x' + Number(reg.address || 0).toString(16))}`;
         document.querySelector(`input[name="enumMode"][value="${mode}"]`).checked = true;
         const el = id => document.getElementById(id);
         el('enumMask').value = this._enumBuilder.mask;
@@ -749,7 +749,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
     _enumBuilderSyncMode() {
         const bits = this._enumBuilder.mode === 'bits';
-        document.getElementById('enumValCol').textContent = bits ? 'Bit (0-63)' : 'Value';
+        document.getElementById('enumValCol').textContent = bits ? this.t('enum.bitCol', 'Bit (0-63)') : this.t('enum.value', 'Value');
         document.getElementById('enumAdvanced').style.display = bits ? 'none' : '';
     },
 

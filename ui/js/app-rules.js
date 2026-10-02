@@ -156,19 +156,19 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     async setRuleMode(id, mode) {
-        const t = (k, d) => this.t(k, d);
+        const t = (k, d, p) => this.t(k, d, p);
         const r = (this._rules || []).find(x => x.id === id);
         if (!r) return;
-        if (mode === 'armed' && !confirm(`${t('rules.armConfirm', 'Arm this rule? It will write to')} ${this._ruleTargetText(r)}.`)) return;
+        if (mode === 'armed' && !confirm(t('rules.armConfirm', 'Arm this rule? It will write to {target}.', { target: this._ruleTargetText(r) }))) return;
         try { await this._ruleOp(`/api/rules/${encodeURIComponent(id)}/mode`, { mode }); }
         catch (e) { alert(e.message); }
         this._loadRules();
     },
 
     async deleteRule(id) {
-        const t = (k, d) => this.t(k, d);
+        const t = (k, d, p) => this.t(k, d, p);
         const r = (this._rules || []).find(x => x.id === id);
-        if (!r || !confirm(`${t('rules.deleteConfirm', 'Delete rule')} ${r.label || id}?${r.mode === 'armed' ? ' ' + t('rules.deleteArmed', 'It is armed: its target is restored to the safe values first.') : ''}`)) return;
+        if (!r || !confirm(`${t('rules.deleteConfirm', 'Delete rule {target}?', { target: r.label || id })}${r.mode === 'armed' ? ' ' + t('rules.deleteArmed', 'It is armed: its target is restored to the safe values first.') : ''}`)) return;
         try { await this._ruleOp(`/api/rules/${encodeURIComponent(id)}`, null, 'DELETE'); }
         catch (e) { alert(e.message); }
         this._loadRules();

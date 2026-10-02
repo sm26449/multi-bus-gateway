@@ -152,8 +152,8 @@ Object.assign(JanitzaMonitor.prototype, {
             if (r.status === 429) {
                 const d = await r.json();
                 const s = d.detail?.retry_after_s || 0;
-                err.textContent = this.t('login.lockedOut', 'Too many attempts. Try again in') +
-                    ` ${Math.ceil(s / 60)} min.`;
+                err.textContent = this.t('login.lockedOut', 'Too many attempts. Try again in {min} min.',
+                    { min: Math.ceil(s / 60) });
                 return;
             }
             if (!r.ok) {

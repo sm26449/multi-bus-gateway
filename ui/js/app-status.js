@@ -448,7 +448,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="status-detail-row">
                     <span class="status-detail-label">${this.t('lbl.status', "Status")}</span>
                     <span class="status-detail-value ${data.connected ? 'success' : 'error'}">
-                        ${data.connected ? 'Connected' : 'Disconnected'}
+                        ${data.connected ? this.t('status.connected', 'Connected') : this.t('status.disconnected', 'Disconnected')}
                     </span>
                 </div>
                 <div class="status-detail-row">
@@ -508,7 +508,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div class="status-detail-row">
                         <span class="status-detail-label">${this.t('lbl.status', "Status")}</span>
                         <span class="status-detail-value ${data.connected ? 'success' : 'error'}">
-                            ${data.connected ? 'Connected' : 'Disconnected'}
+                            ${data.connected ? this.t('status.connected', 'Connected') : this.t('status.disconnected', 'Disconnected')}
                         </span>
                     </div>
                     <div class="status-detail-row">
@@ -554,7 +554,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div class="status-detail-row">
                         <span class="status-detail-label">${this.t('lbl.status', "Status")}</span>
                         <span class="status-detail-value ${data.connected ? 'success' : 'error'}">
-                            ${data.connected ? 'Connected' : 'Disconnected'}
+                            ${data.connected ? this.t('status.connected', 'Connected') : this.t('status.disconnected', 'Disconnected')}
                         </span>
                     </div>
                     <div class="status-detail-row">
