@@ -28,7 +28,7 @@ Object.assign(JanitzaMonitor.prototype, {
         try {
             data = await (await fetch('/api/virtual-meters')).json();
         } catch (e) {
-            el.innerHTML = `<p style="color:#c0392b;">${this.t('msg.loadVmeters', "Could not load virtual meters.")}</p>`;
+            el.innerHTML = `<p style="color:var(--danger-text,#c0392b);">${this.t('msg.loadVmeters', "Could not load virtual meters.")}</p>`;
             return;
         }
         const insts = data.instances || [];
@@ -94,9 +94,9 @@ Object.assign(JanitzaMonitor.prototype, {
                   <div><div style="color:var(--text-secondary);font-size:11.5px;">${this.t('lbl.status', "Status")}</div>${badge}</div>
                   <div><div style="color:var(--text-secondary);font-size:11.5px;">${this.t('lbl.throughput', "Throughput")}</div><b>${m.running ? (m.requests ?? 0) : '—'}</b> req · <b>${m.running ? (m.req_rate ?? 0) : 0}</b>/s</div>
                   <div><div style="color:var(--text-secondary);font-size:11.5px;">${this.t('lbl.freshness', "Freshness")}</div>stale after <b>${m.stale_after_s ?? 15}s</b> · <b>${this._fmtInterval(m.update_interval_s ?? 1)}</b> refresh</div>
-                  ${m.errors ? `<div style="color:#c0392b;"><div style="font-size:11.5px;">${this.t('lbl.errors', "Errors")}</div><b>${m.errors}</b></div>` : ''}
+                  ${m.errors ? `<div style="color:var(--danger-text,#c0392b);"><div style="font-size:11.5px;">${this.t('lbl.errors', "Errors")}</div><b>${m.errors}</b></div>` : ''}
                 </div>
-                ${m.last_error ? `<div style="color:#c77700;font-size:12.5px;margin-bottom:10px;" title="${this._esc(m.last_error.message || '')}"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> ${this._esc(m.last_error.kind || '')}${m.last_error.ts ? ` <span style="color:var(--text-secondary);">· ${this._relTime(m.last_error.ts)}</span>` : ''}</div>` : ''}
+                ${m.last_error ? `<div style="color:var(--warning-text,#c77700);font-size:12.5px;margin-bottom:10px;" title="${this._esc(m.last_error.message || '')}"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> ${this._esc(m.last_error.kind || '')}${m.last_error.ts ? ` <span style="color:var(--text-secondary);">· ${this._relTime(m.last_error.ts)}</span>` : ''}</div>` : ''}
                 <div style="font-size:12.5px;margin-bottom:14px;">
                   <div style="color:var(--text-secondary);margin-bottom:4px;"><i aria-hidden="true" class="bi bi-plug"></i> Connections (${conns.length})</div>
                   <table>${connRows}</table></div>
@@ -538,7 +538,7 @@ Object.assign(JanitzaMonitor.prototype, {
             if (document.hidden) return;          // don't poll a backgrounded tab
             let d;
             try { d = await (await fetch(`/api/virtual-meters/${encodeURIComponent(id)}/stats?limit=200`)).json(); }
-            catch (e) { out.innerHTML = `<p style="color:#c0392b;">${this.t('msg.couldNotLoad', "Could not load.")}</p>`; return; }
+            catch (e) { out.innerHTML = `<p style="color:var(--danger-text,#c0392b);">${this.t('msg.couldNotLoad', "Could not load.")}</p>`; return; }
             if (d.error) { out.innerHTML = `<p style="color:var(--text-secondary);">${this._esc(d.error)}</p>`; return; }
             if (meta) meta.textContent = `${d.total} reqs · ${d.errors} errors · :${d.port} unit ${d.unit_id}`;
             const qs = (d.queries || []).slice().reverse();
@@ -546,7 +546,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 const ms = String(Math.floor((q.ts % 1) * 1000)).padStart(3, '0');
                 const t = new Date(q.ts * 1000).toLocaleTimeString('en-GB', { hour12: false }) + '.' + ms;
                 const resp = q.resp ? q.resp.slice(0, 6).join(' ') + (q.count > 6 ? ' …' : '') : '—';
-                const res = q.err ? '<span style="color:#c0392b;font-weight:600;">EXC</span>'
+                const res = q.err ? '<span style="color:var(--danger-text,#c0392b);font-weight:600;">EXC</span>'
                                   : '<span style="color:var(--success-text);">OK</span>';
                 return `<tr class="vm-log-row${q.err ? ' err' : ''}" data-addr="${q.addr}" data-count="${q.count}" title="click to decode this read" style="border-bottom:1px solid var(--border-light);">
                   <td style="padding:3px 10px 3px 0;color:var(--text-secondary);font-variant-numeric:tabular-nums;">${t}</td>
@@ -595,7 +595,7 @@ Object.assign(JanitzaMonitor.prototype, {
             if (document.hidden) return;          // don't poll a backgrounded tab
             let d;
             try { d = await (await fetch(`/api/virtual-meters/${encodeURIComponent(id)}/stats?limit=1`)).json(); }
-            catch (e) { out.innerHTML = `<p style="color:#c0392b;">${this.t('msg.couldNotLoad', "Could not load.")}</p>`; return; }
+            catch (e) { out.innerHTML = `<p style="color:var(--danger-text,#c0392b);">${this.t('msg.couldNotLoad', "Could not load.")}</p>`; return; }
             if (d.error) { out.innerHTML = `<p style="color:var(--text-secondary);">${this._esc(d.error)}</p>`; return; }
             const upt = d.first_ts ? Math.max(1, Math.round(Date.now() / 1000 - d.first_ts)) : 0;
             const rps = upt ? d.total / upt : 0;
@@ -618,7 +618,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <code style="width:70px;text-align:right;color:#5a6470;">${addr}</code>
                 <div style="flex:1;background:var(--border-light);border-radius:3px;overflow:hidden;"><div style="width:${(c / maxc * 100).toFixed(1)}%;background:#3b82f6;height:14px;"></div></div>
                 <span style="width:52px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text-secondary);">${c}</span></div>`).join('');
-            const evColor = { error: '#c0392b', warn: '#c77700', info: '#5a6470' };
+            const evColor = { error: 'var(--danger-text,#c0392b)', warn: 'var(--warning-text,#c77700)', info: 'var(--text-secondary,#5a6470)' };
             const events = (d.events || []).slice().reverse();   // newest first
             const evRows = events.map(e => {
                 const t = e.ts ? new Date(e.ts * 1000).toLocaleTimeString('en-GB') : '';
@@ -690,7 +690,7 @@ Object.assign(JanitzaMonitor.prototype, {
         let d;
         try {
             d = await (await fetch(`/api/virtual-meters/${encodeURIComponent(id)}/decode?addr=${addr}&count=${count}`)).json();
-        } catch (e) { panel.innerHTML = wrap(`<p style="color:#c0392b;font-size:12.5px;margin:0;">${this.t('msg.decodeFailed', "Decode failed.")}</p>`); return; }
+        } catch (e) { panel.innerHTML = wrap(`<p style="color:var(--danger-text,#c0392b);font-size:12.5px;margin:0;">${this.t('msg.decodeFailed', "Decode failed.")}</p>`); return; }
         if (d.error) { panel.innerHTML = wrap(`<p style="color:var(--text-secondary);font-size:12.5px;margin:0;">${this._esc(d.error)}</p>`); return; }
         panel.innerHTML = wrap(this._buildDecodeBody(d));
     },

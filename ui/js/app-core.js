@@ -73,14 +73,17 @@ class JanitzaMonitor {
         this._debouncedRenderSelectedList = debounce(() => this.renderSelectedRegistersList(), 200);
         this._debouncedRenderMonitorCategories = debounce(() => this.renderMonitorCategories(), 150);
 
+        // localStorage can THROW, not just return null (private windows,
+        // blocked site data) — a throw here killed the whole app at boot
+        const ls = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
         // Theme state
-        this.theme = localStorage.getItem('mbg-theme') || 'auto';
+        this.theme = ls('mbg-theme') || 'auto';
         this.wasDisconnected = false;
 
         // Dashboard view state (cards or table)
-        this.dashboardView = localStorage.getItem('mbg-dashboard-view') || 'cards';
+        this.dashboardView = ls('mbg-dashboard-view') || 'cards';
         // Dashboard device (Phase B): null = primary; persisted per browser
-        this.dashDevice = localStorage.getItem('mbg-dash-device') || null;
+        this.dashDevice = ls('mbg-dash-device') || null;
         this.dashValues = {};
         this.dashRegisters = [];
 
@@ -128,11 +131,16 @@ Object.assign(JanitzaMonitor.prototype, {
     setButtonLoading(btn, loading, originalText = null) {
         if (loading) {
             btn.disabled = true;
-            btn.dataset.originalText = btn.textContent;
-            btn.innerHTML = '<span class="btn-spinner"></span> Saving...';
+            // keep the full markup — restoring via textContent stripped the
+            // button's <i> icon permanently; and say "Saving…" in the UI's language
+            btn.dataset.originalHtml = btn.innerHTML;
+            btn.innerHTML = '<span class="btn-spinner"></span> '
+                + this._esc(this.t('common.saving', 'Saving...'));
         } else {
             btn.disabled = false;
-            btn.textContent = originalText || btn.dataset.originalText || 'Save';
+            if (originalText != null) btn.textContent = originalText;
+            else if (btn.dataset.originalHtml != null) btn.innerHTML = btn.dataset.originalHtml;
+            else btn.textContent = this.t('common.save', 'Save');
         }
     },
 
@@ -257,9 +265,12 @@ Object.assign(JanitzaMonitor.prototype, {
         }
         // Move focus into the dialog (keyboard + screen-reader users land inside).
         setTimeout(() => { const f = this._modalFocusables(modal); (f[0] || dialog).focus(); }, 30);
-        // Trap Tab within the dialog; Escape closes.
+        // Trap Tab within the dialog; Escape closes. stopPropagation: without
+        // it the document-level shortcut handler saw the same Escape and
+        // closed ANOTHER modal too — one press dismissed both the enum
+        // builder and the template editor under it (audit 2026-10-01).
         const onKey = (e) => {
-            if (e.key === 'Escape') { e.preventDefault(); this.closeModal(modalId); return; }
+            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); this.closeModal(modalId); return; }
             if (e.key !== 'Tab') return;
             const f = this._modalFocusables(modal);
             if (!f.length) return;
@@ -272,7 +283,11 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     closeModal(modalId) {
-        const modal = modalId ? document.getElementById(modalId) : document.querySelector('.modal.active');
+        // no id → the TOP-most open modal (highest z-index), not the first in
+        // DOM order — with nested modals the old query closed the OUTER one
+        const modal = modalId ? document.getElementById(modalId)
+            : [...document.querySelectorAll('.modal.active')]
+                .sort((a, b) => (+b.style.zIndex || 0) - (+a.style.zIndex || 0))[0];
         if (!modal) return;
         modal.classList.remove('active');
         modal.style.zIndex = '';                 // back to the stylesheet default
@@ -414,6 +429,25 @@ Object.assign(JanitzaMonitor.prototype, {
             if (el.dataset.i18nOrigTitle === undefined) el.dataset.i18nOrigTitle = el.getAttribute('title') || '';
             el.setAttribute('title', this.t(el.getAttribute('data-i18n-title'), el.dataset.i18nOrigTitle));
         });
+        // aria-labels are UI text too — without this, every labelled control
+        // stayed English for a screen-reader user who switched the language
+        document.querySelectorAll('[data-i18n-aria]').forEach(el => {
+            if (el.dataset.i18nOrigAria === undefined) el.dataset.i18nOrigAria = el.getAttribute('aria-label') || '';
+            el.setAttribute('aria-label', this.t(el.getAttribute('data-i18n-aria'), el.dataset.i18nOrigAria));
+        });
+    },
+
+    // Secondary tab bars (.config-main-tabs): tab semantics + selection state
+    // synced from .active — the bars were plain buttons whose active state was
+    // color-only. Call after every toggle; idempotent.
+    _tabAria(sel) {
+        const bar = document.querySelector(sel);
+        if (!bar) return;
+        bar.setAttribute('role', 'tablist');
+        bar.querySelectorAll('.config-main-tab').forEach(t => {
+            t.setAttribute('role', 'tab');
+            t.setAttribute('aria-selected', String(t.classList.contains('active')));
+        });
     },
 
     _renderLangSelector() {
@@ -482,6 +516,7 @@ Object.assign(JanitzaMonitor.prototype, {
     async loadConfig() {
         try {
             const response = await fetch('/api/config');
+            if (!response.ok) throw new Error('HTTP ' + response.status);
             this.config = await response.json();
         } catch (error) {
             console.error('Failed to load config:', error);
@@ -831,6 +866,8 @@ Object.assign(JanitzaMonitor.prototype, {
 
         // Config page main tabs (Settings/Registers)
         this.setupConfigMainTabs();
+        this._tabAria('#configSubtabs');     // initial state, before any switch
+        this._tabAria('#deviceRegTabs');
 
         // Settings form listeners
         this.setupSettingsListeners();
@@ -846,8 +883,12 @@ Object.assign(JanitzaMonitor.prototype, {
             }
         }
 
-        // Enter - confirm in modals (but not in textareas)
-        if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') {
+        // Enter - confirm in modals, but ONLY from a text field: with focus on
+        // Cancel or the ✕ close, preventDefault suppressed the button's native
+        // activation and SAVED instead — a keyboard user pressing Enter on
+        // "Cancel" committed the edit (audit 2026-10-01)
+        if (e.key === 'Enter' && e.target.tagName === 'INPUT'
+                && !['checkbox', 'radio', 'button', 'submit'].includes(e.target.type)) {
             const registerModal = document.getElementById('registerModal');
             const addModal = document.getElementById('addRegisterModal');
             const customizeModal = document.getElementById('customizeDashModal');
@@ -950,13 +991,18 @@ Object.assign(JanitzaMonitor.prototype, {
     async _setDashDevice(id) {
         const dev = id || this._primaryDeviceId();
         this.dashDevice = dev === this._primaryDeviceId() ? null : dev;
-        localStorage.setItem('mbg-dash-device', this.dashDevice || '');
+        try { localStorage.setItem('mbg-dash-device', this.dashDevice || ''); } catch (e) { /* private mode */ }
         this.valueHistory = {};                    // sparkline history is per device
         this.dashValues = {};
+        // last-wins: rapid chip switching fires overlapping fetches — a slow
+        // /api/values for the PREVIOUS device must not land in the new one's
+        // store (audit 2026-10-01)
+        const seq = this._dashSeq = (this._dashSeq || 0) + 1;
         const jobs = [this._refreshDashRegisters()];
         if (this.dashDevice) {
             jobs.push(fetch('/api/values?device=' + encodeURIComponent(dev))
-                .then(r => r.json()).then(d => { this.dashValues = d.values || {}; })
+                .then(r => r.json())
+                .then(d => { if (seq === this._dashSeq) this.dashValues = d.values || {}; })
                 .catch(() => {}));
         }
         await Promise.all(jobs);
@@ -1025,15 +1071,35 @@ Object.assign(JanitzaMonitor.prototype, {
         const status = document.getElementById('connectionStatus');
         if (!status) return;
 
-        const icon = status.querySelector('i');
         if (connected) {
             status.classList.add('connected');
             status.classList.remove('disconnected');
-            status.innerHTML = '<i class="bi bi-circle-fill" aria-hidden="true"></i> Connected';
+            status.innerHTML = '<i class="bi bi-circle-fill" aria-hidden="true"></i> '
+                + this._esc(this.t('status.connected', 'Connected'));
         } else {
             status.classList.remove('connected');
             status.classList.add('disconnected');
-            status.innerHTML = '<i class="bi bi-circle-fill" aria-hidden="true"></i> Disconnected';
+            status.innerHTML = '<i class="bi bi-circle-fill" aria-hidden="true"></i> '
+                + this._esc(this.t('status.disconnected', 'Disconnected'));
+        }
+        // The dashboard keeps showing its last numbers after a disconnect with
+        // nothing marking them stale — the page people actually watch. Dim it
+        // and stamp WHEN the data is from (audit 2026-10-01).
+        document.body.classList.toggle('ws-stale', !connected);
+        let badge = document.getElementById('staleBadge');
+        if (!connected) {
+            if (!badge) {
+                badge = document.createElement('div');
+                badge.id = 'staleBadge';
+                badge.className = 'stale-badge';
+                badge.setAttribute('role', 'status');
+                const grid = document.getElementById('dashboardGrid');
+                (grid?.parentElement || document.body).insertBefore(badge, grid || null);
+            }
+            badge.textContent = this.t('status.asOf', 'Live updates lost — values as of')
+                + ' ' + new Date().toLocaleTimeString();
+        } else if (badge) {
+            badge.remove();
         }
     },
 

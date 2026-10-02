@@ -139,9 +139,9 @@ Object.assign(JanitzaMonitor.prototype, {
             </div>
             <div class="device-row-stats">${stats}</div>
             <div class="device-row-actions">
-                <button class="btn btn-ghost btn-sm" ${this._act('openEndpointDetail', [p.id])} title="${this.t('endpoints.open', 'Open the endpoint')}"><i aria-hidden="true" class="bi bi-box-arrow-up-right"></i></button>
-                <button class="btn btn-ghost btn-sm" ${this._act('openEndpointModal', [p.id])} title="${this.t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
-                <button class="btn btn-ghost btn-sm" ${this._act('deleteEndpointUi', [p.id])} title="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
+                <button class="btn btn-ghost btn-sm" ${this._act('openEndpointDetail', [p.id])} title="${this.t('endpoints.open', 'Open the endpoint')}" aria-label="${this.t('endpoints.open', 'Open the endpoint')}"><i aria-hidden="true" class="bi bi-box-arrow-up-right"></i></button>
+                <button class="btn btn-ghost btn-sm" ${this._act('openEndpointModal', [p.id])} title="${this.t('common.edit', 'Edit')}" aria-label="${this.t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
+                <button class="btn btn-ghost btn-sm" ${this._act('deleteEndpointUi', [p.id])} title="${this.t('common.delete', 'Delete')}" aria-label="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
             </div>
         </div>
         <div data-endpoint-units="${this._esc(p.id)}" style="display:${open ? '' : 'none'};
@@ -171,12 +171,12 @@ Object.assign(JanitzaMonitor.prototype, {
                 ? this.t('devices.disabled', 'disabled')
                 : this.t('devices.notConnected', 'not connected');
             const actions = [
-                `<button class="btn btn-ghost btn-sm" ${this._act('jumpToDeviceRegisters', [d.id])} title="${this.t('devices.registers', 'Measurements')}"><i aria-hidden="true" class="bi bi-list-check"></i></button>`,
-                `<button class="btn btn-ghost btn-sm" ${this._act('testDevice', [d.id], {el: true})} title="${this.t('devices.test', 'Test read')}"><i aria-hidden="true" class="bi bi-activity"></i></button>`,
+                `<button class="btn btn-ghost btn-sm" ${this._act('jumpToDeviceRegisters', [d.id])} title="${this.t('devices.registers', 'Measurements')}" aria-label="${this.t('devices.registers', 'Measurements')}"><i aria-hidden="true" class="bi bi-list-check"></i></button>`,
+                `<button class="btn btn-ghost btn-sm" ${this._act('testDevice', [d.id], {el: true})} title="${this.t('devices.test', 'Test read')}" aria-label="${this.t('devices.test', 'Test read')}"><i aria-hidden="true" class="bi bi-activity"></i></button>`,
             ];
-            actions.push(`<button class="btn btn-ghost btn-sm" ${this._act('openDeviceDetail', [d.id])} title="${this.t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>`);
+            actions.push(`<button class="btn btn-ghost btn-sm" ${this._act('openDeviceDetail', [d.id])} title="${this.t('common.edit', 'Edit')}" aria-label="${this.t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>`);
             if (!d.primary && !d.endpoint_id) {
-                actions.push(`<button class="btn btn-ghost btn-sm" ${this._act('deleteDevice', [d.id])} title="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>`);
+                actions.push(`<button class="btn btn-ghost btn-sm" ${this._act('deleteDevice', [d.id])} title="${this.t('common.delete', 'Delete')}" aria-label="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>`);
             }
             // nested rows sit under their endpoint group — the chip would repeat it
             const endpointChip = (d.endpoint_id && !nested)
@@ -1049,6 +1049,7 @@ Object.assign(JanitzaMonitor.prototype, {
         this._restoreWsPages();                       // return any embedded view home first
         document.querySelectorAll('#deviceWsTabs .config-main-tab[data-dtab]').forEach(t =>
             t.classList.toggle('active', t.dataset.dtab === name));
+        this._tabAria('#deviceWsTabs');
         document.querySelectorAll('#deviceDetailView [data-dpanel]').forEach(p =>
             p.hidden = p.dataset.dpanel !== name);
         this._viewDevice = id;                        // lock the scoped views to THIS device

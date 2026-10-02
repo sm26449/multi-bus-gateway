@@ -1482,6 +1482,7 @@ Object.assign(JanitzaMonitor.prototype, {
     switchDeviceRegTab(name) {
         document.querySelectorAll('#deviceRegTabs .config-main-tab').forEach(t =>
             t.classList.toggle('active', t.dataset.regtab === name));
+        this._tabAria('#deviceRegTabs');
         document.querySelectorAll('#deviceRegistersView .reg-pane').forEach(p =>
             p.style.display = p.dataset.regpane === name ? '' : 'none');
         // Save applies to the Selected set only — hide it on the Available tab.

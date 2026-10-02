@@ -198,6 +198,8 @@
 .poll-group-interval input:focus {
     outline: none;
     border-color: var(--accent-text);
+    /* same ring as base .input:focus — border-color alone is a sub-1.3:1 cue */
+    box-shadow: 0 0 0 3px var(--accent-tint);
 }
 
 .poll-group-unit {

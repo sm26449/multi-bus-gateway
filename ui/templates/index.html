@@ -101,8 +101,8 @@
                         <span class="status-label"><span data-i18n="status.vmeter">vMeter</span> <span id="vmeterCount">0/0</span></span>
                     </button>
                 </div>
-                <select class="lang-select" id="langSelect" title="Language" data-i18n-title="tip.language"></select>
-                <div class="theme-toggle" id="themeToggle" title="Toggle theme" data-i18n-title="tip.theme">
+                <select class="lang-select" id="langSelect" title="Language" data-i18n-title="tip.language" aria-label="Language" data-i18n-aria="tip.language"></select>
+                <div class="theme-toggle" id="themeToggle" title="Toggle theme" data-i18n-title="tip.theme" aria-label="Toggle theme" data-i18n-aria="tip.theme">
                     <i aria-hidden="true" class="bi bi-moon-fill"></i>
                 </div>
                 <button class="logout-btn" id="logoutBtn" title="Log out" data-i18n-title="login.logout" data-action="logout">
@@ -389,7 +389,7 @@
                         <div class="settings-card devices-card" id="builderCard" style="margin-top:16px;">
                             <div class="settings-card-header">
                                 <h3><i aria-hidden="true" class="bi bi-magic"></i> <span data-i18n="builder.title">Device Builder</span></h3>
-                                <button class="btn btn-ghost btn-sm" id="builderRefreshBtn" data-i18n-title="common.refresh" title="Refresh">
+                                <button class="btn btn-ghost btn-sm" id="builderRefreshBtn" data-i18n-title="common.refresh" title="Refresh" aria-label="Refresh" data-i18n-aria="common.refresh">
                                     <i aria-hidden="true" class="bi bi-arrow-clockwise"></i></button>
                             </div>
                             <div class="settings-card-body">
@@ -711,7 +711,7 @@
                             <div class="settings-card-body" id="mqttSettingsBody">
                                 <div class="form-row">
                                     <div class="form-group flex-2">
-                                        <label class="form-label" data-i18n="lbl.broker">Broker</label>
+                                        <label class="form-label" data-i18n="lbl.broker" for="cfgMqttBroker">Broker</label>
                                         <input type="text" id="cfgMqttBroker" class="input" placeholder="192.168.1.100">
                                         <span class="env-override" id="envMqttBroker"></span>
                                     </div>
@@ -781,7 +781,7 @@
                                     </label>
                                     <div id="mqttTlsFields" style="display:none;margin-top:8px;">
                                         <div class="form-group">
-                                            <label class="form-label" data-i18n="mqtt.tls.ca">CA certificate (verifies the broker)</label>
+                                            <label class="form-label" data-i18n="mqtt.tls.ca" for="cfgMqttTlsCa">CA certificate (verifies the broker)</label>
                                             <input type="text" id="cfgMqttTlsCa" class="input" placeholder="config/certs/ca.crt">
                                         </div>
                                         <div class="form-row">
@@ -823,7 +823,7 @@
                             <div class="settings-card-body" id="influxSettingsBody">
                                 <div class="form-row">
                                     <div class="form-group flex-3">
-                                        <label class="form-label">URL</label>
+                                        <label class="form-label" for="cfgInfluxUrl">URL</label>
                                         <input type="text" id="cfgInfluxUrl" class="input" placeholder="http://localhost:8086">
                                         <span class="env-override" id="envInfluxUrl"></span>
                                     </div>
@@ -900,7 +900,7 @@
                                     <div id="uiTlsFields" style="display:none;margin-top:8px;">
                                         <div class="form-row">
                                             <div class="form-group">
-                                                <label class="form-label" data-i18n="security.https.cert">Certificate file</label>
+                                                <label class="form-label" data-i18n="security.https.cert" for="cfgUiTlsCert">Certificate file</label>
                                                 <input type="text" id="cfgUiTlsCert" class="input" placeholder="config/certs/ui.crt">
                                             </div>
                                             <div class="form-group">
@@ -921,7 +921,7 @@
                                     <div id="authFields" style="display:none;margin-top:8px;">
                                         <div class="form-row">
                                             <div class="form-group">
-                                                <label class="form-label" data-i18n="security.auth.admin">Admin username</label>
+                                                <label class="form-label" data-i18n="security.auth.admin" for="cfgAuthUser">Admin username</label>
                                                 <input type="text" id="cfgAuthUser" class="input" autocomplete="off" placeholder="admin">
                                             </div>
                                             <div class="form-group">
@@ -1058,7 +1058,7 @@
                                     <label class="checkbox-label"><input type="checkbox" id="cfgAlertSigBuffer"> <span data-i18n="alerts.sigBuffer">InfluxDB buffer backlog</span></label>
                                 </div>
                                 <div class="form-row" style="margin-top:8px;">
-                                    <div class="form-group"><label class="form-label" data-i18n="alerts.minInterval">Min interval (s)</label><input type="number" id="cfgAlertMinInterval" class="input" min="1" placeholder="300"></div>
+                                    <div class="form-group"><label class="form-label" data-i18n="alerts.minInterval" for="cfgAlertMinInterval">Min interval (s)</label><input type="number" id="cfgAlertMinInterval" class="input" min="1" placeholder="300"></div>
                                     <div class="form-group"><label class="form-label" data-i18n="alerts.latencyMs" for="cfgAlertLatency">Latency threshold (ms)</label><input type="number" id="cfgAlertLatency" class="input" min="1" placeholder="1000"></div>
                                     <div class="form-group"><label class="form-label" data-i18n="alerts.bufferPoints" for="cfgAlertBuffer">Buffer threshold (points)</label><input type="number" id="cfgAlertBuffer" class="input" min="1" placeholder="1000"></div>
                                 </div>
@@ -1068,7 +1068,7 @@
                                 <h4 data-i18n="alerts.channels">Channels</h4>
                                 <label class="checkbox-label"><input type="checkbox" id="cfgAlertMqtt"> <span data-i18n="alerts.mqtt">Publish to MQTT (&lt;prefix&gt;/alert)</span></label>
                                 <div class="form-group" style="margin-top:8px;">
-                                    <label class="form-label" data-i18n="alerts.webhookUrl">Webhook URL</label>
+                                    <label class="form-label" data-i18n="alerts.webhookUrl" for="cfgAlertWebhookUrl">Webhook URL</label>
                                     <input type="text" id="cfgAlertWebhookUrl" class="input" placeholder="http://sms-gateway:5080/api/sms/send">
                                     <p class="field-hint" data-i18n="alerts.webhookUrlHint">Empty = webhook off. POSTs the alert JSON here (no LAN restriction — meant for external notifiers).</p>
                                 </div>
@@ -1217,7 +1217,7 @@
                         <span data-i18n="mqtt.enable">Enable MQTT publishing</span>
                     </label>
                     <div class="form-group">
-                        <label class="form-label" data-i18n="mqtt.customTopic">Custom Topic</label>
+                        <label class="form-label" data-i18n="mqtt.customTopic" for="editMqttTopic">Custom Topic</label>
                         <input type="text" id="editMqttTopic" class="input" placeholder="voltage/l1_n">
                     </div>
                 </div>
@@ -1228,7 +1228,7 @@
                         <span data-i18n="influx.enable">Enable InfluxDB publishing</span>
                     </label>
                     <div class="form-group">
-                        <label class="form-label" data-i18n="lbl.measurement">Measurement</label>
+                        <label class="form-label" data-i18n="lbl.measurement" for="editInfluxMeasurement">Measurement</label>
                         <input type="text" id="editInfluxMeasurement" class="input" placeholder="voltage">
                     </div>
                     <div class="form-group">
@@ -1246,7 +1246,7 @@
                     <div class="threshold-fields" id="editThresholdFields">
                         <div class="form-row">
                             <div class="form-group">
-                                <label class="form-label" data-i18n="thr.dangerLow">Danger Low</label>
+                                <label class="form-label" data-i18n="thr.dangerLow" for="editThreshDangerLow">Danger Low</label>
                                 <input type="number" id="editThreshDangerLow" class="input input-sm" step="any">
                             </div>
                             <div class="form-group">
@@ -1534,7 +1534,7 @@
                     <label class="form-label" for="vmEditMaxHold" data-i18n="vmeter.maxHold">Max hold (s)</label>
                     <input type="number" id="vmEditMaxHold" class="input" min="1" step="1" value="30">
                 </div>
-                <p style="color:#c77700;font-size:12.5px;margin:6px 0 0;"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i>
+                <p style="color:var(--warning-text,#c77700);font-size:12.5px;margin:6px 0 0;"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i>
                     Changing the port or unit restarts the meter and briefly drops connected consumers
                     (Victron / Fronius fall back to their own grid-loss fail-safe).</p>
             </div>
@@ -1659,11 +1659,11 @@
                             <option value="uint32">uint32</option></select></div>
                 </div>
                 <div class="form-group">
-                    <label class="form-label" for="csvText"><span id="csvTextLabel">CSV</span>
+                    <div class="form-label"><label for="csvText"><span id="csvTextLabel">CSV</span></label>
                         <a href="#" id="csvExampleLink" data-action="downloadCsvExample" style="font-weight:400;font-size:12px;margin-left:8px;" data-i18n="csv.example">download example</a>
                         · <label for="csvFile" id="csvPickLabel" style="display:inline;cursor:pointer;color:var(--primary,#2563eb);font-size:12px;" data-i18n="csv.pickFile">open a .csv file</label>
                         <input type="file" id="csvFile" accept=".csv,text/csv" style="display:none;">
-                    </label>
+                    </div>
                     <textarea id="csvText" class="input" rows="8" style="font-family:monospace;font-size:12px;" placeholder="address,name,label,unit,type,scale&#10;0x0000,V_L1,Voltage L1-N,V,float,1"></textarea>
                 </div>
                 <div><button class="btn btn-secondary btn-sm" data-action="csvPreview" data-with-el><i aria-hidden="true" class="bi bi-search"></i> <span data-i18n="csv.preview">Preview</span></button></div>
@@ -1945,7 +1945,7 @@
                         <span data-i18n="mqtt.enable">Enable MQTT publishing</span>
                     </label>
                     <div class="form-group">
-                        <label class="form-label" data-i18n="mqtt.customTopic">Custom Topic</label>
+                        <label class="form-label" data-i18n="mqtt.customTopic" for="addMqttTopic">Custom Topic</label>
                         <input type="text" id="addMqttTopic" class="input" placeholder="voltage/l1_n">
                     </div>
                 </div>
@@ -1956,7 +1956,7 @@
                         <span data-i18n="influx.enable">Enable InfluxDB publishing</span>
                     </label>
                     <div class="form-group">
-                        <label class="form-label" data-i18n="lbl.measurement">Measurement</label>
+                        <label class="form-label" data-i18n="lbl.measurement" for="addInfluxMeasurement">Measurement</label>
                         <input type="text" id="addInfluxMeasurement" class="input" placeholder="voltage">
                     </div>
                     <div class="form-group">
@@ -2079,7 +2079,7 @@
                         </select>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">&nbsp;</label>
+                        <span class="form-label" aria-hidden="true">&nbsp;</span>
                         <button class="btn btn-primary" id="queryBtn">
                             <i aria-hidden="true" class="bi bi-play-fill"></i> Query
                         </button>
@@ -2160,7 +2160,7 @@
         <div class="modal-content modal-lg">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-cpu"></i> <span id="devWizTitle" data-i18n="devices.wizard.titleAdd">Add Device</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["deviceWizardModal"]' aria-label="Close">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["deviceWizardModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <div class="wizard-steps" id="devWizSteps" aria-label="Wizard progress">
@@ -2220,7 +2220,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-lightning-charge"></i> <span data-i18n="energy.fieldsTitle">Energy fields</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["energyFieldsModal"]' aria-label="Close">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["energyFieldsModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <p class="field-hint" style="margin:0 0 12px;" data-i18n="energy.fieldsIntro">Pick which cumulative counters to total each month for this device — auto-detected from its energy registers (Wh / varh / VAh).</p>
@@ -2239,7 +2239,7 @@
         <div class="modal-content modal-lg">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-file-earmark-spreadsheet"></i> <span id="devTplTitle" data-i18n="devtpl.title">Device Template</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["devTplModal"]' aria-label="Close">&times;</button>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["devTplModal"]'>&times;</button>
             </div>
             <div class="modal-body" id="devTplBody"></div>
             <div class="modal-footer">

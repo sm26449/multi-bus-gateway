@@ -468,7 +468,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 </div>
                 <div class="widget-header-right">
                     ${pollBadge}
-                    <button class="widget-edit-btn" title="Edit widget">
+                    <button class="widget-edit-btn" title="${this._esc(this.t('dash.editWidget', 'Edit widget'))}" aria-label="${this._esc(this.t('dash.editWidget', 'Edit widget'))}">
                         <i aria-hidden="true" class="bi bi-pencil"></i>
                     </button>
                 </div>
@@ -633,7 +633,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <td class="table-unit">${this._esc(fmt.unit)}</td>
                     <td>${pollBadge}</td>
                     <td>
-                        <button class="btn-action" title="Edit" ${this._act('editRegisterByAddress', [reg.address])}>
+                        <button class="btn-action" title="${this._esc(this.t('common.edit', 'Edit'))}" aria-label="${this._esc(this.t('common.edit', 'Edit'))}" ${this._act('editRegisterByAddress', [reg.address])}>
                             <i aria-hidden="true" class="bi bi-pencil"></i>
                         </button>
                     </td>
@@ -902,7 +902,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <button type="button" class="dash-chip ${d.id === active ? 'active' : ''}"
                     role="tab" aria-selected="${d.id === active}"
                     ${this._act('switchDashDevice', [d.id])}>
-                <span class="dot" style="background:${hDot[health[d.id]] || 'var(--text-tertiary)'}"></span>
+                <span class="dot" style="background:${hDot[health[d.id]] || 'var(--text-tertiary)'}" role="img" aria-label="${this._esc(health[d.id] || 'idle')}" title="${this._esc(health[d.id] || 'idle')}"></span>
                 ${this._esc(label)}
             </button>`;
         // standalone devices first; an installation's units together under its
@@ -965,20 +965,22 @@ Object.assign(JanitzaMonitor.prototype, {
             html += `
                 <div class="customize-item" data-address="${reg.address}" draggable="true">
                     <i aria-hidden="true" class="bi bi-grip-vertical customize-drag-handle"></i>
-                    <input type="checkbox" data-address="${reg.address}" ${checked}>
+                    <input type="checkbox" data-address="${reg.address}" ${checked} aria-label="${this._esc(reg.label || reg.name)}">
                     <div class="customize-item-info">
                         <div class="customize-item-label">${this._esc(reg.label || reg.name)}</div>
                         <div class="customize-item-details">${this._esc(reg.name)} · ${this._esc(reg.unit || 'N/A')}</div>
                     </div>
                     <div class="customize-item-controls">
-                        <select class="customize-select" data-address="${reg.address}" data-field="widget">
+                        <select class="customize-select" data-address="${reg.address}" data-field="widget" aria-label="${this._esc(this.t('dash.widgetType', 'Widget type'))} — ${this._esc(reg.label || reg.name)}">
                             <option value="value" ${widgetType === 'value' ? 'selected' : ''}>${this.t('lbl.value', "Value")}</option>
                             <option value="gauge" ${widgetType === 'gauge' ? 'selected' : ''}>${this.t('lbl.gauge', "Gauge")}</option>
                             <option value="chart" ${widgetType === 'chart' ? 'selected' : ''}>${this.t('lbl.chart', "Chart")}</option>
                         </select>
-                        <button class="customize-size-toggle ${isWide}" data-address="${reg.address}" title="Wide widget">
+                        <button class="customize-size-toggle ${isWide}" data-address="${reg.address}" title="Wide widget" aria-pressed="${isWide ? 'true' : 'false'}">
                             <i aria-hidden="true" class="bi bi-arrows-expand"></i> Wide
                         </button>
+                        <button class="btn-action customize-move" data-dir="-1" title="${this._esc(this.t('dash.moveUp', 'Move up'))}" aria-label="${this._esc(this.t('dash.moveUp', 'Move up'))} — ${this._esc(reg.label || reg.name)}"><i aria-hidden="true" class="bi bi-chevron-up"></i></button>
+                        <button class="btn-action customize-move" data-dir="1" title="${this._esc(this.t('dash.moveDown', 'Move down'))}" aria-label="${this._esc(this.t('dash.moveDown', 'Move down'))} — ${this._esc(reg.label || reg.name)}"><i aria-hidden="true" class="bi bi-chevron-down"></i></button>
                     </div>
                 </div>
             `;
@@ -996,7 +998,19 @@ Object.assign(JanitzaMonitor.prototype, {
         // Setup size toggle buttons
         list.querySelectorAll('.customize-size-toggle').forEach(btn => {
             btn.addEventListener('click', () => {
-                btn.classList.toggle('active');
+                btn.setAttribute('aria-pressed', String(btn.classList.toggle('active')));
+            });
+        });
+
+        // keyboard alternative to the drag reorder (the drag was the ONLY way
+        // to reorder — unusable without a pointer)
+        list.querySelectorAll('.customize-move').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const item = btn.closest('.customize-item');
+                const sib = +btn.dataset.dir < 0 ? item.previousElementSibling : item.nextElementSibling;
+                if (!sib || !sib.classList.contains('customize-item')) return;
+                if (+btn.dataset.dir < 0) sib.before(item); else sib.after(item);
+                btn.focus();
             });
         });
 

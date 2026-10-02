@@ -315,21 +315,36 @@ Object.assign(JanitzaMonitor.prototype, {
             if (!items.length) continue;
             const disp = catName.charAt(0).toUpperCase() + catName.slice(1);
             html += `<div class="monitor-category expanded" data-category="${this._esc(catName)}">
-                <div class="monitor-category-header"><span class="arrow">&#9654;</span><span>${this._esc(disp)}</span><span style="margin-left:auto;color:var(--text-tertiary);">(${items.length})</span></div>
+                <div class="monitor-category-header" role="button" tabindex="0" aria-expanded="true"><span class="arrow">&#9654;</span><span>${this._esc(disp)}</span><span style="margin-left:auto;color:var(--text-tertiary);">(${items.length})</span></div>
                 <div class="monitor-category-items">
                 ${items.map(it => {
                     const on = sel.has(it.name);
                     const dot = on ? `<span class="hist-dot" style="background:${colorOf(it.name)};"></span>`
                                    : '<span class="hist-dot hist-dot-empty"></span>';
-                    return `<div class="monitor-item hist-item ${on ? 'selected' : ''}" data-name="${this._esc(it.name)}" title="${this._esc(it.name)}">${dot}<span class="item-name">${this._esc(it.label || it.name)}</span><span class="item-unit">${this._esc(it.unit || '')}</span></div>`;
+                    return `<div class="monitor-item hist-item ${on ? 'selected' : ''}" role="button" tabindex="0" aria-pressed="${on}" data-name="${this._esc(it.name)}" title="${this._esc(it.name)}">${dot}<span class="item-name">${this._esc(it.label || it.name)}</span><span class="item-unit">${this._esc(it.unit || '')}</span></div>`;
                 }).join('')}
                 </div></div>`;
         }
+        // toggling re-renders the list: keep the keyboard user's place
+        const _foc = (document.activeElement && container.contains(document.activeElement))
+            ? document.activeElement.dataset.name : null;
         container.innerHTML = html || '<div style="padding:20px;color:var(--text-secondary);">No measurements match.</div>';
+        // keyboard-reachable like the Monitor page: Enter/Space activate — the
+        // picker was mouse-only, so a keyboard user could not chart anything
+        const act = (el, fn) => {
+            el.addEventListener('click', fn);
+            el.addEventListener('keydown', e => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); }
+            });
+        };
         container.querySelectorAll('.monitor-category-header').forEach(h =>
-            h.addEventListener('click', () => h.parentElement.classList.toggle('expanded')));
+            act(h, () => {
+                const open = h.parentElement.classList.toggle('expanded');
+                h.setAttribute('aria-expanded', String(open));
+            }));
         container.querySelectorAll('.hist-item').forEach(item =>
-            item.addEventListener('click', () => this.toggleHistRegister(item.dataset.name)));
+            act(item, () => this.toggleHistRegister(item.dataset.name)));
+        if (_foc) container.querySelector(`.hist-item[data-name="${CSS.escape(_foc)}"]`)?.focus();
     },
 
     toggleHistRegister(name) {

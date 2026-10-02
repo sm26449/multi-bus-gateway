@@ -1479,5 +1479,15 @@
   "rules.now": "Acum",
   "rules.noSignal": "fără semnal",
   "rules.staleNow": "vechi",
-  "rules.needId": "ID-ul regulii este obligatoriu."
+  "rules.needId": "ID-ul regulii este obligatoriu.",
+  "common.saving": "Se salvează...",
+  "common.remove": "Elimină",
+  "dash.editWidget": "Editează widgetul",
+  "status.clickToOpen": "click pentru a deschide",
+  "status.vmeters": "Contoare virtuale",
+  "status.stale": "învechit",
+  "dash.moveUp": "Mută în sus",
+  "dash.moveDown": "Mută în jos",
+  "dash.widgetType": "Tip widget",
+  "status.asOf": "Actualizările live s-au oprit — valori de la"
 }

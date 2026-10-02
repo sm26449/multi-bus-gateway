@@ -410,6 +410,8 @@
 .customize-select:focus {
     outline: none;
     border-color: var(--accent-text);
+    /* same ring as base .input:focus — border-color alone is a sub-1.3:1 cue */
+    box-shadow: 0 0 0 3px var(--accent-tint);
 }
 
 .customize-size-toggle {
@@ -664,3 +666,21 @@
 /* an installation's units sit together under its name */
 .dash-chip-group { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 3px 6px 3px 4px; border-radius: 999px; border: 1px dashed var(--border); }
 .dash-chip-group-name { font-size: 11.5px; color: var(--text-secondary); padding: 0 6px; white-space: nowrap; }
+
+/* ── disconnect: last values are STALE, say so instead of looking live ── */
+body.ws-stale #dashboardGrid,
+body.ws-stale .dashboard-table-container {
+    opacity: 0.55;
+    filter: saturate(0.6);
+    transition: opacity 0.3s;
+}
+
+.stale-badge {
+    margin: 8px 0;
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    background: var(--warning-tint, rgba(245, 158, 11, 0.12));
+    color: var(--warning-text, #c77700);
+    font-size: 12.5px;
+    border: 1px solid var(--warning-text, #c77700);
+}

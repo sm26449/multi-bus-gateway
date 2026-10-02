@@ -1479,5 +1479,15 @@
   "rules.now": "Now",
   "rules.noSignal": "no signal",
   "rules.staleNow": "stale",
-  "rules.needId": "Rule ID is required."
+  "rules.needId": "Rule ID is required.",
+  "common.saving": "Saving...",
+  "common.remove": "Remove",
+  "dash.editWidget": "Edit widget",
+  "status.clickToOpen": "click to open",
+  "status.vmeters": "Virtual meters",
+  "status.stale": "stale",
+  "dash.moveUp": "Move up",
+  "dash.moveDown": "Move down",
+  "dash.widgetType": "Widget type",
+  "status.asOf": "Live updates lost — values as of"
 }

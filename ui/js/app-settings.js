@@ -382,6 +382,7 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!name) name = 'mqtt';
         document.querySelectorAll('#configSubtabs .config-main-tab').forEach(t =>
             t.classList.toggle('active', t.dataset.cfgtab === name));
+        this._tabAria('#configSubtabs');
         document.querySelectorAll('#configPage .cfg-panel').forEach(p =>
             p.style.display = p.dataset.cfgpanel === name ? '' : 'none');
         if (name === 'alerts') this.loadAlerts();

@@ -2,6 +2,48 @@
 
 ## 3.84.0
 
+### 2026-10-02 — UI: correctness and accessibility
+
+The audit's frontend findings — first the bugs, then the access gaps:
+
+- **One visit to the Status page froze the titlebar for the session.** The
+  page's 2 s refresh reused the app-wide `_statusTimer` handle, so leaving
+  the page cleared the global 5 s status loop: health dots, the
+  devices-online count and the connection-lost detection all stopped. The
+  page has its own timer now; its refresh also got the last-wins sequence
+  guard History/PQ already had, and it preserves keyboard focus across the
+  re-render (the embedded Test button was unreachable — focus dropped
+  every 2 s).
+- **Settings → Alerts "Test" looked dead.** Its result span shared an id
+  with the Status banner's, so the outcome rendered into a hidden element.
+  The handler resolves the span next to the button now.
+- **Modal keyboard traps.** Escape closed TWO stacked modals (the trap
+  didn't stop propagation, and the global fallback closed the first modal
+  in DOM order — now the top-most). Enter with focus on Cancel or ✕
+  SAVED the edit in three modals; it now confirms only from a text field.
+- Stale shown as live: on a WebSocket loss the dashboard kept its last
+  numbers looking live — it dims now, with a "values as of HH:MM" badge.
+- Rapid dashboard device switching could land a slow `/api/values`
+  response in the wrong device's store (sequence guard); `localStorage`
+  access can throw in private windows — boot survives it now; the status
+  banner double-escaped device names (`A&B` showed as `A&amp;B`);
+  `setButtonLoading` hard-coded "Saving..." in English and stripped the
+  button's icon on restore.
+- **Accessibility:** the History measurement picker and its category
+  headers are keyboard-operable (role, tabindex, Enter/Space — they were
+  mouse-only, a keyboard user could not chart anything); the dashboard
+  customize list gained move up/down buttons (reorder was drag-only) and
+  its checkboxes/selects accessible names; status dots carry their state
+  as text (title + aria-label) everywhere, not color alone; warning/danger
+  TEXT uses the theme's `--warning-text`/`--danger-text` tokens (the
+  hard-coded ambers were ≈2.2:1 on the light theme); focus rings restored
+  where `outline:none` had no replacement, and the theme toggle got one
+  plus an accessible name; 12 form labels got their `for`; duplicate
+  `aria-label` attributes, a nested `<label>` and an empty spacer label
+  fixed; secondary tab bars expose tablist semantics with
+  `aria-selected`; JS-built tables set `scope="col"`; and a new
+  `data-i18n-aria` pass translates aria-labels with the rest of the UI.
+
 ### 2026-10-02 — rules: clocks, stale semantics, threshold clears
 
 The audit's remaining rules-layer findings, fixed with regression tests:

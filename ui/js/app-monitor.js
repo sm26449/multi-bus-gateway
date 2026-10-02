@@ -667,7 +667,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <td class="max-cell">${maxDisplay}</td>
                     <td class="unit-cell">${this._esc(info.unit)}</td>
                     <td class="actions-cell">
-                        <button class="btn-remove" data-address="${address}" title="Remove">&#10005;</button>
+                        <button class="btn-remove" data-address="${address}" title="${this._esc(this.t('common.remove', 'Remove'))}" aria-label="${this._esc(this.t('common.remove', 'Remove'))}">&#10005;</button>
                     </td>
                 </tr>
             `;
