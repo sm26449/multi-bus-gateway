@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.84.1
+
+### 2026-10-02 — urllib3 2.8.0 (release gate caught PYSEC-2026-4175/76/77)
+
+The v3.84.0 images were never published: between the audit work and the
+tag, three urllib3 2.7.0 advisories landed (chunk-size buffering DoS,
+a Deflate-stream infinite loop, and HTTPS-proxy TLS-context mix-ups) and
+the release workflow's pip-audit/Trivy gate refused the build — exactly
+what it exists for. 3.84.1 is 3.84.0 plus urllib3 2.8.0 in the lock.
+
 ## 3.84.0
 
 ### 2026-10-02 — dead code: the audit's pruning list
