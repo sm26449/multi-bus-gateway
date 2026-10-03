@@ -1,5 +1,33 @@
 # Changelog
 
+## 3.84.2
+
+### 2026-10-03 — direct serial that works, MQTT input that speaks BMS
+
+- **Direct serial mode could never open its port**: the documented mode
+  (docs/rtu-serial.md §1) maps `/dev/ttyUSBx` into the container, whose
+  node keeps the host's root:dialout 660 — and the `mbg` user had no
+  dialout membership, while the entrypoint's `setpriv --init-groups`
+  drops any docker `group_add`. The image user joins dialout; the doc
+  gains a tip for stable `/dev/serial/by-id` mappings. Found moving a
+  Fronius Smart Meter 65A-3 from the serial-bridge to direct mode.
+- **The MQTT input ingests what BMS collectors actually publish**: an
+  enum register accepts its LABELS (`ON`, `Standby`) via reverse lookup
+  — symmetric with the HA write face — and a `string:N` register carries
+  free text (bounded) into the store; unknown labels drop. Register
+  source topics support a relative `~/leaf` form resolved against the
+  device's base topic, which is what lets ONE template serve N units.
+- **New built-in template `seplos_bms_mqtt`**: the full 58-field map of
+  one [seplos-bms-mqtt](https://github.com/sm2669/seplos-bms-mqtt)
+  battery pack (battery / cells / temperature / alarms / diagnostics),
+  register topics relative — set the device's input topic to
+  `seplos/battery_N/#` and seed from the template. Per-register defaults
+  keep MQTT/Influx re-publish off: the collector stays the writer, the
+  gateway adds per-pack health, dashboards and thresholds.
+- The register span-overlap warning (a Modbus concept) no longer fires
+  for topic/json_path registers — synthetic consecutive addresses are
+  the norm there, and a Seplos pack printed 57 bogus lines per boot.
+
 ## 3.84.1
 
 ### 2026-10-02 — urllib3 2.8.0 (release gate caught PYSEC-2026-4175/76/77)
