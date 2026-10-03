@@ -479,7 +479,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const header = `
             <div class="widget-header">
                 <div class="widget-header-left">
-                    <span class="widget-label">${this._esc(reg.label)}</span>
+                    <span class="widget-label" title="${this._esc(reg.name)}">${this._esc(reg.label)}</span>
                 </div>
                 <div class="widget-header-right">
                     ${pollBadge}
@@ -508,10 +508,9 @@ Object.assign(JanitzaMonitor.prototype, {
                 `;
         }
 
-        // Footer with register name
-        const footer = `<div class="widget-footer">${this._esc(reg.name)}</div>`;
-
-        card.innerHTML = header + content + footer;
+        // No footer: the raw register name is a tooltip on the label — it
+        // duplicated the label on every card and doubled the chrome-to-data ratio.
+        card.innerHTML = header + content;
 
         // Add edit button click handler
         const editBtn = card.querySelector('.widget-edit-btn');

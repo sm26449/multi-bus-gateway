@@ -17,15 +17,9 @@
 
 .stat-card {
     background: var(--bg-secondary);
-    border-radius: var(--radius);
-    padding: 16px;
+    border-radius: var(--radius-sm);
+    padding: 12px 14px;
     border: 1px solid var(--border-light);
-    transition: transform 0.2s, box-shadow 0.2s;
-}
-
-.stat-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(0,0,0,0.3);
 }
 
 .stat-label {
@@ -57,28 +51,27 @@
 /* ==================== DASHBOARD GRID ==================== */
 .dashboard-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
 }
 
 /* Uniform baseline height so number-only cards don't look vacuous next to
    sparkline/gauge cards in the same row. */
-.dashboard-grid .widget-card { min-height: 150px; }
+.dashboard-grid .widget-card { min-height: 112px; }
 
 /* Compact density (operator mode): more cards per screen, quieter chrome.
    Toggled by #dashboardDensityToggle, persisted in localStorage. */
-.dashboard-grid.compact { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+.dashboard-grid.compact { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
 .dashboard-grid.compact .widget-card { padding: 10px 12px; min-height: 0; }
 .dashboard-grid.compact .widget-value { font-size: 22px; }
 .dashboard-grid.compact .widget-header { margin-bottom: 4px; }
-.dashboard-grid.compact .widget-footer, .dashboard-grid.compact .widget-name { font-size: 10.5px; }
 
 .widget-card {
     background: var(--bg-secondary);
-    border-radius: var(--radius);
-    padding: 16px;
+    border-radius: var(--radius-sm);
+    padding: 12px 14px;
     border: 1px solid var(--border-light);
-    transition: transform 0.2s, box-shadow 0.2s;
+    transition: border-color 0.15s;
     display: flex;
     flex-direction: column;
 }
@@ -90,11 +83,6 @@
     align-items: center;
     flex-wrap: wrap;
     margin-bottom: 0;
-}
-
-.widget-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(0,0,0,0.3);
 }
 
 /* Widget Sizes */
@@ -111,7 +99,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
     gap: 8px;
 }
 
@@ -133,6 +121,9 @@
     font-size: 12px;
     font-weight: 500;
     color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* Widget Edit Button */
@@ -151,7 +142,8 @@
     transition: all 0.2s;
 }
 
-.widget-card:hover .widget-edit-btn {
+.widget-card:hover .widget-edit-btn,
+.widget-edit-btn:focus-visible {
     opacity: 1;
 }
 
@@ -160,26 +152,23 @@
     color: var(--text-primary);
 }
 
-/* Widget Value */
+/* Widget Value — the hero of the card: big tabular numerals, nothing else loud */
 .widget-value {
     font-size: 28px;
     font-weight: 700;
     font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+    line-height: 1.1;
     color: var(--text-primary);
-    margin-bottom: 4px;
+    margin-bottom: 0;
 }
 
 .widget-unit {
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 400;
     color: var(--text-tertiary);
     margin-left: 4px;
-}
-
-.widget-footer {
-    font-size: 11px;
-    color: var(--text-tertiary);
-    margin-top: 8px;
 }
 
 /* Value Color Coding */
@@ -201,19 +190,19 @@
 
 /* ==================== GAUGE WIDGET ==================== */
 .widget-gauge {
-    min-height: 140px;
+    min-height: 0;
 }
 
 .widget-gauge .widget-gauge {
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 8px 0;
+    padding: 2px 0 0;
 }
 
 .gauge-svg {
     width: 100%;
-    max-width: 120px;
+    max-width: 96px;
     height: auto;
 }
 
@@ -234,11 +223,11 @@
 
 .gauge-reading {
     text-align: center;
-    margin-top: -10px;
+    margin-top: -6px;
 }
 
 .gauge-number {
-    font-size: 24px;
+    font-size: 22px;
     font-weight: 700;
     font-family: var(--font-mono);
     color: var(--text-primary);
@@ -253,11 +242,12 @@
 .gauge-range {
     display: flex;
     justify-content: space-between;
-    font-size: 10px;
+    font-size: 9.5px;
     color: var(--text-tertiary);
-    margin-top: 4px;
+    opacity: 0.75;
+    margin-top: 2px;
     width: 100%;
-    max-width: 120px;
+    max-width: 96px;
 }
 
 /* ==================== CHART WIDGET ==================== */
@@ -265,10 +255,13 @@
     min-height: 120px;
 }
 
+/* the card and its inner div share the class: the 120px floor is the CARD's,
+   the inner div must not inherit it or an empty chart props the whole row up */
 .widget-chart .widget-chart {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    min-height: 0;
 }
 
 .chart-current {
@@ -310,15 +303,14 @@
     color: var(--text-tertiary);
 }
 
+/* Waiting for history: quiet text, no slab — an empty chart is not an alarm */
 .chart-placeholder {
     display: flex;
     align-items: center;
-    justify-content: center;
     height: 50px;
     color: var(--text-tertiary);
     font-size: 12px;
-    background: var(--bg-tertiary);
-    border-radius: var(--radius-sm);
+    font-style: italic;
 }
 
 /* ==================== CUSTOMIZE DASHBOARD MODAL ==================== */
@@ -608,7 +600,7 @@
 .dash-device-chips::-webkit-scrollbar { display: none; }
 .dash-chip {
     display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
-    padding: 4px 12px; border-radius: 999px; cursor: pointer; font: inherit;
+    padding: 4px 10px; border-radius: var(--radius-sm); cursor: pointer; font: inherit;
     font-size: 12.5px; border: 1px solid var(--border);
     background: var(--bg-secondary); color: var(--text-secondary);
     transition: border-color .12s, background .12s, color .12s;
@@ -618,7 +610,7 @@
 .dash-chip .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 
 /* an installation's units sit together under its name */
-.dash-chip-group { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 3px 6px 3px 4px; border-radius: 999px; border: 1px dashed var(--border); }
+.dash-chip-group { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 3px 6px 3px 4px; border-radius: var(--radius-sm); border: 1px solid var(--border); }
 .dash-chip-group-name { font-size: 11.5px; color: var(--text-secondary); padding: 0 6px; white-space: nowrap; }
 
 /* ── disconnect: last values are STALE, say so instead of looking live ── */
