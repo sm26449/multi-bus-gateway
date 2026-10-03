@@ -638,3 +638,11 @@ body.ws-stale .dashboard-table-container {
     font-size: 12.5px;
     border: 1px solid var(--warning-text, #c77700);
 }
+
+/* text values in a value card (decoded enum states, string registers): same
+   slot as the number, sized to survive 'Floating charge' without clipping */
+.value-number.value-text {
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}

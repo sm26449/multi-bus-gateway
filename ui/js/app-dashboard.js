@@ -443,9 +443,20 @@ Object.assign(JanitzaMonitor.prototype, {
         return Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0];
     },
 
-    createWidgetCard(reg, numValue) {
+    // One display contract for cards, live updates and the table view:
+    // a TEXT value (a decoded enum state like 'Standby', a string register)
+    // renders as text — it used to fall through the numeric formatter as '--'.
+    _displayValue(numValue, reg) {
+        if (typeof numValue === 'string' && numValue !== '') {
+            return { text: numValue, unit: '', isText: true };
+        }
         const fmt = this.formatValueWithUnit(numValue, reg.unit);
-        const displayValue = this._fmtNum(fmt.value, fmt.decimals);
+        return { text: this._fmtNum(fmt.value, fmt.decimals), unit: fmt.unit, isText: false };
+    },
+
+    createWidgetCard(reg, numValue) {
+        const disp = this._displayValue(numValue, reg);
+        const displayValue = disp.text;
 
         // Widget card (CSS Grid handles responsive layout)
         const card = document.createElement('div');
@@ -488,7 +499,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 const colorClass = this.getValueColorClass(numValue, reg);
                 content = `
                     <div class="widget-value">
-                        <span class="value-number ${colorClass}">${displayValue}</span><span class="widget-unit">${this._esc(fmt.unit)}</span>
+                        <span class="value-number ${disp.isText ? 'value-text' : ''} ${colorClass}">${this._esc(displayValue)}</span><span class="widget-unit">${this._esc(disp.unit)}</span>
                     </div>
                 `;
         }
@@ -523,15 +534,15 @@ Object.assign(JanitzaMonitor.prototype, {
             default: // 'value'
                 const valueEl = card.querySelector('.value-number');
                 if (valueEl) {
-                    const fmt = this.formatValueWithUnit(numValue, reg.unit);
-                    const displayValue = this._fmtNum(fmt.value, fmt.decimals);
-                    if (valueEl.textContent !== displayValue) {
-                        valueEl.textContent = displayValue;
+                    const disp = this._displayValue(numValue, reg);
+                    if (valueEl.textContent !== disp.text) {
+                        valueEl.textContent = disp.text;
                     }
+                    valueEl.classList.toggle('value-text', disp.isText);
                     // Update unit display (may change with scaling)
                     const unitEl = card.querySelector('.widget-unit');
-                    if (unitEl && unitEl.textContent !== fmt.unit) {
-                        unitEl.textContent = fmt.unit;
+                    if (unitEl && unitEl.textContent !== disp.unit) {
+                        unitEl.textContent = disp.unit;
                     }
                     // Update color class
                     const newColorClass = this.getValueColorClass(numValue, reg);
@@ -614,8 +625,8 @@ Object.assign(JanitzaMonitor.prototype, {
         const rows = registers.map(reg => {
             const value = this._dashStore()[reg.address];
             const numValue = value?.value;
-            const fmt = this.formatValueWithUnit(numValue, reg.unit);
-            const displayValue = this._fmtNum(fmt.value, fmt.decimals);
+            const disp = this._displayValue(numValue, reg);
+            const displayValue = disp.text;
             const colorClass = this.getValueColorClass(numValue, reg);
             const pollBadge = (reg.poll_group && reg.poll_group !== dom)
                 ? `<span class="badge poll-${this._esc(reg.poll_group)}">${this._esc(reg.poll_group)}</span>`
@@ -628,9 +639,9 @@ Object.assign(JanitzaMonitor.prototype, {
                         <div class="table-name">${this._esc(reg.name)}</div>
                     </td>
                     <td>
-                        <span class="table-value ${colorClass}">${displayValue}</span>
+                        <span class="table-value ${colorClass}">${this._esc(displayValue)}</span>
                     </td>
-                    <td class="table-unit">${this._esc(fmt.unit)}</td>
+                    <td class="table-unit">${this._esc(disp.unit)}</td>
                     <td>${pollBadge}</td>
                     <td>
                         <button class="btn-action" title="${this._esc(this.t('common.edit', 'Edit'))}" aria-label="${this._esc(this.t('common.edit', 'Edit'))}" ${this._act('editRegisterByAddress', [reg.address])}>

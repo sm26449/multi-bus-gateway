@@ -679,8 +679,11 @@ Object.assign(JanitzaMonitor.prototype, {
     // whole UI so KPIs, cards and tables never disagree on formatting.
     _fmtNum(value, decimals = 2) {
         if (typeof value !== 'number' || isNaN(value)) return '--';
+        // an integer is an integer: 'Packs online 8.00' and 'Alarms 0.00'
+        // read as broken, not precise (counts, enum codes, whole mV deltas)
+        const d = Number.isInteger(value) ? 0 : decimals;
         return value.toLocaleString(undefined, {
-            minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+            minimumFractionDigits: d, maximumFractionDigits: d });
     },
 
     _esc(s) {
