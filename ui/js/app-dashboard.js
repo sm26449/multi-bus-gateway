@@ -12,37 +12,41 @@ Object.assign(JanitzaMonitor.prototype, {
      * Returns template key: voltage_ln, voltage_ll, frequency, power_factor, thd, current, power
      */
     detectMeasurementType(unit, name) {
+        // These implicit threshold templates encode GRID assumptions (230 V
+        // L-N, 50 Hz, breaker-sized currents), so they must fire only on the
+        // canonical GRID register names — never on a bare unit or a loose
+        // substring. The old heuristics painted a 51 V battery bank
+        // danger-red, and /u[_]?l/ even matched the "ul" in energy_to_FULl
+        // (audit 2026-10-03, seen live). A register that wants coloring
+        // outside these shapes sets its own thresholds.
         const unitLower = (unit || '').toLowerCase();
         const nameLower = (name || '').toLowerCase();
 
-        // Voltage detection - distinguish L-N from L-L
-        if (unitLower === 'v' || nameLower.includes('voltage') || nameLower.match(/u[_]?l/)) {
-            // L-L voltage: Ull, U_ll, voltage_l1_l2, etc.
-            if (nameLower.includes('ll') || nameLower.match(/l\d[_-]?l\d/) || nameLower.includes('_ll')) {
-                return 'voltage_ll';
-            }
-            // L-N voltage: Uln, U_ln, voltage_l1_n, etc.
+        // Voltage — canonical grid names only, anchored at the start
+        if (/^(voltage_l\d_?l\d|voltage_ll|u_?l\d_?l\d|ull)/.test(nameLower)) {
+            return 'voltage_ll';
+        }
+        if (/^(voltage_l\d(_n)?($|_)|voltage_ln|u_?l\d|uln)/.test(nameLower)) {
             return 'voltage_ln';
         }
-        // Frequency detection
-        if (unitLower === 'hz' || nameLower.includes('freq')) {
+        // Frequency — the unit is unambiguous
+        if (unitLower === 'hz' || /^freq/.test(nameLower)) {
             return 'frequency';
         }
-        // Power Factor detection
-        if (nameLower.includes('power_factor') || nameLower.includes('cos') || nameLower.includes('pf')) {
+        // Power factor
+        if (/^(power_factor|cos_?phi|pf)(_|$)/.test(nameLower)) {
             return 'power_factor';
         }
-        // THD detection
-        if (nameLower.includes('thd') || unitLower === '%thd' || unitLower === '% thd') {
+        // THD
+        if (/^thd/.test(nameLower) || unitLower === '%thd' || unitLower === '% thd') {
             return 'thd';
         }
-        // Current detection
-        if (unitLower === 'a' || nameLower.includes('current') || nameLower.match(/i[_]?l/)) {
+        // Current — per-phase grid names only
+        if (/^(current_(l\d|n)($|_)|i_?l\d)/.test(nameLower)) {
             return 'current';
         }
-        // Power detection
-        if (unitLower === 'w' || unitLower === 'kw' || unitLower === 'mw' || unitLower === 'va' || unitLower === 'kva' ||
-            nameLower.includes('power') || nameLower.match(/p[_]?l/) || nameLower.match(/s[_]?l/)) {
+        // Power — canonical grid power names only
+        if (/^(power_(active|apparent|reactive)|p_?l\d|s_?l\d)/.test(nameLower)) {
             return 'power';
         }
 
