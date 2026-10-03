@@ -103,7 +103,15 @@ class MqttInputClient:
 
     # ── register/topic mapping ────────────────────────────────────────────
     def _reg_topic(self, reg) -> str:
-        return (getattr(reg, 'topic', '') or '').strip() or self.base_topic
+        t = (getattr(reg, 'topic', '') or '').strip()
+        if t.startswith('~/'):
+            # RELATIVE to the device's input base: base 'seplos/battery_3/#'
+            # + '~/soc' → 'seplos/battery_3/soc'. This is what lets one
+            # TEMPLATE serve N units — absolute topics would pin every unit
+            # to the same source (audit follow-up, 2026-10-03).
+            base = (self.base_topic or '').rstrip('#+').rstrip('/')
+            return f"{base}/{t[2:]}" if base else t[2:]
+        return t or self.base_topic
 
     def _index(self) -> Dict[str, list]:
         d: Dict[str, list] = {}
@@ -191,6 +199,26 @@ class MqttInputClient:
                     val = resolve_json_path(doc, jp) if doc is not None else None
                 else:
                     val = doc if isinstance(doc, (int, float, bool)) else raw
+                # TEXT payloads (BMS collectors publish 'ON'/'Standby'/...):
+                # a `string` register carries the text as-is (bounded); an
+                # enum register accepts its LABELS via reverse lookup —
+                # symmetric with the HA write face, which maps label → code.
+                # Unknown labels drop (validation), like any undecodable value.
+                if isinstance(val, str):
+                    _s = val.strip()
+                    _dt = (getattr(r, 'data_type', '') or '').lower()
+                    if _dt.startswith('string'):
+                        if _s:
+                            extracted.append((r, _s[:256]))
+                        continue
+                    _em = getattr(r, 'enum', None)
+                    if _em:
+                        _rev = {str(lbl): code for code, lbl in _em.items()}
+                        if _s in _rev:
+                            try:
+                                val = int(_rev[_s])
+                            except (TypeError, ValueError):
+                                val = _rev[_s]
                 val = _coerce_numeric(val)
             except (ValueError, TypeError, OverflowError, RecursionError) as e:
                 # one hostile field must not cost the message its other
@@ -206,6 +234,12 @@ class MqttInputClient:
             extracted.append((r, val))
         data: Dict[int, Dict] = {}
         for r, val in extracted:
+            if isinstance(val, str):
+                # a string register's text goes to the store as-is — the
+                # numeric corrections below have nothing to say about it
+                data[r.address] = {'value': val, 'register': r,
+                                   'ts': self.last_msg_ts, 'mono': self.last_msg_mono}
+                continue
             # SHARED correction pipeline: nan/enum/bits/scale/scale_from/
             # offset/monotonic/daily — the full poller sequence. This path
             # used to skip `siblings` (so a scale_from register on an MQTT

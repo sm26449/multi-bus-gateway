@@ -526,7 +526,7 @@ text decode) or (`scale` + `offset`) → `monotonic` filter → outputs.**
 | `bits` | *(unset)* | `{bit: name}` — status word → joined names of the set bits |
 | `mask` / `shift` | *(unset)* | extract a sub-field before `enum` decode: `(raw & mask) >> shift` |
 | `json_path` | `""` | HTTP/JSON + MQTT input: dot/bracket path into the payload |
-| `topic` | `""` | MQTT input: per-register source topic (else the device's base topic) |
+| `topic` | `""` | MQTT input: per-register source topic (else the device's base topic). A `~/leaf` form is RELATIVE to the device's base topic (`seplos/battery_3/#` + `~/soc` → `seplos/battery_3/soc`) — what lets one template serve many units (3.84.2) |
 | `thresholds` | *(unset)* | color-coding thresholds (dashboard; also feeds value alerts when enabled) |
 
 **Byte order** is set per *template*, not per register: `protocol.byte_order`

@@ -724,3 +724,71 @@ def test_command_check_answers_a_verdict_for_non_numeric_readback():
     assert "expected one of" in _check({"read": "mode", "in": [0, 1]}, "Standby", {})
     assert _check({"read": "mode", "in": [0, 1]}, 1, {}) is None
     assert _check({"read": "mode", "in": ["Standby"]}, "Standby", {}) is None
+
+
+# ── MQTT input: text payloads (enum labels, string registers, ~/ topics) ─────
+
+def _mqtt_reg(addr, name, topic="", **kw):
+    from multibus.config import SelectedRegister
+    return SelectedRegister(address=addr, name=name, label=name, unit="",
+                            data_type=kw.pop('data_type', 'float'),
+                            poll_group="normal", topic=topic, **kw)
+
+
+def test_mqtt_input_enum_register_accepts_labels():
+    """'ON'/'Standby' payloads: an enum register ingests its LABELS via
+    reverse lookup (symmetric with the HA write face) and the store carries
+    the decoded text, exactly like a Modbus enum register."""
+    from types import SimpleNamespace as NS
+    from multibus import mqtt_input as mi
+    regs = [_mqtt_reg(1, "fet_charge", "bms/fet_charge", data_type="uint16",
+                      enum={"0": "OFF", "1": "ON"})]
+    cli = mi.MqttInputClient({"topic": ""}, regs)
+    got = {}
+    cli.publish_callback = lambda pg, data: got.update(data)
+    cli._on_message(None, None, NS(topic="bms/fet_charge", payload=b"ON"))
+    assert got[1]["value"] == "ON"            # label → code → decoded label
+    got.clear()
+    cli._on_message(None, None, NS(topic="bms/fet_charge", payload=b"MAYBE"))
+    assert got == {}                           # unknown label drops, not corrupts
+
+
+def test_mqtt_input_string_register_carries_text():
+    from types import SimpleNamespace as NS
+    from multibus import mqtt_input as mi
+    regs = [_mqtt_reg(1, "balancing_cells", "bms/balancing_cells",
+                      data_type="string:8")]
+    cli = mi.MqttInputClient({"topic": ""}, regs)
+    got = {}
+    cli.publish_callback = lambda pg, data: got.update(data)
+    cli._on_message(None, None, NS(topic="bms/balancing_cells", payload=b"3,7,12"))
+    assert got[1]["value"] == "3,7,12"
+    got.clear()
+    cli._on_message(None, None, NS(topic="bms/balancing_cells", payload=b"A" * 999))
+    assert len(got[1]["value"]) == 256         # bounded
+
+
+def test_mqtt_input_relative_topics_resolve_against_the_base():
+    """'~/soc' + base 'seplos/battery_3/#' → 'seplos/battery_3/soc' — one
+    template serves N packs."""
+    from types import SimpleNamespace as NS
+    from multibus import mqtt_input as mi
+    regs = [_mqtt_reg(1, "soc", "~/soc")]
+    cli = mi.MqttInputClient({"topic": "seplos/battery_3/#"}, regs)
+    assert cli._subscriptions() == ["seplos/battery_3/soc"]
+    got = {}
+    cli.publish_callback = lambda pg, data: got.update(data)
+    cli._on_message(None, None, NS(topic="seplos/battery_3/soc", payload=b"69.5"))
+    assert got[1]["value"] == 69.5
+
+
+def test_seplos_template_ships_and_validates():
+    from multibus.device_template import TemplateRegistry
+    reg = TemplateRegistry()
+    tpl = reg.get("seplos_bms_mqtt")
+    assert tpl is not None and len(tpl.registers) == 58
+    names = {r.name for r in tpl.registers}
+    assert {"soc", "cell_1", "cell_16", "status", "balancing_cells",
+            "alarm_cell_overvolt", "fet_charge"} <= names
+    # every topic is relative — the template must serve any battery_N base
+    assert all(getattr(r, 'topic', '').startswith('~/') for r in tpl.registers)

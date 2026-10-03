@@ -1,0 +1,1354 @@
+{
+ "device_template": {
+  "schema_version": 1,
+  "id": "seplos_bms_mqtt",
+  "name": "Seplos BMS V3 (via seplos-bms-mqtt)",
+  "vendor": "Seplos",
+  "model": "BMS V3",
+  "version": "1.0",
+  "author": "Multi-Bus Gateway",
+  "description": "One battery pack of the seplos-bms-mqtt collector (https://github.com/sm2669/seplos-bms-mqtt): the collector passively snoops the RS485 pack bus and publishes seplos/battery_N/<field>; this template ingests the full field set over MQTT. Set the device input topic to seplos/battery_N/# — register topics are RELATIVE (~/).",
+  "protocol": {
+   "transports": [
+    "mqtt"
+   ]
+  },
+  "categories": {
+   "battery": {
+    "label": "Battery",
+    "order": 1
+   },
+   "cells": {
+    "label": "Cells",
+    "order": 2
+   },
+   "temperature": {
+    "label": "Temperature",
+    "order": 3
+   },
+   "alarms": {
+    "label": "Alarms",
+    "order": 4
+   },
+   "diagnostics": {
+    "label": "Diagnostics",
+    "order": 5
+   }
+  },
+  "registers": [
+   {
+    "address": 1,
+    "name": "alarm_cell_overvolt",
+    "label": "Alarm Cell Overvolt",
+    "unit": "",
+    "data_type": "float",
+    "category": "alarms",
+    "topic": "~/alarm_cell_overvolt",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 2,
+    "name": "alarm_cell_temp",
+    "label": "Alarm Cell Temp",
+    "unit": "",
+    "data_type": "float",
+    "category": "temperature",
+    "topic": "~/alarm_cell_temp",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 3,
+    "name": "alarm_cell_undervolt",
+    "label": "Alarm Cell Undervolt",
+    "unit": "",
+    "data_type": "float",
+    "category": "alarms",
+    "topic": "~/alarm_cell_undervolt",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 4,
+    "name": "alarm_count",
+    "label": "Alarm Count",
+    "unit": "",
+    "data_type": "float",
+    "category": "alarms",
+    "topic": "~/alarm_count",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 5,
+    "name": "ambient_temp",
+    "label": "Ambient Temp",
+    "unit": "°C",
+    "data_type": "float",
+    "category": "temperature",
+    "topic": "~/ambient_temp",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 6,
+    "name": "average_cell_temp",
+    "label": "Average Cell Temp",
+    "unit": "°C",
+    "data_type": "float",
+    "category": "temperature",
+    "topic": "~/average_cell_temp",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 7,
+    "name": "average_cell_voltage",
+    "label": "Average Cell Voltage",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/average_cell_voltage",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 8,
+    "name": "balancing_bits",
+    "label": "Balancing Bits",
+    "unit": "",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/balancing_bits",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 9,
+    "name": "balancing_count",
+    "label": "Balancing Count",
+    "unit": "",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/balancing_count",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 10,
+    "name": "cell_1",
+    "label": "Cell 1",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/cell_1",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 11,
+    "name": "cell_10",
+    "label": "Cell 10",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/cell_10",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 12,
+    "name": "cell_11",
+    "label": "Cell 11",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/cell_11",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 13,
+    "name": "cell_12",
+    "label": "Cell 12",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/cell_12",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 14,
+    "name": "cell_13",
+    "label": "Cell 13",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/cell_13",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 15,
+    "name": "cell_14",
+    "label": "Cell 14",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/cell_14",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 16,
+    "name": "cell_15",
+    "label": "Cell 15",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/cell_15",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 17,
+    "name": "cell_16",
+    "label": "Cell 16",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/cell_16",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 18,
+    "name": "cell_2",
+    "label": "Cell 2",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/cell_2",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 19,
+    "name": "cell_3",
+    "label": "Cell 3",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/cell_3",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 20,
+    "name": "cell_4",
+    "label": "Cell 4",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/cell_4",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 21,
+    "name": "cell_5",
+    "label": "Cell 5",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/cell_5",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 22,
+    "name": "cell_6",
+    "label": "Cell 6",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/cell_6",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 23,
+    "name": "cell_7",
+    "label": "Cell 7",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/cell_7",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 24,
+    "name": "cell_8",
+    "label": "Cell 8",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/cell_8",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 25,
+    "name": "cell_9",
+    "label": "Cell 9",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/cell_9",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 26,
+    "name": "cell_delta",
+    "label": "Cell Delta",
+    "unit": "mV",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/cell_delta",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": true,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 27,
+    "name": "cell_temp_1",
+    "label": "Cell Temp 1",
+    "unit": "°C",
+    "data_type": "float",
+    "category": "temperature",
+    "topic": "~/cell_temp_1",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 28,
+    "name": "cell_temp_2",
+    "label": "Cell Temp 2",
+    "unit": "°C",
+    "data_type": "float",
+    "category": "temperature",
+    "topic": "~/cell_temp_2",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 29,
+    "name": "cell_temp_3",
+    "label": "Cell Temp 3",
+    "unit": "°C",
+    "data_type": "float",
+    "category": "temperature",
+    "topic": "~/cell_temp_3",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 30,
+    "name": "cell_temp_4",
+    "label": "Cell Temp 4",
+    "unit": "°C",
+    "data_type": "float",
+    "category": "temperature",
+    "topic": "~/cell_temp_4",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 31,
+    "name": "current",
+    "label": "Current",
+    "unit": "A",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/current",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 32,
+    "name": "cycles",
+    "label": "Cycles",
+    "unit": "cycles",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/cycles",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 33,
+    "name": "failure_count",
+    "label": "Failure Count",
+    "unit": "",
+    "data_type": "float",
+    "category": "diagnostics",
+    "topic": "~/failure_count",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 34,
+    "name": "max_cell_temp",
+    "label": "Max Cell Temp",
+    "unit": "°C",
+    "data_type": "float",
+    "category": "temperature",
+    "topic": "~/max_cell_temp",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 35,
+    "name": "max_cell_voltage",
+    "label": "Max Cell Voltage",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/max_cell_voltage",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 36,
+    "name": "maxchgcurt",
+    "label": "MaxChgCurt",
+    "unit": "A",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/maxchgcurt",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 37,
+    "name": "maxdiscurt",
+    "label": "MaxDisCurt",
+    "unit": "A",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/maxdiscurt",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 38,
+    "name": "min_cell_temp",
+    "label": "Min Cell Temp",
+    "unit": "°C",
+    "data_type": "float",
+    "category": "temperature",
+    "topic": "~/min_cell_temp",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 39,
+    "name": "min_cell_voltage",
+    "label": "Min Cell Voltage",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/min_cell_voltage",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 40,
+    "name": "mosfet_temp",
+    "label": "MOSFET Temp",
+    "unit": "°C",
+    "data_type": "float",
+    "category": "temperature",
+    "topic": "~/mosfet_temp",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 41,
+    "name": "pack_voltage",
+    "label": "Pack Voltage",
+    "unit": "V",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/pack_voltage",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": true,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 42,
+    "name": "power",
+    "label": "Power",
+    "unit": "W",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/power",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": true,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 43,
+    "name": "protection_count",
+    "label": "Protection Count",
+    "unit": "",
+    "data_type": "float",
+    "category": "diagnostics",
+    "topic": "~/protection_count",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 44,
+    "name": "remaining_capacity",
+    "label": "Remaining Capacity",
+    "unit": "Ah",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/remaining_capacity",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 45,
+    "name": "soc",
+    "label": "SOC",
+    "unit": "%",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/soc",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": true,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 46,
+    "name": "soh",
+    "label": "SOH",
+    "unit": "%",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/soh",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 47,
+    "name": "total_capacity",
+    "label": "Total Capacity",
+    "unit": "Ah",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/total_capacity",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 48,
+    "name": "total_discharge_capacity",
+    "label": "Total Discharge Capacity",
+    "unit": "Ah",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/total_discharge_capacity",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 49,
+    "name": "balancing_active",
+    "label": "Balancing Active",
+    "unit": "",
+    "data_type": "uint16",
+    "category": "cells",
+    "topic": "~/balancing_active",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    },
+    "enum": {
+     "0": "OFF",
+     "1": "ON"
+    }
+   },
+   {
+    "address": 50,
+    "name": "fet_charge",
+    "label": "FET Charge",
+    "unit": "",
+    "data_type": "uint16",
+    "category": "diagnostics",
+    "topic": "~/fet_charge",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    },
+    "enum": {
+     "0": "OFF",
+     "1": "ON"
+    }
+   },
+   {
+    "address": 51,
+    "name": "fet_discharge",
+    "label": "FET Discharge",
+    "unit": "",
+    "data_type": "uint16",
+    "category": "diagnostics",
+    "topic": "~/fet_discharge",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    },
+    "enum": {
+     "0": "OFF",
+     "1": "ON"
+    }
+   },
+   {
+    "address": 52,
+    "name": "fet_heater",
+    "label": "FET Heater",
+    "unit": "",
+    "data_type": "uint16",
+    "category": "diagnostics",
+    "topic": "~/fet_heater",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    },
+    "enum": {
+     "0": "OFF",
+     "1": "ON"
+    }
+   },
+   {
+    "address": 53,
+    "name": "heating_active",
+    "label": "Heating Active",
+    "unit": "",
+    "data_type": "uint16",
+    "category": "battery",
+    "topic": "~/heating_active",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    },
+    "enum": {
+     "0": "OFF",
+     "1": "ON"
+    }
+   },
+   {
+    "address": 54,
+    "name": "fet_current_limit",
+    "label": "FET Current Limit",
+    "unit": "",
+    "data_type": "uint16",
+    "category": "diagnostics",
+    "topic": "~/fet_current_limit",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    },
+    "enum": {
+     "0": "OFF",
+     "1": "ON"
+    }
+   },
+   {
+    "address": 55,
+    "name": "status",
+    "label": "Status",
+    "unit": "",
+    "data_type": "uint16",
+    "category": "diagnostics",
+    "topic": "~/status",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": true,
+      "widget": "value"
+     }
+    },
+    "enum": {
+     "0": "Off",
+     "1": "Standby",
+     "2": "Full charge",
+     "3": "Floating charge",
+     "4": "Charge",
+     "5": "Discharge",
+     "6": "Unknown"
+    }
+   },
+   {
+    "address": 56,
+    "name": "state",
+    "label": "Collector availability",
+    "unit": "",
+    "data_type": "uint16",
+    "category": "diagnostics",
+    "topic": "~/state",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    },
+    "enum": {
+     "0": "offline",
+     "1": "online"
+    }
+   },
+   {
+    "address": 57,
+    "name": "balancing_cells",
+    "label": "Balancing cells",
+    "unit": "",
+    "data_type": "string:8",
+    "category": "cells",
+    "topic": "~/balancing_cells",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 58,
+    "name": "last_update",
+    "label": "Last BMS frame",
+    "unit": "",
+    "data_type": "string:8",
+    "category": "diagnostics",
+    "topic": "~/last_update",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   }
+  ]
+ }
+}
