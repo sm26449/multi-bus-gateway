@@ -320,7 +320,10 @@ devices:
       # stopbits: 1
       # bytesize: 8
       # http (HTTP/JSON input): url, timeout, headers, verify_tls
-      # mqtt (MQTT input): broker, port, username, password, tls, topic
+      # mqtt (MQTT input): broker, port, username, password, tls, topic,
+      #   accept_retained (true = ingest the broker's retained snapshot on
+      #   subscribe — for collectors that retain + carry an LWT; a restart
+      #   then repopulates instantly instead of waiting for each change)
     mqtt:
       topic_prefix: meters/${device_id}   # ${device_id} / ${id} substituted
       ha_discovery: true

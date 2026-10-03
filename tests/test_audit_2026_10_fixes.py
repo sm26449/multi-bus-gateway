@@ -795,3 +795,24 @@ def test_seplos_template_ships_and_validates():
             "alarm_cell_overvolt", "fet_charge"} <= names
     # every topic is relative — the template must serve any battery_N base
     assert all(getattr(r, 'topic', '').startswith('~/') for r in tpl.registers)
+
+
+def test_accept_retained_reaches_the_mqtt_client_from_config(tmp_path):
+    """The client-side opt-in existed, but the config loader filtered the key
+    out of the connection block — no real device could ever enable it, so a
+    restarted gateway dropped the broker's retained snapshot and showed '--'
+    until each value happened to change."""
+    import yaml
+    from multibus.config import Config
+    cfg = {"modbus": {"host": "127.0.0.1"}, "devices": [{
+        "id": "bms", "name": "bms", "enabled": True,
+        "connection": {"protocol": "mqtt", "broker": "b", "topic": "t/#",
+                       "accept_retained": True}}]}
+    p = tmp_path / "config.yaml"
+    p.write_text(yaml.safe_dump(cfg))
+    c = Config(str(p))
+    d = next(x for x in c.devices if x.id == "bms")
+    assert d.mqtt_in.get("accept_retained") is True
+    from multibus import mqtt_input as mi
+    cli = mi.MqttInputClient(d.mqtt_in, [])
+    assert cli.accept_retained is True

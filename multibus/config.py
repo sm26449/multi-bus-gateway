@@ -226,8 +226,14 @@ def _http_from_conn(c: Dict) -> Dict[str, Any]:
 
 
 def _mqtt_in_from_conn(c: Dict) -> Dict[str, Any]:
+    # accept_retained: the deliberate opt-in for sources that publish RETAINED
+    # telemetry with an LWT (seplos-bms-mqtt does) — without it every value
+    # the broker replays on subscribe is dropped and a freshly-restarted
+    # gateway shows '--' until each field happens to change. The client-side
+    # flag existed but no config path could reach it (audit 2026-10-03).
     return {k: c[k] for k in
-            ('broker', 'port', 'username', 'password', 'tls', 'topic') if k in c}
+            ('broker', 'port', 'username', 'password', 'tls', 'topic',
+             'accept_retained') if k in c}
 
 
 PRIMARY_DEVICE_ID = "umg512"
