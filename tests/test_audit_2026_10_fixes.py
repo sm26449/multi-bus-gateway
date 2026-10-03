@@ -785,6 +785,9 @@ def test_mqtt_input_relative_topics_resolve_against_the_base():
 def test_seplos_template_ships_and_validates():
     from multibus.device_template import TemplateRegistry
     reg = TemplateRegistry()
+    bank = reg.get("seplos_bms_bank_mqtt")
+    assert bank is not None and len(bank.registers) == 28
+    assert all(getattr(r, 'topic', '').startswith('~/pack_') for r in bank.registers)
     tpl = reg.get("seplos_bms_mqtt")
     assert tpl is not None and len(tpl.registers) == 58
     names = {r.name for r in tpl.registers}

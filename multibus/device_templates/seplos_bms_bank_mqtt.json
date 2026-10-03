@@ -1,0 +1,668 @@
+{
+ "device_template": {
+  "schema_version": 1,
+  "id": "seplos_bms_bank_mqtt",
+  "name": "Seplos BMS V3 bank (via seplos-bms-mqtt)",
+  "vendor": "Seplos",
+  "model": "BMS V3 bank",
+  "version": "1.0",
+  "author": "Multi-Bus Gateway",
+  "description": "The whole battery BANK as one device: the seplos-bms-mqtt collector aggregates its packs under seplos/pack/pack_* (sums, averages, min/max, worst-cell). Set the device input topic to seplos/pack/# — register topics are relative. Pairs with seplos_bms_mqtt for per-pack detail.",
+  "protocol": {
+   "transports": [
+    "mqtt"
+   ]
+  },
+  "categories": {
+   "battery": {
+    "label": "Battery",
+    "order": 1
+   },
+   "cells": {
+    "label": "Cells",
+    "order": 2
+   },
+   "temperature": {
+    "label": "Temperature",
+    "order": 3
+   },
+   "limits": {
+    "label": "Limits",
+    "order": 4
+   },
+   "alarms": {
+    "label": "Alarms",
+    "order": 5
+   },
+   "diagnostics": {
+    "label": "Diagnostics",
+    "order": 6
+   }
+  },
+  "registers": [
+   {
+    "address": 1,
+    "name": "average_soc",
+    "label": "State of charge (avg)",
+    "unit": "%",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/pack_average_soc",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": true,
+      "widget": "gauge"
+     }
+    }
+   },
+   {
+    "address": 2,
+    "name": "total_power",
+    "label": "Total power",
+    "unit": "W",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/pack_total_power",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": true,
+      "widget": "chart"
+     }
+    }
+   },
+   {
+    "address": 3,
+    "name": "total_voltage",
+    "label": "Bank voltage (avg)",
+    "unit": "V",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/pack_total_voltage",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": true,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 4,
+    "name": "total_current",
+    "label": "Total current",
+    "unit": "A",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/pack_total_current",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": true,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 5,
+    "name": "status",
+    "label": "Status",
+    "unit": "",
+    "data_type": "uint16",
+    "category": "battery",
+    "topic": "~/pack_status",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": true,
+      "widget": "value"
+     }
+    },
+    "enum": {
+     "0": "Standby",
+     "1": "Charging",
+     "2": "Discharging",
+     "3": "Float Charging",
+     "4": "Unknown"
+    }
+   },
+   {
+    "address": 6,
+    "name": "energy_remaining",
+    "label": "Energy remaining",
+    "unit": "kWh",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/pack_energy_remaining",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": true,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 7,
+    "name": "energy_to_full",
+    "label": "Energy to full",
+    "unit": "kWh",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/pack_energy_to_full",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": true,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 8,
+    "name": "batteries_online",
+    "label": "Packs online",
+    "unit": "",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/pack_batteries_online",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": true,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 9,
+    "name": "cell_delta",
+    "label": "Cell delta (worst)",
+    "unit": "mV",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/pack_cell_delta",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": true,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 10,
+    "name": "soc_spread",
+    "label": "SOC spread",
+    "unit": "%",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/pack_soc_spread",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": true,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 11,
+    "name": "min_soc",
+    "label": "SOC (min pack)",
+    "unit": "%",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/pack_min_soc",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 12,
+    "name": "max_soc",
+    "label": "SOC (max pack)",
+    "unit": "%",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/pack_max_soc",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 13,
+    "name": "min_soh",
+    "label": "SOH (min pack)",
+    "unit": "%",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/pack_min_soh",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 14,
+    "name": "remaining_capacity",
+    "label": "Remaining capacity",
+    "unit": "Ah",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/pack_remaining_capacity",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 15,
+    "name": "total_capacity",
+    "label": "Total capacity",
+    "unit": "Ah",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/pack_total_capacity",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 16,
+    "name": "max_cycles",
+    "label": "Cycles (max pack)",
+    "unit": "",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "~/pack_max_cycles",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 17,
+    "name": "avg_cell_voltage",
+    "label": "Cell voltage (avg)",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/pack_avg_cell_voltage",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 18,
+    "name": "min_cell_voltage",
+    "label": "Cell voltage (min)",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/pack_min_cell_voltage",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 19,
+    "name": "max_cell_voltage",
+    "label": "Cell voltage (max)",
+    "unit": "V",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/pack_max_cell_voltage",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 20,
+    "name": "balancing_cells",
+    "label": "Cells balancing",
+    "unit": "",
+    "data_type": "float",
+    "category": "cells",
+    "topic": "~/pack_balancing_cells",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 21,
+    "name": "avg_temp",
+    "label": "Temperature (avg)",
+    "unit": "°C",
+    "data_type": "float",
+    "category": "temperature",
+    "topic": "~/pack_avg_temp",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 22,
+    "name": "min_temp",
+    "label": "Temperature (min)",
+    "unit": "°C",
+    "data_type": "float",
+    "category": "temperature",
+    "topic": "~/pack_min_temp",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 23,
+    "name": "max_temp",
+    "label": "Temperature (max)",
+    "unit": "°C",
+    "data_type": "float",
+    "category": "temperature",
+    "topic": "~/pack_max_temp",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 24,
+    "name": "max_charge_current",
+    "label": "Charge current limit",
+    "unit": "A",
+    "data_type": "float",
+    "category": "limits",
+    "topic": "~/pack_max_charge_current",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 25,
+    "name": "max_discharge_current",
+    "label": "Discharge current limit",
+    "unit": "A",
+    "data_type": "float",
+    "category": "limits",
+    "topic": "~/pack_max_discharge_current",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 26,
+    "name": "total_alarms",
+    "label": "Active alarms",
+    "unit": "",
+    "data_type": "float",
+    "category": "alarms",
+    "topic": "~/pack_total_alarms",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": true,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 27,
+    "name": "total_protections",
+    "label": "Active protections",
+    "unit": "",
+    "data_type": "float",
+    "category": "alarms",
+    "topic": "~/pack_total_protections",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   },
+   {
+    "address": 28,
+    "name": "last_update",
+    "label": "Last aggregate",
+    "unit": "",
+    "data_type": "string:8",
+    "category": "diagnostics",
+    "topic": "~/pack_last_update",
+    "poll_group": "normal",
+    "defaults": {
+     "mqtt": {
+      "enabled": false
+     },
+     "influxdb": {
+      "enabled": false
+     },
+     "ui": {
+      "show_on_dashboard": false,
+      "widget": "value"
+     }
+    }
+   }
+  ]
+ }
+}
