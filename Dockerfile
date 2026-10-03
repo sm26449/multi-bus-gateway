@@ -21,7 +21,12 @@ RUN apt-get update \
 # (privileged) as non-root needs the per-container sysctl
 # net.ipv4.ip_unprivileged_port_start=0 — scoped to the container's own
 # network namespace, no capabilities involved (see docker-compose.yml).
-RUN useradd --uid 10001 --user-group --no-create-home --shell /usr/sbin/nologin mbg
+# --groups dialout: the documented DIRECT serial mode (docs/rtu-serial.md §1)
+# maps /dev/ttyUSBx into the container, whose node keeps the host's
+# root:dialout 660 — without this membership the unprivileged user could
+# never open it (the entrypoint's setpriv --init-groups also drops any
+# docker --group-add, so the image is the only place this can live).
+RUN useradd --uid 10001 --user-group --groups dialout --no-create-home --shell /usr/sbin/nologin mbg
 
 WORKDIR /app
 

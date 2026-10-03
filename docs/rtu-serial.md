@@ -27,6 +27,13 @@ can live in its own container.
                                        # owned by another service (e.g. a BMS)
    ```
    Recreate the container once (`docker compose up -d multi-bus-gateway`).
+   Tip — stable addressing despite replug renumbering: map the
+   `/dev/serial/by-id/...` symlink to a fixed container path and configure
+   THAT path in MBG:
+   ```yaml
+     devices:
+       - "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_XXXX-if00-port0:/dev/ttyMETER"
+   ```
 2. In **Add device → Modbus RTU**, choose **Direct serial** and fill serial
    port, baud, parity, unit ID.
 3. **Test connection** → any protocol-level answer proves the slave is alive.
