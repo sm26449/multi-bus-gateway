@@ -74,6 +74,12 @@ def validate_register_identity(registers: List[Dict]) -> None:
                     f"vmeter binding, the MQTT topic and the Influx series — "
                     f"they must be unique per device")
             seen_name[name] = addr
+        # span overlap is a MODBUS concept (a multi-word read walking into its
+        # neighbour); a register sourced from an MQTT topic or a JSON path has
+        # a synthetic address, and consecutive ints are the NORM there — the
+        # check would print one bogus warning per register at every boot
+        if r.get('topic') or r.get('json_path'):
+            continue
         dt = str(r.get('data_type') or 'uint16').lower()
         span = (max(1, int(r.get('length') or 1)) if dt == 'string'
                 else _TYPE_SPANS.get(dt, 2))
