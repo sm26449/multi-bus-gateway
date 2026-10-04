@@ -300,7 +300,7 @@ devices:
     template: eastron_sdm630     # device-template id
     enabled: true
     connection:
-      protocol: tcp              # tcp | rtu | rtu-tcp | http | mqtt
+      protocol: tcp              # tcp | rtu | rtu-tcp | http | mqtt | rtu_tap
       # tcp / rtu-tcp:
       host: 192.168.1.60
       port: 502
@@ -338,7 +338,9 @@ devices:
 ```
 
 `rtu-tcp` speaks RTU framing over a TCP socket (a ser2net-style serial bridge);
-`rtu` opens a local serial port directly — see [rtu-serial.md](rtu-serial.md).
+`rtu` opens a local serial port directly; `rtu_tap` is a LISTEN-ONLY observer
+of a bus mastered by someone else (never transmits — decodes the existing
+master↔slave traffic) — see [rtu-serial.md](rtu-serial.md).
 
 Three more keys tie a device into an installation and give it named actions
 (user-facing walk-through in [MANUAL.md §5b and §14b](MANUAL.md)):

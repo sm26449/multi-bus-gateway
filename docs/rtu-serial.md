@@ -144,3 +144,43 @@ slave per adapter, or one adapter per bus.
 | Test connection times out | wrong unit ID, wrong baud (bridge is 9600 8N1), A/B wires swapped, or no termination on a long bus. |
 | Values decode wrong (freq/scale off) | template register map / byte order mismatch — RTU vs TCP is *not* the cause; the frames are identical. Check the template. |
 | Adapter renumbered after replug (direct mode) | expected — that is exactly what the bridge avoids. Move to bridge mode. |
+
+## 7. Listen-only tap (`protocol: rtu_tap`)
+
+A Modbus RTU bus has exactly one master. When the bus you care about already
+has one — a BMS master pack polling its slave packs, a vendor datalogger
+polling its meters, a PLC owning its drives — a second active poller corrupts
+frames for both. The **tap** makes the gateway a silent observer instead: it
+opens the serial port, **never transmits a byte**, reassembles the frames the
+existing exchange produces (3.5-character silence + CRC-16), pairs requests
+with responses, and feeds the decoded values through the exact same
+correction/store/publish pipeline a polled device uses.
+
+```yaml
+devices:
+  - id: tapped-meter
+    name: Meter behind someone else's master
+    template: eastron_sdm630          # byte order + register map, as usual
+    connection:
+      protocol: rtu_tap
+      serial_port: /dev/serial/by-id/usb-...   # your OWN adapter on the bus
+      baudrate: 9600
+      unit_id: 2                      # the observed slave's address
+      stale_after_s: 60               # "stale" = the master stopped asking
+```
+
+Notes:
+
+- **One tap adapter per bus**, wired A/B in parallel like any RS485 node; the
+  port cannot be shared with another process. Several devices may observe
+  different unit IDs on the same port — they share one reader automatically.
+- You only see what the existing master asks for, at the rhythm it asks.
+  There are no retries and no polling intervals; `stale` means the master
+  went quiet, not that the gateway failed.
+- FC 03/04 reads are decoded from request→response pairs. FC 06/16 **writes
+  are decoded too** (from the request payload) — watching a master push
+  setpoints is half the reason to tap a bus while debugging.
+- Exception responses, CRC errors and orphan frames are counted in the
+  device's stats; the last ~200 decoded frames (direction, FC, address,
+  window) are kept in memory as a debug trace.
+- Tap devices are read-only by nature: no write face, no commands.

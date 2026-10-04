@@ -22,7 +22,7 @@ from typing import Any, List, Tuple
 
 logger = logging.getLogger(__name__)
 
-DRIVER_PROTOCOLS = ('tcp', 'rtu', 'rtu-tcp', 'http', 'mqtt')
+DRIVER_PROTOCOLS = ('tcp', 'rtu', 'rtu-tcp', 'http', 'mqtt', 'rtu_tap')
 
 
 def driver_for(config, template_registry, dev_cfg, src, regs, groups, allow_nonlan):
@@ -41,6 +41,18 @@ def driver_for(config, template_registry, dev_cfg, src, regs, groups, allow_nonl
         from .mqtt_input import MqttInputClient
         return MqttInputClient(mqtt_cfg=src.mqtt_in, registers=regs,
                                poll_groups=groups)
+    if proto == 'rtu_tap':
+        # listen-only observer of a bus mastered by someone else — byte order
+        # resolves from the template exactly like an active Modbus source
+        from .rtu_tap import RtuTapClient
+        tid = src.template or dev_cfg.template
+        if tid and template_registry.get(tid) is None:
+            raise ValueError(f"template {tid!r} is not loaded — "
+                             "not decoding a tapped bus with a default byte order")
+        return RtuTapClient(conn_cfg=src.connection, registers=regs,
+                            poll_groups=groups,
+                            byte_order=template_registry.byte_order_for(tid),
+                            device_id=dev_cfg.id)
     from .modbus_client import ModbusClient
     # Decode order resolves from the SOURCE's template (falling back to the
     # device's), through the one resolver both boot and runtime use — so a
@@ -125,7 +137,7 @@ def build_device_client(config, template_registry, dev_cfg, allow_nonlan=False):
             parts.append((src, driver_for(config, template_registry, dev_cfg,
                                           src, regs, groups, allow_nonlan)))
             where = ((src.http or {}).get('url')
-                     or (src.connection.serial_port if src.protocol == 'rtu'
+                     or (src.connection.serial_port if src.protocol in ('rtu', 'rtu_tap')
                          else f'{src.connection.host}:{src.connection.port}'))
             logger.info("Device '%s' source '%s': %s, %d registers, %s",
                         dev_cfg.id, src.id, src.protocol, len(regs), where)
