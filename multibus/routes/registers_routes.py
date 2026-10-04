@@ -22,6 +22,7 @@ time (rebindable via /api/config/apply).
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -72,6 +73,13 @@ def build(ctx) -> APIRouter:
     r = APIRouter(tags=["registers"])
     config, registry, template_registry = ctx.config, ctx.registry, ctx.template_registry
     modbus_client = ctx.modbus_client
+
+    def _has_source_files(dev_cfg) -> bool:
+        """True when the device's registers live in per-source files (an
+        endpoint unit, or a standalone multi-source device). Every plain
+        device carries a synthetic 'default' source that never has a file."""
+        return any(config.source_registers_path(dev_cfg.id, s.id).exists()
+                   for s in (dev_cfg.sources or []))
 
     def _selected_register_out(x) -> Dict:
         """Serialize one SelectedRegister for the API (shared by the legacy
@@ -259,6 +267,27 @@ def build(ctx) -> APIRouter:
             if dev_cfg is None:
                 raise HTTPException(status_code=404, detail="device not found")
             src = _source_of(dev_cfg, source)
+            # A multi-source unit asked WITHOUT a source (the dashboard, fleet):
+            # its own root file is empty by design — every register lives in a
+            # source file. Answer with the union across sources (one entry per
+            # name, first source wins — the arbiter's own ownership rule), or
+            # the dashboard shows "no measurements" for a unit that polls
+            # dozens of registers. Gate on the FILES, not on `sources`: every
+            # plain device carries a synthetic 'default' source with no file.
+            if src is None and _has_source_files(dev_cfg):
+                regs = config.unit_registers(dev_cfg)
+                groups = dict(config.poll_groups)
+                for s in dev_cfg.sources:
+                    for gname, g in (getattr(s, 'poll_groups', None) or {}).items():
+                        groups[gname] = g
+                return {
+                    "registers": [_selected_register_out(x) for x in regs],
+                    "poll_groups": {name: {"interval": g.interval,
+                                           "description": g.description}
+                                    for name, g in groups.items()},
+                    "source": "",
+                    "sources": _sources_out(dev_cfg),
+                }
             if not dev_cfg.primary or src is not None:
                 regs, groups = config.load_device_registers(dev_cfg, source=src)
                 return {
@@ -348,6 +377,49 @@ def build(ctx) -> APIRouter:
                 _i, dev_cfg, dev_client = registry.find(device)
                 if dev_cfg is None:
                     raise HTTPException(status_code=404, detail="device not found")
+                # A multi-source unit saved WITHOUT a source: the payload is
+                # the union the GET served, so route each row back to the
+                # source file that owns its name (first source wins — mirror
+                # of the read) instead of writing a device-root file the read
+                # would shadow forever.
+                if not _source_of(dev_cfg, source) and _has_source_files(dev_cfg):
+                    by_name = {x["name"]: x for x in reg_list if x.get("name")}
+                    consumed: set = set()
+                    touched_sources = []
+                    for s in dev_cfg.sources:
+                        sp = config.source_registers_path(dev_cfg.id, s.id)
+                        if not sp.exists():
+                            continue
+                        with open(sp) as f:
+                            data = json.load(f)
+                        changed = False
+                        for row in (data.get("registers") or []):
+                            nm = row.get("name")
+                            e = by_name.get(nm)
+                            if e is not None and nm not in consumed:
+                                consumed.add(nm)
+                                if row != e:
+                                    row.clear()
+                                    row.update(e)
+                                    changed = True
+                        if changed:
+                            config.save_device_registers(
+                                device, data.get("registers") or [],
+                                poll_groups=data.get("poll_groups"),
+                                source_id=s.id)
+                            touched_sources.append(s)
+                    for s in touched_sources:
+                        regs_s, groups_s = config.load_device_registers(dev_cfg, source=s)
+                        if dev_client:
+                            try:
+                                dev_client.update_registers(regs_s, groups_s, source_id=s.id)
+                            except TypeError:
+                                pass           # bare driver: nothing per-source to reload
+                    if touched_sources and dev_client and hasattr(dev_client, 'reload_registers'):
+                        dev_client.reload_registers()
+                    return {"status": "ok", "count": len(consumed),
+                            "device": device,
+                            "sources": [s.id for s in touched_sources]}
                 # Seed the device's poll-group intervals from its template (a new
                 # device otherwise inherits the primary's fast realtime rate,
                 # which is wrong for a slow HTTP/gateway source).
