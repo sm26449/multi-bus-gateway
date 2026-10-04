@@ -7,46 +7,86 @@
    Stats, widgets, gauges, charts
    ============================================ */
 
-/* ==================== STATS BAR ==================== */
-.stats-bar {
+/* ==================== SITE STRIP ==================== */
+/* The energy story above the fleet: one card per installation (live
+   aggregate), plus devices pinned to the overview. Clickable. */
+.site-strip {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
     gap: 12px;
     margin-bottom: 20px;
 }
+.site-strip[hidden] { display: none; }
 
-.stat-card {
+.site-card {
+    position: relative;
     background: var(--bg-secondary);
     border-radius: var(--radius-sm);
     padding: 12px 14px;
     border: 1px solid var(--border-light);
+    font: inherit;
+    color: var(--text-primary);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.15s;
 }
+.site-card:hover { border-color: var(--accent); }
 
-.stat-label {
+/* personalize (pinned-device cards only): quiet pencil, top-right on hover */
+.site-card-edit {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: var(--radius-sm);
+    color: var(--text-tertiary);
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.site-card:hover .site-card-edit,
+.site-card-edit:focus-visible { opacity: 1; }
+.site-card-edit:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+
+.site-card-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font-size: 11px;
     font-weight: 500;
     color: var(--text-tertiary);
     text-transform: uppercase;
     letter-spacing: 0.5px;
     margin-bottom: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
-.stat-value {
+.site-card-value {
     font-size: 22px;
-    font-weight: 600;
+    font-weight: 700;
     font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
     color: var(--text-primary);
 }
 
-.stat-value.success { color: var(--success-text); }
-.stat-value.danger { color: var(--danger-text); }
-.stat-value.accent { color: var(--accent-text); }
+.site-card-unit {
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-tertiary);
+    margin-left: 4px;
+}
 
-.stat-sub {
+.site-card-sub {
     font-size: 11px;
     color: var(--text-tertiary);
     margin-top: 4px;
 }
+.site-card-warn { color: var(--warning-text); }
 
 /* ==================== DASHBOARD GRID ==================== */
 .dashboard-grid {
@@ -425,7 +465,7 @@
 
 /* ==================== RESPONSIVE ==================== */
 @media (max-width: 768px) {
-    .stats-bar {
+    .site-strip {
         grid-template-columns: repeat(2, 1fr);
     }
 
@@ -594,24 +634,65 @@
 .dashboard-table tr[data-address] { cursor: pointer; }
 .dashboard-table tr[data-address]:hover { background: var(--bg-tertiary, rgba(128,128,128,0.08)); }
 
-/* Dashboard device selector (Phase B): one chip per device, single-select */
-.dash-device-chips { display: flex; gap: 6px; flex-wrap: nowrap; overflow-x: auto;
-                     scrollbar-width: none; margin: 0 12px; }
-.dash-device-chips::-webkit-scrollbar { display: none; }
-.dash-chip {
-    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
-    padding: 4px 10px; border-radius: var(--radius-sm); cursor: pointer; font: inherit;
-    font-size: 12.5px; border: 1px solid var(--border);
-    background: var(--bg-secondary); color: var(--text-secondary);
-    transition: border-color .12s, background .12s, color .12s;
-}
-.dash-chip:hover { border-color: var(--accent); }
-.dash-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-.dash-chip .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+/* Dashboard header reads left-to-right as a path: ← All devices ·
+   [selected device ▾] · Live Values … actions. Flex-start keeps the back
+   button and the switcher adjacent instead of spread by space-between. */
+#dashboardPage .section-header { justify-content: flex-start; gap: 10px; }
+#dashboardPage .section-header h2 { margin-right: auto; }
 
-/* an installation's units sit together under its name */
-.dash-chip-group { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 3px 6px 3px 4px; border-radius: var(--radius-sm); border: 1px solid var(--border); }
-.dash-chip-group-name { font-size: 11.5px; color: var(--text-secondary); padding: 0 6px; white-space: nowrap; }
+/* Device switcher: the current device as a button, a searchable panel to
+   jump to another — replaces the chips row, which stopped scaling past a
+   handful of devices. */
+.device-switcher { position: relative; }
+.device-switcher[hidden] { display: none; }
+
+.device-switcher-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 5px 12px; border-radius: var(--radius-sm); cursor: pointer;
+    font: inherit; font-size: 12.5px; font-weight: 500;
+    border: 1px solid var(--border);
+    background: var(--bg-secondary); color: var(--text-primary);
+    transition: border-color .12s;
+}
+.device-switcher-btn:hover { border-color: var(--accent); }
+.device-switcher-btn .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.device-switcher-btn .bi-chevron-down { font-size: 10px; color: var(--text-tertiary); }
+.device-switcher-name { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.device-switch-panel {
+    /* anchored left: the button sits next to "All devices" on the header's
+       left side, so the panel opens rightwards and stays on screen */
+    position: absolute; top: calc(100% + 6px); left: 0; z-index: 300;
+    min-width: 300px; max-width: min(380px, 90vw);
+    background: var(--bg-secondary); border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    padding: 8px;
+}
+.device-switch-panel[hidden] { display: none; }
+.device-switch-panel .input { width: 100%; margin-bottom: 6px; }
+
+.device-switch-list { max-height: 360px; overflow-y: auto; }
+
+.dsw-group-name {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; color: var(--text-tertiary);
+    padding: 8px 10px 3px; text-align: left;
+}
+.dsw-row {
+    display: flex; align-items: center; gap: 9px; width: 100%;
+    padding: 7px 10px; border: 0; border-radius: var(--radius-sm);
+    background: transparent; color: var(--text-primary);
+    font: inherit; font-size: 13px; cursor: pointer; text-align: left;
+}
+.dsw-row:hover { background: var(--bg-tertiary); }
+.dsw-row.active { background: var(--accent-tint, rgba(10, 132, 255, 0.12)); }
+.dsw-row .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.dsw-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dsw-health {
+    font-size: 10px; color: var(--warning-text);
+    text-transform: uppercase; letter-spacing: 0.4px; flex: none;
+}
 
 /* ── disconnect: last values are STALE, say so instead of looking live ── */
 body.ws-stale #dashboardGrid,
@@ -629,6 +710,270 @@ body.ws-stale .dashboard-table-container {
     color: var(--warning-text, #c77700);
     font-size: 12.5px;
     border: 1px solid var(--warning-text, #c77700);
+}
+
+/* ==================== FLEET OVERVIEW ==================== */
+/* One row per device, problems sorted to the top. Same flat geometry as the
+   widget tiles: radius-sm, border accent on hover, numerals in mono. */
+
+/* the two dashboard faces toggle via [hidden] — their display classes
+   (flex/grid/inline-flex) must not win over the UA's [hidden] */
+.fleet-controls[hidden], .fleet-view[hidden], .dashboard-grid[hidden],
+.dash-device-chips[hidden], #fleetBackBtn[hidden], #dashboardViewToggle[hidden],
+#dashboardDensityToggle[hidden], #customizeDashBtn[hidden] { display: none; }
+.fleet-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.fleet-search { max-width: 260px; }
+
+.fleet-summary {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+#fleetProblemsBtn.active {
+    color: var(--warning-text);
+    border-color: var(--warning-text);
+}
+
+.fleet-view {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.fleet-group-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    margin: 0 2px 6px;
+}
+
+.fleet-group-count { color: var(--text-tertiary); }
+
+.fleet-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.fleet-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    text-align: left;
+    padding: 9px 14px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font: inherit;
+    color: var(--text-primary);
+    transition: border-color 0.15s;
+}
+
+.fleet-row:hover { border-color: var(--accent); }
+
+/* severity is a quiet left edge, not a painted row */
+.fleet-row.sev-danger { border-left: 3px solid var(--danger-text); }
+.fleet-row.sev-warning { border-left: 3px solid var(--warning-text); }
+.fleet-row[data-disabled="1"] { opacity: 0.55; }
+
+.fleet-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: none;
+}
+
+.fleet-name {
+    font-weight: 500;
+    flex: 0 1 220px;
+    min-width: 140px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.fleet-metrics {
+    display: flex;
+    align-items: baseline;
+    gap: 18px;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.fleet-metric {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    white-space: nowrap;
+}
+
+.fm-l {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    max-width: 110px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.fm-v {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.fm-u {
+    font-size: 11px;
+    color: var(--text-tertiary);
+}
+
+.fleet-flags {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    flex: none;
+}
+
+.fleet-badge {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 1px 7px;
+    border-radius: var(--radius-sm);
+}
+
+.fb-danger { background: var(--danger-tint, rgba(239, 68, 68, 0.15)); color: var(--danger-text); }
+.fb-warning { background: var(--warning-tint, rgba(245, 158, 11, 0.15)); color: var(--warning-text); }
+
+.fleet-health {
+    font-size: 10.5px;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+.fleet-row .bi-chevron-right {
+    color: var(--text-tertiary);
+    font-size: 12px;
+    flex: none;
+}
+
+/* pin-to-overview: faintly present always (its first user couldn't find a
+   hover-only affordance), full strength on hover/active */
+.fleet-pin {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: var(--radius-sm);
+    color: var(--text-tertiary);
+    opacity: 0.35;
+    flex: none;
+    transition: opacity 0.15s;
+}
+.fleet-row:hover .fleet-pin,
+.fleet-pin:focus-visible,
+.fleet-pin.active { opacity: 1; }
+.fleet-pin:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.fleet-pin.active { color: var(--accent-text, var(--accent)); }
+
+@media (max-width: 768px) {
+    .fleet-name { flex-basis: 130px; min-width: 100px; }
+    .fleet-metrics { gap: 10px; }
+    .fm-l { display: none; }           /* narrow: value+unit carry the row */
+    .fleet-controls { flex-wrap: wrap; }
+    .fleet-summary { margin-left: 0; width: 100%; }
+}
+
+/* ==================== DEVICE VALUE SECTIONS ==================== */
+/* Below the hero strip: every value of the device in dense collapsible
+   sections grouped by measurement (the HA/GridVis inventory pattern). */
+.device-sections {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.device-sections[hidden] { display: none; }
+
+.dev-section {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.dev-section > summary {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+}
+.dev-section > summary::-webkit-details-marker { display: none; }
+.dev-section > summary .bi-chevron-right {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    transition: transform 0.15s;
+}
+.dev-section[open] > summary .bi-chevron-right { transform: rotate(90deg); }
+.dev-section > summary:hover { color: var(--text-primary); }
+
+.dev-sec-count {
+    font-weight: 400;
+    color: var(--text-tertiary);
+}
+
+.dev-sec-table { width: 100%; border-collapse: collapse; }
+.dev-sec-table td {
+    padding: 6px 14px;
+    border-top: 1px solid var(--border-light);
+    font-size: 13px;
+}
+.dev-sec-table tr[data-address] { cursor: pointer; }
+.dev-sec-table tr[data-address]:hover td { background: var(--bg-tertiary); }
+
+.ds-label {
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 0;              /* table-layout trick: label truncates, numbers don't */
+    width: 100%;
+}
+.ds-value {
+    text-align: right;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    white-space: nowrap;
+    width: 120px;
+}
+.ds-unit {
+    color: var(--text-tertiary);
+    font-size: 11.5px;
+    width: 64px;
+    white-space: nowrap;
 }
 
 /* text values in a value card (decoded enum states, string registers): same

@@ -294,6 +294,7 @@ enabled; dashboard errors surface as 502 with the reason.
 |---|---|---|---|
 | GET | `/api/status` | System status: version, primary Modbus/MQTT/InfluxDB stats, per-device health (connected, reads, poll rate, error taxonomy, staleness, latency) | viewer |
 | GET | `/api/status/resources` | Process footprint: CPU %, RSS, threads, FDs, TCP connections, uptime | viewer |
+| GET | `/api/fleet` | Fleet overview: one row per device — health, staleness, explicit-threshold alarm counts, up to three hero metrics (first dashboard registers) — plus the endpoint name map | viewer |
 | GET | `/health` | Container/monitor probe. HTTP 503 only when an enabled virtual meter is genuinely `down`; a stale Modbus source degrades the body only (a restart can't fix an unreachable meter) | — |
 | GET | `/metrics` | Prometheus exposition (text 0.0.4): `gateway_device_*`, `gateway_mqtt_*`, `gateway_influx_*`, `gateway_vmeter_*` series | — |
 | GET | `/api/events?limit=` | Recent events (persisted across restarts) | viewer |

@@ -130,6 +130,115 @@ def build(ctx) -> APIRouter:
                 })
         return out
 
+    # ── Fleet overview ──────────────────────────────────────────────────
+    # One call serves the whole fleet grid: at 100 devices the UI must not
+    # fan out 100 /api/values fetches to paint an overview.
+
+    def _threshold_band(value, t) -> str:
+        """Band for EXPLICIT thresholds only. The UI's implicit grid
+        templates are display sugar; a fleet alarm must come from a limit
+        someone actually configured."""
+        if not isinstance(t, dict) or not t.get("enabled"):
+            return ""
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return ""
+        def _f(key):
+            x = t.get(key)
+            if x is None or x == "":
+                return None
+            try:
+                return float(x)
+            except (TypeError, ValueError):
+                return None
+        dl, wl = _f("dangerLow"), _f("warningLow")
+        wh, dh = _f("warningHigh"), _f("dangerHigh")
+        if (dl is not None and v < dl) or (dh is not None and v > dh):
+            return "danger"
+        if (wl is not None and v < wl) or (wh is not None and v > wh):
+            return "warning"
+        return ""
+
+    @r.get("/api/fleet")
+    async def get_fleet():
+        """Fleet overview: one compact row per device — health, staleness,
+        explicit-threshold alarm counts, and up to three hero metrics (the
+        device's first dashboard registers by dashboard_order)."""
+        devices_out = []
+        for dev_cfg, client in (registry or []):
+            try:
+                # a multi-source unit keeps every register in per-source
+                # files — its root file is empty; the union is what it reads.
+                # (Plain devices carry a synthetic 'default' source with no
+                # file, and unit_registers falls back to the root file.)
+                if any(config.source_registers_path(dev_cfg.id, s.id).exists()
+                       for s in (dev_cfg.sources or [])):
+                    regs = config.unit_registers(dev_cfg)
+                else:
+                    regs, _groups = config.load_device_registers(dev_cfg)
+            except Exception:  # noqa: BLE001 — overview must never 500
+                regs = []
+            store = (registry.store_for(dev_cfg.id) or {}) if registry else {}
+            danger = warning = 0
+            for x in regs:
+                item = store.get(x.address)
+                if item is None:
+                    continue
+                band = _threshold_band(item.get("value"), x.thresholds)
+                if band == "danger":
+                    danger += 1
+                elif band == "warning":
+                    warning += 1
+            dash = sorted(
+                (x for x in regs if x.ui_show_on_dashboard),
+                key=lambda x: (x.ui_config or {}).get("dashboard_order", 999))
+            hero = []
+            for x in dash[:3]:
+                item = store.get(x.address) or {}
+                hero.append({
+                    "address": x.address, "name": x.name,
+                    "label": getattr(x, "label", "") or x.name,
+                    "unit": getattr(x, "unit", "") or "",
+                    "value": item.get("value"),
+                })
+            health, stale_s = "idle", None
+            if client:
+                health = client.data_health().get("status")
+                stale_s = client.get_stats().get("staleness_age_s")
+            devices_out.append({
+                "id": dev_cfg.id, "name": dev_cfg.name,
+                "enabled": dev_cfg.enabled, "protocol": dev_cfg.protocol,
+                "endpoint_id": getattr(dev_cfg, "endpoint_id", "") or "",
+                "health": health, "staleness_age_s": stale_s,
+                "alarms": {"danger": danger, "warning": warning},
+                "hero": hero,
+            })
+        # endpoints carry their live aggregates too: the fleet header's site
+        # cards (PV power now, units online) come from the same computation
+        # the status page and the publisher already share
+        endpoints = []
+        for p in (getattr(config, "endpoints", None) or []):
+            pid = p.get("id")
+            if not pid:
+                continue
+            agg = {}
+            if registry:
+                try:
+                    from ..endpoint_aggregator import compute_endpoint_aggregates
+                    agg = compute_endpoint_aggregates(config, registry, pid)
+                except Exception:  # noqa: BLE001 — overview must never 500
+                    agg = {}
+            endpoints.append({
+                "id": pid, "name": p.get("name") or pid,
+                "enabled": bool(p.get("enabled", True)),
+                "status": agg.get("status", ""),
+                "units_online": agg.get("units_online", 0),
+                "units_total": agg.get("units_total", 0),
+                "power_active_total": agg.get("power_active_total"),
+            })
+        return {"devices": devices_out, "endpoints": endpoints}
+
     @r.get("/api/status/resources")
     async def get_status_resources():
         """Process resource footprint for the Status page (CPU%, RSS, threads,

@@ -80,7 +80,6 @@ class JanitzaMonitor {
         this.wasDisconnected = false;
 
         // Dashboard view state (cards or table)
-        this.dashboardView = ls('mbg-dashboard-view') || 'cards';
         // Dashboard device (Phase B): null = primary; persisted per browser
         this.dashDevice = ls('mbg-dash-device') || null;
         this.dashValues = {};
@@ -507,6 +506,8 @@ Object.assign(JanitzaMonitor.prototype, {
         // dashboard device dimension: restore the persisted selection (its
         // registers + value snapshot), then render
         await this._setDashDevice(this.dashDevice || null);
+        // fleet overview: the dashboard's default face with 2+ devices
+        await this.initFleet();
         this.updateDashboard();
         this.renderDashDeviceChips();
 
@@ -843,7 +844,6 @@ Object.assign(JanitzaMonitor.prototype, {
         // Customize Dashboard Modal
         document.getElementById('customizeDashBtn').addEventListener('click', () => this.openCustomizeDashModal());
         document.getElementById('customizeDashSave').addEventListener('click', () => this.saveCustomizeDash());
-        document.getElementById('dashboardViewToggle')?.addEventListener('click', () => this.toggleDashboardView());
         // Compact density: class on the grid, persisted; aria-pressed tracks state.
         const densBtn = document.getElementById('dashboardDensityToggle');
         const applyDensity = (on) => {
@@ -1048,9 +1048,11 @@ Object.assign(JanitzaMonitor.prototype, {
                 }
             }
 
-            // Update dashboard if active
+            // Update dashboard if active — fleet face harvests hero values
+            // from the same broadcast, device face repaints its widgets
             if (this.currentPage === 'dashboard') {
-                this.updateDashboard();
+                if (this._fleetVisible && this._fleetVisible()) this._fleetIngest(msg);
+                else this.updateDashboard();
             }
 
             // Update the measurements table if it is visible. Like the Monitor it

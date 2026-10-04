@@ -115,38 +115,36 @@
         <main class="content" id="mainContent">
             <!-- Dashboard Page -->
             <div class="page active" id="dashboardPage" role="tabpanel" aria-labelledby="tab-dashboard" tabindex="0">
-                <!-- Stats Bar -->
-                <div class="stats-bar">
-                    <div class="stat-card">
-                        <div class="stat-label" data-i18n="dashboard.activeRegisters">Active measurements</div>
-                        <div class="stat-value" id="statRegisters">--</div>
-                        <div class="stat-sub" data-i18n="dashboard.configured">configured</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label" data-i18n="dashboard.pollRate">Poll Rate</div>
-                        <div class="stat-value" id="statPollRate">--</div>
-                        <div class="stat-sub" data-i18n="dashboard.updatesPerSec">updates/sec</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label" data-i18n="dashboard.mqttMessages">MQTT Messages</div>
-                        <div class="stat-value" id="statMqttMsg">--</div>
-                        <div class="stat-sub" data-i18n="dashboard.published">published</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label" data-i18n="dashboard.influxPoints">InfluxDB Points</div>
-                        <div class="stat-value" id="statInfluxPts">--</div>
-                        <div class="stat-sub" data-i18n="dashboard.written">written</div>
-                    </div>
+                <!-- Site strip: the ENERGY story first — one card per
+                     installation (live aggregate) + devices pinned to the
+                     overview. The gateway's own pipeline numbers live on the
+                     Status page, where the gateway is operated. -->
+                <div class="site-strip" id="siteStrip" hidden>
+                    <!-- Populated by JavaScript -->
                 </div>
 
                 <!-- Dashboard Header -->
                 <div class="section-header">
-                    <h2><i aria-hidden="true" class="bi bi-speedometer2"></i> <span data-i18n="dashboard.liveValues">Live Values</span></h2>
-                    <div class="dash-device-chips" id="dashDeviceChips" role="tablist" aria-label="Dashboard device"></div>
-                    <div class="header-actions">
-                        <button class="btn btn-ghost btn-sm" id="dashboardViewToggle" data-i18n-title="tip.toggleView" title="Toggle view (Cards/Table)">
-                            <i aria-hidden="true" class="bi bi-table"></i>
+                    <button class="btn btn-ghost btn-sm" id="fleetBackBtn" hidden>
+                        <i aria-hidden="true" class="bi bi-arrow-left"></i> <span data-i18n="fleet.allDevices">All devices</span>
+                    </button>
+                    <div class="device-switcher" id="deviceSwitcherWrap" hidden>
+                        <button type="button" class="device-switcher-btn" id="deviceSwitcherBtn"
+                                aria-expanded="false" aria-haspopup="listbox"
+                                data-i18n-title="dash.switchDevice" title="Switch device">
+                            <span class="dot" id="deviceSwitcherDot"></span>
+                            <span class="device-switcher-name" id="deviceSwitcherName">—</span>
+                            <i aria-hidden="true" class="bi bi-chevron-down"></i>
                         </button>
+                        <div class="device-switch-panel" id="deviceSwitchPanel" hidden>
+                            <input type="search" class="input input-sm" id="deviceSwitchSearch"
+                                   data-i18n-placeholder="fleet.search" placeholder="Search devices...">
+                            <div class="device-switch-list" id="deviceSwitchList" role="listbox"
+                                 aria-label="Devices"></div>
+                        </div>
+                    </div>
+                    <h2><i aria-hidden="true" class="bi bi-speedometer2"></i> <span data-i18n="dashboard.liveValues">Live Values</span></h2>
+                    <div class="header-actions">
                         <button class="btn btn-ghost btn-sm" id="dashboardDensityToggle" data-i18n-title="tip.toggleDensity" title="Compact density" aria-pressed="false">
                             <i aria-hidden="true" class="bi bi-arrows-collapse"></i>
                         </button>
@@ -156,8 +154,26 @@
                     </div>
                 </div>
 
-                <!-- Dashboard Grid -->
+                <!-- Fleet overview (default face when several devices exist) -->
+                <div class="fleet-controls" id="fleetControls" hidden>
+                    <input type="search" class="input input-sm fleet-search" id="fleetSearch"
+                           data-i18n-placeholder="fleet.search" placeholder="Search devices...">
+                    <button class="btn btn-ghost btn-sm" id="fleetProblemsBtn" aria-pressed="false">
+                        <i aria-hidden="true" class="bi bi-exclamation-triangle"></i>
+                        <span data-i18n="fleet.onlyProblems">Only problems</span>
+                    </button>
+                    <span class="fleet-summary" id="fleetSummary"></span>
+                </div>
+                <div class="fleet-view" id="fleetView" hidden>
+                    <!-- Populated by JavaScript -->
+                </div>
+
+                <!-- Dashboard Grid (hero widgets of the selected device) -->
                 <div class="dashboard-grid" id="dashboardGrid">
+                    <!-- Populated by JavaScript -->
+                </div>
+                <!-- Every other value of the device, grouped by measurement -->
+                <div class="device-sections" id="deviceSections">
                     <!-- Populated by JavaScript -->
                 </div>
             </div>
@@ -2021,6 +2037,35 @@
     </div>
 
     <!-- Customize Dashboard Modal -->
+    <!-- Site card personalization: which metric a pinned device shows -->
+    <div class="modal" id="siteCardModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i aria-hidden="true" class="bi bi-pin-angle"></i> <span id="siteCardModalTitle">Card</span></h3>
+                <button class="modal-close" aria-label="Close" data-action="closeSiteCardModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label" for="siteCardMetric" data-i18n="fleet.cardMetric">Metric shown on the card</label>
+                    <select class="input" id="siteCardMetric"></select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="siteCardLabel" data-i18n="fleet.cardLabel">Card label (optional)</label>
+                    <input class="input" id="siteCardLabel" type="text" maxlength="40"
+                           data-i18n-placeholder="fleet.cardLabelPh" placeholder="Defaults to the metric's label">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost btn-sm" id="siteCardMoveLeft" title="Move left" data-i18n-title="fleet.moveLeft" style="margin-right:4px;">
+                    <i aria-hidden="true" class="bi bi-arrow-left"></i></button>
+                <button class="btn btn-ghost btn-sm" id="siteCardMoveRight" title="Move right" data-i18n-title="fleet.moveRight" style="margin-right:auto;">
+                    <i aria-hidden="true" class="bi bi-arrow-right"></i></button>
+                <button class="btn btn-ghost" id="siteCardRemove" data-i18n="fleet.removeCard">Remove card</button>
+                <button class="btn btn-primary" id="siteCardSave" data-i18n="common.save">Save</button>
+            </div>
+        </div>
+    </div>
+
     <div class="modal" id="customizeDashModal">
         <div class="modal-content modal-lg">
             <div class="modal-header">
@@ -2258,6 +2303,7 @@
     <script src="/static/js/app-core.js?v=0"></script>
     <script src="/static/js/app-auth.js?v=0"></script>
     <script src="/static/js/app-dashboard.js?v=0"></script>
+    <script src="/static/js/app-fleet.js?v=0"></script>
     <script src="/static/js/app-status.js?v=0"></script>
     <script src="/static/js/app-registers.js?v=0"></script>
     <script src="/static/js/app-templates.js?v=0"></script>

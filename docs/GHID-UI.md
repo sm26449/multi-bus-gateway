@@ -21,17 +21,34 @@ selectorul de limbă și comutatorul de temă (clar/întunecat).
 
 ![Dashboard](img/guide/01-dashboard.png)
 
-Panoul de ansamblu. Sus, patru contoare rapide: **măsurători active**, **rata de
-poll** (updates/sec), **mesaje MQTT publicate**, **puncte scrise în InfluxDB**.
+Panoul de ansamblu. Sus, **banda de site** — povestea energiei, nu a
+gateway-ului: câte un card pe **instalație** (puterea agregată acum, unități
+online) plus device-urile **prinse pe overview** cu pioneza de pe rândul lor
+din flotă. Creionul de pe un card prins deschide personalizarea: **ce metrică**
+arată cardul (orice registru al device-ului), **etichetă proprie** și ordinea
+(◀ ▶). Click pe card te duce la instalația sau device-ul respectiv. Contoarele
+interne ale gateway-ului (rata de poll, MQTT, InfluxDB) sunt pe pagina
+**Status**.
 
-Dedesubt, **Live Values** — valorile în timp real, grupate pe **chip-uri de
-dispozitiv** (aici *Janitza UMG 512-PRO* și *Fronius Meter*): apeși un chip și
-vezi doar widget-urile acelui dispozitiv. Fiecare widget arată valoarea, unitatea
-și numele registrului; unele au **gauge** (tensiuni), altele **sparkline** (trend)
-sau **badge de grup de poll** (realtime / normal / slow). Butoanele din dreapta:
-comută între **grilă și tabel**, ascunde/afișează unitățile, și **Customize**
-(reordonare, culori, alegerea widget-urilor). Bara de jos: starea conexiunii,
-intervalele grupurilor de poll, versiunea și ora ultimului update.
+Dedesubt, **Live Values**. Cu două sau mai multe dispozitive, pagina se
+deschide pe **vederea de flotă**: un rând per dispozitiv — punct de sănătate,
+numărul alarmelor de prag (doar praguri configurate explicit) și primele
+registre de dashboard ca metrici-erou — grupate pe instalație și sortate cu
+problemele sus. Căutarea și filtrul **Doar probleme** îngustează lista; click
+pe un rând deschide vederea acelui dispozitiv, **Toate device-urile** te
+întoarce la flotă.
+
+Vederea per-dispozitiv are două etaje: sus **cardurile-erou** (cel mult 12,
+alese și ordonate din **Customize**), dedesubt **toate** valorile dispozitivului
+în secțiuni pliabile pe măsurătoare (Putere / Tensiune / Curent / Energie /
+Temperatură / Celule / Alarme / Altele — alarmele și diagnosticele pliate
+implicit, starea per secțiune se ține minte). Click pe orice rând sau card
+deschide istoricul valorii. Numele tehnic al registrului e tooltip pe etichetă.
+Lângă „Toate device-urile" stă **selectorul de device** — butonul cu device-ul
+curent deschide un panou cu căutare pentru salt rapid la alt device. Bara de
+jos: starea conexiunii, intervalele grupurilor de poll, versiunea și ora
+ultimului update. Cu un singur dispozitiv, vederea de flotă lipsește — pagina
+deschide direct vederea dispozitivului.
 
 ---
 

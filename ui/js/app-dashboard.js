@@ -261,7 +261,10 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     openValueHistory(address) {
-        const reg = (this.selectedRegisters || []).find(r => String(r.address) === String(address));
+        // the dashboard device's own list first — selectedRegisters belongs to
+        // the Measurements page and misses non-primary devices entirely
+        const reg = [...(this.dashRegisters || []), ...(this.selectedRegisters || [])]
+            .find(r => String(r.address) === String(address));
         if (!reg || !reg.name) return;
         this._vhReg = reg;
         this._vhRange = this._vhRange || '-1h';
@@ -313,6 +316,8 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     updateDashboard() {
+        // fleet face active → the widget grid is hidden, don't paint it
+        if (this._fleetVisible && this._fleetVisible()) return;
         const grid = document.getElementById('dashboardGrid');
 
         // Per-device empty state: distinguish "no widgets picked" from "source
@@ -333,6 +338,8 @@ Object.assign(JanitzaMonitor.prototype, {
                     <button class="empty-state-action" ${this._act('jumpToDeviceRegisters', [dev])}>
                         📋 ${this.t('dash.goMeasurements', 'Go to Measurements')}</button>
                 </div>`;
+            const sections = document.getElementById('deviceSections');
+            if (sections) { sections.innerHTML = ''; this._sectionsKey = ''; }
             return;
         }
 
@@ -345,13 +352,14 @@ Object.assign(JanitzaMonitor.prototype, {
                 return orderA - orderB;
             });
 
-        // Check if we should render table view or cards view
-        if (this.dashboardView === 'table') {
-            this.renderDashboardTable(grid, dashboardRegs);
-            return;
-        }
-
-        // Cards view (default)
+        // Hero strip + sections (the integrator pattern: SolarEdge/VRM put a
+        // few curated KPIs up top, HA/GridVis put the volume in grouped dense
+        // sections). A card is a spotlight, not an inventory — the legacy
+        // defaults flag EVERYTHING on-dashboard (umg512: 39), so the strip
+        // takes only the first HERO_CAP by dashboard_order and every value
+        // still lives in the categorized table below.
+        const heroRegs = dashboardRegs.slice(0, this.HERO_CAP);
+        this.renderDeviceSections(dashRegs, heroRegs);
         // Get current widget addresses (data-address is on the wrapper div)
         const existingWidgets = new Map();
         grid.querySelectorAll('.widget-card[data-address]').forEach(el => {
@@ -359,7 +367,7 @@ Object.assign(JanitzaMonitor.prototype, {
         });
 
         // Track which addresses should exist
-        const targetAddresses = new Set(dashboardRegs.map(r => r.address));
+        const targetAddresses = new Set(heroRegs.map(r => r.address));
 
         // Remove widgets that shouldn't exist anymore
         existingWidgets.forEach((el, addr) => {
@@ -370,15 +378,15 @@ Object.assign(JanitzaMonitor.prototype, {
 
         // Remove empty state if it exists and we have registers
         const emptyState = grid.querySelector('.empty-state');
-        if (emptyState && dashboardRegs.length > 0) {
+        if (emptyState && heroRegs.length > 0) {
             emptyState.remove();
         }
 
         // Dominant poll group of the set — cards badge only the exceptions.
-        this._dashDominantGroup = this._dominantPollGroup(dashboardRegs);
+        this._dashDominantGroup = this._dominantPollGroup(heroRegs);
 
         // Update or create widgets in correct order
-        dashboardRegs.forEach((reg, index) => {
+        heroRegs.forEach((reg, index) => {
             const value = this._dashStore()[reg.address];
             const numValue = value?.value;
             const existingCard = existingWidgets.get(reg.address);
@@ -421,8 +429,9 @@ Object.assign(JanitzaMonitor.prototype, {
             }
         });
 
-        // Show empty state if no registers
-        if (dashboardRegs.length === 0 && !grid.querySelector('.empty-state')) {
+        // Show empty state only when the device has NO registers at all —
+        // zero heroes with a populated sections table below is a valid state.
+        if (dashRegs.length === 0 && !grid.querySelector('.empty-state')) {
             grid.innerHTML = `
                 <div class="empty-state">
                     <div class="empty-state-icon"><i class="bi bi-bar-chart" aria-hidden="true"></i></div>
@@ -555,107 +564,131 @@ Object.assign(JanitzaMonitor.prototype, {
         }
     },
 
-    // ============ Dashboard Table View ============
+    // ============ Device value sections (hero strip + grouped inventory) ============
+    // The HA/GridVis pattern: a few spotlight cards on top, EVERY value in
+    // dense collapsible sections grouped by what it measures. The group id
+    // comes from the API's canonical `category`, refined client-side for BMS
+    // vocabularies (cells, alarms) the canonical dictionary doesn't cover.
 
-    toggleDashboardView() {
-        this.dashboardView = this.dashboardView === 'cards' ? 'table' : 'cards';
-        localStorage.setItem('mbg-dashboard-view', this.dashboardView);
+    HERO_CAP: 12,
 
-        // Update toggle button icon
-        const toggleBtn = document.getElementById('dashboardViewToggle');
-        if (toggleBtn) {
-            const icon = toggleBtn.querySelector('i');
-            if (icon) {
-                icon.className = this.dashboardView === 'table' ? 'bi bi-grid-3x3-gap' : 'bi bi-table';
-            }
-        }
-
-        // Force full re-render
-        const grid = document.getElementById('dashboardGrid');
-        grid.innerHTML = '';
-        this.updateDashboard();
+    _sectionCat(reg) {
+        const n = String(reg.name || '').toLowerCase();
+        if (/(^|_)(alarm|protect|fault|warn)(_|$|s_|ing)/.test(n)) return 'alarms';
+        if (/^cell_?\d|^balancing/.test(n)) return 'cells';
+        return reg.category || 'other';
     },
 
-    renderDashboardTable(container, registers) {
-        // Remove any existing cards (switching from cards to table)
-        const existingCards = container.querySelectorAll('.widget-card');
-        existingCards.forEach(el => el.remove());
+    // display order + labels; sections absent from a device simply don't render
+    _sectionMeta() {
+        return [
+            ['power', this.t('sec.power', 'Power')],
+            ['voltage', this.t('sec.voltage', 'Voltage')],
+            ['current', this.t('sec.current', 'Current')],
+            ['energy', this.t('sec.energy', 'Energy')],
+            ['frequency', this.t('sec.frequency', 'Frequency')],
+            ['dc', this.t('sec.dc', 'DC')],
+            ['temperature', this.t('sec.temperature', 'Temperature')],
+            ['cells', this.t('sec.cells', 'Cells')],
+            ['quality', this.t('sec.quality', 'Power quality')],
+            ['site', this.t('sec.site', 'Site')],
+            ['controls', this.t('sec.controls', 'Controls')],
+            ['status', this.t('sec.status', 'Status')],
+            ['alarms', this.t('sec.alarms', 'Alarms')],
+            ['other', this.t('sec.other', 'Other')],
+        ];
+    },
 
-        // Check for existing table
-        let table = container.querySelector('.dashboard-table');
+    // noise-prone groups fold by default (HA folds Diagnostics the same way);
+    // the operator's toggles stick per device+section
+    _secOpen(dev, sec) {
+        const def = !(sec === 'alarms' || sec === 'status' || sec === 'other');
+        try {
+            const v = localStorage.getItem(`mbg-sec-${dev}-${sec}`);
+            return v == null ? def : v === '1';
+        } catch (e) { return def; }
+    },
 
-        if (!table) {
-            // Create table structure
-            container.innerHTML = `
-                <div class="table-container dashboard-table-container">
-                    <table class="dashboard-table">
-                        <thead>
-                            <tr>
-                                <th>${this.t('lbl.label', "Label")}</th>
-                                <th>${this.t('lbl.value', "Value")}</th>
-                                <th>${this.t('lbl.unit', "Unit")}</th>
-                                <th>${this.t('lbl.pollGroup', "Poll Group")}</th>
-                                <th>${this.t('lbl.actions', "Actions")}</th>
-                            </tr>
-                        </thead>
-                        <tbody id="dashboardTableBody"></tbody>
-                    </table>
-                </div>
-            `;
-            table = container.querySelector('.dashboard-table');
+    renderDeviceSections(allRegs, heroRegs) {
+        const box = document.getElementById('deviceSections');
+        if (!box) return;
+        const dev = this._dashDeviceId();
+        const heroSet = new Set(heroRegs.map(r => r.address));
+        const rest = allRegs.filter(r => !heroSet.has(r.address));
+        const key = dev + '|' + rest.map(r => r.address).join(',');
+
+        if (this._sectionsKey !== key) {
+            this._sectionsKey = key;
+            this._sectionCells = {};
+            if (!rest.length) { box.innerHTML = ''; return; }
+            const groups = new Map();
+            rest.forEach(r => {
+                const c = this._sectionCat(r);
+                if (!groups.has(c)) groups.set(c, []);
+                groups.get(c).push(r);
+            });
+            const html = this._sectionMeta()
+                .filter(([id]) => groups.has(id))
+                .map(([id, label]) => {
+                    const regs = groups.get(id);
+                    const rows = regs.map(r => `
+                        <tr data-address="${r.address}">
+                            <td class="ds-label" title="${this._esc(r.name)}">${this._esc(r.label || r.name)}</td>
+                            <td class="ds-value"><span class="table-value value-normal">--</span></td>
+                            <td class="ds-unit"></td>
+                        </tr>`).join('');
+                    return `
+                    <details class="dev-section" data-sec="${id}" ${this._secOpen(dev, id) ? 'open' : ''}>
+                        <summary><i aria-hidden="true" class="bi bi-chevron-right"></i>
+                            ${this._esc(label)} <span class="dev-sec-count">${regs.length}</span></summary>
+                        <table class="dev-sec-table"><tbody>${rows}</tbody></table>
+                    </details>`;
+                }).join('');
+            box.innerHTML = html;
+            // cache the live cells once — the per-tick update touches text only
+            box.querySelectorAll('tr[data-address]').forEach(tr => {
+                this._sectionCells[tr.dataset.address] = {
+                    val: tr.querySelector('.table-value'),
+                    unit: tr.querySelector('.ds-unit'),
+                };
+            });
+            this._wireDeviceSections(box, dev);
         }
 
-        const tbody = container.querySelector('#dashboardTableBody');
+        // value pass (every tick, in place)
+        const store = this._dashStore();
+        rest.forEach(r => {
+            const cell = this._sectionCells[String(r.address)];
+            if (!cell || !cell.val) return;
+            const numValue = store[r.address]?.value;
+            const disp = this._displayValue(numValue, r);
+            if (cell.val.textContent !== disp.text) cell.val.textContent = disp.text;
+            const cls = 'table-value ' + (this.getValueColorClass(numValue, r) || 'value-normal');
+            if (cell.val.className !== cls) cell.val.className = cls;
+            if (cell.unit.textContent !== disp.unit) cell.unit.textContent = disp.unit;
+        });
+    },
 
-        if (registers.length === 0) {
-            container.innerHTML = `
-                <div class="empty-state">
-                    <div class="empty-state-icon"><i class="bi bi-bar-chart" aria-hidden="true"></i></div>
-                    <div class="empty-state-title">${this.t('msg.noWidgets', "No widgets on dashboard")}</div>
-                    <div class="empty-state-desc">
-                        ${this.t('dash.emptyDesc', 'Add measurements to your dashboard to monitor values in real-time.')}
-                    </div>
-                    <button class="empty-state-action" ${this._act('_jumpToRegisters', ['primary'])}>
-                        📋 ${this.t('dash.goMeasurements', 'Go to Measurements')}
-                    </button>
-                </div>
-            `;
-            return;
+    _wireDeviceSections(box, dev) {
+        if (!box._secWired) {
+            box._secWired = true;
+            box.addEventListener('click', (e) => {
+                const tr = e.target.closest('tr[data-address]');
+                if (tr) this.openValueHistory(tr.dataset.address);
+            });
         }
-
-        // Build table rows
-        const dom = this._dominantPollGroup(registers);
-        const rows = registers.map(reg => {
-            const value = this._dashStore()[reg.address];
-            const numValue = value?.value;
-            const disp = this._displayValue(numValue, reg);
-            const displayValue = disp.text;
-            const colorClass = this.getValueColorClass(numValue, reg);
-            const pollBadge = (reg.poll_group && reg.poll_group !== dom)
-                ? `<span class="badge poll-${this._esc(reg.poll_group)}">${this._esc(reg.poll_group)}</span>`
-                : '<span class="table-poll-muted">—</span>';
-
-            return `
-                <tr data-address="${reg.address}">
-                    <td>
-                        <div class="table-label">${this._esc(reg.label)}</div>
-                        <div class="table-name">${this._esc(reg.name)}</div>
-                    </td>
-                    <td>
-                        <span class="table-value ${colorClass}">${this._esc(displayValue)}</span>
-                    </td>
-                    <td class="table-unit">${this._esc(disp.unit)}</td>
-                    <td>${pollBadge}</td>
-                    <td>
-                        <button class="btn-action" title="${this._esc(this.t('common.edit', 'Edit'))}" aria-label="${this._esc(this.t('common.edit', 'Edit'))}" ${this._act('editRegisterByAddress', [reg.address])}>
-                            <i aria-hidden="true" class="bi bi-pencil"></i>
-                        </button>
-                    </td>
-                </tr>
-            `;
-        }).join('');
-
-        tbody.innerHTML = rows;
+        // 'toggle' does not bubble — capture it; persist per device+section
+        if (!box._secToggleWired) {
+            box._secToggleWired = true;
+            box.addEventListener('toggle', (e) => {
+                const d = e.target;
+                if (!d.matches || !d.matches('.dev-section')) return;
+                const sec = d.dataset.sec;
+                const devNow = this._dashDeviceId();
+                try { localStorage.setItem(`mbg-sec-${devNow}-${sec}`, d.open ? '1' : '0'); }
+                catch (err) { /* private mode */ }
+            }, true);
+        }
     },
 
     updateGaugeWidget(card, reg, value) {
@@ -899,44 +932,117 @@ Object.assign(JanitzaMonitor.prototype, {
         } finally { if (btn) btn.disabled = false; }
     },
 
-    // ── Device chips (Phase B): pick which device the dashboard shows ──────
+    // ── Device switcher: a button naming the current device, a searchable
+    // panel to jump to another (the VRM installation-switcher pattern). The
+    // old chips row stopped scaling past a handful of devices.
     async renderDashDeviceChips() {
-        const box = document.getElementById('dashDeviceChips');
-        if (!box) return;
+        const wrap = document.getElementById('deviceSwitcherWrap');
+        if (!wrap) return;
         let devices = [];
         try { devices = (await this._fetchDevices(true)) || []; } catch (e) {}
         this._dashDevList = devices;
-        if (devices.length < 2) { box.innerHTML = ''; return; }   // one device → no chips
+        if (devices.length < 2) { wrap.hidden = true; return; }   // one device → no switcher
+        // button face: where am I, and is it healthy
         const health = {};
         (this.status?.devices || []).forEach(d => { health[d.id] = d.data_health; });
-        const hDot = { ok: 'var(--success)', degraded: 'var(--warning)',
-                       stale: 'var(--warning)', down: 'var(--danger)' };
         const active = this._dashDeviceId();
-        const chip = (d, label) => `
-            <button type="button" class="dash-chip ${d.id === active ? 'active' : ''}"
-                    role="tab" aria-selected="${d.id === active}"
-                    ${this._act('switchDashDevice', [d.id])}>
-                <span class="dot" style="background:${hDot[health[d.id]] || 'var(--text-tertiary)'}" role="img" aria-label="${this._esc(health[d.id] || 'idle')}" title="${this._esc(health[d.id] || 'idle')}"></span>
-                ${this._esc(label)}
+        const cur = devices.find(d => d.id === active);
+        const dot = document.getElementById('deviceSwitcherDot');
+        const name = document.getElementById('deviceSwitcherName');
+        if (dot) {
+            const h = health[active] || 'idle';
+            dot.style.background = this._healthDot(h);
+            dot.title = h;
+        }
+        if (name) name.textContent = (cur && (cur.name || cur.id)) || active;
+        this._wireDeviceSwitcher(wrap);
+        this._renderDeviceSwitchList(devices, health, active);
+    },
+
+    _healthDot(h) {
+        const map = { ok: 'var(--success)', degraded: 'var(--warning)',
+                      stale: 'var(--warning)', down: 'var(--danger)' };
+        return map[h] || 'var(--text-tertiary)';
+    },
+
+    _renderDeviceSwitchList(devices, health, active) {
+        const list = document.getElementById('deviceSwitchList');
+        if (!list) return;
+        const row = (d, label) => `
+            <button type="button" class="dsw-row ${d.id === active ? 'active' : ''}"
+                    role="option" aria-selected="${d.id === active}" data-id="${this._esc(d.id)}"
+                    data-search="${this._esc(((d.name || '') + ' ' + d.id).toLowerCase())}">
+                <span class="dot" style="background:${this._healthDot(health[d.id])}"></span>
+                <span class="dsw-name">${this._esc(label)}</span>
+                ${(health[d.id] && health[d.id] !== 'ok')
+                    ? `<span class="dsw-health">${this._esc(health[d.id])}</span>` : ''}
             </button>`;
-        // standalone devices first; an installation's units together under its
-        // name, each chip carrying only what distinguishes the unit
         const live = devices.filter(d => d.enabled !== false);
         const standalone = live.filter(d => !d.endpoint_id);
         const byEp = new Map();
-        live.filter(d => d.endpoint_id).forEach(d => { if (!byEp.has(d.endpoint_id)) byEp.set(d.endpoint_id, []); byEp.get(d.endpoint_id).push(d); });
-        const short = (d, epName) => {
-            const n = d.name || d.id;
-            const stripped = epName && n.startsWith(epName) ? n.slice(epName.length).replace(/^[\s·:-]+/, '') : n;
-            return stripped || n;
-        };
-        box.innerHTML = standalone.map(d => chip(d, d.name || d.id)).join('')
+        live.filter(d => d.endpoint_id).forEach(d => {
+            if (!byEp.has(d.endpoint_id)) byEp.set(d.endpoint_id, []);
+            byEp.get(d.endpoint_id).push(d);
+        });
+        list.innerHTML = standalone.map(d => row(d, d.name || d.id)).join('')
             + [...byEp.entries()].map(([pid, units]) => {
                 const epName = units[0].endpoint_name || pid;
-                return `<span class="dash-chip-group" role="group" aria-label="${this._esc(epName)}">
-                    <span class="dash-chip-group-name"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(epName)}</span>
-                    ${units.map(d => chip(d, short(d, epName))).join('')}</span>`;
+                return `<div class="dsw-group" data-group>
+                    <div class="dsw-group-name"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(epName)}</div>
+                    ${units.map(d => row(d, d.name || d.id)).join('')}</div>`;
             }).join('');
+    },
+
+    _deviceSwitchOpen(open) {
+        const panel = document.getElementById('deviceSwitchPanel');
+        const btn = document.getElementById('deviceSwitcherBtn');
+        if (!panel || !btn) return;
+        panel.hidden = !open;
+        btn.setAttribute('aria-expanded', String(open));
+        if (open) {
+            const s = document.getElementById('deviceSwitchSearch');
+            if (s) { s.value = ''; this._filterDeviceSwitch(''); s.focus(); }
+        }
+    },
+
+    _filterDeviceSwitch(q) {
+        const list = document.getElementById('deviceSwitchList');
+        if (!list) return;
+        const needle = q.trim().toLowerCase();
+        list.querySelectorAll('.dsw-row').forEach(r => {
+            r.hidden = !!needle && !(r.dataset.search || '').includes(needle);
+        });
+        // a group header with every unit filtered out disappears with them
+        list.querySelectorAll('[data-group]').forEach(g => {
+            g.hidden = ![...g.querySelectorAll('.dsw-row')].some(r => !r.hidden);
+        });
+    },
+
+    _wireDeviceSwitcher(wrap) {
+        if (wrap._dswWired) return;
+        wrap._dswWired = true;
+        const btn = document.getElementById('deviceSwitcherBtn');
+        const panel = document.getElementById('deviceSwitchPanel');
+        const search = document.getElementById('deviceSwitchSearch');
+        if (btn) btn.addEventListener('click', () =>
+            this._deviceSwitchOpen(panel ? panel.hidden : true));
+        if (search) search.addEventListener('input', () =>
+            this._filterDeviceSwitch(search.value));
+        if (panel) panel.addEventListener('click', (e) => {
+            const r = e.target.closest('.dsw-row');
+            if (!r) return;
+            this._deviceSwitchOpen(false);
+            this.switchDashDevice(r.dataset.id);
+        });
+        document.addEventListener('click', (e) => {
+            if (panel && !panel.hidden && !wrap.contains(e.target)) this._deviceSwitchOpen(false);
+        });
+        wrap.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && panel && !panel.hidden) {
+                this._deviceSwitchOpen(false);
+                if (btn) btn.focus();
+            }
+        });
     },
 
     async switchDashDevice(id) {

@@ -153,10 +153,20 @@ each pipeline connects — click one for details.
 
 Open `http://<host>:8080`. The top navigation:
 
-- **Dashboard** — global live KPI cards + the values you pinned across
-  devices. *Customize* picks the cards; card/table view toggle; default
-  widget colors follow the phase convention configured under Config →
-  General.
+- **Dashboard** — a **site strip** (one card per installation with its live
+  aggregate power and units online, plus devices pinned to the overview via
+  the pin on their fleet row — each pinned card is personalizable: pick the
+  metric it shows, give it a label, reorder; the gateway's own pipeline
+  counters live on the Status page) + a **fleet overview**: with two
+  or more devices the page opens on one row per device (health dot,
+  explicit-threshold alarm counts, its first dashboard registers as hero
+  metrics), grouped by installation and sorted worst-first, with search
+  and an *Only problems* filter. Clicking a row opens that device's view:
+  up to 12 hero widgets (picked and ordered in *Customize*) above collapsible
+  sections grouping EVERY value by measurement; a device switcher button sits
+  next to *All devices* for quick lateral jumps. Default widget colors follow
+  the phase convention configured under Config → General. A single-device
+  install skips the overview and opens straight on the device view.
 - **Devices** — every southbound source as a card with live health; the
   **Add Device** wizard, **Add Installation** (§5b) and **Discover devices**
   live here. Opening a device gives its tabbed workspace: *Overview*
