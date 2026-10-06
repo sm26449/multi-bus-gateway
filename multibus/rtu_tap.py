@@ -65,8 +65,21 @@ def frame_crc_ok(frame: bytes) -> bool:
 
 
 class RtuFramer:
-    """Incremental, timing-based RTU frame splitter. Pure — fed with
-    ``(bytes, monotonic_time)`` so it is testable without a serial port."""
+    """Incremental RTU frame splitter: protocol-aware + CRC-validated.
+
+    Timing alone cannot split frames here: a tap reads the port in chunks
+    (pyserial returns ~50 ms batches) and at 19200 baud a whole
+    request→response exchange fits inside ONE chunk, so inter-frame silence
+    is invisible to us. Instead, frames are extracted greedily from the head
+    of the buffer by trying each PLAUSIBLE length for the function code and
+    letting CRC-16 arbitrate — the same approach every serious bus sniffer
+    uses. The 3.5-character silence remains the RESYNC signal: a head that
+    validates at no candidate length (we attached mid-frame, or a byte got
+    corrupted) is dropped once the bus goes quiet, and the stream realigns
+    on the next exchange.
+
+    Pure — fed with ``(bytes, monotonic_time)`` so it is testable without a
+    serial port."""
 
     def __init__(self, baudrate: int = 9600, bytesize: int = 8,
                  parity: str = 'N', stopbits: int = 1):
@@ -75,27 +88,70 @@ class RtuFramer:
         self.gap = max(_MIN_GAP_S, 3.5 * char_time)
         self._buf = bytearray()
         self._last_byte_t: Optional[float] = None
+        self.dropped_bytes = 0            # resync cost, surfaced in stats
+
+    def _candidates(self) -> List[int]:
+        """Plausible total frame lengths for the buffer head's function code."""
+        b = self._buf
+        fc = b[1]
+        out = []
+        if fc & 0x80:
+            out.append(5)                                  # exception response
+        elif fc in (1, 2, 3, 4):
+            out.append(8)                                  # read request
+            if len(b) > 2:
+                out.append(5 + b[2])                       # read response
+        elif fc in (5, 6):
+            out.append(8)                                  # write single (req == echo)
+        elif fc in (15, 16):
+            out.append(8)                                  # write-multi response
+            if len(b) > 6:
+                out.append(9 + b[6])                       # write-multi request
+        else:                                              # unknown FC: best guesses
+            out.append(8)
+            if len(b) > 2:
+                out.append(5 + b[2])
+        return sorted({n for n in out if 4 <= n <= 260})
+
+    def _extract(self, final: bool = False) -> List[bytes]:
+        """Greedy head extraction with one-byte-slide resync.
+
+        Wall-clock gaps are useless here — the serial layer hands us ~20-50 ms
+        chunks, so every chunk boundary looks like silence. Resync is purely
+        CRC-driven instead: when every candidate length for the head is
+        already buffered and none validates, the head byte is junk — slide one
+        byte and retry. ``final`` (true silence: an empty read) also slides
+        through a PARTIAL head rather than waiting for bytes that will not
+        come."""
+        frames = []
+        while len(self._buf) >= 4:
+            cands = self._candidates()
+            matched = None
+            for n in cands:
+                if len(self._buf) >= n and frame_crc_ok(bytes(self._buf[:n])):
+                    matched = bytes(self._buf[:n])
+                    break
+            if matched is not None:
+                frames.append(matched)
+                del self._buf[:len(matched)]
+                continue
+            if max(cands) <= len(self._buf) or final:
+                del self._buf[:1]          # junk head — slide to realign
+                self.dropped_bytes += 1
+                continue
+            break                          # head plausible but incomplete — wait
+        return frames
 
     def feed(self, data: bytes, now: float) -> List[bytes]:
-        """Append bytes; return frames CLOSED by the silence before them."""
-        frames = []
-        if (self._buf and self._last_byte_t is not None
-                and now - self._last_byte_t >= self.gap):
-            frames.append(bytes(self._buf))
-            self._buf.clear()
+        """Append bytes and return every complete frame at the buffer head."""
         if data:
             self._buf.extend(data)
             self._last_byte_t = now
-        return frames
+        return self._extract()
 
     def flush(self, now: float) -> List[bytes]:
-        """Close the pending frame if the bus has been silent long enough."""
-        if (self._buf and self._last_byte_t is not None
-                and now - self._last_byte_t >= self.gap):
-            out = [bytes(self._buf)]
-            self._buf.clear()
-            return out
-        return []
+        """On bus silence (an empty read): slide through any junk head too."""
+        return self._extract(final=True)
 
 
 class TapReader:
@@ -109,10 +165,20 @@ class TapReader:
         self.bytesize = int(getattr(conn_cfg, 'bytesize', 8) or 8)
         self._clients: Dict[int, 'RtuTapClient'] = {}
         self._pending: Dict[int, Tuple[int, int, int, float]] = {}  # unit -> (fc, addr, count, t)
+        # learned window shapes: (fc, byte_count) -> start address. On a
+        # multi-drop bus the MASTER device answers no requests — it emits its
+        # own blocks unsolicited (the Seplos master pack does exactly this).
+        # Every paired exchange teaches us what a block of that shape means,
+        # so an unpaired response dispatches at the learned address. A shape
+        # seen with two different addresses becomes ambiguous and never infers.
+        self._shape: Dict[Tuple[int, int], Optional[int]] = {}
+        self.inferred = 0
         self._serial = None
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._lock = threading.Lock()
+        self._framer = RtuFramer(self.baudrate, self.bytesize,
+                                 self.parity, self.stopbits)
         # port-level observability (every client reports these)
         self.frames = 0
         self.crc_errors = 0
@@ -166,7 +232,7 @@ class TapReader:
 
     # ── the wire loop ──────────────────────────────────────────────────────
     def _run(self) -> None:
-        framer = RtuFramer(self.baudrate, self.bytesize, self.parity, self.stopbits)
+        framer = self._framer
         ser = self._serial
         while not self._stop.is_set():
             try:
@@ -188,6 +254,14 @@ class TapReader:
             return
         self.frames += 1
         unit, fc = frame[0], frame[1]
+        if self.frames == 1:
+            logger.info("rtu_tap %s: first valid frame (unit %d, fc %d, %d bytes)",
+                        self.port, unit, fc, len(frame))
+        if self.frames % 1000 == 0:
+            logger.info("rtu_tap %s: %d frames (crc_err %d, orphans %d, exc %d, "
+                        "writes %d, resync %dB)", self.port, self.frames,
+                        self.crc_errors, self.orphans, self.exceptions,
+                        self.writes_seen, self._framer.dropped_bytes)
         body = frame[:-2]
         if fc & 0x80:
             self.exceptions += 1
@@ -207,12 +281,30 @@ class TapReader:
                     and nbytes == 2 * pend[2] and now - pend[3] <= _RESPONSE_WINDOW_S):
                 addr, count = pend[1], pend[2]
                 del self._pending[unit]
+                # teach the shape map (first write wins; a conflict poisons it)
+                key = (fc, nbytes)
+                if self._shape.get(key, addr) != addr:
+                    self._shape[key] = None               # ambiguous — never infer
+                else:
+                    self._shape[key] = addr
                 words = [(body[3 + 2 * i] << 8) | body[4 + 2 * i] for i in range(count)]
                 self._note(now, unit, fc, kind='response', detail=f"@{addr} x{count}")
                 self._dispatch(unit, addr, words, now)
-            else:
-                self.orphans += 1
-                self._note(now, unit, fc, kind='orphan')
+                return
+            # unpaired response — the emitting unit may BE the bus master
+            # (nobody asks it anything): infer the window from the shape the
+            # other units' paired exchanges taught us
+            if len(frame) == 5 + nbytes and nbytes > 0 and nbytes % 2 == 0:
+                addr = self._shape.get((fc, nbytes))
+                if addr is not None:
+                    count = nbytes // 2
+                    words = [(body[3 + 2 * i] << 8) | body[4 + 2 * i] for i in range(count)]
+                    self.inferred += 1
+                    self._note(now, unit, fc, kind='inferred', detail=f"@{addr} x{count}")
+                    self._dispatch(unit, addr, words, now)
+                    return
+            self.orphans += 1
+            self._note(now, unit, fc, kind='orphan')
             return
         if fc == 6 and len(frame) == 8:                    # write single (req == echo)
             addr = (body[2] << 8) | body[3]
@@ -317,6 +409,10 @@ class RtuTapClient:
     def _ingest_window(self, addr: int, words: List[int], now: float) -> None:
         self.windows += 1
         self.last_rx_mono = now
+        if self.windows == 1:
+            logger.info("rtu_tap %s: first paired window — unit %d @%d x%d "
+                        "(callback %s)", self.device_id, self.unit_id, addr,
+                        len(words), 'set' if self.publish_callback else 'MISSING')
         with self._lock:
             regs = list(self.registers)
         end = addr + len(words)
@@ -349,6 +445,9 @@ class RtuTapClient:
                 continue
             data[r.address] = {'value': val, 'register': r, 'ts': ts, 'mono': now}
         if data and self.publish_callback:
+            if self.updates == 0:
+                logger.info("rtu_tap %s: first %d values decoded from window @%d",
+                            self.device_id, len(data), addr)
             self.updates += len(data)
             try:
                 self.publish_callback('tap', data)
@@ -373,7 +472,9 @@ class RtuTapClient:
                 'crc_errors': self._reader.crc_errors,
                 'orphan_frames': self._reader.orphans,
                 'exception_responses': self._reader.exceptions,
+                'resync_dropped_bytes': self._reader._framer.dropped_bytes,
             },
+            'inferred_windows': self._reader.inferred,
             'bus': {
                 'port': self._reader.port,
                 'frames': self._reader.frames,

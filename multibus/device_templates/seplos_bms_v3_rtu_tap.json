@@ -8,8 +8,13 @@
     "version": "1.0.0",
     "author": "Stefan Maldaianu",
     "description": "One Seplos V3 battery pack observed on the inter-pack RS485 bus via protocol rtu_tap (the master pack is the bus master — never poll this bus actively). Telemetry blocks PIA (0x1000, FC04) and PIB (0x1100, FC04); names mirror seplos_bms_mqtt 1:1 so the two read paths compare side by side. Alarm/status coils (PIC 0x1200, FC01) are not decoded by the tap yet. Set unit_id to the pack address (1..16). Defaults keep MQTT/Influx republish OFF — in a parallel validation the collector stays the writer.",
-    "protocol": "rtu_tap",
-    "byte_order": "big",
+    "protocol": {
+      "transports": [
+        "rtu_tap"
+      ],
+      "byte_order": "big",
+      "default_register_type": "input"
+    },
     "categories": {
       "battery": {
         "label": "Battery",

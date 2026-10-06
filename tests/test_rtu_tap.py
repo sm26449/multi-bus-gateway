@@ -74,17 +74,27 @@ def test_crc_roundtrip_and_reject():
     assert not frame_crc_ok(b'\x01\x03')
 
 
-def test_framer_splits_on_silence_not_on_chunk_boundaries():
-    fr = RtuFramer(baudrate=9600)
+def test_framer_extracts_complete_frames_regardless_of_chunking():
+    fr = RtuFramer(baudrate=19200)
     f1, f2 = req_read(1, 3, 0, 1), resp_read(1, 3, [7])
-    # frame 1 arrives in two chunks 1 ms apart (below the 3.5-char gap)
+    # a frame arriving in two chunks is emitted the moment it completes
     assert fr.feed(f1[:3], now=0.000) == []
-    assert fr.feed(f1[3:], now=0.001) == []
-    # frame 2 starts after a real silent gap -> frame 1 closes
-    out = fr.feed(f2, now=0.100)
-    assert out == [f1]
-    # silence closes the pending frame on flush
-    assert fr.flush(now=0.200) == [f2]
+    assert fr.feed(f1[3:], now=0.001) == [f1]
+    # the PRODUCTION case: request + response glued into ONE read chunk
+    # (pyserial returns ~50 ms batches; a whole exchange fits inside)
+    assert fr.feed(f1 + f2, now=0.100) == [f1, f2]
+    assert fr.dropped_bytes == 0
+
+
+def test_framer_resyncs_after_mid_frame_attach():
+    fr = RtuFramer(baudrate=19200)
+    f2 = resp_read(1, 3, [7])
+    # we attached mid-frame: a tail of garbage that validates at no length
+    assert fr.feed(f2[3:], now=0.0) == []
+    assert fr.flush(now=0.5) == []
+    # the junk slides out as the next real frame arrives — stream realigns
+    assert fr.feed(f2, now=1.0) == [f2]
+    assert fr.dropped_bytes == len(f2) - 3
 
 
 def test_request_response_pairing_dispatches_decoded_values():
@@ -232,3 +242,26 @@ def test_seplos_v3_template_decodes_pia_like_the_collector():
     r._on_frame(resp_read(1, 4, pib), now=1.05)
     assert got['cell_1'] == 3.265 and got['cell_16'] == 3.280
     assert abs(got['mosfet_temp'] - 31.85) < 0.01
+
+
+def test_unpaired_response_dispatches_via_learned_shape():
+    """A bus MASTER answers no requests — it emits its blocks unsolicited.
+    The tap learns (fc, byte_count) -> address from the other units' paired
+    exchanges and dispatches the master's unpaired responses through it;
+    a shape seen at two addresses becomes ambiguous and never infers."""
+    got = {}
+    r, c = make_pair('/p8', unit=1, registers=[reg(0x1000, 'v', 'uint16')])
+    c.publish_callback = lambda g, data: got.update(data)
+    # unit 2's paired exchange teaches: (fc4, 2 bytes) -> 0x1000
+    r._on_frame(req_read(2, 4, 0x1000, 1), now=0.0)
+    r._on_frame(resp_read(2, 4, [111]), now=0.05)
+    # unit 1 (our device, the master) emits the same shape with NO request
+    r._on_frame(resp_read(1, 4, [222]), now=1.0)
+    assert got[0x1000]['value'] == 222
+    assert r.inferred == 1 and r.orphans == 0
+    # a conflicting mapping poisons the shape: no more inference
+    r._on_frame(req_read(2, 4, 0x2000, 1), now=2.0)
+    r._on_frame(resp_read(2, 4, [5]), now=2.05)
+    got.clear()
+    r._on_frame(resp_read(1, 4, [9]), now=3.0)
+    assert got == {} and r.orphans == 1
