@@ -5,9 +5,9 @@
     "name": "Seplos BMS V3 pack (RTU tap, listen-only)",
     "vendor": "Seplos",
     "model": "BMS V3",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "author": "Stefan Maldaianu",
-    "description": "One Seplos V3 battery pack observed on the inter-pack RS485 bus via protocol rtu_tap (the master pack is the bus master — never poll this bus actively). Telemetry blocks PIA (0x1000, FC04) and PIB (0x1100, FC04); names mirror seplos_bms_mqtt 1:1 so the two read paths compare side by side. Alarm/status coils (PIC 0x1200, FC01) are not decoded by the tap yet. Set unit_id to the pack address (1..16). Defaults keep MQTT/Influx republish OFF — in a parallel validation the collector stays the writer.",
+    "description": "One Seplos V3 battery pack observed on the inter-pack RS485 bus via protocol rtu_tap (the master pack is the bus master — never poll this bus actively). Telemetry blocks PIA (0x1000, FC04) and PIB (0x1100, FC04); names mirror seplos_bms_mqtt 1:1 so the two read paths compare side by side. Alarm/status coils (PIC 0x1200, FC01) decode in BIT-address space: a coil register reads one bit, a uint16 coil packs 16 bits LSB-first — the same math the collector uses for its masks. Derived counts (alarm_count, balancing_count/cells) are Phase-2 calc registers. Set unit_id to the pack address (1..16). Defaults keep MQTT/Influx republish OFF — in a parallel validation the collector stays the writer.",
     "protocol": {
       "transports": [
         "rtu_tap"
@@ -27,6 +27,14 @@
       "temperature": {
         "label": "Temperature",
         "icon": "thermometer-half"
+      },
+      "alarms": {
+        "label": "Alarms",
+        "icon": "exclamation-triangle"
+      },
+      "diagnostics": {
+        "label": "Diagnostics",
+        "icon": "wrench"
       }
     },
     "registers": [
@@ -909,6 +917,1093 @@
         },
         "scale": 10,
         "offset": -273.15
+      },
+      {
+        "address": 4608,
+        "name": "alarm_cell_undervolt",
+        "label": "Cell Undervolt Mask",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 4624,
+        "name": "alarm_cell_overvolt",
+        "label": "Cell Overvolt Mask",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 4640,
+        "name": "alarm_cell_temp",
+        "label": "Cell Temp Alarm Mask",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 4656,
+        "name": "balancing_bits",
+        "label": "Balancing Mask",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 4672,
+        "name": "status",
+        "label": "Status",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "battery",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": true,
+            "widget": "value"
+          }
+        },
+        "enum": {
+          "0": "Unknown",
+          "1": "Discharge",
+          "2": "Charge",
+          "4": "Floating charge",
+          "8": "Full charge",
+          "16": "Standby",
+          "32": "Off"
+        },
+        "mask": 63
+      },
+      {
+        "address": 4680,
+        "name": "alarm_cell_high_v",
+        "label": "Cell High V",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4681,
+        "name": "alarm_cell_overvolt_prot",
+        "label": "Cell OV Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4682,
+        "name": "alarm_cell_low_v",
+        "label": "Cell Low V",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4683,
+        "name": "alarm_cell_undervolt_prot",
+        "label": "Cell UV Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4684,
+        "name": "alarm_pack_high_v",
+        "label": "Pack High V",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4685,
+        "name": "alarm_pack_overvolt_prot",
+        "label": "Pack OV Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4686,
+        "name": "alarm_pack_low_v",
+        "label": "Pack Low V",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4687,
+        "name": "alarm_pack_undervolt_prot",
+        "label": "Pack UV Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4688,
+        "name": "alarm_charge_high_temp",
+        "label": "Chg High Temp",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4689,
+        "name": "alarm_charge_overtemp_prot",
+        "label": "Chg OT Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4690,
+        "name": "alarm_charge_low_temp",
+        "label": "Chg Low Temp",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4691,
+        "name": "alarm_charge_undertemp_prot",
+        "label": "Chg UT Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4692,
+        "name": "alarm_discharge_high_temp",
+        "label": "Dis High Temp",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4693,
+        "name": "alarm_discharge_overtemp_prot",
+        "label": "Dis OT Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4694,
+        "name": "alarm_discharge_low_temp",
+        "label": "Dis Low Temp",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4695,
+        "name": "alarm_discharge_undertemp_prot",
+        "label": "Dis UT Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4696,
+        "name": "alarm_ambient_high_temp",
+        "label": "Ambient High Temp",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4697,
+        "name": "alarm_ambient_overtemp_prot",
+        "label": "Ambient OT Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4700,
+        "name": "alarm_mosfet_high_temp",
+        "label": "MOSFET High Temp",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4701,
+        "name": "alarm_mosfet_overtemp_prot",
+        "label": "MOSFET OT Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4702,
+        "name": "heating_active",
+        "label": "Heating",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "diagnostics",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "enum": {
+          "0": "OFF",
+          "1": "ON"
+        },
+        "mask": 1
+      },
+      {
+        "address": 4704,
+        "name": "alarm_charge_current",
+        "label": "Chg Current",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4705,
+        "name": "alarm_charge_overcurrent_prot",
+        "label": "Chg OC Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4706,
+        "name": "alarm_charge_overcurrent_2_prot",
+        "label": "Chg OC2 Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4707,
+        "name": "alarm_discharge_current",
+        "label": "Dis Current",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4708,
+        "name": "alarm_discharge_overcurrent_prot",
+        "label": "Dis OC Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4709,
+        "name": "alarm_discharge_overcurrent_2_prot",
+        "label": "Dis OC2 Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4710,
+        "name": "alarm_short_circuit_prot",
+        "label": "Short Circuit Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4722,
+        "name": "alarm_soc_low",
+        "label": "SOC Low",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4723,
+        "name": "alarm_soc_prot",
+        "label": "SOC Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4724,
+        "name": "alarm_cell_diff",
+        "label": "Cell Diff Alarm",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4728,
+        "name": "fet_discharge",
+        "label": "FET Discharge",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "diagnostics",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "enum": {
+          "0": "OFF",
+          "1": "ON"
+        },
+        "mask": 1
+      },
+      {
+        "address": 4729,
+        "name": "fet_charge",
+        "label": "FET Charge",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "diagnostics",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "enum": {
+          "0": "OFF",
+          "1": "ON"
+        },
+        "mask": 1
+      },
+      {
+        "address": 4730,
+        "name": "fet_current_limit",
+        "label": "FET Current Limit",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "diagnostics",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "enum": {
+          "0": "OFF",
+          "1": "ON"
+        },
+        "mask": 1
+      },
+      {
+        "address": 4731,
+        "name": "fet_heater",
+        "label": "FET Heater",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "diagnostics",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "enum": {
+          "0": "OFF",
+          "1": "ON"
+        },
+        "mask": 1
+      },
+      {
+        "address": 4736,
+        "name": "balancing_active",
+        "label": "Balancing",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "enum": {
+          "0": "OFF",
+          "1": "ON"
+        },
+        "mask": 1
+      },
+      {
+        "address": 4744,
+        "name": "failure_ntc",
+        "label": "Failure NTC",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4745,
+        "name": "failure_afe",
+        "label": "Failure AFE",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4746,
+        "name": "failure_charge_mosfet",
+        "label": "Failure Chg MOSFET",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4747,
+        "name": "failure_discharge_mosfet",
+        "label": "Failure Dis MOSFET",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
+      },
+      {
+        "address": 4748,
+        "name": "failure_cell_diff",
+        "label": "Failure Cell Diff",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "coil",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "mask": 1
       }
     ]
   }

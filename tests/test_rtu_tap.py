@@ -265,3 +265,63 @@ def test_unpaired_response_dispatches_via_learned_shape():
     got.clear()
     r._on_frame(resp_read(1, 4, [9]), now=3.0)
     assert got == {} and r.orphans == 1
+
+
+def req_coils(unit, addr, count):
+    return adu(bytes([unit, 1, addr >> 8, addr & 0xFF, count >> 8, count & 0xFF]))
+
+
+def resp_coils(unit, payload: bytes):
+    return adu(bytes([unit, 1, len(payload)]) + payload)
+
+
+def test_seplos_pic_coils_decode_like_the_collector():
+    """FC01 PIC block: masks pack 16 bits LSB-first, status decodes to its
+    label through mask+enum, FETs read ON/OFF, failures read 0/1 — and the
+    master pack's unsolicited PIC dispatches via the learned shape."""
+    import json
+    tpl = json.load(open('multibus/device_templates/seplos_bms_v3_rtu_tap.json'))
+    regs = []
+    for x in tpl['device_template']['registers']:
+        if x.get('register_type') != 'coil':
+            continue
+        regs.append(reg(x['address'], x['name'], x['data_type'],
+                        mask=x.get('mask'), enum=x.get('enum'),
+                        register_type='coil'))
+    r, c = make_pair('/pic', unit=2, registers=regs)
+    got = {}
+    c.publish_callback = lambda g, data: got.update(
+        {data[a]['register'].name: data[a]['value'] for a in data})
+    # 18 bytes: cells 3+9 undervolt; balancing cells 1,2; status=Charge(bit1);
+    # byte9 alarm_pack_low_v(bit6); byte15 fet_charge(bit1); byte17 failure_afe(bit1)
+    payload = bytes([
+        0b00000100, 0b00000010,   # bytes 0-1: undervolt mask = 0x0204 (cells 3, 10)
+        0, 0,                     # overvolt
+        0, 0,                     # cell temp
+        0b00000011, 0,            # balancing: cells 1,2
+        0b00000010,               # byte 8: status = Charge
+        0b01000000,               # byte 9: pack_low_v
+        0, 0, 0, 0,               # bytes 10-13
+        0,                        # byte 14
+        0b00000010,               # byte 15: fet_charge ON
+        0,                        # byte 16
+        0b00000010,               # byte 17: failure_afe
+    ])
+    r._on_frame(req_coils(2, 0x1200, 144), now=0.0)
+    r._on_frame(resp_coils(2, payload), now=0.05)
+    assert got['alarm_cell_undervolt'] == 0x0204
+    assert got['balancing_bits'] == 0b11
+    assert got['status'] == 'Charge'
+    assert got['alarm_pack_low_v'] == 1 and got['alarm_pack_high_v'] == 0
+    assert got['fet_charge'] == 'ON' and got['fet_discharge'] == 'OFF'
+    assert got['failure_afe'] == 1 and got['failure_ntc'] == 0
+    # the master's unsolicited PIC (no request) rides the learned shape
+    got.clear()
+    r2, c2 = make_pair('/pic2', unit=1, registers=regs)
+    c2.publish_callback = lambda g, data: got.update(
+        {data[a]['register'].name: data[a]['value'] for a in data})
+    r2._on_frame(req_coils(3, 0x1200, 144), now=0.0)      # unit 3 teaches the shape
+    r2._on_frame(resp_coils(3, bytes(18)), now=0.05)
+    r2._on_frame(resp_coils(1, payload), now=1.0)         # master, unpaired
+    assert r2.inferred == 1
+    assert got['status'] == 'Charge'

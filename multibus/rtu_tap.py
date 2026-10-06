@@ -268,6 +268,42 @@ class TapReader:
             self._note(now, unit, fc & 0x7F, kind='exception',
                        detail=f"code {body[2] if len(body) > 2 else '?'}")
             return
+        if fc in (1, 2):
+            # coil/discrete reads: the request counts BITS, the response packs
+            # them 8 to a byte LSB-first. Dispatched in BIT-address space.
+            if len(frame) == 8:                            # request
+                addr = (body[2] << 8) | body[3]
+                count = (body[4] << 8) | body[5]
+                self._pending[unit] = (fc, addr, count, now)
+                self._note(now, unit, fc, kind='request', detail=f"@{addr} x{count} bits")
+                return
+            pend = self._pending.get(unit)
+            nbytes = body[2] if len(body) > 2 else -1
+            if (pend and pend[0] == fc and len(frame) == 5 + nbytes
+                    and nbytes == (pend[2] + 7) // 8
+                    and now - pend[3] <= _RESPONSE_WINDOW_S):
+                addr, count = pend[1], pend[2]
+                del self._pending[unit]
+                key = (fc, nbytes)
+                if self._shape.get(key, addr) != addr:
+                    self._shape[key] = None
+                else:
+                    self._shape[key] = addr
+                bits = [(body[3 + i // 8] >> (i % 8)) & 1 for i in range(count)]
+                self._note(now, unit, fc, kind='response', detail=f"@{addr} x{count} bits")
+                self._dispatch_bits(unit, addr, bits, now)
+                return
+            if len(frame) == 5 + nbytes and nbytes > 0:
+                addr = self._shape.get((fc, nbytes))
+                if addr is not None:       # the master's own unsolicited block
+                    bits = [(body[3 + i // 8] >> (i % 8)) & 1 for i in range(nbytes * 8)]
+                    self.inferred += 1
+                    self._note(now, unit, fc, kind='inferred', detail=f"@{addr} x{len(bits)} bits")
+                    self._dispatch_bits(unit, addr, bits, now)
+                    return
+            self.orphans += 1
+            self._note(now, unit, fc, kind='orphan')
+            return
         if fc in (3, 4):
             if len(frame) == 8:                            # request
                 addr = (body[2] << 8) | body[3]
@@ -340,6 +376,14 @@ class TapReader:
                 client._ingest_window(addr, words, now)
             except Exception as e:  # noqa: BLE001 — a decode bug must not kill the reader
                 logger.error("rtu_tap %s unit %d: ingest failed — %s", self.port, unit, e)
+
+    def _dispatch_bits(self, unit: int, addr: int, bits: List[int], now: float) -> None:
+        client = self._clients.get(unit)
+        if client:
+            try:
+                client._ingest_coils(addr, bits, now)
+            except Exception as e:  # noqa: BLE001 — a decode bug must not kill the reader
+                logger.error("rtu_tap %s unit %d: coil ingest failed — %s", self.port, unit, e)
 
 
 # one reader per port, shared by every tap device on it
@@ -453,6 +497,46 @@ class RtuTapClient:
                 self.publish_callback('tap', data)
             except Exception as e:  # noqa: BLE001 — see mqtt_input: never kill the reader thread
                 logger.error("rtu_tap fan-out failed for %s: %s", self.device_id, e)
+
+    def _ingest_coils(self, addr: int, bits: List[int], now: float) -> None:
+        """A window of coils/discretes, in BIT-address space. A register with
+        ``register_type: coil`` reads one bit (data_type bit/bool) or packs 16
+        consecutive bits LSB-first into a word (data_type uint16) — the layout
+        the Seplos PIC block and most alarm bitmaps use. mask/shift/enum then
+        apply through the shared correction pipeline, so a status byte decodes
+        to its label and a FET bit to ON/OFF exactly like any other register."""
+        self.windows += 1
+        self.last_rx_mono = now
+        with self._lock:
+            regs = [r for r in self.registers
+                    if str(getattr(r, 'register_type', '') or '').lower() == 'coil']
+        end = addr + len(bits)
+        data = {}
+        ts = time.time()
+        for r in regs:
+            # uint16 packs 16 bits LSB-first; `mask: 1` marks a SINGLE-bit
+            # register (the template validator has no bool type, and the
+            # shared pipeline applies mask only inside enum decode)
+            dt16 = str(getattr(r, 'data_type', '') or '').lower() == 'uint16'
+            width = 1 if getattr(r, 'mask', None) == 1 else (16 if dt16 else 1)
+            if not (addr <= r.address < end):
+                continue
+            off = r.address - addr
+            take = min(width, end - r.address)   # high bits past the window read 0
+            raw = sum(bits[off + i] << i for i in range(take))
+            val = apply_corrections(raw, r, siblings=self._sibling_raw)
+            if val is None:
+                continue
+            data[r.address] = {'value': val, 'register': r, 'ts': ts, 'mono': now}
+        if data and self.publish_callback:
+            if self.updates == 0:
+                logger.info("rtu_tap %s: first %d coil values from window @%d",
+                            self.device_id, len(data), addr)
+            self.updates += len(data)
+            try:
+                self.publish_callback('tap', data)
+            except Exception as e:  # noqa: BLE001
+                logger.error("rtu_tap coil fan-out failed for %s: %s", self.device_id, e)
 
     # ── observability ──────────────────────────────────────────────────────
     def get_stats(self) -> Dict:
