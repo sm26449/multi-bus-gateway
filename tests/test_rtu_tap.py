@@ -198,3 +198,37 @@ devices:
     from multibus.rtu_tap import RtuTapClient as _C
     assert isinstance(drv, _C) and drv.unit_id == 7
     assert dev.protocol == 'rtu_tap'
+
+
+def test_seplos_v3_template_decodes_pia_like_the_collector():
+    """The bundled seplos_bms_v3_rtu_tap template, fed a synthetic PIA frame,
+    must land on the collector's math: V/100, A/100 signed, SOC/10,
+    cell V/1000, Kelvin/10 - 273.15."""
+    import json
+    tpl = json.load(open('multibus/device_templates/seplos_bms_v3_rtu_tap.json'))
+    regs = [reg(x['address'], x['name'], x.get('data_type', 'uint16'),
+                scale=x.get('scale', 1.0), offset=x.get('offset', 0.0),
+                unit=x.get('unit', ''))
+            for x in tpl['device_template']['registers']]
+    r, c = make_pair('/seplos', unit=1, registers=regs)
+    got = {}
+    c.publish_callback = lambda g, data: got.update(
+        {data[a]['register'].name: data[a]['value'] for a in data})
+    # PIA: 18 words — 52.29 V, -12.34 A, SOC 34.5 %, avg cell 3.268 V,
+    # avg cell temp 21.45 °C (2946 raw Kelvin*10)
+    words = [5229, 65536 - 1234, 7730, 28000, 1234, 345, 1000, 42,
+             3268, 2946, 3270, 3261, 2950, 2940, 0, 180, 80, 0]
+    r._on_frame(req_read(1, 4, 0x1000, 18), now=0.0)
+    r._on_frame(resp_read(1, 4, words), now=0.05)
+    assert got['pack_voltage'] == 52.29
+    assert got['current'] == -12.34
+    assert got['soc'] == 34.5
+    assert got['average_cell_voltage'] == 3.268
+    assert abs(got['average_cell_temp'] - 21.45) < 0.01
+    assert got['maxdiscurt'] == 180 and got['maxchgcurt'] == 80
+    # PIB: 16 cells + 4 temps + skip 4 + ambient/mosfet = 26 words
+    pib = [3265 + i for i in range(16)] + [2950, 2951, 2952, 2953] + [0]*4 + [2990, 3050]
+    r._on_frame(req_read(1, 4, 0x1100, 26), now=1.0)
+    r._on_frame(resp_read(1, 4, pib), now=1.05)
+    assert got['cell_1'] == 3.265 and got['cell_16'] == 3.280
+    assert abs(got['mosfet_temp'] - 31.85) < 0.01
