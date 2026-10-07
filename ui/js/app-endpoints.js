@@ -70,6 +70,7 @@ Object.assign(JanitzaMonitor.prototype, {
         set('#plCensus', this._endpointCensusText(p));
         set('#plHeadline', this._endpointHeadlineHtml(p));
         set('#plReadVia', this._endpointReadViaHtml(p));
+        set('#plTplUpdate', this._tplUpdateNotice('endpoint', p.id, p.template_update));
         // never redraw while a unit is being renamed or a source saved; and a
         // "How it is read" the operator opened stays open across the tick
         if (!view.querySelector('[data-renaming]')
@@ -1108,11 +1109,10 @@ Object.assign(JanitzaMonitor.prototype, {
                 <button data-admin class="btn btn-secondary btn-sm" ${this._act('testEndpointUi', [p.id], { el: true })}
                         title="${t('endpoints.testHint', 'Asks every unit over every way it is read — the Solar API by URL, Modbus by one read on its own connection. A Modbus probe opens one more client on the datalogger; they serve only a few at once.')}"><i aria-hidden="true" class="bi bi-activity"></i> ${t('endpoints.test', 'Test units')}</button>
                 <button data-admin class="btn btn-secondary btn-sm" ${this._act('openEndpointModal', [p.id])}><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('common.edit', 'Edit')}</button>
-                <button data-admin class="btn btn-ghost btn-sm" ${this._act('refreshEndpointFromTemplate', [p.id], { el: true })}
-                        title="${t('endpoints.refreshTplHint', 'Bring the units\' labels, units, categories and totals up to date with their template. Your selection, dashboard choices, outputs and formulas stay as they are. The units restart (a few seconds).')}"><i aria-hidden="true" class="bi bi-arrow-repeat"></i> ${t('endpoints.refreshTpl', 'Update from template')}</button>
                 <button data-admin class="btn btn-ghost btn-sm" ${this._act('deleteEndpointUi', [p.id])}><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>
             </div>
         </div>
+        <div id="plTplUpdate">${this._tplUpdateNotice('endpoint', p.id, p.template_update)}</div>
 
         <div class="settings-card">
             <div class="settings-card-body">
@@ -1454,33 +1454,6 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     // ── endpoint actions ───────────────────────────────────────────────────────
-
-    async refreshEndpointFromTemplate(id, btn) {
-        if (!confirm(this.t('endpoints.refreshTplConfirm', 'Update every unit\'s labels, units and totals from its template? The units restart for a few seconds.'))) return;
-        // a template may have gained calculated fields since the units were made
-        const addNew = confirm(this.t('endpoints.refreshTplAddNew', 'Also add the calculated fields the template has gained since these units were made? (OK = add them, Cancel = only update the existing rows. A calculated field you deleted on purpose would come back.)'));
-        const orig = btn ? btn.innerHTML : '';
-        if (btn) { btn.disabled = true; btn.innerHTML = '<span class="btn-spinner"></span> …'; }
-        try {
-            const r = await fetch(`/api/endpoints/${encodeURIComponent(id)}/refresh-from-template${addNew ? '?add_new=true' : ''}`, { method: 'POST' });
-            const d = await r.json().catch(() => ({}));
-            if (!r.ok) {
-                // FastAPI answers a string, {errors: [...]}, or a 422 list of {msg}
-                const det = d.detail;
-                const msgs = Array.isArray(det) ? det.map(x => x?.msg || String(x))
-                    : det?.errors || [typeof det === 'string' ? det : r.statusText];
-                throw new Error(msgs.join(' · '));
-            }
-            const regs = (d.units || []).reduce((a, u) => a + u.registers + u.calculated + (u.added || 0), 0);
-            this.showToast('success', this.t('endpoints.refreshTplDone', 'Updated from template'),
-                this.t('endpoints.refreshTplRows', '{n} rows updated across {u} units', { n: regs, u: (d.units || []).length }));
-            this._refreshEndpointDetail(id);
-        } catch (e) {
-            this.showToast('error', this.t('endpoints.saveFail', 'Save failed'), e.message);
-        } finally {
-            if (btn) { btn.disabled = false; btn.innerHTML = orig; }
-        }
-    },
 
     async toggleEndpointAggregates(id, el) {
         const p = this._endpointDetail;

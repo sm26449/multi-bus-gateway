@@ -3619,6 +3619,15 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             if not isinstance(src, list) or not [x for x in src if str(x).strip()]:
                 errors.append(f"{w}.from: at least one unit field")
 
+    def _template_update_summary(pid: str) -> Dict:
+        from .template_refresh import plan_devices
+        try:
+            plan = plan_devices(config, template_registry, config.endpoint_devices(pid))
+        except Exception:  # noqa: BLE001 — a status view must never 500 on this
+            return {'pending': False, 'changes': 0, 'new': 0}
+        return {'pending': plan['pending'], 'changes': len(plan['changes']),
+                'new': len(plan['new']), 'units_affected': plan['units_affected']}
+
     def _endpoint_entry(p: Dict) -> Dict:
         pid = p.get('id')
         units = []
@@ -3781,6 +3790,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'units_alarming': sum(1 for u in units
                                       if (u.get('alarms') or {}).get('danger')
                                       or (u.get('alarms') or {}).get('warning')),
+                # the template has something to bring in (the page offers the
+                # update only then); details at /template-changes
+                'template_update': _template_update_summary(pid),
                 'status': ('' if not units else 'online' if online == len(units)
                            else 'offline' if online == 0 else 'partial'),
                 'online_units': online,
@@ -4308,6 +4320,28 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         return {"status": "updated", "endpoint": _endpoint_entry(raw),
                 "devices": devices_out}
 
+    @app.get("/api/endpoints/{endpoint_id}/template-changes")
+    def endpoint_template_changes(endpoint_id: str):
+        """What "Update from template" would change on this installation's
+        units — nothing is written. The page offers the update only when
+        ``pending``, and shows exactly this list before it is applied."""
+        from .template_refresh import plan_devices
+        if config.get_raw_endpoint(endpoint_id) is None:
+            raise HTTPException(status_code=404, detail="endpoint not found")
+        return plan_devices(config, template_registry, config.endpoint_devices(endpoint_id))
+
+    @app.get("/api/devices/{device_id}/template-changes")
+    def device_template_changes(device_id: str):
+        """The same for one standalone device."""
+        from .template_refresh import plan_devices
+        _idx, dev_cfg, _client = _find_device(device_id)
+        if dev_cfg is None:
+            raise HTTPException(status_code=404, detail="device not found")
+        if dev_cfg.primary:
+            return {"pending": False, "units_total": 1, "units_affected": 0,
+                    "templates": [], "changes": [], "new": []}
+        return plan_devices(config, template_registry, [dev_cfg])
+
     @app.post("/api/endpoints/{endpoint_id}/refresh-from-template")
     @_serialized_mutation
     def refresh_endpoint_from_template(endpoint_id: str, add_new: bool = False):
@@ -4326,9 +4360,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             _start_endpoint_devices(config.endpoint_devices(endpoint_id))
             # the stop withdrew the units' HA entities — publish them again
             _sync_device_discovery()
-        logger.info("endpoint %s: refreshed from template (%d register rows, "
-                    "%d calculated rows)", endpoint_id,
-                    sum(r['registers'] for r in results), sum(r['calculated'] for r in results))
+        logger.info("endpoint %s: updated from template — %d register rows, "
+                    "%d calculated rows changed, %d new calculated fields added "
+                    "across %d units", endpoint_id,
+                    sum(r['registers'] for r in results), sum(r['calculated'] for r in results),
+                    sum(r['added'] for r in results), len(results))
         return {"status": "refreshed", "units": results}
 
     @app.post("/api/devices/{device_id}/refresh-from-template")
@@ -4353,6 +4389,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         new_client = _start_device_client(dev_cfg)
         registry.replace(device_id, dev_cfg, client=new_client, add_if_missing=True)
         _sync_device_discovery()            # HA picks up the new labels
+        logger.info("device %s: updated from template — %d register rows, %d calculated "
+                    "rows changed, %d new calculated fields added", device_id,
+                    res['registers'], res['calculated'], res['added'])
         return {"status": "refreshed", **res}
 
     @app.delete("/api/endpoints/{endpoint_id}")

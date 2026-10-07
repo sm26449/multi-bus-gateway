@@ -111,6 +111,38 @@ try {
   await page.evaluate(id => window.app.openEndpointDetail(id), ID);
   await page.waitForSelector(`[data-group-units]`);
   await page.waitForTimeout(1500);
+  // ---- template update: offered only when there is something to bring in --
+  check('up to date: no template notice, no update button',
+    (await page.locator('#plTplUpdate .tpl-update-notice').count()) === 0
+    && (await page.locator('button:has-text("Update from template")').count()) === 0);
+  if (CTR) {
+    const f = `/app/config/devices/${u0.device_id}/selected_registers.json`;
+    execFileSync('docker', ['exec', CTR, 'sed', '-i', 's/"Max discharge current (BMS limit)"/"MaxDisCurt"/', f]);
+    await page.waitForSelector('#plTplUpdate .tpl-update-notice', { timeout: 12000 }).catch(() => {});
+    const note = await page.locator('#plTplUpdate').innerText().catch(() => '');
+    check('an aged unit raises the notice', /template/i.test(note) && /1 change/.test(note), note.replace(/\s+/g, ' '));
+    await page.locator('#plTplUpdate button').click();
+    await page.waitForSelector('#tplUpdateModal.active .tplu-table');
+    const body = await page.innerText('#tplUpdateBody');
+    check('the modal shows what changes, before and after',
+      /maxdiscurt/.test(body) && /MaxDisCurt/.test(body) && /Max discharge current \(BMS limit\)/.test(body)
+      && /1\/2 units/.test(body), body.replace(/\s+/g, ' ').slice(0, 200));
+    await page.click('#tplUpdateApply');
+    await page.waitForSelector('#tplUpdateModal.active', { state: 'detached', timeout: 15000 }).catch(() => {});
+    await page.waitForFunction(() => !document.querySelector('#plTplUpdate .tpl-update-notice'), null, { timeout: 15000 }).catch(() => {});
+    check('applied: the notice is gone', (await page.locator('#plTplUpdate .tpl-update-notice').count()) === 0);
+    const back = execFileSync('docker', ['exec', CTR, 'sh', '-c', `grep -c 'Max discharge current (BMS limit)' ${f}`]).toString().trim();
+    check('applied: the label is back on disk', back === '1', back);
+    // the apply restarts the units: wait until they read again
+    for (let i = 0; i < 30; i++) {
+      const g2 = ((await api(`/api/endpoints/${ID}`)).body.groups || [])[0] || {};
+      if ((g2.units || []).length && (g2.units || []).every(u => (u.live || {}).power != null)) break;
+      await sleep(1000);
+    }
+    await page.evaluate(id => window.app.openEndpointDetail(id), ID);
+    await page.waitForSelector(`[data-group-units]`);
+    await page.waitForTimeout(1500);
+  }
   const head = await page.innerText('#plHeadline');
   check('page headline: battery power with its sign hint', /Battery power/.test(head) && /charging/.test(head), head.replace(/\n/g, ' | ').slice(0, 120));
   const th = await page.locator('[data-group] thead').first().innerText();

@@ -714,3 +714,33 @@
 .table th { font-weight: 600; color: var(--text-secondary); font-size: 11.5px; text-transform: uppercase; letter-spacing: .02em; }
 .table tbody tr:last-child td { border-bottom: 0; }
 .table code { font-size: 12px; }
+
+/* ── template update: notice + review modal ─────────────────────────────── */
+.tpl-update-notice { display: flex; align-items: center; gap: 12px; margin: 0 0 14px;
+    padding: 10px 14px; border: 1px solid var(--accent); border-radius: var(--radius-sm, 6px);
+    background: var(--accent-tint, rgba(18,163,178,.10)); }
+.tpl-update-notice > .bi { font-size: 18px; color: var(--accent); }
+.tpl-update-text { flex: 1; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.tpl-update-text span { color: var(--text-secondary); font-size: 13px; }
+.tpl-update-viewer { display: none; }
+body.role-viewer .tpl-update-viewer { display: inline; }
+.tplu-h { margin: 14px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--text-secondary); }
+.tplu-list { margin: 6px 0 0; padding-left: 18px; }
+.tplu-list li { margin-bottom: 6px; }
+.tplu-check { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
+.tplu-units { font-size: 11px; color: var(--text-tertiary, #8a94a0); margin-left: 4px; }
+.tplu-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tplu-table th { text-align: left; font-weight: 600; color: var(--text-secondary); padding: 4px 6px;
+    border-bottom: 1px solid var(--border); }
+.tplu-table td { padding: 5px 6px; border-bottom: 1px solid var(--border); vertical-align: top;
+    overflow-wrap: anywhere; }
+.tplu-before { color: var(--text-secondary); text-decoration: line-through; text-decoration-color: var(--text-tertiary, #8a94a0); }
+.tplu-after { font-weight: 500; }
+.tplu-none { font-style: italic; color: var(--text-tertiary, #8a94a0); text-decoration: none; }
+.tplu-kept { margin-top: 14px; }
+#tplUpdateModal .modal-content { max-width: 760px; }
+@media (max-width: 600px) {
+    .tpl-update-notice { flex-wrap: wrap; }
+    .tplu-table th:nth-child(2), .tplu-table td:nth-child(2) { display: none; }
+}

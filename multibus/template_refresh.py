@@ -34,6 +34,7 @@ calculated list, version) survive.
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 from pathlib import Path
@@ -58,6 +59,21 @@ def _rescaled(row: Dict[str, Any], t) -> bool:
     return False
 
 
+def _apply_row(row: Dict[str, Any], t, keys: Tuple[str, ...]) -> None:
+    """Bring one row's description in line with its template row (in place)."""
+    for k in keys:
+        if k == "unit" and _rescaled(row, t):
+            continue        # the operator's scale goes with the operator's unit
+        v = getattr(t, k, None)
+        if v not in (None, ""):
+            row[k] = v
+    agg = getattr(t, "aggregates", None)
+    if agg:
+        row["aggregates"] = dict(agg)
+    else:
+        row.pop("aggregates", None)
+
+
 def _refresh_rows(rows: List[Dict[str, Any]], tpl_rows: Dict[str, Any],
                   keys: Tuple[str, ...]) -> int:
     changed = 0
@@ -66,20 +82,63 @@ def _refresh_rows(rows: List[Dict[str, Any]], tpl_rows: Dict[str, Any],
         if t is None:
             continue
         before = json.dumps(row, sort_keys=True, default=str)
-        for k in keys:
-            if k == "unit" and _rescaled(row, t):
-                continue        # the operator's scale goes with the operator's unit
-            v = getattr(t, k, None)
-            if v not in (None, ""):
-                row[k] = v
-        agg = getattr(t, "aggregates", None)
-        if agg:
-            row["aggregates"] = dict(agg)
-        else:
-            row.pop("aggregates", None)
+        _apply_row(row, t, keys)
         if json.dumps(row, sort_keys=True, default=str) != before:
             changed += 1
     return changed
+
+
+def _row_changes(rows: List[Dict[str, Any]], tpl_rows: Dict[str, Any],
+                 keys: Tuple[str, ...]) -> List[Dict[str, Any]]:
+    """What _refresh_rows WOULD change, key by key — computed on a copy with
+    the very same rule, so the preview cannot disagree with the apply."""
+    out = []
+    for row in rows:
+        t = tpl_rows.get(row.get("name"))
+        if t is None:
+            continue
+        after = copy.deepcopy(row)
+        _apply_row(after, t, keys)
+        for k in keys + ("aggregates",):
+            if row.get(k) != after.get(k):
+                out.append({"field": row.get("name"), "label": after.get("label") or row.get("name"),
+                            "key": k, "before": row.get(k), "after": after.get(k)})
+    return out
+
+
+# a preview is asked for on every look at an installation: keep it until a
+# register file or the template changes
+_PLAN_CACHE: Dict[Any, Dict[str, Any]] = {}
+
+
+def plan_file(path: Path, tpl, with_new: bool = False) -> Dict[str, Any]:
+    """What refreshing this file would do, without doing it: ``changes``
+    (one per field and key, with before/after) and, with ``with_new``, the
+    template's calculated fields the unit lacks (``new``)."""
+    try:
+        st = path.stat()
+    except OSError:
+        return {"changes": [], "new": []}
+    key = (str(path), st.st_mtime_ns, st.st_size, id(tpl), getattr(tpl, "version", ""), with_new)
+    hit = _PLAN_CACHE.get(key)
+    if hit is not None:
+        return hit
+    data = json.loads(path.read_text(encoding="utf-8"))
+    regs = data.get("registers") or []
+    calcs = data.get("calculated") or []
+    changes = (_row_changes(regs, {r.name: r for r in (tpl.registers or [])}, REGISTER_KEYS)
+               + _row_changes(calcs, {c.name: c for c in (tpl.calculated or [])}, CALC_KEYS))
+    new = []
+    if with_new:
+        have = {r.get("name") for r in regs} | {c.get("name") for c in calcs}
+        new = [{"field": c.name, "label": c.label or c.name,
+                "description": getattr(c, "description", "") or ""}
+               for c in (tpl.calculated or []) if c.name not in have]
+    res = {"changes": changes, "new": new}
+    if len(_PLAN_CACHE) > 512:
+        _PLAN_CACHE.clear()
+    _PLAN_CACHE[key] = res
+    return res
 
 
 def refresh_file(path: Path, tpl, lock=None, add_new: bool = False) -> Dict[str, int]:
@@ -122,12 +181,9 @@ def refresh_file(path: Path, tpl, lock=None, add_new: bool = False) -> Dict[str,
     return {"registers": n_reg, "calculated": n_calc, "added": n_add}
 
 
-def refresh_device(config, template_registry, dev_cfg, add_new: bool = False) -> Dict[str, Any]:
-    """Refresh every register file of one device: its own, and each source's
-    against that source's template. ``add_new`` also adds the template's
-    calculated fields the unit lacks — to the unit's own file, where derived
-    measurements live."""
-    out = {"device": dev_cfg.id, "registers": 0, "calculated": 0, "added": 0, "files": 0}
+def _jobs(config, dev_cfg) -> List[Tuple[Path, str, bool]]:
+    """Every register file of a device with the template it is read against,
+    and whether it is the unit's own file (where derived measurements live)."""
     jobs = []
     dev_tid = getattr(dev_cfg, "template", "") or ""
     for src in getattr(dev_cfg, "sources", None) or []:
@@ -139,14 +195,60 @@ def refresh_device(config, template_registry, dev_cfg, add_new: bool = False) ->
         jobs.append((root, dev_tid or next(
             (getattr(sx, "template", "") for sx in (getattr(dev_cfg, "sources", None) or [])
              if getattr(sx, "template", "")), "")))
-    for path, tid in jobs:
+    return [(p, t, p == root) for p, t in jobs]
+
+
+def refresh_device(config, template_registry, dev_cfg, add_new: bool = False) -> Dict[str, Any]:
+    """Refresh every register file of one device: its own, and each source's
+    against that source's template. ``add_new`` also adds the template's
+    calculated fields the unit lacks — to the unit's own file, where derived
+    measurements live."""
+    out = {"device": dev_cfg.id, "registers": 0, "calculated": 0, "added": 0, "files": 0}
+    for path, tid, own in _jobs(config, dev_cfg):
         tpl = template_registry.get(tid) if tid else None
         if tpl is None:
             continue
         res = refresh_file(path, tpl, getattr(config, "_file_lock", None),
-                           add_new=add_new and path == root)
+                           add_new=add_new and own)
         out["registers"] += res["registers"]
         out["calculated"] += res["calculated"]
         out["added"] += res["added"]
         out["files"] += 1
     return out
+
+
+def _same(v) -> str:
+    return json.dumps(v, sort_keys=True, default=str)
+
+
+def plan_devices(config, template_registry, devs) -> Dict[str, Any]:
+    """What "Update from template" would do to these units, merged: the same
+    change on eight packs is one line that says ``units: 8``. ``pending`` is
+    whether there is anything to apply at all — the button exists only then.
+    ``templates`` names the template(s) and versions it would bring in."""
+    devs = list(devs)
+    changes: Dict[Any, Dict[str, Any]] = {}
+    new: Dict[str, Dict[str, Any]] = {}
+    templates: Dict[str, Dict[str, Any]] = {}
+    affected = set()
+    for dev in devs:
+        for path, tid, own in _jobs(config, dev):
+            tpl = template_registry.get(tid) if tid else None
+            if tpl is None:
+                continue
+            templates[tid] = {"id": tid, "name": getattr(tpl, "name", "") or tid,
+                              "version": getattr(tpl, "version", "") or ""}
+            plan = plan_file(path, tpl, with_new=own)
+            for c in plan["changes"]:
+                k = (c["field"], c["key"], _same(c["before"]), _same(c["after"]))
+                entry = changes.setdefault(k, {**c, "units": 0})
+                entry["units"] += 1
+                affected.add(dev.id)
+            for n in plan["new"]:
+                entry = new.setdefault(n["field"], {**n, "units": 0})
+                entry["units"] += 1
+                affected.add(dev.id)
+    return {"pending": bool(changes or new), "units_total": len(devs),
+            "units_affected": len(affected), "templates": list(templates.values()),
+            "changes": sorted(changes.values(), key=lambda c: (c["key"], c["field"])),
+            "new": list(new.values())}

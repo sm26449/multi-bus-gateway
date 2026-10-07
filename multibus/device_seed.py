@@ -95,6 +95,10 @@ def autoselect_template_registers(config: Any, template_registry: Any,
     reg_list = [{
         'address': r.address, 'name': r.name, 'label': r.label or r.name,
         'unit': r.unit, 'data_type': r.data_type,
+        # what the template says about the row, so a unit starts identical to
+        # it (and "Update from template" has nothing to offer a new unit)
+        **({'description': r.description} if getattr(r, 'description', '') else {}),
+        **({'category': r.category} if getattr(r, 'category', '') else {}),
         'poll_group': r.poll_group or 'normal', 'json_path': r.json_path,
         'topic': getattr(r, 'topic', ''), 'scale': r.scale,
         **({'offset': r.offset} if getattr(r, 'offset', 0) else {}),

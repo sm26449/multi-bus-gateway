@@ -2303,6 +2303,22 @@
         </div>
     </div>
 
+    <!-- Template update: what an improved template would change, before it is applied -->
+    <div class="modal" id="tplUpdateModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i aria-hidden="true" class="bi bi-stars"></i> <span id="tplUpdateTitle" data-i18n="tplu.title">Template update</span></h3>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["tplUpdateModal"]'>&times;</button>
+            </div>
+            <div class="modal-body" id="tplUpdateBody"></div>
+            <div class="modal-footer">
+                <span class="save-feedback" id="tplUpdateFeedback"></span>
+                <button class="btn btn-secondary btn-sm" data-action="closeModal" data-args='["tplUpdateModal"]'><span data-i18n="common.cancel">Cancel</span></button>
+                <button class="btn btn-primary btn-sm" id="tplUpdateApply" data-admin data-action="applyTemplateUpdate"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="tplu.apply">Apply to all units</span></button>
+            </div>
+        </div>
+    </div>
+
     <!-- Device Template editor (Tier 2) -->
     <div class="modal" id="devTplModal">
         <div class="modal-content modal-lg">
@@ -2339,6 +2355,7 @@
     <script src="/static/js/app-monitor.js?v=0"></script>
     <script src="/static/js/app-devices.js?v=0"></script>
     <script src="/static/js/app-endpoints.js?v=0"></script>
+    <script src="/static/js/app-template-update.js?v=0"></script>
     <script src="/static/js/app-plant-wizard.js?v=0"></script>
     <script src="/static/js/app-calculated.js?v=0"></script>
     <script src="/static/js/app-wizard.js?v=0"></script>

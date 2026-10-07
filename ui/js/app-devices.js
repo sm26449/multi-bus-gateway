@@ -147,7 +147,8 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="device-row-main">
                 <div class="device-row-title"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(p.name || p.id)}
                     <span class="dev-chip">${this._esc(p.id)}</span>
-                    <span class="dev-chip">${units.length} ${units.length === 1 ? this.t('endpoints.unit', 'unit') : this.t('endpoints.units', 'units')}</span></div>
+                    <span class="dev-chip">${units.length} ${units.length === 1 ? this.t('endpoints.unit', 'unit') : this.t('endpoints.units', 'units')}</span>
+                    ${(p.template_update || {}).pending ? `<span class="sink-pill warn" title="${this._esc(this.t('tplu.noticeTitle', 'The template has been updated'))}"><i aria-hidden="true" class="bi bi-stars"></i> ${this._esc(this.t('tplu.badge', 'template update'))}</span>` : ''}</div>
                 <div class="device-row-sub">${this._esc(holds.join(' · ') || p.template || '')}${ways.length ? ` · ${this.t('endpoints.readVia', 'Read via')} ${this._esc(ways.join(' + '))}` : ''}</div>
             </div>
             <div class="device-row-stats">${stats}</div>
@@ -566,6 +567,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 ${(primary || endpointId) ? '' : `<button data-admin class="btn btn-ghost btn-sm" ${this._act('deleteDevice', [s.id])}><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>`}
             </div>
         </div>
+        <div id="devTplUpdate"></div>
 
         <!-- device workspace: every tab opens IN-PLACE — the user never leaves
              the device (Measurements/Monitor/History/Energy are embedded, scoped
@@ -860,6 +862,24 @@ Object.assign(JanitzaMonitor.prototype, {
             tab.addEventListener('click', () => this._switchDeviceTab(tab.dataset.dtab)));
         this._loadDevicePollGroups(this._devDetail?.id);
         this._loadDeviceSnapshot(this._devDetail?.id);   // Overview is the default tab
+        this._loadDeviceTplUpdate(this._devDetail);
+    },
+
+    // a standalone device made from a template that has improved since: the
+    // notice appears only then (an installation's units are updated together,
+    // from the installation page)
+    async _loadDeviceTplUpdate(s) {
+        const box = document.getElementById('devTplUpdate');
+        if (!box || !s || s.primary || s.endpoint_id) return;
+        try {
+            const r = await fetch(`/api/devices/${encodeURIComponent(s.id)}/template-changes`);
+            if (!r.ok) return;
+            const plan = await r.json();
+            if (this._devDetail?.id !== s.id) return;    // the operator moved on
+            box.innerHTML = this._tplUpdateNotice('device', s.id, {
+                pending: plan.pending, changes: (plan.changes || []).length,
+                new: (plan.new || []).length, units_affected: 0 });
+        } catch (e) { /* the notice is a convenience */ }
     },
 
     // ── Logs ────────────────────────────────────────────────────────────────

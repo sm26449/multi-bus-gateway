@@ -924,3 +924,48 @@ def test_an_endpoint_created_at_runtime_runs_its_template_formulas(tmp_path):
     assert r.status_code == 200, r.text
     names = {e["_reg"].name for e in (app.state.calc_engine.store.get("bank-u1") or [])}
     assert {"power", "cell_delta", "alarm_count"} <= names, names
+
+
+@needs_tc
+def test_template_changes_are_previewed_then_applied_and_a_new_bank_is_up_to_date(tmp_path):
+    """The update is offered only when the template has something the units
+    lack, the preview lists exactly that, and applying it leaves nothing."""
+    import json as _json
+    from multibus.api import create_api
+    cfg = write_config(tmp_path)
+    app, _ = create_api(cfg, None, None, None, devices=[(d, None) for d in cfg.devices])
+    client = TestClient(app, raise_server_exceptions=False)
+    r = client.post("/api/endpoints", json={
+        "id": "bank", "name": "Bank", "template": "seplos_bms_v3_rtu_tap", "enabled": True,
+        "connection": {"protocol": "rtu_tap", "serial_port": "/dev/null-tap-pv", "baudrate": 9600},
+        "units": [1, 2], "influxdb": {"enabled": False}})
+    assert r.status_code == 200, r.text
+    # a bank made from the template is up to date: nothing to offer
+    plan = client.get("/api/endpoints/bank/template-changes").json()
+    assert plan["pending"] is False, plan
+    assert client.get("/api/endpoints/bank").json()["template_update"]["pending"] is False
+    # age both units: an old label, a formula the template gained since
+    for uid in ("bank-u1", "bank-u2"):
+        f = cfg.device_registers_path(uid)
+        d = _json.loads(f.read_text())
+        for row in d["registers"]:
+            if row["name"] == "maxdiscurt":
+                row["label"] = "MaxDisCurt"
+        d["calculated"] = [c for c in d["calculated"] if c["name"] != "warning_count"]
+        f.write_text(_json.dumps(d))
+    plan = client.get("/api/endpoints/bank/template-changes").json()
+    assert plan["pending"] and plan["units_affected"] == 2
+    assert [(n["field"], n["units"]) for n in plan["new"]] == [("warning_count", 2)]
+    lab = [c for c in plan["changes"] if c["field"] == "maxdiscurt"]
+    assert lab == [{"field": "maxdiscurt", "label": "Max discharge current (BMS limit)",
+                    "key": "label", "before": "MaxDisCurt",
+                    "after": "Max discharge current (BMS limit)", "units": 2}], lab
+    assert plan["templates"][0]["id"] == "seplos_bms_v3_rtu_tap"
+    summary = client.get("/api/endpoints/bank").json()["template_update"]
+    assert summary == {"pending": True, "changes": 1, "new": 1, "units_affected": 2}
+    # previewing wrote nothing
+    assert "MaxDisCurt" in cfg.device_registers_path("bank-u1").read_text()
+    r = client.post("/api/endpoints/bank/refresh-from-template?add_new=true")
+    assert r.status_code == 200
+    assert [(u["registers"], u["added"]) for u in r.json()["units"]] == [(1, 1), (1, 1)]
+    assert client.get("/api/endpoints/bank/template-changes").json()["pending"] is False
