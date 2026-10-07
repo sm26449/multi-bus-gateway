@@ -116,7 +116,8 @@ Object.assign(JanitzaMonitor.prototype, {
         const hc = { ok: 'var(--success,#22c55e)', degraded: 'var(--warning,#f59e0b)',
                      down: 'var(--danger,#ef4444)', idle: 'var(--text-secondary,#8a94a0)' };
         const proto = { http: 'HTTP', tcp: 'Modbus TCP', 'rtu-tcp': 'Modbus RTU/TCP',
-                        rtu: 'Modbus RTU', mqtt: 'MQTT' };
+                        rtu: 'Modbus RTU', mqtt: 'MQTT',
+                        rtu_tap: 'Modbus RTU tap (listen-only)' };
         return `<div style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px;">${t('endpoints.readVia', 'Read via')}</div>`
             + rows.map(r => {
                 const where = r.protocol === 'http' ? '' : ` ${this._esc(r.address || '')}`;
@@ -1344,12 +1345,18 @@ Object.assign(JanitzaMonitor.prototype, {
                     <select id="plProto" class="input">
                         <option value="tcp" ${(conn.protocol || 'tcp') === 'tcp' ? 'selected' : ''}>Modbus TCP</option>
                         <option value="rtu-tcp" ${conn.protocol === 'rtu-tcp' ? 'selected' : ''}>Modbus RTU over TCP</option>
+                        <option value="rtu_tap" ${conn.protocol === 'rtu_tap' ? 'selected' : ''}>${this.t('endpoints.protoTap', 'Modbus RTU tap (listen-only)')}</option>
                     </select></div>
-                <div class="form-group flex-2"><label class="form-label" for="plHost">${this.t('endpoints.host', 'Host')}</label>
+                <div class="form-group flex-2" data-net-only><label class="form-label" for="plHost">${this.t('endpoints.host', 'Host')}</label>
                     <input id="plHost" class="input" value="${this._esc(conn.host || '')}" placeholder="192.168.1.50"></div>
-                <div class="form-group"><label class="form-label" for="plPort">${this.t('endpoints.port', 'Port')}</label>
+                <div class="form-group" data-net-only><label class="form-label" for="plPort">${this.t('endpoints.port', 'Port')}</label>
                     <input id="plPort" class="input" type="number" value="${conn.port || 502}"></div>
-                <div class="form-group"><label class="form-label" for="plLanes">${this.t('endpoints.lanes', 'Connections')}</label>
+                <div class="form-group flex-2" data-tap-only hidden><label class="form-label" for="plSerial">${this.t('endpoints.serialPort', 'Serial port')}</label>
+                    <input id="plSerial" class="input" value="${this._esc(conn.serial_port || '')}" placeholder="/dev/serial/by-id/usb-...">
+                    <div class="field-hint">${this.t('endpoints.tapHint', 'Listen-only: the gateway never transmits — the bus\'s own master sets the rhythm. One process per port.')}</div></div>
+                <div class="form-group" data-tap-only hidden><label class="form-label" for="plBaud">${this.t('endpoints.baudrate', 'Baud rate')}</label>
+                    <input id="plBaud" class="input" type="number" value="${conn.baudrate || 19200}"></div>
+                <div class="form-group" data-net-only><label class="form-label" for="plLanes">${this.t('endpoints.lanes', 'Connections')}</label>
                     <input id="plLanes" class="input" type="number" min="1" max="8" value="${conn.max_connections || 1}">
                     <div class="field-hint">${this.t('endpoints.lanesHint',
                         'Sockets to this master, with the units shared out between them. One is right for a master that serializes internally — most dataloggers — and more is right only where a measurement says so: scripts/calibrate_endpoint.py.')}</div></div>
@@ -1375,6 +1382,16 @@ Object.assign(JanitzaMonitor.prototype, {
                 : this.t('endpoints.subHint', 'Use ${unit_id} / ${endpoint_id} in the topic prefix, bucket and tag — substituted per unit.')}</div>
             ${sinkToggles}`;
         document.getElementById('endpointFeedback').textContent = '';
+        // serial fields for the tap, network fields for the masters
+        const _syncProto = () => {
+            const tap = document.getElementById('plProto').value === 'rtu_tap';
+            document.querySelectorAll('#endpointModalBody [data-tap-only]')
+                .forEach(el => { el.hidden = !tap; });
+            document.querySelectorAll('#endpointModalBody [data-net-only]')
+                .forEach(el => { el.hidden = tap; });
+        };
+        document.getElementById('plProto').addEventListener('change', _syncProto);
+        _syncProto();
         // the modal shell is shared with the source editor, which repoints this
         // button — reclaim it, or Save would still be saving a source
         const _save = document.querySelector('#endpointModal [data-endpoint-save]');
@@ -1423,14 +1440,26 @@ Object.assign(JanitzaMonitor.prototype, {
             // payload does not speak of them
             body.connection = { ...(this._endpointEditConn || {}) };
         } else {
-            body.connection = {
-                ...(this._endpointEditConn || {}),
-                protocol: document.getElementById('plProto').value,
-                host: document.getElementById('plHost').value.trim(),
-                port: parseInt(document.getElementById('plPort').value, 10) || 502,
-                max_connections: Math.min(8, Math.max(1,
-                    parseInt(document.getElementById('plLanes')?.value, 10) || 1)),
-            };
+            const _proto = document.getElementById('plProto').value;
+            if (_proto === 'rtu_tap') {
+                body.connection = {
+                    ...(this._endpointEditConn || {}),
+                    protocol: _proto,
+                    serial_port: document.getElementById('plSerial').value.trim(),
+                    baudrate: parseInt(document.getElementById('plBaud').value, 10) || 19200,
+                };
+                delete body.connection.host;
+                delete body.connection.max_connections;
+            } else {
+                body.connection = {
+                    ...(this._endpointEditConn || {}),
+                    protocol: _proto,
+                    host: document.getElementById('plHost').value.trim(),
+                    port: parseInt(document.getElementById('plPort').value, 10) || 502,
+                    max_connections: Math.min(8, Math.max(1,
+                        parseInt(document.getElementById('plLanes')?.value, 10) || 1)),
+                };
+            }
             body.units = units;
         }
         body.mqtt = {

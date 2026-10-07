@@ -1545,7 +1545,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 address = redact_url(url) if redact else url
             elif proto == 'mqtt':
                 address = str((src.mqtt_in or {}).get('topic', ''))
-            elif proto == 'rtu':
+            elif proto in ('rtu', 'rtu_tap'):
                 address = f"{src.connection.serial_port} · unit {src.connection.unit_id}"
             else:
                 address = f"{src.connection.host}:{src.connection.port} · unit {src.connection.unit_id}"

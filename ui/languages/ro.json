@@ -1532,5 +1532,9 @@
   "fleet.moveLeft": "Mută la stânga",
   "fleet.moveRight": "Mută la dreapta",
   "fleet.removeCard": "Șterge cardul",
-  "fleet.editCard": "Personalizează cardul"
+  "fleet.editCard": "Personalizează cardul",
+  "endpoints.protoTap": "Modbus RTU tap (doar ascultare)",
+  "endpoints.serialPort": "Port serial",
+  "endpoints.baudrate": "Baud rate",
+  "endpoints.tapHint": "Doar ascultare: gateway-ul nu transmite niciodată — ritmul îl dă masterul magistralei. Un singur proces per port."
 }

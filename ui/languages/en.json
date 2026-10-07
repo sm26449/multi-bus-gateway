@@ -1532,5 +1532,9 @@
   "fleet.moveLeft": "Move left",
   "fleet.moveRight": "Move right",
   "fleet.removeCard": "Remove card",
-  "fleet.editCard": "Customize card"
+  "fleet.editCard": "Customize card",
+  "endpoints.protoTap": "Modbus RTU tap (listen-only)",
+  "endpoints.serialPort": "Serial port",
+  "endpoints.baudrate": "Baud rate",
+  "endpoints.tapHint": "Listen-only: the gateway never transmits — the bus's own master sets the rhythm. One process per port."
 }
