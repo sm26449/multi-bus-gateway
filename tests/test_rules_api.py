@@ -318,3 +318,36 @@ def test_a_failed_release_to_safe_is_reported_as_failed(tmp_path):
     ev = [e for e in app.state.event_log.recent(50) if 'ov-u1' in str(e)] if hasattr(app.state, 'event_log') else []
     texts = " ".join(str(e) for e in ev)
     assert "FAILED" in texts and "released to safe" not in texts.replace("release to safe FAILED", "")
+
+
+@needs_tc
+def test_rules_export_then_import_preview_apply_and_never_arrive_armed(tmp_path):
+    import yaml
+    inv = _Inverter(sf=-2)
+    cfg, app, client, clock, rt = _rule_app(tmp_path, {'pv-u1': inv})
+    r = client.get("/api/rules/export")
+    assert r.status_code == 200 and "attachment" in r.headers["content-disposition"]
+    doc = yaml.safe_load(r.text)
+    assert [x["id"] for x in doc["rules"]] == ["ov-u1"]
+    assert client.get("/api/rules/export?ids=nope").status_code == 404
+    # the file says armed; an import never arms
+    doc["rules"][0]["mode"] = "armed"
+    text = yaml.safe_dump(doc)
+    assert client.delete("/api/rules/ov-u1").status_code == 200
+    prev = client.post("/api/rules/import", json={"yaml": text}).json()
+    assert prev["applied"] is False and prev["rules"][0]["status"] == "new"
+    assert prev["rules"][0]["was_armed"] is True
+    assert "ov-u1" not in rt.rules                              # preview wrote nothing
+    done = client.post("/api/rules/import", json={"yaml": text, "apply": True}).json()
+    assert done["rules"][0]["status"] == "created" and rt.rules["ov-u1"].mode == "shadow"
+    # again: it exists — refused unless replace is ticked
+    again = client.post("/api/rules/import", json={"yaml": text, "apply": True}).json()
+    assert again["rules"][0]["status"] == "exists" and again["ok"] == 0
+    rep = client.post("/api/rules/import", json={"yaml": text, "apply": True, "replace": True}).json()
+    assert rep["rules"][0]["status"] == "replaced"
+    # a rule whose target does not exist here is shown as invalid, with why
+    other = dict(doc["rules"][0], id="ov-u9", target={"device": "pv-u9", "command": "power_limit"})
+    bad = client.post("/api/rules/import", json={"yaml": yaml.safe_dump([other])}).json()
+    assert bad["rules"][0]["status"] == "invalid" and bad["rules"][0]["errors"]
+    # garbage is a 422, not a crash
+    assert client.post("/api/rules/import", json={"yaml": "rules: 3"}).status_code == 422

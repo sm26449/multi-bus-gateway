@@ -8,7 +8,13 @@ from __future__ import annotations
 
 from typing import Dict
 
-from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Request, Response
+
+
+def payload_mode_armed(_raw: Dict, original) -> bool:
+    """Whether the file had the rule armed (it is imported as shadow anyway —
+    the preview says so, so nobody is surprised it is not running)."""
+    return isinstance(original, dict) and str(original.get("mode", "")) == "armed"
 
 
 def build(ctx) -> APIRouter:
@@ -48,6 +54,91 @@ def build(ctx) -> APIRouter:
         """Every rule with its live picture: state in words, signal, per-unit
         want / commanded / clamp, the last decision and its reason."""
         return {"rules": _rt().list()}
+
+    # ── moving rules between installations ─────────────────────────────────
+    @r.get("/api/rules/export")
+    def export_rules(ids: str = ""):
+        """The rules as a YAML file (all, or ``?ids=a,b``): their definitions
+        only — no live state, no history. ``mode`` is kept for the record, but
+        an import always brings rules in as shadow."""
+        import yaml
+        rt = _rt()
+        want = [x.strip() for x in ids.split(",") if x.strip()]
+        raws = [dict(rt.raw[rid]) for rid in rt.raw if not want or rid in want]
+        missing = [x for x in want if x not in rt.raw]
+        if missing:
+            raise HTTPException(status_code=404, detail={"errors": [f"no such rule: {', '.join(missing)}"]})
+        body = ("# Multi-Bus Gateway rules — import with Rules → Import\n"
+                "# Imported rules arrive in SHADOW: they decide and say so, they write\n"
+                "# nothing until someone arms them on the installation that runs them.\n"
+                + yaml.safe_dump({"rules": raws}, sort_keys=False, allow_unicode=True))
+        name = (want[0] if len(want) == 1 else "rules") + ".yaml"
+        return Response(content=body, media_type="application/x-yaml",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+    @r.post("/api/rules/import")
+    def import_rules(request: Request, payload: Dict = Body(...)):
+        """``{yaml, apply: false|true, replace: false|true}``. Without ``apply``
+        nothing is written: every rule comes back with what would happen to it
+        (``new`` / ``replace`` / ``exists`` / ``invalid``) and why. With it, the
+        valid ones are saved. Imported rules ALWAYS arrive in shadow — arming
+        is an explicit act on the installation that runs them — and a rule
+        that is armed here is never replaced by an import (shadow it first)."""
+        import yaml
+        who = _who(request)
+        text = str(payload.get("yaml") or "")
+        if not text.strip():
+            raise HTTPException(status_code=422, detail={"errors": ["yaml is empty"]})
+        if len(text) > 1_000_000:
+            raise HTTPException(status_code=413, detail={"errors": ["yaml too large (max 1 MB)"]})
+        try:
+            doc = yaml.safe_load(text)
+        except yaml.YAMLError as e:
+            raise HTTPException(status_code=422, detail={"errors": [f"invalid YAML: {e}"]})
+        items = doc.get("rules") if isinstance(doc, dict) and "rules" in doc else doc
+        if isinstance(items, dict):
+            items = [items]                      # one rule on its own
+        if not isinstance(items, list) or not items:
+            raise HTTPException(status_code=422, detail={"errors": [
+                "expected a list of rules (a `rules:` list, or one rule)"]})
+        apply, replace = bool(payload.get("apply")), bool(payload.get("replace"))
+        rt = _rt()
+        out, seen = [], set()
+        for i, raw in enumerate(items):
+            if not isinstance(raw, dict):
+                out.append({"id": f"#{i + 1}", "status": "invalid", "errors": ["not a rule (a mapping)"]})
+                continue
+            raw = {**raw, "mode": "shadow"}      # never arrives armed
+            rid = str(raw.get("id") or "")
+            entry = {"id": rid or f"#{i + 1}", "label": raw.get("label", ""),
+                     "kind": raw.get("kind", ""), "was_armed": payload_mode_armed(raw, items[i])}
+            if rid in seen:
+                out.append({**entry, "status": "invalid", "errors": [f"id '{rid}' appears twice in the file"]})
+                continue
+            seen.add(rid)
+            exists = rid in rt.rules
+            if exists and not replace:
+                out.append({**entry, "status": "exists", "errors": [
+                    "a rule with this id is already here — tick “replace” to overwrite it"]})
+                continue
+            if exists and rt.rules[rid].mode == "armed":
+                out.append({**entry, "status": "invalid", "errors": [
+                    "the rule here is ARMED — put it in shadow before replacing it"]})
+                continue
+            errs = rt.validate(raw, existing=rid if exists else None)
+            if errs:
+                out.append({**entry, "status": "invalid", "errors": errs})
+                continue
+            status = "replace" if exists else "new"
+            if apply:
+                errs, _d = rt.upsert(raw, who=who, via="import")
+                if errs:
+                    out.append({**entry, "status": "invalid", "errors": errs})
+                    continue
+                status = "replaced" if exists else "created"
+            out.append({**entry, "status": status, "errors": []})
+        ok = sum(1 for x in out if x["status"] in ("new", "replace", "created", "replaced"))
+        return {"applied": apply, "rules": out, "ok": ok, "total": len(out)}
 
     @r.get("/api/rules/{rule_id}")
     def get_rule(rule_id: str):

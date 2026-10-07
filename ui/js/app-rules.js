@@ -19,7 +19,8 @@ Object.assign(JanitzaMonitor.prototype, {
         const el = document.getElementById('rulesContent');
         if (!el) return;
         this._stopRulesPolls();
-        for (const [id, fn] of [['rulesAddBtn', () => this.openRuleModal('')], ['rulesRefreshBtn', () => this.renderRulesPage()]]) {
+        for (const [id, fn] of [['rulesAddBtn', () => this.openRuleModal('')], ['rulesRefreshBtn', () => this.renderRulesPage()],
+                                ['rulesImportBtn', () => this.openRulesImport()]]) {
             const b = document.getElementById(id);
             if (b && !b._wired) { b._wired = true; b.addEventListener('click', fn); }
         }
@@ -94,13 +95,14 @@ Object.assign(JanitzaMonitor.prototype, {
                     ${lv.error ? `<span class="sink-pill bad" title="${this._esc(lv.error)}">${t('rules.cannotRun', 'cannot run')}</span>` : ''}
                 </h3>
                 <div class="header-actions" style="display:flex;gap:6px;flex-wrap:wrap;">
-                    <button class="btn btn-sm ${armed ? 'btn-secondary' : 'btn-primary'}" ${this._act('setRuleMode', [r.id, armed ? 'shadow' : 'armed'])} ${lv.error && !armed ? 'disabled' : ''}>
+                    <button data-admin class="btn btn-sm ${armed ? 'btn-secondary' : 'btn-primary'}" ${this._act('setRuleMode', [r.id, armed ? 'shadow' : 'armed'])} ${lv.error && !armed ? 'disabled' : ''}>
                         <i aria-hidden="true" class="bi ${armed ? 'bi-eye' : 'bi-shield-check'}"></i> ${armed ? t('rules.toShadow', 'To shadow') : t('rules.arm', 'Arm…')}</button>
-                    <button class="btn btn-ghost btn-sm" ${this._act('openRuleClamp', [r.id])} title="${t('rules.clampHint', 'A ceiling on what the rule may ask for, for a stated time')}"><i aria-hidden="true" class="bi bi-arrow-down-square"></i> ${t('rules.clamp', 'Clamp…')}</button>
-                    <button class="btn btn-ghost btn-sm" ${this._act('openRuleOverride', [r.id])} title="${t('rules.overrideHint', 'Pause the rule so you or another system can command its target')}"><i aria-hidden="true" class="bi bi-pause-circle"></i> ${t('rules.override', 'Pause…')}</button>
+                    <button data-admin class="btn btn-ghost btn-sm" ${this._act('openRuleClamp', [r.id])} title="${t('rules.clampHint', 'A ceiling on what the rule may ask for, for a stated time')}"><i aria-hidden="true" class="bi bi-arrow-down-square"></i> ${t('rules.clamp', 'Clamp…')}</button>
+                    <button data-admin class="btn btn-ghost btn-sm" ${this._act('openRuleOverride', [r.id])} title="${t('rules.overrideHint', 'Pause the rule so you or another system can command its target')}"><i aria-hidden="true" class="bi bi-pause-circle"></i> ${t('rules.override', 'Pause…')}</button>
                     <button class="btn btn-ghost btn-sm" ${this._act('toggleRuleDecisions', [r.id])}><i aria-hidden="true" class="bi bi-journal-text"></i> ${t('rules.decisions', 'Decisions')}</button>
-                    <button class="btn btn-ghost btn-sm" ${this._act('openRuleModal', [r.id])} title="${t('common.edit', 'Edit')}" aria-label="${t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
-                    <button class="btn btn-ghost btn-sm" ${this._act('deleteRule', [r.id])} title="${t('common.delete', 'Delete')}" aria-label="${t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
+                    <a class="btn btn-ghost btn-sm" href="/api/rules/export?ids=${encodeURIComponent(r.id)}" download title="${t('rules.exportOne', 'Export this rule (YAML)')}" aria-label="${t('rules.exportOne', 'Export this rule (YAML)')}"><i aria-hidden="true" class="bi bi-download"></i></a>
+                    <button data-admin class="btn btn-ghost btn-sm" ${this._act('openRuleModal', [r.id])} title="${t('common.edit', 'Edit')}" aria-label="${t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
+                    <button data-admin class="btn btn-ghost btn-sm" ${this._act('deleteRule', [r.id])} title="${t('common.delete', 'Delete')}" aria-label="${t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
                 </div>
             </div>
             <div class="settings-card-body">
@@ -401,5 +403,85 @@ Object.assign(JanitzaMonitor.prototype, {
         } catch (e) { fb.textContent = e.message; return; }
         this.closeModal('ruleModal');
         this._loadRules();
+    },
+
+    // ── import: preview what would happen to each rule, then apply ────────
+    openRulesImport() {
+        const t = (k, d) => this.t(k, d);
+        this._rulesImportText = '';
+        document.getElementById('rulesImportText').value = '';
+        document.getElementById('rulesImportReplace').checked = false;
+        document.getElementById('rulesImportResult').innerHTML = '';
+        document.getElementById('rulesImportApply').disabled = true;
+        const file = document.getElementById('rulesImportFile');
+        if (file && !file._wired) {
+            file._wired = true;
+            file.addEventListener('change', async () => {
+                const f = file.files[0]; file.value = '';
+                if (f) { document.getElementById('rulesImportText').value = await f.text(); this.rulesImportPreview(); }
+            });
+        }
+        this.openModal('rulesImportModal');
+    },
+
+    async _rulesImportPost(apply) {
+        const text = document.getElementById('rulesImportText').value;
+        const replace = document.getElementById('rulesImportReplace').checked;
+        const r = await fetch('/api/rules/import', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ yaml: text, apply, replace }) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error((d.detail?.errors || [r.statusText]).join(' · '));
+        return d;
+    },
+
+    async rulesImportPreview() {
+        const t = (k, d, p) => this.t(k, d, p);
+        const box = document.getElementById('rulesImportResult');
+        const apply = document.getElementById('rulesImportApply');
+        if (!document.getElementById('rulesImportText').value.trim()) {
+            box.innerHTML = `<p class="field-hint">${this._esc(t('rules.import.empty', 'Paste the YAML or open a file first.'))}</p>`;
+            return;
+        }
+        try {
+            const d = await this._rulesImportPost(false);
+            box.innerHTML = this._rulesImportTable(d);
+            apply.disabled = !d.ok;
+            apply.textContent = t('rules.import.applyN', 'Import {n} rule(s) in shadow', { n: d.ok });
+        } catch (e) {
+            box.innerHTML = `<div class="field-error">${this._esc(String(e.message || e))}</div>`;
+            apply.disabled = true;
+        }
+    },
+
+    async rulesImportApply() {
+        const t = (k, d, p) => this.t(k, d, p);
+        try {
+            const d = await this._rulesImportPost(true);
+            document.getElementById('rulesImportResult').innerHTML = this._rulesImportTable(d);
+            this.showToast('success', t('rules.import.done', 'Rules imported'),
+                t('rules.import.doneDetail', '{n} of {m} imported — in shadow until you arm them', { n: d.ok, m: d.total }));
+            if (d.ok === d.total) this.closeModal('rulesImportModal');
+            this._loadRules(true);
+        } catch (e) {
+            this.showToast('error', t('rules.import.failed', 'Import failed'), String(e.message || e));
+        }
+    },
+
+    _rulesImportTable(d) {
+        const t = (k, def) => this.t(k, def);
+        const WORD = {
+            new: ['ok', t('rules.import.new', 'new')], replace: ['warn', t('rules.import.replace', 'replaces the one here')],
+            created: ['ok', t('rules.import.created', 'imported')], replaced: ['ok', t('rules.import.replaced', 'replaced')],
+            exists: ['warn', t('rules.import.exists', 'already here')], invalid: ['bad', t('rules.import.invalid', 'cannot import')],
+        };
+        return `<table class="tplu-table"><thead><tr>
+            <th>${this._esc(t('rules.import.rule', 'Rule'))}</th><th>${this._esc(t('rules.import.what', 'What happens'))}</th><th></th></tr></thead><tbody>
+            ${d.rules.map(x => {
+                const [cls, word] = WORD[x.status] || ['', x.status];
+                return `<tr><td style="white-space:nowrap;"><code>${this._esc(x.id)}</code>${x.label ? ' ' + this._esc(x.label) : ''}</td>
+                    <td><span class="sink-pill ${cls}">${this._esc(word)}</span>${x.was_armed ? ` <span class="field-hint">${this._esc(t('rules.import.wasArmed', 'armed in the file — arrives in shadow'))}</span>` : ''}</td>
+                    <td class="field-hint">${(x.errors || []).map(e => this._esc(e)).join('<br>')}</td></tr>`;
+            }).join('')}</tbody></table>`;
     },
 });
