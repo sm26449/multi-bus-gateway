@@ -642,7 +642,7 @@ The URL carries no ${unit_id}: an installation is one thing, so this group holds
 
 ## Seplos BMS V3 pack (RTU tap, listen-only)
 
-**id** `seplos_bms_v3_rtu_tap` · **vendor** Seplos · **model** BMS V3 · **version** 1.6.0 · **registers** 84
+**id** `seplos_bms_v3_rtu_tap` · **vendor** Seplos · **model** BMS V3 · **version** 1.8.1 · **registers** 84
 
 - **Transport:** Modbus RTU **listen-only tap** (decodes another master's exchanges): FC01 (read coils), FC04 (read input registers) · byte order **big-endian, high word first (ABCD)**
 
@@ -697,7 +697,7 @@ The URL carries no ${unit_id}: an installation is one thing, so this group holds
 | 4747 / 0x128B | `failure_discharge_mosfet` | Failure Dis MOSFET | uint16 | 1 | — | realtime |
 | 4748 / 0x128C | `failure_cell_diff` | Failure Cell Diff | uint16 | 1 | — | realtime |
 | 4096 / 0x1000 | `pack_voltage` | Pack Voltage | uint16 | 100 | V | realtime |
-| 4097 / 0x1001 | `current` | Current | int16 | 100 | A | realtime |
+| 4097 / 0x1001 | `current` | Current (+ charging) | int16 | 100 | A | realtime |
 | 4098 / 0x1002 | `remaining_capacity` | Remaining Capacity | uint16 | 100 | Ah | realtime |
 | 4099 / 0x1003 | `total_capacity` | Total Capacity | uint16 | 100 | Ah | realtime |
 | 4100 / 0x1004 | `total_discharge_capacity` | Total Discharge Capacity | uint16 | 0.1 | Ah | realtime |
@@ -710,8 +710,8 @@ The URL carries no ${unit_id}: an installation is one thing, so this group holds
 | 4107 / 0x100B | `min_cell_voltage` | Min Cell Voltage | uint16 | 1000 | V | realtime |
 | 4108 / 0x100C | `max_cell_temp` | Max Cell Temp | uint16 | 10 | °C | realtime |
 | 4109 / 0x100D | `min_cell_temp` | Min Cell Temp | uint16 | 10 | °C | realtime |
-| 4111 / 0x100F | `maxdiscurt` | MaxDisCurt | uint16 | 1 | A | realtime |
-| 4112 / 0x1010 | `maxchgcurt` | MaxChgCurt | uint16 | 1 | A | realtime |
+| 4111 / 0x100F | `maxdiscurt` | Max discharge current (BMS limit) | uint16 | 1 | A | realtime |
+| 4112 / 0x1010 | `maxchgcurt` | Max charge current (BMS limit) | uint16 | 1 | A | realtime |
 | 4352 / 0x1100 | `cell_1` | Cell 1 | uint16 | 1000 | V | realtime |
 | 4353 / 0x1101 | `cell_2` | Cell 2 | uint16 | 1000 | V | realtime |
 | 4354 / 0x1102 | `cell_3` | Cell 3 | uint16 | 1000 | V | realtime |

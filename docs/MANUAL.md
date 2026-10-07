@@ -278,6 +278,26 @@ byte-identical.
 **Deleting a device** keeps its register file on disk (data safety) and is
 blocked while any virtual meter sources it.
 
+### 5.3 How a unit is shown — the template decides
+
+What the UI shows for a kind of device comes from its template's `display`
+block, not from a list in the code: what a unit is called (*Battery pack*),
+the columns of its row on the installation page, its values on the fleet,
+the installation's headline, which fields are alarms, which dashboard
+sections are a **grid** (a pack's cells as tiles, the weak one and the full
+one marked, read to the millivolt) or show **only what is active** (34 alarm
+flags at zero become *Nothing active*), and which values are **bitmasks**
+(*Cell 3, Cell 7* instead of `68`). The block is read live: improve the
+template and every unit shows it at once. Write your own in a template
+([config-reference.md — `display:`](config-reference.md#display--how-a-unit-of-this-kind-is-shown));
+without one, the device's role decides as before.
+
+Labels, units, descriptions, categories and totals, on the other hand, are
+**copied** into a unit when it is created. When a template improves them,
+**Update from template** (admin, on a device or an installation) carries them
+over to the rows the unit already has; your selection, flags, sinks,
+thresholds and formulas stay as they are.
+
 ---
 
 ## 5b. Installations — one datalogger, many units

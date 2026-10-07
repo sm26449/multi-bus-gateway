@@ -277,6 +277,26 @@ entitățile HA rămân byte-identice.
 (siguranța datelor) și e blocată cât timp un meter virtual îl folosește ca
 sursă.
 
+### 5.3 Cum se afișează o unitate — decide template-ul
+
+Ce arată interfața pentru un tip de dispozitiv vine din blocul `display` al
+template-ului, nu dintr-o listă din cod: cum se numește o unitate (*Battery
+pack*), coloanele rândului ei pe pagina instalației, valorile din fleet,
+linia de sus a instalației, ce câmpuri sunt alarme, ce secțiuni din dashboard
+sunt **grilă** (celulele unui pachet ca plăcuțe, cea slabă și cea plină
+marcate, citite la milivolt) sau arată **doar ce e activ** (34 de flag-uri
+de alarmă pe zero devin *Nimic activ*) și ce valori sunt **măști de biți**
+(*Cell 3, Cell 7* în loc de `68`). Blocul e citit live: îmbunătățești
+template-ul și toate unitățile îl arată imediat. Formatul complet:
+[config-reference.md — `display:`](config-reference.md#display--how-a-unit-of-this-kind-is-shown);
+fără bloc, decide rolul dispozitivului, ca înainte.
+
+Etichetele, unitățile de măsură, descrierile, categoriile și totalurile sunt
+în schimb **copiate** în unitate la creare. Când template-ul le îmbunătățește,
+**Update from template** (admin, pe un dispozitiv sau o instalare) le aduce pe
+rândurile pe care unitatea le are deja; selecția, flag-urile, ieșirile,
+pragurile și formulele rămân ale tale.
+
 ---
 
 ## 6. Registre, grupuri de poll & praguri

@@ -92,6 +92,7 @@ conventional status codes (401 unauthenticated, 403 forbidden, 404 not found,
 | POST | `/api/devices/{id}/rest-push` | Configure the periodic REST push sink (`{enabled,url,interval_s≥5,headers,format:native\|flat,verify_tls,timeout}`); header values masked on read, preserved on save | admin |
 | POST | `/api/devices/{id}/rest-push/test` | Push once now and report the result | operator |
 | POST | `/api/devices/{id}/payload-sample` | Fetch one full payload from a saved MQTT/HTTP device (for the `json_path` picker) | operator |
+| POST | `/api/devices/{id}/refresh-from-template` | Update from template: carry the template's `label`/`unit`/`description`/`category`/`aggregates` (registers) and `label`/`unit` (template calculated fields) over to the rows the device already has, matched by name; selection, UI flags, sinks, thresholds and formulas are kept, no row is added; the device restarts so the pipeline sees the new metadata. Answers `{status, device, registers, calculated, files}` (rows changed). 422 for a unit of an installation (refresh the installation) and for the primary | admin |
 
 ### Endpoints (N units of one device behind one endpoint)
 
@@ -111,11 +112,12 @@ device create/edit/delete refuses their ids.
 | GET | `/api/registers/selected?device=&source=` | The selection of one source's map; every register carries `category` (canonical name → unit → `other`); `sources[]` carry `selected`, `catalog` (template size) and `interval_s` (fastest group the selection uses) | viewer |
 | GET | `/api/devices` (installation units) | Besides the device fields, a unit of an installation carries `endpoint_name`, `group_id`, `role`, `live` (glance values by role, fresh only), `fields` (label/unit per live name) and `read_via[]` — every source that reads it: `id`, `protocol`, `address` (with the unit id; URL redacted for viewers), `template`, `interval_s`, `timeout_s`, `stale_after_s`, `registers` (selected from it), `provides` (fields it supplies now), `status`, `latency_ms`, `reads_5m`, `failed_5m`, `fail_pct_5m`. `selected_registers` is the union across sources | viewer |
 | GET | `/api/endpoints` | All endpoints with their units (id, health, last seen, poll rate, errors, `live` glance values by role, `sources` verdict per source), `headline` (`power_now`, `energy_today`, `autonomy`, `self_consumption` — from the site group when there is one, else the inverters' sum, `null` when not measured), `read_via` (every distinct source across groups: `interval_s`, `latency_ms`, `reads_5m`, `failed_5m`, `fail_pct_5m`, `units_ok/units_total`, `status`), `fields` (label/unit per live name), `groups[]` (each with `aggregates` + `aggregate_fields`, `topic`, `outputs` = the real per-unit topic prefix / bucket / tag, `sources[]` with the same 5-minute window). A grouped installation has NO whole-installation `aggregates` (empty), and a group of one unit has no total (`aggregates: {}`, `topic: null`) | viewer |
-| GET | `/api/endpoints/{id}` | One endpoint, same shape, plus how its totals are made: `totals` (the operator's own, `{name: {op, from}}`), `totals_declared` (what the units' templates declare, as the units carry it) and `unit_fields` (every field name the units carry — what a total can be built from); `influxdb` includes `tags` and `outputs` | viewer |
+| GET | `/api/endpoints/{id}` | One endpoint, same shape, plus how its totals are made: `totals` (the operator's own, `{name: {op, from}}`), `totals_declared` (what the units' templates declare, as the units carry it) and `unit_fields` (every field name the units carry — what a total can be built from); `influxdb` includes `tags` and `outputs`; each unit carries `alarms` (`{danger, warning, active: [{field, label, severity, value}]}` from its template's `display.alarms`) and the endpoint `units_alarming` | viewer |
 | POST | `/api/endpoints` | Create: validate → persist → materialize N devices → seed each from the template → hot-start | admin |
 | PUT | `/api/endpoints/{id}` | Update. An edit that changes what the units are built from re-materializes them; an edit that only changes endpoint-level settings (name, `aggregates`, unit display names, `totals`, `influxdb.outputs`) keeps every poller running. Routing identity (topic prefix / bucket / device tag) stays fixed, and what the form omits (`write_locked`, `aggregates`, `http_output`, `rest_push`, `totals`, `influxdb.tags`, `influxdb.outputs`, per-unit ids/names) is preserved; sending `totals: {}` / `outputs: []` / `tags: {}` clears them. Malformed `totals` / `tags` / `outputs` → 422 with the offending field named (`influxdb.outputs[0].fields[1].scale`) | admin |
 | DELETE | `/api/endpoints/{id}` | Delete the endpoint and stop its units (register files kept; blocked while a virtual meter sources a unit) | admin |
 | POST | `/api/endpoints/{id}/test` | Probe every unit on the shared endpoint, one answer each. Opens another Modbus client — dataloggers serve only a few at once | admin |
+| POST | `/api/endpoints/{id}/refresh-from-template` | The same for every unit of the installation (they stop, refresh, restart): `{status, units: [ … one result each ]}` | admin |
 
 The per-unit sinks (`/api/devices/{unit}/http-output`, `/rest-push`) and the
 write lock are declared once and apply to the whole endpoint: one endpoint, one
@@ -147,7 +149,7 @@ rather than silently reading the primary's bucket.
 | Method | Path | Description | Role |
 |---|---|---|---|
 | GET | `/api/registers/all?device=` | Register catalog (from the device's template) | viewer |
-| GET | `/api/registers/selected?device=` | Selected (polled) registers + poll groups | viewer |
+| GET | `/api/registers/selected?device=` | Selected (polled) registers + poll groups; each register carries its template category, and the device its template's `display` block | viewer |
 | POST | `/api/registers/selected?device=` | Replace the selection; hot-reloads only that device's pollers | admin |
 | POST | `/api/query/register` | On-demand single read (holding/input) on the primary | viewer |
 | POST | `/api/query/batch` | On-demand batch read | viewer |

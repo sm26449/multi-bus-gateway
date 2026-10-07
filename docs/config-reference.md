@@ -440,7 +440,8 @@ single unit.
 **Template-declared totals and your own (`totals:`).** Beyond the three rules,
 a template may declare how a vendor's fields combine across a bank or a farm:
 a register (or calculated register) carries `aggregates: {output_name: op}`
-with `op` one of `sum`, `avg`, `min`, `max`, `spread` — `soc` →
+with `op` one of `sum`, `avg`, `min`, `max`, `spread`, `mode` (the majority
+value, text included — a bank's one-word status) — `soc` →
 `pack_average_soc: avg, pack_min_soc: min, pack_max_soc: max` all at once.
 The endpoint may override any of them, or add its own, without touching the
 template:
@@ -676,6 +677,62 @@ calculated:
 Existing devices are **not** re-seeded when a template gains derived
 measurements — a device's selection is a copy taken once. Carry them over with
 a migration (the 3.75 Fronius one shipped as a one-off script and is no longer in the tree).
+
+**Update from template** (3.86, device or installation page, admin;
+`POST /api/devices/{id}/refresh-from-template`,
+`POST /api/endpoints/{id}/refresh-from-template`) carries a template's
+*descriptions* over to the rows a unit already has: `label`, `unit`,
+`description`, `category` and `aggregates` on registers, `label` and `unit`
+on template-shipped calculated fields, matched by name. It keeps what the
+operator decided — which rows are selected, dashboard/UI flags, MQTT/InfluxDB
+switches and topics, thresholds, and every formula — and adds no row. The
+units restart so the pipeline sees the new metadata; an installation's unit
+is refreshed through its installation, so every unit stays alike.
+
+### `display:` — how a unit of this kind is shown
+
+A template may say how the UI presents a unit made from it. The block is read
+**live** from the template, never copied into a unit: an improved template
+reaches every existing unit on the next page load, no *Update from template*
+needed. Absent, the UI falls back to the defaults of the device's role
+(meter, inverter, …). Every field it names must be a field of the template
+(a register or a template calculated field), every category one of its
+`categories` — a template that breaks this is refused at load with the key
+named.
+
+```json
+"display": {
+  "unit_label": "Battery pack", "unit_label_plural": "Battery packs",
+  "icon": "battery-half",
+  "glance": ["power", "soc", "pack_voltage", "max_cell_temp", "status"],
+  "hero": ["soc", "power", "status"],
+  "headline": [
+    {"field": "pack_total_power", "label": "Battery power", "hint": "− charging · + discharging"},
+    {"field": "pack_average_soc", "label": "State of charge"}
+  ],
+  "alarms": [
+    {"field": "alarm_count", "severity": "warning"},
+    {"field": "protection_count", "severity": "danger"}
+  ],
+  "sections": {
+    "cells":  {"widget": "grid", "tiles": "^cell_\\d+$", "decimals": 3},
+    "alarms": {"widget": "active_only"}
+  },
+  "bitmasks": {"balancing_bits": "Cell {n}", "alarm_cell_temp": "Sensor {n}"}
+}
+```
+
+| Key | Meaning |
+|-----|---------|
+| `unit_label` / `unit_label_plural` / `icon` | what a unit is called on the installation page and the fleet (Bootstrap icon name) |
+| `glance` | the columns of a unit's row in the installation's unit table |
+| `hero` | the values a unit's row shows on the fleet dashboard |
+| `headline` | the installation's top line, from its **totals**: `field` (a total's name), `label`, optional `hint` (e.g. the sign of a battery's power) |
+| `alarms` | fields whose non-zero value **is** an active alarm (a BMS's alarm/protection/failure counts, an inverter's fault word): `{field, severity}`, severity `warning` (default) or `danger`. A fresh value that is non-zero, true, or a word other than `off`/`none`/`normal`/`ok` counts. They add to the fleet's alarm counts next to explicit thresholds; each installation unit carries `alarms` and the installation `units_alarming` (`GET /api/endpoints/{id}`); the unit row shows a pill, the unit page lists what is active |
+| `sections` | per category, a widget for the dashboard's section: `grid` — tiles with the lowest and highest marked (a pack's weak cell at a glance); `tiles` is a regex on the field name choosing them (default: the fields sharing the section's main unit), `decimals` (0–6) how finely tiles **and** the section's rows in the tiles' unit read; other fields stay rows below. `active_only` — only rows whose value is active, *Nothing active* otherwise, the section header marked while something is |
+| `bitmasks` | `{field: pattern}` — a mask reads as the bits that are set, numbered from 1: `"Cell {n}"` → *Cell 3, Cell 7*, `—` when clear (dashboard and unit page) |
+
+`GET /api/registers/selected?device=…` returns the block as `display`.
 
 See also: [MANUAL.md](MANUAL.md) · [upgrade-guide.md](upgrade-guide.md) ·
 [canonical-fields.md](canonical-fields.md) · [csv-import.md](csv-import.md) ·
