@@ -84,13 +84,14 @@ def test_sharing_can_be_turned_off():
     assert a._tp is not b._tp
 
 
-def test_a_directly_attached_serial_line_never_shares():
-    """Two devices on one RS-485 line are a different problem (one master per
-    line), and a serial port has no host:port to key on."""
+def test_slaves_on_one_serial_line_share_it_and_two_lines_do_not():
+    """Several slaves on one RS-485 bus are several devices sharing ONE open
+    line, keyed by its port (a tty opens once); another port is another bus."""
     _fresh()
-    a = _conn(1, protocol='rtu')
-    b = _conn(2, protocol='rtu')
-    assert a._tp is not b._tp
+    a = _conn(1, protocol='rtu', serial_port='/dev/ttyBUS1')
+    b = _conn(2, protocol='rtu', serial_port='/dev/ttyBUS1')
+    c = _conn(3, protocol='rtu', serial_port='/dev/ttyBUS2')
+    assert a._tp is b._tp and a._tp is not c._tp
 
 
 def test_every_transaction_carries_its_own_unit_id():

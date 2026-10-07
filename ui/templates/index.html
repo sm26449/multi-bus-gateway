@@ -384,6 +384,8 @@
                                         <i aria-hidden="true" class="bi bi-search"></i> <span data-i18n="devices.discover">Discover devices</span></button>
                                     <button data-admin class="btn btn-ghost btn-sm" data-action="openBuilderDeploy" data-i18n-title="tip.deployNode" title="Build firmware for a remote ESP32/ESP8266 RS485 reader and adopt it as a device">
                                         <i aria-hidden="true" class="bi bi-magic"></i> <span data-i18n="builder.deployNew">Deploy new device</span></button>
+                                    <button data-admin class="btn btn-ghost btn-sm" data-action="openBridgeModal" title="Add the box a serial bus is reached through: our serial bridge on a Raspberry Pi or server, or an RS-485-to-Ethernet converter">
+                                        <i aria-hidden="true" class="bi bi-hdd-network"></i> <span data-i18n="bridges.add">Add bridge</span></button>
                                     <button data-admin class="btn btn-ghost btn-sm" data-action="openPlantWizard" data-i18n-title="tip.addEndpoint" title="Add a whole installation: one master device fronting several units — inverters, the meter at its grid connection, a battery. Each kind is a group, totalled on its own.">
                                         <i aria-hidden="true" class="bi bi-diagram-3"></i> <span data-i18n="endpoints.add">Add Installation</span>
                                     </button>
@@ -2345,6 +2347,31 @@
         </div>
     </div>
 
+    <!-- Bridges: add / edit the box a serial bus is reached through -->
+    <div class="modal" id="bridgeModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i aria-hidden="true" class="bi bi-hdd-network"></i> <span id="bridgeTitle">Bridge</span></h3>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["bridgeModal"]'>&times;</button>
+            </div>
+            <div class="modal-body" id="bridgeBody"></div>
+            <div class="modal-footer">
+                <span class="save-feedback" id="bridgeFeedback" style="white-space:pre-line;"></span>
+                <button class="btn btn-secondary btn-sm" data-action="closeModal" data-args='["bridgeModal"]'><span data-i18n="common.cancel">Cancel</span></button>
+                <button class="btn btn-primary btn-sm" data-admin data-action="saveBridge"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
+            </div>
+        </div>
+    </div>
+    <div class="modal" id="bridgeInfoModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i aria-hidden="true" class="bi bi-hdd-network"></i> <span id="bridgeInfoTitle"></span></h3>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["bridgeInfoModal"]'>&times;</button>
+            </div>
+            <div class="modal-body" id="bridgeInfoBody"></div>
+        </div>
+    </div>
+
     <!-- Template update: what an improved template would change, before it is applied -->
     <div class="modal" id="tplUpdateModal">
         <div class="modal-content">
@@ -2398,6 +2425,7 @@
     <script src="/static/js/app-devices.js?v=0"></script>
     <script src="/static/js/app-endpoints.js?v=0"></script>
     <script src="/static/js/app-template-update.js?v=0"></script>
+    <script src="/static/js/app-bridges.js?v=0"></script>
     <script src="/static/js/app-plant-wizard.js?v=0"></script>
     <script src="/static/js/app-calculated.js?v=0"></script>
     <script src="/static/js/app-wizard.js?v=0"></script>

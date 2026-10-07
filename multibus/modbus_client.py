@@ -355,14 +355,21 @@ class ModbusConnection:
         # The socket lives on the ACCESS POINT, not on the unit: several units
         # behind one master share it (and the lock that serializes it), while
         # every counter below stays this unit's own.
-        _shared = (bool(getattr(config, 'share_transport', True))
-                   and str(getattr(config, 'protocol', 'tcp')).lower() != 'rtu')
+        # A directly attached serial line is shared the same way, keyed by its
+        # port: several slaves on one RS-485 bus = several devices, ONE open
+        # tty, one transaction at a time.
+        _serial = str(getattr(config, 'protocol', 'tcp')).lower() == 'rtu'
+        _shared = bool(getattr(config, 'share_transport', True))
         # Which socket this unit rides on. Sticky by unit id, so a unit always
         # uses the same lane (its reconnects never disturb a sibling on another)
         # and the units spread evenly when there is more than one.
-        _lanes = max(1, int(getattr(config, 'max_connections', 1) or 1))
+        _lanes = 1 if _serial else max(1, int(getattr(config, 'max_connections', 1) or 1))
         self.lane = (int(getattr(config, 'unit_id', 0) or 0) % _lanes) if _shared else 0
-        self._tp = transport_for(config.host, config.port, _shared, self.lane)
+        if _serial:
+            self._tp = transport_for(f"serial:{getattr(config, 'serial_port', '') or ''}", 0,
+                                     _shared and bool(getattr(config, 'serial_port', '')), 0)
+        else:
+            self._tp = transport_for(config.host, config.port, _shared, self.lane)
         self.lock = self._tp.lock
         self.successful_reads = 0
         self.failed_reads = 0

@@ -1,0 +1,18 @@
+{
+  "id": "mbg_serial_bridge",
+  "name": "MBG serial bridge",
+  "description": "Our container (ser2net) on any Linux host — a Raspberry Pi next to the bus, a server. Each USB serial adapter it sees is one bus on its own TCP port, kept across replug; the gateway reads its adapters and sets their serial parameters.",
+  "framing": "rtu",
+  "discovery": "api",
+  "serial_config": "api",
+  "health": "api",
+  "control_port": 7000,
+  "default_port": 7001,
+  "max_connections": 1,
+  "max_ports": 99,
+  "setup": [
+    "Run the bridge on the host the adapters are plugged into — the gateway shows the exact command.",
+    "Open the data ports (7001…) and the control port (7000) to the gateway's IP only: data ports carry raw Modbus, which has no authentication.",
+    "The token protects the control port; the gateway keeps it."
+  ]
+}

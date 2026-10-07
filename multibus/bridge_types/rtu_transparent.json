@@ -1,0 +1,18 @@
+{
+  "id": "rtu_transparent",
+  "name": "RS-485 to Ethernet converter — transparent",
+  "description": "A hardware converter (Waveshare, USR-TCP232, Elfin EW11, PUSR…) that passes bytes between the network and the bus without understanding them. The gateway sends RTU frames with their CRC, exactly as on a local serial port: full diagnostics, any serial protocol, listen-only possible — but usually ONE client at a time.",
+  "framing": "rtu",
+  "discovery": "manual",
+  "serial_config": "manual",
+  "health": "devices",
+  "default_port": 4196,
+  "max_connections": 1,
+  "max_ports": 4,
+  "setup": [
+    "In the converter's web page: work mode TCP Server, protocol None / Transparent (Waveshare: 'Protocol: None'; USR: 'Transparent'; Elfin EW11: 'Protocol: None').",
+    "Set the serial side to the bus's baud / parity / stop bits — the gateway cannot set them on this kind of device.",
+    "Packet interval / 'gap' at least 10 ms (or 'auto'): too short and the converter cuts a frame in two.",
+    "Only the gateway connects to it: a second client would take the line away."
+  ]
+}

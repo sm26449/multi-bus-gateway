@@ -77,7 +77,11 @@ def build(ctx) -> APIRouter:
         carry the bridge host + their stable tcp_port to prefill the add form."""
         host = urlparse(_BRIDGE_URL).hostname or "mbg-serial-bridge"
         try:
-            with urllib.request.urlopen(f"{_BRIDGE_URL}/adapters", timeout=4) as resp:
+            _req = urllib.request.Request(f"{_BRIDGE_URL}/adapters")
+            if os.environ.get("SERIAL_BRIDGE_TOKEN"):
+                # a bridge started with BRIDGE_TOKEN answers only with it
+                _req.add_header("Authorization", f"Bearer {os.environ['SERIAL_BRIDGE_TOKEN']}")
+            with urllib.request.urlopen(_req, timeout=4) as resp:
                 data = json.loads(resp.read().decode())
             for a in data.get("adapters", []):
                 a["bridge_host"] = host        # what an rtu-tcp device sets as connection.host

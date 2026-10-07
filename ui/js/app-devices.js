@@ -79,7 +79,8 @@ Object.assign(JanitzaMonitor.prototype, {
         try { endpoints = (await (await fetch('/api/endpoints')).json()).endpoints || []; }
         catch (e) { console.error(e); }
         this._endpoints = endpoints;
-        if (!devices.length && !endpoints.length) {
+        const bridges = this._loadBridges ? await this._loadBridges() : [];
+        if (!devices.length && !endpoints.length && !bridges.length) {
             el.innerHTML = `<span class="field-hint">${this.t('devices.none', 'No devices configured.')}</span>`;
             return;
         }
@@ -87,10 +88,13 @@ Object.assign(JanitzaMonitor.prototype, {
                               down: 'var(--danger,#ef4444)', idle: 'var(--text-secondary,var(--text-secondary))' };
         // Devices belonging to an endpoint render NESTED under their endpoint group
         // (expandable); only standalone devices render as top-level rows.
-        const standalone = devices.filter(d => !d.endpoint_id);
+        // a device on a bridge is listed under its bus (an installation's unit
+        // stays under its installation, the bridge only names it)
+        const standalone = devices.filter(d => !d.endpoint_id && !d.bridge);
         const byEndpoint = {};
         devices.forEach(d => { if (d.endpoint_id) (byEndpoint[d.endpoint_id] ||= []).push(d); });
-        const html = standalone.map(d => this._deviceRowHtml(d, healthColor)).join('')
+        const html = (this._bridgesSectionHtml ? this._bridgesSectionHtml(bridges, healthColor) : '')
+            + standalone.map(d => this._deviceRowHtml(d, healthColor)).join('')
             + endpoints.map(p => this._endpointGroupHtml(p, byEndpoint[p.id] || [], healthColor)).join('');
         el.innerHTML = html;
         // expand/collapse wiring (state persists per endpoint in localStorage)

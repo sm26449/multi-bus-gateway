@@ -1,0 +1,18 @@
+{
+  "id": "modbus_gateway",
+  "name": "Modbus TCP gateway (RS-485)",
+  "description": "A converter in 'Modbus TCP to RTU' mode: it receives Modbus TCP, asks the slave over RS-485 and answers in Modbus TCP. Several systems can read the bus at once (if it allows multi-host), but only Modbus passes, and it hides wire errors behind exception 0x0B.",
+  "framing": "modbus_tcp",
+  "discovery": "manual",
+  "serial_config": "manual",
+  "health": "devices",
+  "default_port": 502,
+  "max_connections": 1,
+  "max_ports": 4,
+  "setup": [
+    "In the converter's web page: work mode TCP Server, protocol 'Modbus TCP to RTU' (Waveshare: also tick 'Multi-host' if other systems read it too; USR: 'Modbus TCP <=> Modbus RTU').",
+    "Set the serial side to the bus's baud / parity / stop bits.",
+    "Set the converter's response timeout above the slowest slave (e.g. 500 ms); exception 0x0B means it got no answer in time.",
+    "Max connections: as many as the converter accepts — the gateway opens that many."
+  ]
+}

@@ -1350,8 +1350,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     or str(getattr(d.connection, 'serial_port', '')).strip() != sp):
                 continue
             if protocol == 'rtu' and dproto == 'rtu':
-                return [f"connection.serial_port: '{sp}' is already used by "
-                        f"device '{d.id}' — one RTU master per serial line"]
+                # several slaves on one bus: they share the open line and take
+                # turns; the slave address must differ, the line settings agree
+                if int(conn.get('unit_id', 1)) == int(getattr(d.connection, 'unit_id', -1)):
+                    return [f"connection.unit_id: unit {conn.get('unit_id', 1)} on '{sp}' is "
+                            f"already read by device '{d.id}' — each slave on a bus has its own address"]
             if protocol != dproto:
                 return [f"connection.serial_port: '{sp}' is already used by device "
                         f"'{d.id}' as {dproto} — a serial line is either polled or "
@@ -1361,10 +1364,41 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             theirs = (int(d.connection.baudrate or 9600),
                       str(d.connection.parity or 'N').upper())
             if ours != theirs:
-                return [f"connection.baudrate: '{sp}' is tapped by '{d.id}' at "
-                        f"{theirs[0]} {theirs[1]} — every tap on one line uses the "
+                how = 'tapped' if dproto == 'rtu_tap' else 'read'
+                return [f"connection.baudrate: '{sp}' is {how} by '{d.id}' at "
+                        f"{theirs[0]} {theirs[1]} — every device on one line uses the "
                         f"same line settings"]
         return []
+
+    def _test_on_shared_bus(conn: Dict, unit_id: int, address: int, timeout: float,
+                            where: str, busy_id: str) -> Dict:
+        """One read on a bus a running device already holds, through the same
+        socket and lock (a temporary unit on the shared transport)."""
+        from .config import ModbusConfig
+        from .modbus_client import ModbusConnection
+        mc = ModbusConnection(ModbusConfig(
+            host=str(conn.get('host', '')), port=int(conn.get('port', 502) or 502),
+            unit_id=unit_id, timeout=timeout, retry_attempts=1, retry_delay=0,
+            protocol=str(conn.get('protocol', 'rtu-tcp'))), trace_label=f"test:{where}")
+        t0 = time.perf_counter()
+        try:
+            words = mc.read_registers(address, 2, "holding")
+        except Exception as e:  # noqa: BLE001
+            words, err = None, str(e)
+        else:
+            err = ""
+        finally:
+            mc.disconnect()                     # releases the claim, keeps the socket
+        lat = round((time.perf_counter() - t0) * 1000, 1)
+        if words is not None:
+            return {"ok": True, "latency_ms": lat, "shared_with": busy_id,
+                    "message": f"Unit {unit_id} answered in {lat} ms — through the connection "
+                               f"device '{busy_id}' already uses on this bus (one connection, "
+                               f"taking turns)"}
+        return {"ok": False, "latency_ms": lat, "shared_with": busy_id,
+                "message": f"No answer from unit {unit_id} on {where} — the bus itself works "
+                           f"(device '{busy_id}' reads on it): check the unit id and that the "
+                           f"slave is wired to this bus{(' — ' + err) if err else ''}"}
 
     def _validate_device_payload(payload: Dict, *, existing_id: str = None) -> Dict:
         """Normalize + validate the raw device dict from the UI. Raises
@@ -1383,6 +1417,26 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         # password — the sentinel is resolved here, server-side only.
         if conn.get('password') == '$GATEWAY_MQTT_PASSWORD':
             conn['password'] = config.mqtt.password
+        _bridge_ref = None
+        if conn.get('bridge'):
+            # a device on a bridge: the bridge must exist and own that port;
+            # host, port and protocol then come from it (checked as such below)
+            _br = config.get_raw_bridge(str(conn['bridge']))
+            if _br is None:
+                errors.append(f"connection.bridge: no bridge '{conn['bridge']}' — add it on the Devices page first")
+            else:
+                _bports = [int(p.get('port')) for p in (_br.get('ports') or []) if p.get('port')]
+                from .bridges import TYPES as _BT, resolve_connection as _resolve
+                _bt = _BT.get(_br.get('type'), {})
+                if conn.get('bridge_port') is not None and _bt.get('discovery') == 'manual' \
+                        and int(conn.get('bridge_port')) not in _bports:
+                    errors.append(f"connection.bridge_port: {conn.get('bridge_port')} is not a port of "
+                                  f"'{_br['id']}' ({', '.join(map(str, _bports)) or 'none declared'})")
+                # what is SAVED is the reference; what is CHECKED is what it resolves to
+                _bridge_ref = {k: conn[k] for k in ('bridge', 'bridge_port', 'unit_id', 'timeout')
+                               if conn.get(k) is not None}
+                conn = _resolve(conn, config.bridges)
+                _bridge_ref.setdefault('bridge_port', conn.get('port'))
         protocol = str(conn.get('protocol', 'tcp')).lower()
         if protocol not in ('tcp', 'rtu', 'rtu-tcp', 'rtu_tap', 'http', 'mqtt'):
             errors.append("connection.protocol: must be 'tcp', 'rtu', 'rtu-tcp', "
@@ -1450,30 +1504,30 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     raise ValueError
             except (TypeError, ValueError):
                 errors.append("connection.port: must be 1..65535")
-            if protocol == 'rtu-tcp':
-                # An rtu-tcp host:port IS a physical RS-485 line: the bridge
-                # generates it with max-connections:1 + kickolduser, so two
-                # devices on one endpoint evict each other forever, both
-                # showing timeouts with no explanation (external audit E2 —
-                # the same one-master-per-line rule the plain-RTU branch
-                # already enforces on serial_port). Multi-drop belongs on ONE
-                # device per line; distinct unit_ids do not change the rule.
+            if protocol == 'rtu-tcp' or _bridge_ref:
+                # An rtu-tcp host:port IS one RS-485 bus (and so is a Modbus TCP
+                # gateway's port reached through a bridge). Several slaves on it
+                # are several devices: they share ONE socket to the bridge and
+                # take turns on it (the shared transport — a converter that
+                # accepts a single client is never fought over). What must not
+                # repeat is the slave address: two devices with one unit id on
+                # one bus would read the same slave and answer for each other.
                 _host = str(conn.get('host', '')).strip().lower()
                 try:
                     _port = int(conn.get('port', 502))
+                    _unit = int(conn.get('unit_id', 1))
                 except (TypeError, ValueError):
-                    _port = None
+                    _port = _unit = None
                 for d in config.devices:
                     if (getattr(d, 'id', None) != existing_id
-                            and getattr(d, 'protocol', '') == 'rtu-tcp'
+                            and getattr(d, 'protocol', '') == protocol
                             and str(getattr(d.connection, 'host', '')).strip().lower() == _host
-                            and int(getattr(d.connection, 'port', 0) or 0) == _port):
+                            and int(getattr(d.connection, 'port', 0) or 0) == _port
+                            and int(getattr(d.connection, 'unit_id', -1)) == _unit):
                         errors.append(
-                            f"connection: rtu-tcp endpoint {_host}:{_port} is "
-                            f"already used by device '{d.id}' — one master per "
-                            f"bridged serial line (the bridge kicks the older "
-                            f"client, so two devices would evict each other "
-                            f"forever)")
+                            f"connection.unit_id: unit {_unit} on {_host}:{_port} is "
+                            f"already read by device '{d.id}' — each slave on a bus "
+                            f"has its own address")
                         break
             try:
                 unit = int(conn.get('unit_id', 1))
@@ -1488,7 +1542,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             'name': str(payload.get('name', '') or did),
             'template': template_id,
             'enabled': bool(payload.get('enabled', True)),
-            'connection': conn,
+            # a device on a bridge keeps only the reference — host, port and
+            # protocol are the bridge's, resolved whenever the list is built
+            'connection': _bridge_ref or conn,
         }
         mqtt_block = dict(payload.get('mqtt') or {})
         # per-device HA discovery toggle lives under mqtt.ha_discovery
@@ -1505,6 +1561,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     def _device_entry(dev_cfg, client, *, redact=False) -> Dict:
         entry = dev_cfg.summary()
+        # the bridge (and its bus port) this device reaches its bus through
+        _bid = config._device_bridge(dev_cfg.id)
+        if _bid:
+            entry['bridge'] = _bid
+            _raw = next((x for x in config._raw_devices if x.get('id') == dev_cfg.id), {}) or {}
+            entry['bridge_port'] = (_raw.get('connection') or {}).get('bridge_port') or dev_cfg.connection.port
         regs = config.unit_registers(dev_cfg)       # every source's selection, one entry per name
         entry['selected_registers'] = len(regs)
         entry['influxdb_device_tag'] = dev_cfg.influxdb_device_tag
@@ -4461,23 +4523,19 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             # rtu-tcp: RTU frames over a raw TCP socket (serial-over-TCP bridge)
             _framer = {'framer': FramerType.RTU} if proto == 'rtu-tcp' else {}
             if proto == 'rtu-tcp':
-                # audit DP-19: the bridge kicks the OLDER client — a test
-                # against an endpoint a running device is polling would boot
-                # the live poller mid-transaction and push it into the slow
-                # timeout path. Refuse; the operator can disable the device
-                # first if a raw probe is really needed.
+                # A bus already read by a running device: ask THROUGH its
+                # connection (the shared transport), in turn with the slaves on
+                # it — a private socket would make a single-client bridge drop
+                # the live one (audit DP-19). Only the unit id is the test's own.
                 _th = str(conn.get('host', '')).strip().lower()
                 _tp = int(conn.get('port', 502) or 502)
-                for _d in config.devices:
-                    if (getattr(_d, 'enabled', False)
-                            and getattr(_d, 'protocol', '') == 'rtu-tcp'
-                            and str(getattr(_d.connection, 'host', '')).strip().lower() == _th
-                            and int(getattr(_d.connection, 'port', 0) or 0) == _tp):
-                        return {"ok": False, "error":
-                                f"endpoint {where} is being live-polled by "
-                                f"device '{_d.id}' — a test would kick its "
-                                f"connection (bridge is single-client). "
-                                f"Disable the device first."}
+                _busy = next((_d for _d in config.devices
+                              if getattr(_d, 'enabled', False)
+                              and getattr(_d, 'protocol', '') == 'rtu-tcp'
+                              and str(getattr(_d.connection, 'host', '')).strip().lower() == _th
+                              and int(getattr(_d.connection, 'port', 0) or 0) == _tp), None)
+                if _busy is not None:
+                    return _test_on_shared_bus(conn, unit_id, address, timeout, where, _busy.id)
             c = ModbusTcpClient(host=conn.get('host', ''),
                                 port=int(conn.get('port', 502)), timeout=timeout,
                                 **_framer)
@@ -4512,6 +4570,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     def test_device_adhoc(payload: Dict = Body(...)):
         """Wizard step-1 probe for a NOT-yet-saved device (TCP or RTU)."""
         conn = payload.get('connection', payload) or {}
+        if conn.get('bridge'):
+            from .bridges import resolve_connection as _rb
+            conn = _rb(conn, config.bridges)     # test the bus the device will use
         protocol = str(conn.get('protocol', 'tcp')).lower()
         if protocol == 'http':
             url = str(conn.get('url', '')).strip()
@@ -5294,34 +5355,42 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                          commissioning, config as config_routes, device_templates,
                          diagnostics, discovery_routes, energy, general_config,
                          languages, metrics, pq, registers_routes, rules as rules_routes,
-                         status_routes, system, values_routes, vmeters)
+                         status_routes, system, values_routes, vmeters, bridges as bridges_routes)
+
+    def _restart_devices(device_ids: List[str]) -> List[str]:
+        """Rebuild the running client of these devices from the CURRENT config
+        (a bridge's new host, a template's new word order)."""
+        out = []
+        current = {d.id: d for d in config.devices}
+        for dev_cfg, client in list(registry):
+            if dev_cfg.id not in device_ids or dev_cfg.primary:
+                continue
+            fresh = current.get(dev_cfg.id, dev_cfg)
+            try:
+                if client:
+                    client.disconnect()
+                new_client = _start_device_client(fresh)
+                registry.replace(fresh.id, fresh, client=new_client, add_if_missing=True)
+                out.append(fresh.id)
+            except Exception as e:  # noqa: BLE001 — one device must not stop the rest
+                logger.error("restart of %s failed: %s", fresh.id, e)
+        return out
+
     def _restart_devices_using_template(template_id: str) -> List[str]:
         """A map's protocol (word order, read size) is read when a client is
         made: restart every running device that reads with it, so a saved
         change takes effect now instead of at the next container restart."""
-        out = []
-        for dev_cfg, client in list(registry):
-            if dev_cfg.primary:
-                continue
-            tids = {getattr(dev_cfg, 'template', '') or ''} | {
-                getattr(sx, 'template', '') or '' for sx in (getattr(dev_cfg, 'sources', None) or [])}
-            if template_id not in tids:
-                continue
-            try:
-                if client:
-                    client.disconnect()
-                new_client = _start_device_client(dev_cfg)
-                registry.replace(dev_cfg.id, dev_cfg, client=new_client, add_if_missing=True)
-                out.append(dev_cfg.id)
-            except Exception as e:  # noqa: BLE001 — one device must not stop the rest
-                logger.error("restart of %s after template %s change failed: %s",
-                             dev_cfg.id, template_id, e)
+        ids = [d.id for d, _c in list(registry) if not d.primary and template_id in (
+            {getattr(d, 'template', '') or ''}
+            | {getattr(sx, 'template', '') or '' for sx in (getattr(d, 'sources', None) or [])})]
+        out = _restart_devices(ids)
         if out:
             logger.info("template %s: protocol changed — restarted %s", template_id, ", ".join(out))
         return out
 
     ctx = ApiCtx(
         restart_devices_using_template=_restart_devices_using_template,
+        restart_devices=_restart_devices,
         app=app, config=config, registry=registry, calc_engine=calc_engine,
         event_log=event_log, alert_mgr=alert_mgr,
         auth_state=auth_state, api_key=_api_key,
@@ -5336,7 +5405,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     for _mod in (builder_routes, calculated, commissioning, config_routes,
                  device_templates, diagnostics, discovery_routes, energy,
                  general_config, languages, metrics, pq, registers_routes, rules_routes,
-                 status_routes, system, auth_routes, values_routes, vmeters):
+                 status_routes, system, auth_routes, values_routes, vmeters, bridges_routes):
         app.include_router(_mod.build(ctx))
     app.include_router(auth_routes.build_passkeys(ctx))
 

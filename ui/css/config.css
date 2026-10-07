@@ -762,3 +762,23 @@ body.role-viewer .tpl-update-viewer { display: inline; }
 .probe-apply { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
 
 .tpl-guide { float: right; font-weight: 400; font-size: 12.5px; }
+
+/* ── bridges on the Devices page ─────────────────────────────────────────── */
+.bridge-card { border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); margin-bottom: 10px; background: var(--bg-card, transparent); }
+.bridge-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 10px 12px; }
+.bridge-head > .bi { color: var(--accent); font-size: 16px; }
+.bridge-actions, .bridge-port-actions { margin-left: auto; display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.bridge-port { border-top: 1px solid var(--border); padding: 6px 12px 8px 30px; }
+.bridge-port-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.bridge-dev { display: flex; align-items: center; gap: 8px; padding: 3px 0 3px 22px; cursor: pointer; font-size: 13px; }
+.bridge-dev:hover { color: var(--accent); }
+.bridge-types { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.bridge-type { border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; cursor: pointer; }
+.bridge-type.on { border-color: var(--accent); background: var(--accent-tint, rgba(18,163,178,.08)); }
+.bridge-type input { position: absolute; opacity: 0; pointer-events: none; }
+.bridge-type span { font-size: 12px; color: var(--text-secondary); }
+.bridge-port-row { gap: 6px; }
+.bridge-port-row .br-port { max-width: 100px; }
+.code-block { white-space: pre-wrap; word-break: break-all; font-family: var(--font-mono, monospace); font-size: 12px; background: var(--bg-secondary, rgba(0,0,0,.04)); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); padding: 8px 10px; }
+#bridgeModal .modal-content, #bridgeInfoModal .modal-content { max-width: 820px; }
+@media (max-width: 600px) { .bridge-port { padding-left: 12px; } .bridge-dev { padding-left: 8px; } }
