@@ -351,5 +351,7 @@ devices:
     assert by['alarm_cell_undervolt'].influxdb_measurement == ''   # not a collector field
     assert by['soc'].aggregates == {'pack_average_soc': 'avg', 'pack_min_soc': 'min',
                                     'pack_max_soc': 'max', 'pack_soc_spread': 'spread'}
-    # influx stays OFF until provisioning enables it
-    assert by['pack_voltage'].influxdb_enabled is False
+    # 1.5.0 (cutover): publishing defaults ON — the template IS the writer now
+    assert by['pack_voltage'].influxdb_enabled is True
+    assert by['pack_voltage'].mqtt_enabled is True
+    assert by['alarm_pack_low_v'].mqtt_enabled is False   # internal bit feeds counts only

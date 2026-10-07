@@ -12,7 +12,7 @@ collector retires); the `mbg/*` convention stays for new devices.
 | 1 | FC04 telemetry + FC01 PIC alarms in `rtu_tap`, template `seplos_bms_v3_rtu_tap` | DONE — validated live, byte-identical |
 | 2 | Derived counts (popcount calc registers) + template-declared bank aggregation (`aggregates:` fan-out) | DONE — unit-tested |
 | 3 | Consumer compatibility (this document) | DONE |
-| 4 | Provisioning + cutover window | pending (after the OV cutover) |
+| 4 | Provisioning + cutover window | DONE 2026-10-07 — collector retired |
 
 ## Consumer inventory (verified 2026-10-07)
 
@@ -87,3 +87,25 @@ Deliberately dropped (no consumer found): `pack_status` consensus,
   provisioning, `device`/`poll_group` tags added by MBG). No known queries.
 - PIC coils carry no per-cell alarm text lists (`balancing_cells`); the
   bitmask `balancing_bits` + `balancing_count` carry the same information.
+
+## Cutover record (2026-10-07)
+
+Executed by `tools/seplos_bank_cutover.py --apply` + the window:
+collector stopped, MBG redeployed; the `battery-bank` endpoint
+materialized 8 rtu_tap units which auto-seeded (84 registers + 8
+calculated each) from template 1.5.0. Verified live: all 8
+`seplos/battery_N/*` flowing (telemetry, PIC status/alarms, calculated
+counts), `seplos/pack/*` aggregates (SOC avg/min/max/spread, total
+power, units_online 8, status online), InfluxDB `seplos_battery` +
+`endpoint` measurements landing. alertd variables 10/112/188/189
+retopiced (backups in the MBG config dir); the two Grafana bank queries
+moved to measurement `endpoint`. The collector service sits in the
+compose `retired` profile — rollback is documented inline there.
+
+## Pre-release checklist (before the public 3.85.0 push)
+
+- [ ] Device wizard (Add/Edit) supports `protocol: rtu_tap` — serial
+      port, baudrate, unit_id, stale_after_s — so a listen-only device
+      is configurable from the UI, not only from config.yaml.
+- [ ] CHANGELOG entries for 3.85.0 (fleet-first dashboard + rtu_tap +
+      seplos migration features).
