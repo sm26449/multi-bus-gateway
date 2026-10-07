@@ -962,10 +962,39 @@ def test_template_changes_are_previewed_then_applied_and_a_new_bank_is_up_to_dat
                     "after": "Max discharge current (BMS limit)", "units": 2}], lab
     assert plan["templates"][0]["id"] == "seplos_bms_v3_rtu_tap"
     summary = client.get("/api/endpoints/bank").json()["template_update"]
-    assert summary == {"pending": True, "changes": 1, "new": 1, "units_affected": 2}
+    assert summary == {"pending": True, "changes": 1, "new": 1, "units_affected": 2,
+                       "missing_templates": []}
     # previewing wrote nothing
     assert "MaxDisCurt" in cfg.device_registers_path("bank-u1").read_text()
     r = client.post("/api/endpoints/bank/refresh-from-template?add_new=true")
     assert r.status_code == 200
     assert [(u["registers"], u["added"]) for u in r.json()["units"]] == [(1, 1), (1, 1)]
     assert client.get("/api/endpoints/bank/template-changes").json()["pending"] is False
+
+
+@needs_tc
+def test_templates_page_names_waiting_updates_and_a_missing_template_is_said(tmp_path):
+    import json as _json
+    from multibus.api import create_api
+    cfg = write_config(tmp_path)
+    app, _ = create_api(cfg, None, None, None, devices=[(d, None) for d in cfg.devices])
+    client = TestClient(app, raise_server_exceptions=False)
+    assert client.post("/api/endpoints", json={
+        "id": "bank", "name": "Bank", "template": "seplos_bms_v3_rtu_tap", "enabled": True,
+        "connection": {"protocol": "rtu_tap", "serial_port": "/dev/null-tap-tp", "baudrate": 9600},
+        "units": [1], "influxdb": {"enabled": False}}).status_code == 200
+    def tpl_row():
+        rows = client.get("/api/device-templates").json()["templates"]
+        return next(t for t in rows if t["id"] == "seplos_bms_v3_rtu_tap")
+    assert tpl_row()["pending_updates"] == [] and "bank-u1" in tpl_row()["used_by"]
+    f = cfg.device_registers_path("bank-u1")
+    d = _json.loads(f.read_text())
+    d["calculated"] = [c for c in d["calculated"] if c["name"] != "warning_count"]
+    f.write_text(_json.dumps(d))
+    assert tpl_row()["pending_updates"] == [{"kind": "endpoint", "id": "bank", "name": "Bank"}]
+    # the map the bank was made from disappears: said, not silently skipped
+    app.state.ctx.template_registry._templates.pop("seplos_bms_v3_rtu_tap")
+    plan = client.get("/api/endpoints/bank/template-changes").json()
+    assert plan["missing_templates"] == ["seplos_bms_v3_rtu_tap"] and plan["pending"] is False
+    assert client.get("/api/endpoints/bank").json()["template_update"]["missing_templates"] \
+        == ["seplos_bms_v3_rtu_tap"]

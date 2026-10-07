@@ -744,3 +744,9 @@ body.role-viewer .tpl-update-viewer { display: inline; }
     .tpl-update-notice { flex-wrap: wrap; }
     .tplu-table th:nth-child(2), .tplu-table td:nth-child(2) { display: none; }
 }
+
+.tpl-update-notice.tpl-missing { border-color: var(--warning-text); background: var(--warning-tint); }
+.tpl-update-notice.tpl-missing > .bi { color: var(--warning-text); }
+.tm-pending { margin-top: 4px; font-size: 12px; color: var(--text-secondary); display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.tm-pending > .bi { color: var(--accent); }
+.tm-pending-item { display: inline-flex; align-items: center; gap: 4px; }

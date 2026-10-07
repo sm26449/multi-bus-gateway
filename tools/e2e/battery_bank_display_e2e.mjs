@@ -121,6 +121,15 @@ try {
     await page.waitForSelector('#plTplUpdate .tpl-update-notice', { timeout: 12000 }).catch(() => {});
     const note = await page.locator('#plTplUpdate').innerText().catch(() => '');
     check('an aged unit raises the notice', /template/i.test(note) && /1 change/.test(note), note.replace(/\s+/g, ' '));
+    // the Templates page says where an update is waiting
+    await page.click('[data-page="templates"]');
+    await page.waitForSelector('.tm-pending', { timeout: 15000 }).catch(() => {});
+    const pend = await page.locator('.tm-pending').allInnerTexts().catch(() => []);
+    check('Templates page names the installation waiting for an update',
+      pend.some(x => /Bank display E2E/.test(x)), pend.join(' | ').replace(/\s+/g, ' ').slice(0, 160));
+    await page.click('[data-page="devices"]');
+    await page.evaluate(id => window.app.openEndpointDetail(id), ID);
+    await page.waitForSelector('#plTplUpdate .tpl-update-notice', { timeout: 12000 });
     await page.locator('#plTplUpdate button').click();
     await page.waitForSelector('#tplUpdateModal.active .tplu-table');
     const body = await page.innerText('#tplUpdateBody');

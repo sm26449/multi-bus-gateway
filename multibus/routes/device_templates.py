@@ -34,21 +34,51 @@ def build(ctx) -> APIRouter:
     template_registry, registry = ctx.template_registry, ctx.registry
 
     def _templates_in_use() -> Dict[str, List[str]]:
-        """template id -> device ids using it (delete guard + UI badge)."""
+        """template id -> device ids using it (delete guard + UI badge) —
+        the device's own template and every source's (an installation's unit
+        is often read through a source that names the map)."""
         used: Dict[str, List[str]] = {}
         for dev_cfg, _c in registry:
-            if dev_cfg.template:
-                used.setdefault(dev_cfg.template, []).append(dev_cfg.id)
+            tids = {getattr(dev_cfg, "template", "") or ""} | {
+                getattr(sx, "template", "") or "" for sx in (getattr(dev_cfg, "sources", None) or [])}
+            for tid in sorted(t for t in tids if t):
+                used.setdefault(tid, []).append(dev_cfg.id)
         return used
+
+    def _pending_updates() -> Dict[str, List[Dict]]:
+        """template id -> the installations / standalone devices that have
+        an update from it waiting (the Templates page links to them)."""
+        from ..template_refresh import plan_devices
+        config = ctx.config
+        out: Dict[str, List[Dict]] = {}
+
+        def note(kind, oid, name, devs):
+            try:
+                plan = plan_devices(config, template_registry, devs)
+            except Exception:  # noqa: BLE001 — a listing must not fail on this
+                return
+            if not plan["pending"]:
+                return
+            for t in plan["templates"]:
+                out.setdefault(t["id"], []).append({"kind": kind, "id": oid, "name": name})
+        for p in (getattr(config, "endpoints", None) or []):
+            if p.get("id"):
+                note("endpoint", p["id"], p.get("name") or p["id"], config.endpoint_devices(p["id"]))
+        for dev_cfg, _c in registry:
+            if not dev_cfg.primary and not getattr(dev_cfg, "endpoint_id", ""):
+                note("device", dev_cfg.id, dev_cfg.name or dev_cfg.id, [dev_cfg])
+        return out
 
     @r.get("/api/device-templates")
     def list_device_templates():
         """Template library (built-ins + user uploads) for the wizard picker."""
         used = _templates_in_use()
+        pending = _pending_updates()
         out = []
         for t in template_registry.list():
             s = t.summary()
             s['used_by'] = used.get(t.id, [])
+            s['pending_updates'] = pending.get(t.id, [])
             out.append(s)
         return {"templates": out, "load_errors": template_registry.load_errors,
                 "load_warnings": getattr(template_registry, "load_warnings", {})}

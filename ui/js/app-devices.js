@@ -148,6 +148,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="device-row-title"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(p.name || p.id)}
                     <span class="dev-chip">${this._esc(p.id)}</span>
                     <span class="dev-chip">${units.length} ${units.length === 1 ? this.t('endpoints.unit', 'unit') : this.t('endpoints.units', 'units')}</span>
+                    ${((p.template_update || {}).missing_templates || []).length ? `<span class="sink-pill bad" title="${this._esc(this.t('tplu.missingTitle', 'Template not available'))}"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> ${this._esc(this.t('tplu.missingBadge', 'template missing'))}</span>` : ''}
                     ${(p.template_update || {}).pending ? `<span class="sink-pill warn" title="${this._esc(this.t('tplu.noticeTitle', 'The template has been updated'))}"><i aria-hidden="true" class="bi bi-stars"></i> ${this._esc(this.t('tplu.badge', 'template update'))}</span>` : ''}</div>
                 <div class="device-row-sub">${this._esc(holds.join(' · ') || p.template || '')}${ways.length ? ` · ${this.t('endpoints.readVia', 'Read via')} ${this._esc(ways.join(' + '))}` : ''}</div>
             </div>
@@ -878,7 +879,8 @@ Object.assign(JanitzaMonitor.prototype, {
             if (this._devDetail?.id !== s.id) return;    // the operator moved on
             box.innerHTML = this._tplUpdateNotice('device', s.id, {
                 pending: plan.pending, changes: (plan.changes || []).length,
-                new: (plan.new || []).length, units_affected: 0 });
+                new: (plan.new || []).length, units_affected: 0,
+                missing_templates: plan.missing_templates || [] });
         } catch (e) { /* the notice is a convenience */ }
     },
 

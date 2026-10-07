@@ -236,11 +236,14 @@ def plan_devices(config, template_registry, devs) -> Dict[str, Any]:
     changes: Dict[Any, Dict[str, Any]] = {}
     new: Dict[str, Dict[str, Any]] = {}
     templates: Dict[str, Dict[str, Any]] = {}
+    missing = set()
     affected = set()
     for dev in devs:
         for path, tid, own in _jobs(config, dev):
             tpl = template_registry.get(tid) if tid else None
             if tpl is None:
+                if tid:
+                    missing.add(tid)     # deleted, renamed or failed to load
                 continue
             templates[tid] = {"id": tid, "name": getattr(tpl, "name", "") or tid,
                               "version": getattr(tpl, "version", "") or ""}
@@ -257,4 +260,6 @@ def plan_devices(config, template_registry, devs) -> Dict[str, Any]:
     return {"pending": bool(changes or new), "units_total": len(devs),
             "units_affected": len(affected), "templates": list(templates.values()),
             "changes": sorted(changes.values(), key=lambda c: (c["key"], c["field"])),
-            "new": list(new.values())}
+            "new": list(new.values()),
+            # a unit keeps working from its own copy, but cannot be updated
+            "missing_templates": sorted(missing)}

@@ -39,6 +39,11 @@ Object.assign(JanitzaMonitor.prototype, {
             const usedRow = inUse
                 ? `<div style="margin-top:3px;color:var(--text-secondary);font-size:12px;">${t('templates.inUse', 'in use by')}: ${x.used_by.map(d => `<code>${this._esc(d)}</code>`).join(', ')}</div>`
                 : '';
+            // installations / devices with an update from this map waiting
+            const pend = x.pending_updates || [];
+            const pendRow = pend.length
+                ? `<div class="tm-pending"><i aria-hidden="true" class="bi bi-stars"></i> ${t('templates.pending', 'Update waiting in')}: ${pend.map(p => `<span class="tm-pending-item">${this._esc(p.name)} <button data-admin class="btn btn-ghost btn-sm" ${this._act('openTemplateUpdate', [p.kind, p.id])}>${t('tplu.review', 'Review and apply')}</button></span>`).join(' ')}</div>`
+                : '';
             const viewBtn = `<button class="btn btn-sm" data-tm-view="${this._esc(x.id)}"><i aria-hidden="true" class="bi bi-eye"></i> ${t('templates.view', 'View')}</button>`;
             const actions = x.builtin
                 ? `${viewBtn}
@@ -55,6 +60,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><b>${this._esc(x.name)}</b> ${x.builtin ? badgeBuiltin : badgeUser}</div>
                     <div style="color:var(--text-secondary);font-size:12px;margin-top:3px;">id <code>${this._esc(x.id)}</code>${meta ? ' · ' + meta : ''} · ${x.registers} ${t('templates.regs', 'registers')}${x.version ? ' · v' + this._esc(x.version) : ''}</div>
                     ${usedRow}
+                    ${pendRow}
                   </div>
                   <div style="display:flex;gap:8px;flex-wrap:wrap;">${actions}</div>
                 </div></div>`;

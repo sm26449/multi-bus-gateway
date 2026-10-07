@@ -3624,9 +3624,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         try:
             plan = plan_devices(config, template_registry, config.endpoint_devices(pid))
         except Exception:  # noqa: BLE001 — a status view must never 500 on this
-            return {'pending': False, 'changes': 0, 'new': 0}
+            return {'pending': False, 'changes': 0, 'new': 0, 'missing_templates': []}
         return {'pending': plan['pending'], 'changes': len(plan['changes']),
-                'new': len(plan['new']), 'units_affected': plan['units_affected']}
+                'new': len(plan['new']), 'units_affected': plan['units_affected'],
+                'missing_templates': plan['missing_templates']}
 
     def _endpoint_entry(p: Dict) -> Dict:
         pid = p.get('id')
@@ -4339,7 +4340,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             raise HTTPException(status_code=404, detail="device not found")
         if dev_cfg.primary:
             return {"pending": False, "units_total": 1, "units_affected": 0,
-                    "templates": [], "changes": [], "new": []}
+                    "templates": [], "changes": [], "new": [], "missing_templates": []}
         return plan_devices(config, template_registry, [dev_cfg])
 
     @app.post("/api/endpoints/{endpoint_id}/refresh-from-template")

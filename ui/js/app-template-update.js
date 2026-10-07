@@ -15,6 +15,19 @@ Object.assign(JanitzaMonitor.prototype, {
     // the notice on an installation / device page; '' when up to date
     _tplUpdateNotice(kind, id, summary) {
         const s = summary || {};
+        const miss = s.missing_templates || [];
+        if (miss.length) {
+            // the map the units were made from is gone: they keep working
+            // from their own copy, but nothing can update them
+            return `
+            <div class="tpl-update-notice tpl-missing" role="status">
+                <i aria-hidden="true" class="bi bi-exclamation-triangle"></i>
+                <div class="tpl-update-text">
+                    <b>${this._esc(this.t('tplu.missingTitle', 'Template not available'))}</b>
+                    <span>${this._esc(this.t('tplu.missingText', '{tpl} is not in the library (deleted, renamed, or it failed to load). The units keep reading with their own copy, but cannot be updated from it. Restore or re-import the template on the Templates page.', { tpl: miss.join(', ') }))}</span>
+                </div>
+            </div>`;
+        }
         if (!s.pending) return '';
         const t = (k, d, p) => this.t(k, d, p);
         const parts = [];
@@ -131,7 +144,9 @@ Object.assign(JanitzaMonitor.prototype, {
             this.showToast('success', t('tplu.done', 'Template update applied'),
                 t('tplu.doneDetail', '{c} field(s) updated, {a} added, on {u} unit(s)',
                   { c: sum('registers') + sum('calculated'), a: sum('added'), u: list.length }));
-            if (st.kind === 'endpoint') this._refreshEndpointDetail?.(st.id);
+            // refresh wherever the review was opened from
+            if (this.currentPage === 'templates') this.renderTemplateManager?.();
+            else if (st.kind === 'endpoint') this._refreshEndpointDetail?.(st.id);
             else this.openDeviceDetail?.(st.id);
         } catch (e) {
             if (fb) fb.textContent = String(e.message || e);
