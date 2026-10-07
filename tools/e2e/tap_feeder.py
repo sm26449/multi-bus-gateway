@@ -1,6 +1,8 @@
 """Fake Seplos pack bus on a PTY: the master asks each unit in TAP_UNITS (default 3)
 for PIA (FC4 0x1000 x18) once a second and the pack answers. /tmp/ttyTAPE2E -> the PTY slave."""
-import os, time, tty
+import os
+import time
+import tty
 
 def crc16(b):
     c = 0xFFFF

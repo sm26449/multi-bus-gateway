@@ -232,8 +232,10 @@ class TapReader:
     def _stop_locked(self) -> None:
         self._stop.set()
         if self._serial:
-            try: self._serial.close()
-            except Exception: pass  # noqa: BLE001
+            try:
+                self._serial.close()
+            except Exception:  # noqa: BLE001
+                pass
         self._serial = None
         self._thread = None
 
