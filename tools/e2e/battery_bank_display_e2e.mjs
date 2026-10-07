@@ -4,7 +4,8 @@
  * carry their source field's label and unit, "Update from template" refreshes
  * a seeded unit, and a viewer sees no control it cannot use.
  *
- * Needs an EPHEMERAL instance (auth off) with a fake two-pack bus on a PTY:
+ * Needs an EPHEMERAL instance (auth off) with a fake two-pack bus on a PTY
+ * (unit 3 has a weak cell 5 and one active alarm):
  *   docker cp tools/e2e/tap_feeder.py <ctr>:/tmp/
  *   docker exec -d -u <app uid> -e TAP_UNITS=2,3 <ctr> python /tmp/tap_feeder.py
  *   cd tools/e2e && MBG_URL=http://127.0.0.1:8099 CTR=mbg-ui-sandbox node battery_bank_display_e2e.mjs
@@ -139,6 +140,49 @@ try {
     return t ? t.scrollWidth - w.clientWidth : -1;
   });
   check('phone: unit table fits without side-scrolling', overflow <= 4, `overflow ${overflow}px`);
+  // ---- 4. C: alarms the template declares; D: grid, active-only, bitmasks
+  await page.setViewportSize({ width: 1440, height: 950 });
+  const u3 = (g.units || []).find(u => u.unit_id === 3) || {};
+  const pe = (await api(`/api/endpoints/${ID}`)).body;
+  const pu3 = (pe.units || []).find(u => u.unit_id === 3) || {};
+  check('C: the unit with an active alarm is counted', pe.units_alarming === 1 && (pu3.alarms || {}).warning === 1,
+    JSON.stringify({ n: pe.units_alarming, a: pu3.alarms }));
+  const fl = ((await api('/api/fleet')).body.devices || []).find(d => d.id === u3.device_id) || {};
+  check('C: the fleet counts it too', (fl.alarms || {}).warning >= 1, JSON.stringify(fl.alarms));
+  await page.click('[data-page="devices"]');
+  await page.evaluate(id => window.app.openEndpointDetail(id), ID);
+  await page.waitForTimeout(1500);
+  check('C: census says how many units alarm', /alarming/.test(await page.innerText('#plCensus')));
+  const r3 = await page.locator(`[data-group-units] tr[data-unit="${u3.device_id}"]`).innerHTML();
+  check('C: the unit row carries the alarm pill', /bi-exclamation-triangle/.test(r3));
+  await page.evaluate(id => window.app.openDeviceDetail(id), u3.device_id);
+  await page.waitForTimeout(2000);
+  check('C: the unit page lists the active alarm', /Alarm Count: 1/i.test(await page.innerText('#mainContent')));
+  await page.click('[data-page="dashboard"]');
+  await page.evaluate(id => window.app.openFleetDevice(id), u3.device_id);
+  await page.waitForTimeout(2500);
+  await page.evaluate(() => document.querySelectorAll('details.dev-section').forEach(d => d.open = true));
+  await page.waitForTimeout(1200);
+  const tiles = await page.locator('details[data-widget="grid"] .cell-tile').count();
+  check('D: the cells section is a grid', tiles >= 16, String(tiles));
+  const minTile = await page.locator('details[data-widget="grid"] .cell-tile.ct-min[title="cell_5"]').count();
+  check('D: the weak cell is marked', minTile === 1);
+  const bal = await page.locator('details.dev-section tr', { hasText: 'Balancing Mask' }).innerText().catch(() => '');
+  check('D: a mask reads as what is set', /Cell 3/.test(bal), bal.replace(/\s+/g, ' '));
+  // the active bit (cell high voltage) and the derived count — nothing else
+  const shown = await page.locator('details[data-widget="active_only"] tr[data-address]:visible').allInnerTexts();
+  const noneShown = await page.locator('details[data-widget="active_only"] .ds-none:visible').count();
+  check('D: alarms show only what is active', shown.length === 2 && shown.some(x => /Cell High V/.test(x))
+    && noneShown === 0, shown.join(' / ').replace(/\s+/g, ' '));
+  const u2 = (g.units || []).find(u => u.unit_id === 2) || {};
+  await page.evaluate(id => window.app.openFleetDevice(id), u2.device_id);
+  await page.waitForTimeout(2500);
+  await page.evaluate(() => document.querySelectorAll('details.dev-section').forEach(d => d.open = true));
+  await page.waitForTimeout(1200);
+  check('D: a clean pack says nothing is active',
+    await page.locator('details[data-widget="active_only"] .ds-none:visible').count() === 1
+    && await page.locator('details[data-widget="active_only"] tr[data-address]:visible').count() === 0);
+
   check('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 } catch (e) {
   check('script ran to the end', false, String(e).slice(0, 300));
