@@ -242,3 +242,30 @@ port range starting at a free port. The script starts its own throwaway
 anonymous broker (`mbg-e2e-mqtt`) and `sims/new_user_sims.py` inside the
 container, and removes every `e2e_nu_*` / `e2e-nu-*` thing it made, at the start
 and at the end. Lines starting `NOTE` are UX observations, not failures.
+
+## Bridges (RS-485 over the network)
+
+`bridges_e2e.mjs` drives the Devices page's bridges against two simulated boxes
+(`sims/bridge_sims.py`, started inside the container): a TRANSPARENT converter
+(raw RTU over TCP, slaves 1 and 2, one client at a time — newest wins, and it
+counts its accepts) and a Modbus TCP GATEWAY (pymodbus, units 1 and 2). It adds
+a transparent bridge in the modal, two slaves on one bus with the wizard (main
+button and the bus's "+ Device"), checks their exact values and that they ride
+ONE connection, the duplicate-unit refusal, the wizard's Test through the
+shared bus while they poll, Check mode (right type, and both wrong types), a
+device behind the gateway (resolves to Modbus TCP), editing the bridge's bus
+port and host (devices follow; the sim sees the new client address), the MBG
+serial bridge's Set-up command with its token and its offline reason, delete
+refused while in use, and the Devices page at 390 px.
+
+```bash
+cd tools/e2e
+MBG_URL=http://127.0.0.1:8099 CTR=mbg-ui-sandbox CHROMIUM_PATH=<chrome> node bridges_e2e.mjs
+```
+
+Config it expects: auth off, a container it may `docker exec` into (app user
+uid 10001, pymodbus) on `pv-stack-network`, ports 14196-14198 and 15502 free in
+it. It removes every `e2e_br_*` / `e2e-br-*` thing it made at the start and the
+end. `BUG` lines are product bugs known when it was written: the check states
+the right behaviour, does not fail the run unless `STRICT=1`, and prints
+`FIXED` once the product is right.
