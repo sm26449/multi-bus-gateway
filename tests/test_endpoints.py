@@ -810,3 +810,67 @@ def test_build_point_device_tags_never_displace_identity_or_register_tags():
                                    "poll_group": "evil"}).to_line_protocol()
     assert "battery_id=3" in line and "device=battery_3" in line
     assert "bank=own" in line and "evil" not in line
+
+
+@needs_tc
+def test_endpoint_outputs_and_tags_are_validated_and_editable(tmp_path):
+    """Outputs and tags are the operator's: sent from the page they replace
+    the stored ones, omitted by the settings dialog they survive, malformed
+    they are refused with the field named."""
+    from multibus.api import create_api
+    cfg = write_config(tmp_path, extra_yaml=TAGGED_BANK_YAML)
+    app, _ = create_api(cfg, None, None, None, devices=[(d, None) for d in cfg.devices])
+    client = TestClient(app, raise_server_exceptions=False)
+    out = {"id": "legacy-pack", "measurement": "seplos_pack",
+           "fields": [{"name": "total_power", "source": "pack_total_power"},
+                      {"name": "energy_remaining", "source": "pack_energy_remaining",
+                       "scale": 0.001}]}
+    body = {"name": "Bank", "enabled": True,
+            "influxdb": {"enabled": True, "tags": {"battery_id": "${unit_id}"},
+                         "outputs": [out]}}
+    r = client.put("/api/endpoints/bank", json=body)
+    assert r.status_code == 200, r.text
+    ix = cfg.get_raw_endpoint("bank")["influxdb"]
+    assert ix["tags"] == {"battery_id": "${unit_id}"}          # edited: 'bank' tag gone
+    assert ix["outputs"][0]["measurement"] == "seplos_pack"
+    assert cfg.get_device("bank-u1").influxdb_tags == {"battery_id": "1"}
+    # the settings dialog omits both → both kept
+    r = client.put("/api/endpoints/bank", json={"name": "Bank 2", "enabled": True,
+                                                "influxdb": {"enabled": True}})
+    assert r.status_code == 200, r.text
+    ix = cfg.get_raw_endpoint("bank")["influxdb"]
+    assert ix["outputs"][0]["id"] == "legacy-pack" and ix["tags"]["battery_id"] == "${unit_id}"
+    # malformed: every problem named
+    bad = {"id": "Bad Id", "measurement": "_time", "mode": "sometimes",
+           "fields": [{"name": "a", "source": ""}, {"name": "a", "source": "x", "scale": 0}]}
+    r = client.put("/api/endpoints/bank", json={"name": "Bank", "enabled": True,
+                   "influxdb": {"tags": {"_field": "x"}, "outputs": [bad]}})
+    assert r.status_code == 422
+    msg = json.dumps(r.json())
+    for frag in ("outputs[0].id", "outputs[0].measurement", "outputs[0].mode",
+                 "fields[0].source", "fields[1].name", "fields[1].scale", "tags._field"):
+        assert frag in msg, frag
+
+
+@needs_tc
+def test_endpoint_totals_are_shown_validated_and_kept(tmp_path):
+    from multibus.api import create_api
+    cfg = write_config(tmp_path, extra_yaml=TAGGED_BANK_YAML)
+    app, _ = create_api(cfg, None, None, None, devices=[(d, None) for d in cfg.devices])
+    client = TestClient(app, raise_server_exceptions=False)
+    tot = {"pack_max_temp": {"op": "max", "from": ["max_cell_temp", "ambient_temp"]}}
+    r = client.put("/api/endpoints/bank", json={"name": "Bank", "enabled": True, "totals": tot})
+    assert r.status_code == 200, r.text
+    ep = client.get("/api/endpoints/bank").json()
+    ep = ep.get("endpoint", ep)
+    assert ep["totals"] == tot
+    assert "totals_declared" in ep and "unit_fields" in ep
+    # omitted → kept; {} → cleared
+    client.put("/api/endpoints/bank", json={"name": "Bank", "enabled": True})
+    assert cfg.get_raw_endpoint("bank")["totals"] == tot
+    client.put("/api/endpoints/bank", json={"name": "Bank", "enabled": True, "totals": {}})
+    assert "totals" not in cfg.get_raw_endpoint("bank")
+    r = client.put("/api/endpoints/bank", json={"name": "Bank", "enabled": True,
+                   "totals": {"t": {"op": "median", "from": []}}})
+    assert r.status_code == 422
+    assert "totals.t.op" in json.dumps(r.json()) and "totals.t.from" in json.dumps(r.json())

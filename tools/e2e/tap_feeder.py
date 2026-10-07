@@ -1,5 +1,5 @@
-"""Fake Seplos pack bus on a PTY: the master asks unit 3 for PIA (FC4 0x1000 x18)
-once a second and the pack answers. /tmp/ttyTAPE2E -> the PTY slave."""
+"""Fake Seplos pack bus on a PTY: the master asks each unit in TAP_UNITS (default 3)
+for PIA (FC4 0x1000 x18) once a second and the pack answers. /tmp/ttyTAPE2E -> the PTY slave."""
 import os, time, tty
 
 def crc16(b):
@@ -16,8 +16,14 @@ def adu(body):
 
 WORDS = [5313, (-270) & 0xFFFF, 9800, 28000, 0, 769, 1000, 42, 3323, 2981,
          3330, 3315, 2990, 2970, 0, 150, 150, 0]
-REQ = adu(bytes([3, 4, 0x10, 0x00, 0, len(WORDS)]))
-RESP = adu(bytes([3, 4, 2 * len(WORDS)]) + b''.join(w.to_bytes(2, 'big') for w in WORDS))
+UNITS = [int(u) for u in os.environ.get('TAP_UNITS', '3').split(',')]
+
+
+def exchange(unit, words):
+    req = adu(bytes([unit, 4, 0x10, 0x00, 0, len(words)]))
+    resp = adu(bytes([unit, 4, 2 * len(words)]) + b''.join(w.to_bytes(2, 'big') for w in words))
+    return req, resp
+
 
 m, s = os.openpty()
 tty.setraw(s)
@@ -27,5 +33,9 @@ if os.path.lexists(link):
 os.symlink(os.ttyname(s), link)
 print('feeding', os.ttyname(s), flush=True)
 while not os.path.exists('/tmp/feeder.stop'):
-    os.write(m, REQ); time.sleep(0.02); os.write(m, RESP)
+    for u in UNITS:
+        w = list(WORDS)
+        w[0] += u                      # each pack a slightly different voltage
+        req, resp = exchange(u, w)
+        os.write(m, req); time.sleep(0.02); os.write(m, resp); time.sleep(0.05)
     time.sleep(1.0)

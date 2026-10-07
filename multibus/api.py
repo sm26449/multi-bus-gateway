@@ -1243,6 +1243,85 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                          name=f"Device-Init-{dev_cfg.id}").start()
         return client
 
+    _INFLUX_NAME_RE = re.compile(r'^[A-Za-z][A-Za-z0-9_.\-]{0,63}$')
+    _INFLUX_RESERVED = {'_time', '_measurement', '_field', '_value', '_start', '_stop', 'time'}
+
+    def _influx_block_errors(ix: Dict, w: str, *, outputs: bool) -> List[str]:
+        """Shape-check an ``influxdb`` block's operator-editable parts: static
+        ``tags`` (device and endpoint) and the endpoint's extra ``outputs``.
+        Names must be Influx-safe and never one of its own columns."""
+        errors: List[str] = []
+        if not isinstance(ix, dict):
+            return [f"{w}: must be an object"]
+
+        def _tags(tags, where):
+            if tags in (None, {}):
+                return
+            if not isinstance(tags, dict):
+                errors.append(f"{where}: must be a mapping of name: value")
+                return
+            for k, v in tags.items():
+                if not _INFLUX_NAME_RE.match(str(k)) or str(k) in _INFLUX_RESERVED:
+                    errors.append(f"{where}.{k}: tag names start with a letter "
+                                  "(letters, digits, _ . -) and are not Influx columns")
+                elif v is None or not str(v).strip() or len(str(v)) > 128:
+                    errors.append(f"{where}.{k}: value required (1-128 chars)")
+
+        _tags(ix.get('tags'), f"{w}.tags")
+        outs = ix.get('outputs')
+        if outs in (None, []):
+            return errors
+        if not outputs:
+            return errors + [f"{w}.outputs: only an endpoint's totals have extra outputs"]
+        if not isinstance(outs, list) or len(outs) > 16:
+            return errors + [f"{w}.outputs: a list of at most 16 outputs"]
+        ids = set()
+        for i, o in enumerate(outs):
+            ow = f"{w}.outputs[{i}]"
+            if not isinstance(o, dict):
+                errors.append(f"{ow}: must be an object")
+                continue
+            oid = str(o.get('id', '')).strip()
+            if not re.match(r'^[a-z0-9][a-z0-9_-]{0,31}$', oid):
+                errors.append(f"{ow}.id: a-z 0-9 - _ (1-32 chars)")
+            elif oid in ids:
+                errors.append(f"{ow}.id: '{oid}' is used twice")
+            ids.add(oid)
+            if not _INFLUX_NAME_RE.match(str(o.get('measurement', ''))):
+                errors.append(f"{ow}.measurement: required, starts with a letter "
+                              "(letters, digits, _ . -)")
+            b = str(o.get('bucket', '') or '')
+            if b and not re.match(r'^[A-Za-z0-9][A-Za-z0-9_.\-${}]{0,63}$', b):
+                errors.append(f"{ow}.bucket: invalid name")
+            if str(o.get('mode', 'changed') or 'changed') not in ('changed', 'every'):
+                errors.append(f"{ow}.mode: changed or every")
+            _tags(o.get('tags'), f"{ow}.tags")
+            fl = o.get('fields')
+            if not isinstance(fl, list) or not fl or len(fl) > 200:
+                errors.append(f"{ow}.fields: 1-200 fields")
+                continue
+            names = set()
+            for j, f in enumerate(fl):
+                fw = f"{ow}.fields[{j}]"
+                if not isinstance(f, dict):
+                    errors.append(f"{fw}: must be an object")
+                    continue
+                n = str(f.get('name', ''))
+                if not _INFLUX_NAME_RE.match(n) or n in _INFLUX_RESERVED:
+                    errors.append(f"{fw}.name: starts with a letter (letters, digits, _ . -)")
+                elif n in names:
+                    errors.append(f"{fw}.name: '{n}' is written twice")
+                names.add(n)
+                if not str(f.get('source', '')).strip():
+                    errors.append(f"{fw}.source: which total feeds it")
+                try:
+                    sc = float(f.get('scale', 1) if f.get('scale', 1) not in (None, '') else 1)
+                    if sc == 0 or sc != sc or sc in (float('inf'), float('-inf')):
+                        raise ValueError
+                except (TypeError, ValueError):
+                    errors.append(f"{fw}.scale: a non-zero number")
+        return errors
+
     def _serial_line_conflicts(protocol: str, sp: str, conn: Dict,
                                existing_id: str = None) -> List[str]:
         """Who else holds serial line `sp`. One physical line cannot be driven
@@ -1405,6 +1484,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             raw['mqtt'] = mqtt_block
         if payload.get('influxdb'):
             raw['influxdb'] = payload['influxdb']
+            _e = _influx_block_errors(raw['influxdb'], 'influxdb', outputs=False)
+            if _e:
+                raise HTTPException(status_code=422, detail={"errors": _e})
         return raw
 
     def _device_entry(dev_cfg, client, *, redact=False) -> Dict:
@@ -2525,7 +2607,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         raw.setdefault('mqtt', {})['topic_prefix'] = dev_cfg.mqtt_topic_prefix
         raw.setdefault('influxdb', {})['bucket'] = dev_cfg.influxdb_bucket
         raw['influxdb']['device_tag'] = dev_cfg.influxdb_device_tag
-        if dev_cfg.influxdb_tags:
+        if dev_cfg.influxdb_tags and 'tags' not in ((payload.get('influxdb') or {})):
             raw['influxdb']['tags'] = dict(dev_cfg.influxdb_tags)
         # Preserve the HTTP-output opt-in across an edit (it is toggled from the
         # Outputs tab, not carried in the wizard payload — an omit must not wipe it).
@@ -3357,6 +3439,42 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     break
         return out
 
+    def _endpoint_totals_view(pid: str) -> Dict:
+        """The template-declared totals as the units actually carry them
+        ({name: {op, from}}) and the union of the units' field names."""
+        declared: Dict[str, Dict] = {}
+        fields: Set[str] = set()
+        for dev in config.endpoint_devices(pid):
+            for entry in list((registry.store_for(dev.id) or {}).values()):
+                name = entry.get('name')
+                if not name:
+                    continue
+                fields.add(name)
+                for out, op in (entry.get('aggregates') or {}).items():
+                    d = declared.setdefault(str(out), {'op': op, 'from': []})
+                    if name not in d['from']:
+                        d['from'].append(name)
+        return {'totals_declared': declared, 'unit_fields': sorted(fields)}
+
+    def _validate_totals(t, errors: List[str]) -> None:
+        if t in (None, {}):
+            return
+        if not isinstance(t, dict) or len(t) > 200:
+            errors.append("totals: a mapping of name: {op, from} (at most 200)")
+            return
+        for name, d in t.items():
+            w = f"totals.{name}"
+            if not _INFLUX_NAME_RE.match(str(name)):
+                errors.append(f"{w}: names start with a letter (letters, digits, _ . -)")
+            if not isinstance(d, dict):
+                errors.append(f"{w}: must be {{op, from}}")
+                continue
+            if d.get('op') not in ('sum', 'avg', 'min', 'max', 'spread'):
+                errors.append(f"{w}.op: sum, avg, min, max or spread")
+            src = d.get('from')
+            if not isinstance(src, list) or not [x for x in src if str(x).strip()]:
+                errors.append(f"{w}.from: at least one unit field")
+
     def _endpoint_entry(p: Dict) -> Dict:
         pid = p.get('id')
         units = []
@@ -3483,6 +3601,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 # vocabulary client-side
                 'aggregate_fields': {k: m for k, m in
                                      ((k, field_meta(k)) for k in agg) if m},
+                # how the totals are made, in the open: the operator's own
+                # (`totals`), what the units' templates declare, and every field
+                # the units carry — what a total can be built from
+                'totals': dict(p.get('totals') or {}),
+                **_endpoint_totals_view(pid),
                 # the endpoint's own settings, so the page can render + edit them
                 'aggregates_enabled': bool(p.get('aggregates', True)),
                 'write_locked': bool(p.get('write_locked', False)),
@@ -3784,6 +3907,15 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         for opt in ('mqtt', 'influxdb'):
             if payload.get(opt):
                 raw[opt] = dict(payload[opt])
+        if 'totals' in payload:
+            _terr: List[str] = []
+            _validate_totals(payload['totals'], _terr)
+            if _terr:
+                raise HTTPException(status_code=422, detail={"errors": _terr})
+            if payload['totals']:
+                raw['totals'] = {str(k): {'op': v['op'],
+                                          'from': [str(x) for x in v['from'] if str(x).strip()]}
+                                 for k, v in payload['totals'].items()}
         if prev is not None:
             # An edit REPLACES the stored entry, so anything the endpoint owns but
             # the form does not send would vanish: a locked endpoint silently
@@ -3792,6 +3924,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             for key in ('write_locked', 'aggregates', 'http_output', 'rest_push'):
                 if key not in raw and key in prev:
                     raw[key] = prev[key]
+            # totals: an empty mapping sent on purpose clears them; a form that
+            # does not send the key keeps them
+            if 'totals' not in payload and prev.get('totals'):
+                raw['totals'] = prev['totals']
             # a form that omits a whole sink block keeps the stored one — the
             # pin below would otherwise rebuild it from the routing keys ALONE
             # and drop ha_discovery/enabled with it
@@ -3802,11 +3938,21 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             # (see update_device): changing it re-routes every unit's future
             # data and orphans their history + Home Assistant entities.
             for sect, keys in (('mqtt', ('topic_prefix', 'aggregate_prefix')),
-                               ('influxdb', ('bucket', 'device_tag', 'tags'))):
+                               ('influxdb', ('bucket', 'device_tag'))):
                 for k in keys:
                     old = (prev.get(sect) or {}).get(k)
                     if old is not None:
                         raw.setdefault(sect, {})[k] = old
+            # Static tags and extra outputs are the operator's to edit, from
+            # the endpoint page — but a form that does not speak of them (the
+            # settings dialog) must not wipe them.
+            for k in ('tags', 'outputs'):
+                old = (prev.get('influxdb') or {}).get(k)
+                if old is not None and k not in (raw.get('influxdb') or {}):
+                    raw.setdefault('influxdb', {})[k] = old
+        errors = _influx_block_errors(raw.get('influxdb') or {}, 'influxdb', outputs=True)
+        if errors:
+            raise HTTPException(status_code=422, detail={"errors": errors})
         return raw
 
     def _stop_endpoint_devices(pid: str) -> None:
@@ -3956,7 +4102,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             'enabled': bool(raw.get('enabled', True)),
             'units': [(u['unit_id'], u['id']) for u in config._endpoint_units(raw)],
             'mqtt': raw.get('mqtt') or {},
-            'influxdb': raw.get('influxdb') or {},
+            # extra outputs are the aggregator's, read live each cycle — an
+            # edit to them must not restart a single unit
+            'influxdb': {k: v for k, v in (raw.get('influxdb') or {}).items()
+                         if k != 'outputs'},
             'write_locked': bool(raw.get('write_locked', False)),
             'http_output': raw.get('http_output') or {},
             'rest_push': raw.get('rest_push') or {},

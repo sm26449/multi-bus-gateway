@@ -4,7 +4,7 @@
  *
  * Needs an EPHEMERAL instance (it creates and deletes devices) with auth off,
  * and a fake pack bus on a PTY inside it — the master asks unit 3 for the
- * Seplos PIA block (FC4 0x1000 x18, 53.13 V / -2.7 A) once a second:
+ * Seplos PIA block (FC4 0x1000 x18, 53.13 V + unit id in centivolts / -2.7 A) once a second:
  *
  *   docker cp tools/e2e/tap_feeder.py <ctr>:/tmp/
  *   docker exec -d -u <app uid> <ctr> python /tmp/tap_feeder.py   # the APP user,
@@ -94,7 +94,8 @@ try {
   check('Test reports hearing unit 3', t.ok === true && /hearing unit 3/.test(t.message), t.message);
   const vals = (await api(`/api/values?device=${ID}`)).body.values || {};
   const byName = Object.fromEntries(Object.values(vals).map(v => [v.name, v.value]));
-  check('pack_voltage decoded 53.13', byName.pack_voltage === 53.13, String(byName.pack_voltage));
+  // the feeder offsets each pack's voltage by its unit id: 5313 + 3
+  check('pack_voltage decoded 53.16', byName.pack_voltage === 53.16, String(byName.pack_voltage));
   check('current decoded -2.7', byName.current === -2.7, String(byName.current));
   check('soc decoded 76.9', byName.soc === 76.9, String(byName.soc));
 

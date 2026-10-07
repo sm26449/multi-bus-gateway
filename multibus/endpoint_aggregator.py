@@ -112,6 +112,27 @@ def _derive_power_factor(out: Dict[str, Any]) -> Optional[float]:
     return round(max(-1.0, min(1.0, p / s)), 4)
 
 
+_OPS = ("sum", "avg", "min", "max", "spread")
+
+
+def endpoint_totals(config, endpoint_id: str) -> Dict[str, Dict[str, Any]]:
+    """The endpoint's operator-defined totals, normalized:
+    ``{name: {"op": op, "from": [field, ...]}}``. Malformed entries are skipped
+    (the API refuses them; a hand edit must not take the publisher down)."""
+    getraw = getattr(config, "get_raw_endpoint", None)
+    raw = (getraw(endpoint_id) if callable(getraw) else None) or next(
+        (p for p in (getattr(config, "endpoints", None) or [])
+         if isinstance(p, dict) and p.get("id") == endpoint_id), None) or {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for name, t in (raw.get("totals") or {}).items():
+        if not isinstance(t, dict) or t.get("op") not in _OPS:
+            continue
+        src = [str(x) for x in (t.get("from") or []) if str(x).strip()]
+        if src:
+            out[str(name)] = {"op": t["op"], "from": src}
+    return out
+
+
 def compute_endpoint_aggregates(config, registry, endpoint_id: str,
                              now: Optional[float] = None,
                              group_id: Optional[str] = None) -> Dict[str, Any]:
@@ -143,6 +164,15 @@ def compute_endpoint_aggregates(config, registry, endpoint_id: str,
     # vendor's fields combine across a bank/farm (soc -> pack_average_soc avg,
     # pack_min_soc min, ... all at once). Ops: sum|avg|min|max|spread.
     declared: Dict[str, Tuple[str, List[float]]] = {}
+    # The operator's own totals (endpoint ``totals:``) — {name: {op, from}}.
+    # A total named here REPLACES the template's declaration of the same name
+    # (what a bank's max temperature is made of is the operator's call), and
+    # may be built from any of the units' fields.
+    totals = endpoint_totals(config, endpoint_id)
+    feeds: Dict[str, List[Tuple[str, str]]] = {}
+    for out_name, t in totals.items():
+        for src in t["from"]:
+            feeds.setdefault(src, []).append((out_name, t["op"]))
     online = 0
     for dev in expected:
         store = registry.store_for(dev.id) or {}
@@ -170,8 +200,11 @@ def compute_endpoint_aggregates(config, registry, endpoint_id: str,
             decl = entry.get("aggregates")
             if isinstance(decl, dict) and is_fresh:
                 for out_name, op in decl.items():
-                    if op in ("sum", "avg", "min", "max", "spread"):
+                    if op in _OPS and str(out_name) not in totals:
                         declared.setdefault(str(out_name), (op, []))[1].append(float(val))
+            if is_fresh:
+                for out_name, op in feeds.get(name, ()):
+                    declared.setdefault(out_name, (op, []))[1].append(float(val))
         if fresh_any:
             online += 1
 
@@ -340,6 +373,7 @@ class EndpointAggregator(threading.Thread):
                 # nightfall.
                 self._publish_mqtt(pid, agg, sub, p, first)
                 self._publish_influx(p, pid, agg, sub if not first else '')
+                self._publish_influx_outputs(p, pid, agg, gid, first)
 
     def _publish_mqtt(self, pid: str, agg: Dict[str, Any], sub: str = "",
                       endpoint: Optional[Dict] = None, first: bool = False):
@@ -352,6 +386,68 @@ class EndpointAggregator(threading.Thread):
             # publish_if_changed keeps the change-detection semantics every
             # other topic has (heartbeat republish included)
             mqtt.publish_if_changed(f"{base}/{leaf}", val)
+
+    def _ensure_once(self, influx, bucket: str) -> None:
+        if bucket and bucket not in self._ensured and getattr(influx, "connected", False):
+            try:
+                fn = getattr(influx, 'ensure_bucket', None)
+                if callable(fn):
+                    fn(bucket)
+            except Exception as e:  # noqa: BLE001 — a totals write must not
+                logger.debug("ensure_bucket(%s): %s", bucket, e)
+            self._ensured.add(bucket)
+
+    def _publish_influx_outputs(self, endpoint: Dict, pid: str, agg: Dict[str, Any],
+                                gid: str, first: bool) -> None:
+        """The operator's own InfluxDB outputs of an endpoint's totals
+        (``influxdb.outputs``): each names its bucket, measurement, static tags
+        and a field map ``name <- aggregate x scale``, and is written as ONE
+        point per cycle. Nothing here knows a vendor — this is how a consumer
+        that reads a measurement of its own keeps reading it after the source
+        behind it changed. An output without ``group`` follows the first group."""
+        ix = endpoint.get("influxdb") or {}
+        outs = ix.get("outputs") or []
+        if not outs or not bool(ix.get("enabled", True)):
+            return
+        influx = self._get_influx()
+        if influx is None:
+            return
+        try:
+            from influxdb_client import Point, WritePrecision
+        except Exception:  # noqa: BLE001 — influx client optional in tests
+            return
+        default_bucket = endpoint_bucket(endpoint, pid)
+        changed_only_default = getattr(influx, "publish_mode", "changed") == "changed"
+        for out in outs:
+            if not isinstance(out, dict) or not bool(out.get("enabled", True)):
+                continue
+            want = str(out.get("group") or "")
+            if (want and want != gid) or (not want and not first):
+                continue
+            fields = {}
+            for f in out.get("fields") or []:
+                val = agg.get(str(f.get("source", "")))
+                if not isinstance(val, (int, float)) or isinstance(val, bool):
+                    continue                  # absent this cycle: not written
+                fields[str(f.get("name"))] = float(val) * float(f.get("scale", 1) or 1)
+            if not fields:
+                continue
+            oid = str(out.get("id") or out.get("measurement"))
+            mode = str(out.get("mode") or ("changed" if changed_only_default else "every"))
+            key = f"{pid}/@{oid}"
+            if mode == "changed" and self._influx_last.get(key) == fields:
+                continue
+            sub = lambda v: str(v).replace("${endpoint_id}", pid)  # noqa: E731
+            bucket = sub(out.get("bucket") or "") or default_bucket
+            self._ensure_once(influx, bucket)
+            ts = time.time()
+            point = Point(sub(out.get("measurement"))).time(int(ts * 1e9), WritePrecision.NS)
+            for k, v in (out.get("tags") or {}).items():
+                point = point.tag(str(k), sub(v))
+            for k, v in fields.items():
+                point = point.field(k, v)
+            influx.write_point(point, ts=ts, bucket=bucket)
+            self._influx_last[key] = fields
 
     def _publish_influx(self, endpoint: Dict, pid: str, agg: Dict[str, Any],
                         sub: str = ""):
@@ -384,14 +480,7 @@ class EndpointAggregator(threading.Thread):
         # below still buffers, and the bucket is ensured on a later cycle once
         # the connection is back (a derived bucket created mid-outage can lose
         # the replay that races the ensure — the steady state self-heals)
-        if bucket and bucket not in self._ensured and getattr(influx, "connected", False):
-            try:
-                fn = getattr(influx, 'ensure_bucket', None)
-                if callable(fn):
-                    fn(bucket)
-            except Exception as e:  # noqa: BLE001 — a totals write must not
-                logger.debug("ensure_bucket(%s): %s", bucket, e)
-            self._ensured.add(bucket)
+        self._ensure_once(influx, bucket)
         changed_only = getattr(influx, "publish_mode", "changed") == "changed"
         # change detection is per GROUP: two groups carry the same field names
         # and one shared memo would hide the second group's every value

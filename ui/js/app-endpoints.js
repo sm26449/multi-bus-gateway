@@ -1128,7 +1128,283 @@ Object.assign(JanitzaMonitor.prototype, {
                     ${t('endpoints.routingFixed', 'Topics and buckets are fixed after creation — changing them would re-route every unit and orphan their history and Home Assistant entities. Home Assistant, HTTP and REST outputs are switched on any unit’s Outputs tab and apply to the whole installation.')}</p>
             </div>
         </div>
+        <div id="plTotals">${this._endpointTotalsHtml(p)}</div>
+        <div id="plInfluxExtras">${this._endpointInfluxExtrasHtml(p)}</div>
         </div>`;
+    },
+
+    // ── how the totals are made / where else they are written ─────────────────
+    // Everything in the open and the operator's to change: which unit fields a
+    // total is built from (the template's declaration is only the default), the
+    // static tags on every unit's points, and any extra InfluxDB measurement
+    // the totals are written to. Nothing here knows a vendor.
+    _endpointTotalsHtml(p) {
+        const t = this.t.bind(this);
+        const own = p.totals || {}, decl = p.totals_declared || {};
+        const names = [...new Set([...Object.keys(decl), ...Object.keys(own)])].sort();
+        const rows = names.map(n => {
+            const d = own[n] || decl[n];
+            const mine = !!own[n];
+            return `<tr>
+                <td style="padding:4px 14px 4px 0;"><code style="font-size:11.5px;">${this._esc(n)}</code></td>
+                <td style="padding:4px 14px 4px 0;">${this._esc(d.op)}</td>
+                <td style="padding:4px 14px 4px 0;font-size:12px;">${(d.from || []).map(f => `<code style="font-size:11px;">${this._esc(f)}</code>`).join(' ')}</td>
+                <td style="padding:4px 14px 4px 0;"><span class="sink-pill ${mine ? 'ok' : ''}">${mine ? t('endpoints.totals.own', 'yours') : t('endpoints.totals.template', 'template')}</span></td>
+                <td style="padding:4px 0;white-space:nowrap;">
+                    <button class="btn btn-ghost btn-sm" ${this._act('openTotalModal', [p.id, n])} aria-label="${t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
+                    ${mine ? `<button class="btn btn-ghost btn-sm" ${this._act('removeEndpointTotal', [p.id, n])} aria-label="${t('endpoints.totals.reset', 'Back to the template')}" title="${t('endpoints.totals.reset', 'Back to the template')}"><i aria-hidden="true" class="bi bi-arrow-counterclockwise"></i></button>` : ''}
+                </td></tr>`;
+        }).join('');
+        return `<div class="settings-card">
+            <div class="settings-card-header">
+                <h3><i aria-hidden="true" class="bi bi-calculator"></i> ${t('endpoints.totals.title', 'How the totals are made')}</h3>
+                <button class="btn btn-secondary btn-sm" ${this._act('openTotalModal', [p.id, ''])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('endpoints.totals.add', 'Add total')}</button>
+            </div>
+            <div class="settings-card-body">
+                ${rows ? `<div style="overflow-x:auto;"><table style="font-size:13px;">
+                    <tr style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;">
+                        <td style="padding-right:14px;">${t('endpoints.totals.name', 'Total')}</td>
+                        <td style="padding-right:14px;">${t('endpoints.totals.op', 'How')}</td>
+                        <td style="padding-right:14px;">${t('endpoints.totals.from', 'From the units’ fields')}</td>
+                        <td style="padding-right:14px;">${t('endpoints.totals.origin', 'Defined by')}</td><td></td></tr>
+                    ${rows}</table></div>`
+                  : `<span class="field-hint">${t('endpoints.totals.none', 'No totals declared by the template — add your own.')}</span>`}
+                <p class="field-hint" style="margin-top:10px;">${t('endpoints.totals.hint', 'A total you define replaces the template’s total of the same name. It is computed over the fresh units and published with the other totals (MQTT and InfluxDB).')}</p>
+            </div></div>`;
+    },
+
+    _endpointInfluxExtrasHtml(p) {
+        const t = this.t.bind(this);
+        const ix = p.influxdb || {};
+        const tags = Object.entries(ix.tags || {});
+        const outs = ix.outputs || [];
+        const outRows = outs.map(o => `<tr>
+                <td style="padding:4px 14px 4px 0;"><code style="font-size:11.5px;">${this._esc(o.measurement)}</code>
+                    ${o.enabled === false ? `<span class="sink-pill">${t('common.off', 'off')}</span>` : ''}</td>
+                <td style="padding:4px 14px 4px 0;"><code style="font-size:11px;">${this._esc(o.bucket || ix.bucket || p.id)}</code></td>
+                <td style="padding:4px 14px 4px 0;font-size:12px;">${(o.fields || []).length} ${t('endpoints.outputs.fields', 'fields')} · ${this._esc(o.mode || 'changed')}</td>
+                <td style="padding:4px 0;white-space:nowrap;">
+                    <button class="btn btn-ghost btn-sm" ${this._act('openInfluxOutputModal', [p.id, o.id])} aria-label="${t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
+                    <button class="btn btn-ghost btn-sm" ${this._act('removeInfluxOutput', [p.id, o.id])} aria-label="${t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
+                </td></tr>`).join('');
+        return `<div class="settings-card">
+            <div class="settings-card-header">
+                <h3><i aria-hidden="true" class="bi bi-database"></i> ${t('endpoints.influx.title', 'InfluxDB — tags and extra outputs')}</h3>
+            </div>
+            <div class="settings-card-body">
+                <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;">
+                    <span style="color:var(--text-secondary);font-size:12px;">${t('endpoints.influx.tags', 'Tags on every unit’s points')}</span>
+                    ${tags.length ? tags.map(([k, v]) => `<code style="font-size:11.5px;">${this._esc(k)}=${this._esc(v)}</code>`).join(' ')
+                                  : `<span class="field-hint">${t('common.none', 'none')}</span>`}
+                    <button class="btn btn-ghost btn-sm" ${this._act('openInfluxTagsModal', [p.id])}><i aria-hidden="true" class="bi bi-pencil"></i> ${t('common.edit', 'Edit')}</button>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;">
+                    <span style="color:var(--text-secondary);font-size:12px;">${t('endpoints.outputs.title', 'The totals are also written to')}</span>
+                    <button class="btn btn-secondary btn-sm" ${this._act('openInfluxOutputModal', [p.id, ''])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('endpoints.outputs.add', 'Add output')}</button>
+                </div>
+                ${outRows ? `<div style="overflow-x:auto;margin-top:6px;"><table style="font-size:13px;">
+                    <tr style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;">
+                        <td style="padding-right:14px;">${t('endpoints.outputs.measurement', 'Measurement')}</td>
+                        <td style="padding-right:14px;">${t('devices.wizard.bucket', 'InfluxDB bucket')}</td>
+                        <td style="padding-right:14px;">${t('endpoints.outputs.what', 'What')}</td><td></td></tr>
+                    ${outRows}</table></div>`
+                  : `<p class="field-hint" style="margin:6px 0 0;">${t('endpoints.outputs.none', 'Only the default measurement. Add an output when a consumer reads the totals under a measurement and field names of its own.')}</p>`}
+            </div></div>`;
+    },
+
+    // a small key=value / multi-row editor reused by the three dialogs below
+    _kvRowsHtml(id, rows, cols) {
+        const row = (r = {}) => `<div class="form-row" data-kv-row style="align-items:flex-end;margin-bottom:4px;">
+            ${cols.map(c => c.options
+                ? `<div class="form-group ${c.wide ? 'flex-2' : ''}" style="margin-bottom:0;"><select class="input" data-k="${c.key}" aria-label="${this._esc(c.label)}">
+                    ${c.options.map(o => `<option ${String(o) === String(r[c.key] ?? '') ? 'selected' : ''}>${this._esc(o)}</option>`).join('')}</select></div>`
+                : `<div class="form-group ${c.wide ? 'flex-2' : ''}" style="margin-bottom:0;"><input class="input" data-k="${c.key}" aria-label="${this._esc(c.label)}"
+                    ${c.list ? `list="${c.list}"` : ''} placeholder="${this._esc(c.placeholder || c.label)}" value="${this._esc(r[c.key] ?? '')}"></div>`).join('')}
+            <button type="button" class="btn btn-ghost btn-sm" data-kv-del aria-label="${this._esc(this.t('common.delete', 'Delete'))}"><i aria-hidden="true" class="bi bi-x-lg"></i></button></div>`;
+        setTimeout(() => {
+            const box = document.getElementById(id);
+            if (!box || box.dataset.wired) return;
+            box.dataset.wired = '1';
+            box.addEventListener('click', e => {
+                if (e.target.closest('[data-kv-del]')) e.target.closest('[data-kv-row]').remove();
+                if (e.target.closest('[data-kv-add]')) {
+                    e.target.closest('[data-kv-add]').insertAdjacentHTML('beforebegin', row());
+                }
+            });
+        });
+        return `<div id="${id}">${(rows.length ? rows : [{}]).map(row).join('')}
+            <button type="button" class="btn btn-ghost btn-sm" data-kv-add><i aria-hidden="true" class="bi bi-plus-lg"></i> ${this.t('common.add', 'Add')}</button></div>`;
+    },
+
+    _kvRowsRead(id) {
+        return [...document.querySelectorAll(`#${id} [data-kv-row]`)].map(r =>
+            Object.fromEntries([...r.querySelectorAll('[data-k]')].map(i => [i.dataset.k, i.value.trim()])))
+            .filter(o => Object.values(o).some(v => v !== ''));
+    },
+
+    _endpointModalOpen(title, body, action, args) {
+        document.getElementById('endpointModalTitle').textContent = title;
+        document.getElementById('endpointModalBody').innerHTML = body;
+        document.getElementById('endpointFeedback').textContent = '';
+        const save = document.querySelector('#endpointModal [data-endpoint-save]')
+            || document.querySelector('#endpointModal .btn-primary');
+        if (save) { save.innerHTML = `<i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}`; this._setAction(save, action, args); }
+        this.openModal('endpointModal');
+    },
+
+    async _endpointPutPartial(id, extra) {
+        const p = this._endpointDetail;
+        const fb = document.getElementById('endpointFeedback');
+        const rsp = await fetch(`/api/endpoints/${encodeURIComponent(id)}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(this._endpointPutBody(p, extra)),
+        });
+        if (!rsp.ok) {
+            const d = await rsp.json().catch(() => ({}));
+            const errs = d.detail?.errors || [d.detail || rsp.statusText];
+            const msg = Array.isArray(errs) ? errs.join(' · ') : String(errs);
+            if (fb && document.getElementById('endpointModal')?.classList.contains('active')) {
+                fb.textContent = msg; fb.className = 'save-feedback err';
+            } else this.showToast('error', this.t('endpoints.saveFail', 'Save failed'), msg);
+            return false;
+        }
+        this.closeModal('endpointModal');
+        this.showToast('success', this.t('endpoints.saved', 'Endpoint saved'), '');
+        const r = await fetch(`/api/endpoints/${encodeURIComponent(id)}`);
+        if (r.ok) {
+            const np = await r.json();
+            this._endpointDetail = np;
+            const a = document.getElementById('plTotals'), b = document.getElementById('plInfluxExtras');
+            if (a) a.innerHTML = this._endpointTotalsHtml(np);
+            if (b) b.innerHTML = this._endpointInfluxExtrasHtml(np);
+        }
+        return true;
+    },
+
+    openInfluxTagsModal(id) {
+        const p = this._endpointDetail, t = this.t.bind(this);
+        const rows = Object.entries((p.influxdb || {}).tags || {}).map(([k, v]) => ({ k, v }));
+        this._endpointModalOpen(t('endpoints.influx.tagsTitle', 'Tags on every unit’s points'), `
+            <p class="field-hint" style="margin:0 0 10px;">${t('endpoints.influx.tagsHint', 'Written on every point of every unit, raw and calculated. ${unit_id}, ${endpoint_id} and ${device_id} are substituted per unit. A tag is part of a series’ identity: changing one starts a new series.')}</p>
+            ${this._kvRowsHtml('plTagRows', rows, [
+                { key: 'k', label: t('endpoints.influx.tagName', 'Tag'), placeholder: 'battery_id' },
+                { key: 'v', label: t('endpoints.influx.tagValue', 'Value'), placeholder: '${unit_id}', wide: true }])}`,
+            'saveInfluxTags', [id]);
+    },
+
+    async saveInfluxTags(id) {
+        const tags = Object.fromEntries(this._kvRowsRead('plTagRows').map(r => [r.k, r.v]));
+        const ix = { ...(this._endpointDetail.influxdb || {}), tags };
+        delete ix.outputs;                       // not sent → kept server-side
+        await this._endpointPutPartial(id, { influxdb: ix });
+    },
+
+    openTotalModal(id, name) {
+        const p = this._endpointDetail, t = this.t.bind(this);
+        const d = (p.totals || {})[name] || (p.totals_declared || {})[name] || { op: 'sum', from: [] };
+        const fields = p.unit_fields || [];
+        const from = new Set(d.from || []);
+        this._endpointModalOpen(name ? t('endpoints.totals.edit', 'Edit total') : t('endpoints.totals.add', 'Add total'), `
+            <div class="form-row">
+                <div class="form-group flex-2"><label class="form-label" for="totName">${t('endpoints.totals.name', 'Total')}</label>
+                    <input id="totName" class="input" value="${this._esc(name)}" ${name ? 'disabled' : ''} placeholder="pack_max_temp"></div>
+                <div class="form-group"><label class="form-label" for="totOp">${t('endpoints.totals.op', 'How')}</label>
+                    <select id="totOp" class="input">${['sum', 'avg', 'min', 'max', 'spread'].map(o => `<option ${o === d.op ? 'selected' : ''}>${o}</option>`).join('')}</select></div>
+            </div>
+            <div class="form-group"><label class="form-label" for="totFilter">${t('endpoints.totals.from', 'From the units’ fields')}</label>
+                <input id="totFilter" class="input" placeholder="${this._esc(t('common.search', 'Search'))}" style="margin-bottom:6px;">
+                <div id="totFrom" style="max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px 10px;columns:2;">
+                    ${fields.map(f => `<label style="display:flex;gap:6px;align-items:center;font-size:12.5px;" data-f="${this._esc(f)}">
+                        <input type="checkbox" value="${this._esc(f)}" ${from.has(f) ? 'checked' : ''}> <code style="font-size:11.5px;">${this._esc(f)}</code></label>`).join('')}
+                </div>
+                <div class="field-hint">${t('endpoints.totals.fromHint', 'Every checked field of every fresh unit goes into one pool, then the operation runs over it.')}</div></div>`,
+            'saveEndpointTotal', [id, name]);
+        document.getElementById('totFilter').addEventListener('input', e => {
+            const q = e.target.value.toLowerCase();
+            document.querySelectorAll('#totFrom [data-f]').forEach(l => { l.style.display = l.dataset.f.toLowerCase().includes(q) ? '' : 'none'; });
+        });
+    },
+
+    async saveEndpointTotal(id, name) {
+        const n = name || document.getElementById('totName').value.trim();
+        const from = [...document.querySelectorAll('#totFrom input:checked')].map(i => i.value);
+        const totals = { ...(this._endpointDetail.totals || {}), [n]: { op: document.getElementById('totOp').value, from } };
+        await this._endpointPutPartial(id, { totals });
+    },
+
+    async removeEndpointTotal(id, name) {
+        const totals = { ...(this._endpointDetail.totals || {}) };
+        delete totals[name];
+        await this._endpointPutPartial(id, { totals });
+    },
+
+    openInfluxOutputModal(id, oid) {
+        const p = this._endpointDetail, t = this.t.bind(this);
+        const ix = p.influxdb || {};
+        const o = (ix.outputs || []).find(x => x.id === oid) || { enabled: true, mode: 'changed', fields: [], tags: {} };
+        const sources = [...new Set([...Object.keys(p.aggregates || {}),
+            ...Object.keys(p.totals || {}), ...Object.keys(p.totals_declared || {}),
+            'units_online', 'units_total'])].sort();
+        const groups = (p.groups || []).map(g => g.id);
+        this._endpointModalOpen(oid ? t('endpoints.outputs.edit', 'Edit InfluxDB output') : t('endpoints.outputs.add', 'Add output'), `
+            <datalist id="outSources">${sources.map(s => `<option value="${this._esc(s)}">`).join('')}</datalist>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label" for="outId">ID</label>
+                    <input id="outId" class="input" value="${this._esc(o.id || '')}" ${oid ? 'disabled' : ''} placeholder="legacy-pack"></div>
+                <div class="form-group flex-2"><label class="form-label" for="outMeas">${t('endpoints.outputs.measurement', 'Measurement')}</label>
+                    <input id="outMeas" class="input" value="${this._esc(o.measurement || '')}" placeholder="my_measurement"></div>
+                <div class="form-group"><label class="form-label" for="outBucket">${t('devices.wizard.bucket', 'InfluxDB bucket')}</label>
+                    <input id="outBucket" class="input" value="${this._esc(o.bucket || '')}" placeholder="${this._esc(ix.bucket || p.id)}"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label" for="outMode">${t('endpoints.outputs.mode', 'Write')}</label>
+                    <select id="outMode" class="input">
+                        <option value="changed" ${o.mode !== 'every' ? 'selected' : ''}>${t('endpoints.outputs.changed', 'when a value changes')}</option>
+                        <option value="every" ${o.mode === 'every' ? 'selected' : ''}>${t('endpoints.outputs.every', 'every cycle')}</option></select></div>
+                ${groups.length > 1 ? `<div class="form-group"><label class="form-label" for="outGroup">${t('endpoints.group', 'Group')}</label>
+                    <select id="outGroup" class="input"><option value="">${this._esc(groups[0])}</option>${groups.slice(1).map(g => `<option ${g === o.group ? 'selected' : ''}>${this._esc(g)}</option>`).join('')}</select></div>` : ''}
+                <div class="form-group" style="align-self:flex-end;"><label class="form-label" style="display:flex;gap:8px;align-items:center;">
+                    <input type="checkbox" id="outEnabled" ${o.enabled !== false ? 'checked' : ''}> ${t('endpoints.outputs.enabled', 'Write this output')}</label></div>
+            </div>
+            <div class="wiz-eyebrow">${t('endpoints.outputs.fieldsTitle', 'Fields — name ← total × scale')}</div>
+            ${this._kvRowsHtml('outFieldRows', (o.fields || []).map(f => ({ name: f.name, source: f.source, scale: f.scale ?? 1 })), [
+                { key: 'name', label: t('endpoints.outputs.fieldName', 'Field'), placeholder: 'total_power' },
+                { key: 'source', label: t('endpoints.outputs.source', 'From total'), list: 'outSources', wide: true },
+                { key: 'scale', label: t('endpoints.outputs.scale', 'Scale'), placeholder: '1' }])}
+            <div class="wiz-eyebrow" style="margin-top:10px;">${t('endpoints.outputs.tagsTitle', 'Tags on this output')}</div>
+            ${this._kvRowsHtml('outTagRows', Object.entries(o.tags || {}).map(([k, v]) => ({ k, v })), [
+                { key: 'k', label: t('endpoints.influx.tagName', 'Tag') },
+                { key: 'v', label: t('endpoints.influx.tagValue', 'Value'), wide: true }])}
+            <p class="field-hint">${t('endpoints.outputs.hint', 'One point per cycle with every field whose total exists. ${endpoint_id} is substituted in the bucket and tag values. Empty bucket = the endpoint’s.')}</p>`,
+            'saveInfluxOutput', [id, oid]);
+    },
+
+    async saveInfluxOutput(id, oid) {
+        const g = x => document.getElementById(x);
+        const o = {
+            id: oid || g('outId').value.trim(),
+            enabled: !!g('outEnabled').checked,
+            measurement: g('outMeas').value.trim(),
+            mode: g('outMode').value,
+            fields: this._kvRowsRead('outFieldRows').map(r => ({
+                name: r.name, source: r.source, scale: r.scale === '' ? 1 : Number(r.scale) })),
+            tags: Object.fromEntries(this._kvRowsRead('outTagRows').map(r => [r.k, r.v])),
+        };
+        if (g('outBucket').value.trim()) o.bucket = g('outBucket').value.trim();
+        if (g('outGroup')?.value) o.group = g('outGroup').value;
+        const ix = this._endpointDetail.influxdb || {};
+        const outs = (ix.outputs || []).filter(x => x.id !== o.id).concat([o]);
+        const send = { ...ix, outputs: outs };
+        delete send.tags;                        // not sent → kept server-side
+        await this._endpointPutPartial(id, { influxdb: send });
+    },
+
+    async removeInfluxOutput(id, oid) {
+        if (!confirm(this.t('endpoints.outputs.confirmDelete', 'Stop writing this output? Its history stays in InfluxDB.'))) return;
+        const ix = this._endpointDetail.influxdb || {};
+        const send = { ...ix, outputs: (ix.outputs || []).filter(x => x.id !== oid) };
+        delete send.tags;
+        await this._endpointPutPartial(id, { influxdb: send });
     },
 
     // ── endpoint actions ───────────────────────────────────────────────────────

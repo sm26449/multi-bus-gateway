@@ -550,3 +550,88 @@ def test_declared_aggregates_fan_out_across_units(tmp_path):
     stores[units[0].id][2] = dict(entry(1.0, {'bogus': 'median'}), name='y')
     out2 = compute_endpoint_aggregates(cfg, _Reg(stores), pid)
     assert 'bogus' not in out2
+
+
+# ── operator-defined InfluxDB outputs ────────────────────────────────────────
+
+def _bank(outputs, mode="changed"):
+    cfg = _Cfg(["u1", "u2"], endpoints=[{"id": "bank", "enabled": True,
+                                         "influxdb": {"bucket": "b", "outputs": outputs}}])
+    reg = _Reg({"u1": {1: _entry("power_active_total", 100)},
+                "u2": {1: _entry("power_active_total", 150)}})
+    inf = _Influx()
+    inf.publish_mode = mode
+    return EndpointAggregator(cfg, reg, lambda: None, lambda: inf), inf, reg
+
+
+def _lp(inf, measurement):
+    return [p.to_line_protocol() for p, _b in inf.points
+            if p.to_line_protocol().startswith(measurement + " ") or
+            p.to_line_protocol().startswith(measurement + ",")]
+
+
+def test_an_output_writes_one_point_with_mapped_scaled_fields():
+    """The operator names the measurement, the tags and every field with the
+    total it comes from — one point per cycle, nothing vendor-specific."""
+    pytest.importorskip("influxdb_client")
+    ag, inf, _ = _bank([{"id": "legacy", "measurement": "my_pack",
+                         "tags": {"site": "${endpoint_id}"},
+                         "fields": [{"name": "total_power", "source": "power_active_total"},
+                                    {"name": "total_kw", "source": "power_active_total",
+                                     "scale": 0.001},
+                                    {"name": "online", "source": "units_online"},
+                                    {"name": "ghost", "source": "no_such_total"}]}])
+    ag._publish_all()
+    lines = _lp(inf, "my_pack")
+    assert len(lines) == 1
+    line = lines[0]
+    assert line.startswith("my_pack,site=bank ")
+    assert "total_power=250" in line and "total_kw=0.25" in line and "online=2" in line
+    assert "ghost" not in line                      # absent total: not written
+    assert [b for p, b in inf.points if p.to_line_protocol().startswith("my_pack")] == ["b"]
+    ag._publish_all()                               # unchanged → nothing new
+    assert len(_lp(inf, "my_pack")) == 1
+
+
+def test_an_output_in_every_mode_writes_each_cycle_and_can_be_disabled():
+    pytest.importorskip("influxdb_client")
+    out = {"id": "o", "measurement": "m", "mode": "every", "bucket": "other",
+           "fields": [{"name": "p", "source": "power_active_total"}]}
+    ag, inf, _ = _bank([out])
+    ag._publish_all(); ag._publish_all()
+    assert len(_lp(inf, "m")) == 2
+    assert {b for p, b in inf.points if p.to_line_protocol().startswith("m ")} == {"other"}
+    out["enabled"] = False
+    ag._publish_all()
+    assert len(_lp(inf, "m")) == 2
+
+
+def test_outputs_stop_with_the_endpoints_influx_switch():
+    pytest.importorskip("influxdb_client")
+    ag, inf, _ = _bank([{"id": "o", "measurement": "m",
+                         "fields": [{"name": "p", "source": "power_active_total"}]}])
+    ag._config.endpoints[0]["influxdb"]["enabled"] = False
+    ag._publish_all()
+    assert not _lp(inf, "m")
+
+
+def test_operator_totals_replace_the_template_declaration():
+    """A total named in the endpoint's `totals` is built from the fields the
+    operator lists — here a max temperature over cell AND ambient sensors —
+    and the template's declaration of that name no longer counts."""
+    from multibus.endpoint_aggregator import compute_endpoint_aggregates
+    ent = lambda n, v, decl=None: dict(_entry(n, v), aggregates=decl)  # noqa: E731
+    reg = _Reg({"u1": {1: ent("max_cell_temp", 22.0, {"pack_max_temp": "max"}),
+                       2: ent("ambient_temp", 27.5), 3: ent("balancing_count", 2)},
+                "u2": {1: ent("max_cell_temp", 23.0, {"pack_max_temp": "max"}),
+                       2: ent("ambient_temp", 26.0), 3: ent("balancing_count", 1)}})
+    base = {"id": "p", "enabled": True}
+    agg = compute_endpoint_aggregates(_Cfg(["u1", "u2"], endpoints=[base]), reg, "p")
+    assert agg["pack_max_temp"] == 23.0                      # template: cells only
+    tot = dict(base, totals={"pack_max_temp": {"op": "max", "from": ["max_cell_temp", "ambient_temp"]},
+                             "pack_balancing_cells": {"op": "sum", "from": ["balancing_count"]},
+                             "broken": {"op": "median", "from": ["x"]}})
+    agg = compute_endpoint_aggregates(_Cfg(["u1", "u2"], endpoints=[tot]), reg, "p")
+    assert agg["pack_max_temp"] == 27.5                      # operator: + ambient
+    assert agg["pack_balancing_cells"] == 3
+    assert "broken" not in agg
