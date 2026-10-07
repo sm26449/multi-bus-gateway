@@ -106,7 +106,10 @@ def _row_changes(rows: List[Dict[str, Any]], tpl_rows: Dict[str, Any],
             # is done with the next update but is no reason to announce one
             if k in SILENT_FILL and row.get(k) in (None, ""):
                 continue
-            if row.get(k) != after.get(k):
+            old, new = row.get(k), after.get(k)
+            if isinstance(old, str) and isinstance(new, str) and old.split() == new.split():
+                continue        # spacing only: nothing anyone would see
+            if old != new:
                 out.append({"field": row.get("name"), "label": after.get("label") or row.get("name"),
                             "key": k, "before": row.get(k), "after": after.get(k)})
     return out
@@ -237,6 +240,7 @@ def plan_devices(config, template_registry, devs) -> Dict[str, Any]:
     new: Dict[str, Dict[str, Any]] = {}
     templates: Dict[str, Dict[str, Any]] = {}
     missing = set()
+    bringing = set()        # the templates that actually have something new
     affected = set()
     for dev in devs:
         for path, tid, own in _jobs(config, dev):
@@ -248,6 +252,8 @@ def plan_devices(config, template_registry, devs) -> Dict[str, Any]:
             templates[tid] = {"id": tid, "name": getattr(tpl, "name", "") or tid,
                               "version": getattr(tpl, "version", "") or ""}
             plan = plan_file(path, tpl, with_new=own)
+            if plan["changes"] or plan["new"]:
+                bringing.add(tid)
             for c in plan["changes"]:
                 k = (c["field"], c["key"], _same(c["before"]), _same(c["after"]))
                 entry = changes.setdefault(k, {**c, "units": 0})
@@ -258,7 +264,8 @@ def plan_devices(config, template_registry, devs) -> Dict[str, Any]:
                 entry["units"] += 1
                 affected.add(dev.id)
     return {"pending": bool(changes or new), "units_total": len(devs),
-            "units_affected": len(affected), "templates": list(templates.values()),
+            "units_affected": len(affected),
+            "templates": [t for tid, t in templates.items() if tid in bringing] or list(templates.values()),
             "changes": sorted(changes.values(), key=lambda c: (c["key"], c["field"])),
             "new": list(new.values()),
             # a unit keeps working from its own copy, but cannot be updated
