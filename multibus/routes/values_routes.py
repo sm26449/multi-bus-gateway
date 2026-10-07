@@ -212,8 +212,11 @@ def build(ctx) -> APIRouter:
                           start: str = Query("-6h"), stop: str = Query("now()"),
                           every: str = Query("1m"), fn: str = Query("mean"),
                           measurement: Optional[str] = Query(None),
-                          device: str = Query(default="")):
+                          device: str = Query(default=""),
+                          group: str = Query(default="")):
         """Aggregated history for a register, read back from InfluxDB.
+        For an installation's total, ``group`` names a later group (empty =
+        the first one, whose series carry no group tag).
         fn='all' returns mean/min/max series (for a band). ``device`` reads that
         device's bucket + tag (Tier 2)."""
         influxdb_publisher = ctx.influxdb_publisher          # request-time (rebindable)
@@ -227,7 +230,7 @@ def build(ctx) -> APIRouter:
         is_endpoint = bool(device) and config.get_device(device) is None
         res = await asyncio.to_thread(influxdb_publisher.query_history,
                                       name, start, stop, every, fn, measurement,
-                                      bucket, device_tag, is_endpoint)
+                                      bucket, device_tag, is_endpoint, group)
         if "error" in res:
             err = res["error"]
             code = 503 if ("disabled" in err or "unavailable" in err) else 400

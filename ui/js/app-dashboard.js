@@ -665,7 +665,10 @@ Object.assign(JanitzaMonitor.prototype, {
         const dev = this._dashDeviceId();
         const heroSet = new Set(heroRegs.map(r => r.address));
         const rest = allRegs.filter(r => !heroSet.has(r.address));
-        const key = dev + '|' + rest.map(r => r.address).join(',');
+        // what the sections are built from: the rows (with the labels and
+        // categories an Update from template may change) and the display block
+        const key = dev + '|' + rest.map(r => `${r.address}:${r.label || ''}:${r.category || ''}`).join(',')
+            + '|' + JSON.stringify(this.dashDisplay || {});
 
         if (this._sectionsKey !== key) {
             this._sectionsKey = key;
@@ -717,7 +720,7 @@ Object.assign(JanitzaMonitor.prototype, {
                         const tileUnits = new Set(tiles.map(r => r.unit || '').filter(Boolean));
                         others.forEach(r => { if (tileUnits.has(r.unit || '')) fine.add(String(r.address)); });
                         body = `<div class="cell-grid">${tiles.map(r => `
-                            <div class="cell-tile" data-address="${r.address}" data-grid="${id}" data-fine="1" tabindex="0" role="button" title="${this._esc(r.name)}">
+                            <div class="cell-tile" data-address="${r.address}" data-grid="${this._esc(id)}" data-fine="1" tabindex="0" role="button" title="${this._esc(r.name)}">
                                 <div class="ct-label">${this._esc(r.label || r.name)}</div>
                                 <div class="ct-val"><span class="table-value value-normal">--</span> <span class="ds-unit"></span></div>
                             </div>`).join('')}</div>`
@@ -730,7 +733,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     body = body.replace(/<tr data-address="([^"]+)"/g,
                         (m, a) => fine.has(a) ? `${m} data-fine="1"` : m);
                     return `
-                    <details class="dev-section" data-sec="${id}" data-widget="${widget}" data-decimals="${Number.isInteger(secCfg.decimals) ? secCfg.decimals : ''}" ${this._secOpen(dev, id) ? 'open' : ''}>
+                    <details class="dev-section" data-sec="${this._esc(id)}" data-widget="${widget}" data-decimals="${Number.isInteger(secCfg.decimals) ? secCfg.decimals : ''}" ${this._secOpen(dev, id) ? 'open' : ''}>
                         <summary><i aria-hidden="true" class="bi bi-chevron-right"></i>
                             ${this._esc(label)} <span class="dev-sec-count">${regs.length}</span></summary>
                         ${body}
@@ -771,9 +774,12 @@ Object.assign(JanitzaMonitor.prototype, {
             const cls = 'table-value ' + (this.getValueColorClass(numValue, r) || 'value-normal');
             if (cell.val.className !== cls) cell.val.className = cls;
             if (cell.unit.textContent !== disp.unit) cell.unit.textContent = disp.unit;
-            if (cell.grid && typeof numValue === 'number') {
+            // an unused slot (0 V) or a missing reading is not the weak cell
+            if (cell.grid && typeof numValue === 'number' && Number.isFinite(numValue) && numValue > 0) {
                 const k = cell.sec; if (!gridVals.has(k)) gridVals.set(k, []);
                 gridVals.get(k).push([cell.el, numValue]);
+            } else if (cell.grid) {
+                cell.el.classList.remove('ct-min', 'ct-max');
             }
             if (cell.activeOnly) {
                 const on = this._isActiveValue(numValue);
@@ -785,9 +791,15 @@ Object.assign(JanitzaMonitor.prototype, {
         gridVals.forEach(list => {
             const vs = list.map(x => x[1]);
             const lo = Math.min(...vs), hi = Math.max(...vs), spread = hi > lo;
+            const loTxt = this.t('dash.lowest', 'lowest'), hiTxt = this.t('dash.highest', 'highest');
             list.forEach(([el, v]) => {
-                el.classList.toggle('ct-min', spread && v === lo);
-                el.classList.toggle('ct-max', spread && v === hi);
+                const isLo = spread && v === lo, isHi = spread && v === hi;
+                el.classList.toggle('ct-min', isLo);
+                el.classList.toggle('ct-max', isHi);
+                // colour alone does not say it — the tile's name does
+                const base = el.querySelector('.ct-label')?.textContent || '';
+                const name = isLo ? `${base} (${loTxt})` : isHi ? `${base} (${hiTxt})` : base;
+                if (el.getAttribute('aria-label') !== name) el.setAttribute('aria-label', name);
             });
         });
         // an active-only section shows what is active, or says nothing is
@@ -802,10 +814,14 @@ Object.assign(JanitzaMonitor.prototype, {
 
     // a bitmask as the list of what is set: 9 → "Cell 1, Cell 4"; 0 → "—"
     _bitList(v, pattern) {
-        const n = Math.trunc(v);
-        if (!n) return '—';
+        let n = Math.trunc(v);
+        if (!Number.isFinite(n) || !n) return '—';
+        // a signed register read as negative is the same bits, unsigned
+        if (n < 0) n = n >= -0x8000 ? n + 0x10000 : n >= -0x80000000 ? n + 0x100000000 : -n;
         const out = [];
-        for (let i = 0; i < 32; i++) if (n & (2 ** i)) out.push(String(pattern).replace('{n}', i + 1));
+        for (let i = 0; n >= 1 && i < 53; i++, n = Math.floor(n / 2)) {
+            if (n % 2) out.push(String(pattern).replace('{n}', i + 1));
+        }
         return out.join(', ');
     },
 

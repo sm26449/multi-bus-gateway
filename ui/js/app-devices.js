@@ -185,7 +185,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 : this.t('devices.notConnected', 'not connected');
             const actions = [
                 `<button class="btn btn-ghost btn-sm" ${this._act('jumpToDeviceRegisters', [d.id])} title="${this.t('devices.registers', 'Measurements')}" aria-label="${this.t('devices.registers', 'Measurements')}"><i aria-hidden="true" class="bi bi-list-check"></i></button>`,
-                `<button class="btn btn-ghost btn-sm" ${this._act('testDevice', [d.id], {el: true})} title="${this.t('devices.test', 'Test read')}" aria-label="${this.t('devices.test', 'Test read')}"><i aria-hidden="true" class="bi bi-activity"></i></button>`,
+                `<button data-admin class="btn btn-ghost btn-sm" ${this._act('testDevice', [d.id], {el: true})} title="${this.t('devices.test', 'Test read')}" aria-label="${this.t('devices.test', 'Test read')}"><i aria-hidden="true" class="bi bi-activity"></i></button>`,
             ];
             actions.push(`<button class="btn btn-ghost btn-sm" ${this._act('openDeviceDetail', [d.id])} title="${this.t('common.open', 'Open')}" aria-label="${this.t('common.open', 'Open')}"><i aria-hidden="true" class="bi bi-box-arrow-up-right"></i></button>`);
             if (!d.primary && !d.endpoint_id) {
@@ -910,8 +910,8 @@ Object.assign(JanitzaMonitor.prototype, {
                     ${c.writes && c.writes.length ? `<div class="field-hint" style="margin-bottom:8px;">${t('commands.writes', 'Writes')}: ${c.writes.map(w => `<code>${this._esc(w.register)}</code>`).join(', ')}${c.guard && c.guard.length ? ` · ${t('commands.guarded', 'only if')} ${c.guard.map(g => `<code>${this._cmdGuardText(g)}</code>`).join(', ')}` : ''}${c.verify && c.verify.length ? ` · ${t('commands.verifies', 'verifies')} ${c.verify.map(g => `<code>${this._esc(g.read)}</code>`).join(', ')}` : ''}</div>` : ''}
                     ${this._cmdFormHtml(c, `dcmd_${c.name}`)}
                     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                        <button type="button" class="btn btn-primary btn-sm" ${c.enabled ? '' : 'disabled'} ${this._act('runDeviceCommand', [id, c.name, false])}><i aria-hidden="true" class="bi bi-send"></i> ${t('commands.run', 'Run')}</button>
-                        <button type="button" class="btn btn-ghost btn-sm" ${c.enabled ? '' : 'disabled'} ${this._act('runDeviceCommand', [id, c.name, true])}
+                        <button type="button" data-admin class="btn btn-primary btn-sm" ${c.enabled ? '' : 'disabled'} ${this._act('runDeviceCommand', [id, c.name, false])}><i aria-hidden="true" class="bi bi-send"></i> ${t('commands.run', 'Run')}</button>
+                        <button type="button" data-admin class="btn btn-ghost btn-sm" ${c.enabled ? '' : 'disabled'} ${this._act('runDeviceCommand', [id, c.name, true])}
                                 title="${t('commands.testHint', 'Reads the device and shows what would be written — nothing is written.')}"><i aria-hidden="true" class="bi bi-eye"></i> ${t('commands.test', 'Test')}</button>
                         <span class="field-hint">${c.last ? `${t('commands.last', 'Last')}: ${this._cmdVerdict(c.last.status)} · ${fmtTs(c.last.ts)} · ${this._esc(c.last.via || '')} ${this._esc(c.last.by || '')}` : t('commands.neverRun', 'Never run since start')}</span>
                     </div>
@@ -1546,7 +1546,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <input type="checkbox" id="ddvRestVerify" ${rp.verify_tls !== false ? 'checked' : ''}> ${this.t('rest.verifyTls', 'Verify TLS certificate')}</label>
                 <div class="rest-status" id="ddvRestStatus">${statusLine}</div>
                 <div class="calc-editor-actions" style="margin-top:12px">
-                    <button class="btn btn-ghost btn-sm" ${this._act('testRestPush', [this._devDetail.id])}><i aria-hidden="true" class="bi bi-send"></i> ${this.t('rest.test', 'Test push')}</button>
+                    <button data-admin class="btn btn-ghost btn-sm" ${this._act('testRestPush', [this._devDetail.id])}><i aria-hidden="true" class="bi bi-send"></i> ${this.t('rest.test', 'Test push')}</button>
                     <button data-admin class="btn btn-primary btn-sm" ${this._act('saveRestPush', [this._devDetail.id])}><i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}</button>
                 </div>
                 ${this._endpointSinkNote()}

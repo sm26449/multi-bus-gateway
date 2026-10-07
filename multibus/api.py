@@ -3387,13 +3387,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         """What the unit itself says is wrong — the template-declared alarm
         fields that are active now (fresh values only)."""
         from .display import active_alarms
-        now = time.time()
-
-        def fresh(e):
-            ts = e.get('ts')
-            return ts is not None and (now - ts) <= max(4 * float(e.get('interval') or 30), 60.0)
         return active_alarms(_display_of(dev),
-                             list((registry.store_for(dev.id) or {}).values()), fresh)
+                             list((registry.store_for(dev.id) or {}).values()))
 
     def _glance_names(dev) -> tuple:
         names = _display_of(dev).get('glance')
@@ -3746,8 +3741,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 # canonical label/unit/topic per aggregate name, so a view can
                 # render "Total active power · W" without re-deriving the
                 # vocabulary client-side
-                'aggregate_fields': (groups[0].get('aggregate_fields') or {}) if (groups and not grouped)
-                                    else {k: m for k, m in ((k, field_meta(k)) for k in agg) if m},
+                # (a one-unit installation's group has no meta: fall back, so the
+                # field keeps the shape it had before groups carried their own)
+                'aggregate_fields': ((groups[0].get('aggregate_fields') if (groups and not grouped) else None)
+                                     or {k: m for k, m in ((k, field_meta(k)) for k in agg) if m}),
                 'aggregate_order': (groups[0].get('aggregate_order') or []) if (groups and not grouped) else [],
                 # how the totals are made, in the open: the operator's own
                 # (`totals`), what the units' templates declare, and every field
@@ -4324,6 +4321,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             results = [refresh_device(config, template_registry, d) for d in made]
         finally:
             _start_endpoint_devices(config.endpoint_devices(endpoint_id))
+            # the stop withdrew the units' HA entities — publish them again
+            _sync_device_discovery()
         logger.info("endpoint %s: refreshed from template (%d register rows, "
                     "%d calculated rows)", endpoint_id,
                     sum(r['registers'] for r in results), sum(r['calculated'] for r in results))
@@ -4350,6 +4349,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             client.disconnect()
         new_client = _start_device_client(dev_cfg)
         registry.replace(device_id, dev_cfg, client=new_client, add_if_missing=True)
+        _sync_device_discovery()            # HA picks up the new labels
         return {"status": "refreshed", **res}
 
     @app.delete("/api/endpoints/{endpoint_id}")

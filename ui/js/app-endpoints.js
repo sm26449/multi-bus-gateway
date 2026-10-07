@@ -95,7 +95,8 @@ Object.assign(JanitzaMonitor.prototype, {
         const sev = al.danger ? 'danger' : 'warning';
         const n = (al.danger || 0) + (al.warning || 0);
         const what = (al.active || []).map(a => `${a.label}: ${a.value}`).join(' · ');
-        return ` <span class="sink-pill ${sev === 'danger' ? 'bad' : 'warn'}" title="${this._esc(what)}"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i><span class="col-wide-text"> ${n}</span></span>`;
+        const said = `${n} ${this.t('endpoints.alarming', 'alarming')}: ${what}`;
+        return ` <span class="sink-pill ${sev === 'danger' ? 'bad' : 'warn'}" role="img" aria-label="${this._esc(said)}" title="${this._esc(what)}"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i><span class="col-wide-text"> ${n}</span></span>`;
     },
 
     // The four numbers an operator looks for first. Only what the installation
@@ -451,7 +452,7 @@ Object.assign(JanitzaMonitor.prototype, {
                         ${this._act('moveSource', [p.id, s.id, 1, groupId || ''])}
                         title="${t('endpoints.srcDown', 'Lower precedence')}"><i aria-hidden="true" class="bi bi-arrow-down"></i></button>
                 <button data-admin class="btn btn-ghost btn-sm" ${this._act('openSourceModal', [p.id, s.id, groupId || ''])}><i aria-hidden="true" class="bi bi-pencil"></i></button>
-                <button class="btn btn-ghost btn-sm" ${srcs.length < 2 ? 'disabled' : ''}
+                <button data-admin class="btn btn-ghost btn-sm" ${srcs.length < 2 ? 'disabled' : ''}
                         ${this._act('deleteSource', [p.id, s.id, groupId || ''])}
                         title="${srcs.length < 2 ? t('endpoints.srcLast', 'A unit needs at least one source') : t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
               </td>
@@ -1017,7 +1018,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const nd = (unit === '%' || unit === '°C') ? 1 : unit === 'V' ? 2 : null;
         const r = nd != null ? v.toFixed(nd)
             : Math.abs(v) >= 100 ? v.toFixed(1) : v.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
-        return unit ? `${r} ${unit}` : r;
+        return unit ? `${r} ${this._esc(unit)}` : r;
     },
 
     _endpointAggGridHtml(p) {
@@ -1461,7 +1462,13 @@ Object.assign(JanitzaMonitor.prototype, {
         try {
             const r = await fetch(`/api/endpoints/${encodeURIComponent(id)}/refresh-from-template`, { method: 'POST' });
             const d = await r.json().catch(() => ({}));
-            if (!r.ok) throw new Error((d.detail?.errors || [d.detail || r.statusText]).join(' · '));
+            if (!r.ok) {
+                // FastAPI answers a string, {errors: [...]}, or a 422 list of {msg}
+                const det = d.detail;
+                const msgs = Array.isArray(det) ? det.map(x => x?.msg || String(x))
+                    : det?.errors || [typeof det === 'string' ? det : r.statusText];
+                throw new Error(msgs.join(' · '));
+            }
             const regs = (d.units || []).reduce((a, u) => a + u.registers + u.calculated, 0);
             this.showToast('success', this.t('endpoints.refreshTplDone', 'Updated from template'),
                 this.t('endpoints.refreshTplRows', '{n} rows updated across {u} units', { n: regs, u: (d.units || []).length }));

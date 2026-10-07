@@ -185,9 +185,14 @@ def build(ctx) -> APIRouter:
                 regs = []
             store = (registry.store_for(dev_cfg.id) or {}) if registry else {}
             danger = warning = 0
+            from ..display import active_alarms, alarm_fields
+            _disp = _display_of(dev_cfg)
+            _declared_alarms = alarm_fields(_disp)
             for x in regs:
                 item = store.get(x.address)
-                if item is None:
+                # a field the template declares as an alarm is counted below,
+                # once — not again by a threshold on it
+                if item is None or getattr(x, "name", None) in _declared_alarms:
                     continue
                 band = _threshold_band(item.get("value"), x.thresholds)
                 if band == "danger":
@@ -196,12 +201,11 @@ def build(ctx) -> APIRouter:
                     warning += 1
             # plus what the device itself declares as wrong (a BMS's alarm,
             # protection and failure counts) — no threshold needed
-            from ..display import active_alarms
-            _decl = active_alarms(_display_of(dev_cfg), list(store.values()))
+            _decl = active_alarms(_disp, list(store.values()))
             danger += _decl["danger"]
             warning += _decl["warning"]
             hero = []
-            declared = (_display_of(dev_cfg).get("hero") or [])
+            declared = (_disp.get("hero") or [])
             if declared:
                 # the template says what a fleet row of this kind shows —
                 # calculated fields included (a pack's power is one)

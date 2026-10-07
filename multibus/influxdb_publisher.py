@@ -945,7 +945,7 @@ class InfluxDBPublisher:
                       measurement: Optional[str] = None,
                       bucket: Optional[str] = None,
                       device_tag: Optional[str] = None,
-                      aggregate: bool = False) -> Dict:
+                      aggregate: bool = False, group: str = "") -> Dict:
         """Read aggregated history for a register (matched by its ``name`` tag)
         back from InfluxDB. Returns ``{name, every, fn, series:[{t,v}]}`` (UTC
         ISO timestamps), or ``{series_mean/min/max}`` when ``fn=='all'`` (for a
@@ -954,6 +954,7 @@ class InfluxDBPublisher:
         if not self.config.enabled:
             return {"error": "influxdb disabled"}
         safe_name = str(name).replace("\\", "").replace('"', "")
+        safe_group = str(group or "").replace("\\", "").replace('"', "")
         if not safe_name:
             return {"error": "name required"}
         if not self._EVERY_RE.match(str(every)):
@@ -1001,7 +1002,11 @@ class InfluxDBPublisher:
             # an endpoint's totals are written as FIELDS named after the total
             # (tags device=<endpoint>, aggregate=endpoint), not as a `name`
             # tag over a `value` field — the per-register shape found nothing
-            sel = (f'  |> filter(fn: (r) => r["_field"] == "{safe_name}" and r["aggregate"] == "endpoint")\n'
+            # the first group's totals carry no `group` tag (their series
+            # predate groups); a later group's do — never merge the two
+            grp = (f' and r["group"] == "{safe_group}"' if safe_group
+                   else ' and not exists r["group"]')
+            sel = (f'  |> filter(fn: (r) => r["_field"] == "{safe_name}" and r["aggregate"] == "endpoint"{grp})\n'
                    if aggregate else
                    f'  |> filter(fn: (r) => r["name"] == "{safe_name}")\n'
                    f'  |> filter(fn: (r) => r["_field"] == "value")\n')

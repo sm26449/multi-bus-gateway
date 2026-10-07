@@ -23,9 +23,14 @@ its own list of what a kind of device shows.
 """
 from __future__ import annotations
 
+import math
+import time
 from typing import Any, Dict, Iterable, Optional
 
 SEVERITIES = ("warning", "danger")
+# what a declared alarm field says when nothing is wrong — the UI
+# (_isActiveValue) keeps the same list
+INACTIVE_WORDS = ("", "0", "off", "none", "normal", "ok", "false", "—")
 
 
 def template_id_of(dev) -> str:
@@ -42,18 +47,40 @@ def display_of(template_registry, dev) -> Dict[str, Any]:
     return dict(getattr(tpl, "display", None) or {})
 
 
+def is_fresh(entry: Dict[str, Any], now: Optional[float] = None) -> bool:
+    """A stored value still describes the device: read within four of its
+    poll intervals (at least a minute). A unit gone silent with an alarm
+    raised must not keep alarming everywhere it is counted."""
+    ts = entry.get("ts")
+    if ts is None:
+        return False
+    now = time.time() if now is None else now
+    return (now - ts) <= max(4 * float(entry.get("interval") or 30), 60.0)
+
+
 def _active(value: Any) -> bool:
     """A declared alarm field is ACTIVE when it says something: a non-zero
     number, a true flag, a non-empty word other than the usual "nothing"."""
     if value is None or isinstance(value, bool):
         return bool(value)
     if isinstance(value, (int, float)):
-        return value != 0
-    return str(value).strip().lower() not in ("", "0", "off", "none", "normal", "ok", "false")
+        return not math.isnan(value) and value != 0
+    text = str(value).strip().lower()
+    try:
+        num = float(text)
+        return not math.isnan(num) and num != 0     # "0.0" says nothing too
+    except ValueError:
+        return text not in INACTIVE_WORDS
+
+
+def alarm_fields(display: Dict[str, Any]) -> set:
+    """The names the template declares as alarms."""
+    return {a["field"] for a in (display.get("alarms") or [])
+            if isinstance(a, dict) and a.get("field")}
 
 
 def active_alarms(display: Dict[str, Any], store_entries: Iterable[Dict[str, Any]],
-                  fresh: Optional[callable] = None) -> Dict[str, Any]:
+                  fresh: Optional[callable] = is_fresh) -> Dict[str, Any]:
     """Count the template-declared alarm fields that are active right now.
 
     ``display.alarms`` = ``[{field, severity}]`` — a BMS's alarm/protection/

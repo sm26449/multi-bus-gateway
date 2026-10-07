@@ -602,10 +602,15 @@ def _display_errors(t: Dict[str, Any]) -> List[str]:
                 # finely they read (a pack's cells differ in millivolts)
                 tiles = v.get('tiles')
                 if tiles is not None:
+                    # the browser runs it: Python-only syntax (named groups
+                    # `(?P<…>`, inline flags `(?i)`) would fail there silently
                     try:
                         re.compile(str(tiles))
+                        if re.search(r"\(\?P|\(\?[aiLmsux-]+[:)]", str(tiles)):
+                            raise re.error("Python-only syntax")
                     except re.error:
-                        errs.append(f"display.sections.{c}.tiles: not a valid regular expression")
+                        errs.append(f"display.sections.{c}.tiles: not a valid regular expression "
+                                    "(plain syntax both Python and JavaScript read)")
                 dec = v.get('decimals')
                 if dec is not None and (isinstance(dec, bool) or not isinstance(dec, int)
                                         or not 0 <= dec <= 6):

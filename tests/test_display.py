@@ -16,6 +16,7 @@
 #
 """The template's `display` block: declared alarms, sections, bitmasks."""
 import json
+import time
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -28,9 +29,10 @@ DISP = {"alarms": [{"field": "alarm_count", "severity": "warning"},
 
 
 def test_active_alarms_counts_what_the_device_says_is_wrong():
-    store = [{"name": "alarm_count", "value": 2.0, "label": "Alarm Count"},
-             {"name": "protection_count", "value": 0},
-             {"name": "fault_word", "value": "OK"}]
+    now = time.time()
+    store = [{"name": "alarm_count", "value": 2.0, "label": "Alarm Count", "ts": now},
+             {"name": "protection_count", "value": 0, "ts": now},
+             {"name": "fault_word", "value": "OK", "ts": now}]
     out = active_alarms(DISP, store)
     assert (out["warning"], out["danger"]) == (1, 0)
     assert out["active"][0]["label"] == "Alarm Count"
@@ -78,3 +80,37 @@ def test_grid_tiles_and_decimals_are_validated():
     errs = " | ".join(validate_template(data))
     assert "display.sections.cells.tiles" in errs
     assert "display.sections.cells.decimals" in errs
+
+
+def test_python_only_regex_syntax_is_refused_for_tiles():
+    p = Path("multibus/device_templates/seplos_bms_v3_rtu_tap.json")
+    for bad in ("(?i)^cell_\\d+$", "^(?P<n>cell)_\\d+$"):
+        data = json.loads(p.read_text())
+        data["device_template"]["display"]["sections"]["cells"]["tiles"] = bad
+        assert any("sections.cells.tiles" in e for e in validate_template(data)), bad
+
+
+def test_a_dash_reads_as_nothing_active():
+    disp = {"alarms": [{"field": "fault", "severity": "danger"}]}
+    assert active_alarms(disp, [{"name": "fault", "value": "—"}], fresh=None)["danger"] == 0
+
+
+def test_a_silent_unit_stops_alarming_and_zero_text_or_nan_say_nothing():
+    disp = {"alarms": [{"field": "fault", "severity": "danger"}]}
+    old = [{"name": "fault", "value": 2, "ts": time.time() - 3600, "interval": 5}]
+    assert active_alarms(disp, old)["danger"] == 0          # stale by default
+    for quiet in ("0.0", float("nan"), "0"):
+        assert active_alarms(disp, [{"name": "fault", "value": quiet}], fresh=None)["danger"] == 0
+    assert active_alarms(disp, [{"name": "fault", "value": "2.0"}], fresh=None)["danger"] == 1
+
+
+def test_update_from_template_keeps_the_unit_of_a_rescaled_row():
+    from multibus.template_refresh import _refresh_rows
+    tpl = {"p": NS(name="p", label="Power", unit="W", scale=1, offset=0,
+                   description="", category="power", aggregates=None)}
+    mine = [{"name": "p", "label": "old", "unit": "kW", "scale": 0.001}]
+    theirs = [{"name": "p", "label": "old", "unit": "w", "scale": 1}]
+    _refresh_rows(mine, tpl, ("label", "unit"))
+    _refresh_rows(theirs, tpl, ("label", "unit"))
+    assert (mine[0]["label"], mine[0]["unit"]) == ("Power", "kW")
+    assert (theirs[0]["label"], theirs[0]["unit"]) == ("Power", "W")

@@ -23,7 +23,8 @@ existed. This refreshes what the template DESCRIBES on the rows the unit
 already has, and nothing the operator decided:
 
 refreshed  label, unit, description, category, aggregates — on registers and
-           template-shipped calculated fields matched by name
+           template-shipped calculated fields matched by name (the unit only
+           while the row keeps the template's scale and offset)
 kept       which rows are selected, their dashboard/ui flags, MQTT/InfluxDB
            switches and topics, thresholds, and every calculated EXPRESSION
            (a formula is logic; the operator may have tuned it)
@@ -42,6 +43,21 @@ REGISTER_KEYS = ("label", "unit", "description", "category")
 CALC_KEYS = ("label", "unit")
 
 
+def _rescaled(row: Dict[str, Any], t) -> bool:
+    """The operator changed how this row is scaled (W read as kW with scale
+    0.001): its unit is theirs too, and the template's would lie."""
+    for k, default in (("scale", 1), ("offset", 0)):
+        mine, theirs = row.get(k), getattr(t, k, None)
+        if mine is None or theirs is None:
+            continue
+        try:
+            if float(mine) != float(theirs if theirs is not None else default):
+                return True
+        except (TypeError, ValueError):
+            return True
+    return False
+
+
 def _refresh_rows(rows: List[Dict[str, Any]], tpl_rows: Dict[str, Any],
                   keys: Tuple[str, ...]) -> int:
     changed = 0
@@ -51,6 +67,8 @@ def _refresh_rows(rows: List[Dict[str, Any]], tpl_rows: Dict[str, Any],
             continue
         before = json.dumps(row, sort_keys=True, default=str)
         for k in keys:
+            if k == "unit" and _rescaled(row, t):
+                continue        # the operator's scale goes with the operator's unit
             v = getattr(t, k, None)
             if v not in (None, ""):
                 row[k] = v

@@ -398,3 +398,7 @@ def test_query_history_reads_an_endpoint_total_as_a_field(monkeypatch):
     assert 'r["_field"] == "pack_average_soc" and r["aggregate"] == "endpoint"' in seen[0]
     assert 'r["name"] ==' not in seen[0]
     assert 'r["name"] == "_TEMPERATUR"' in seen[-1] and 'r["_field"] == "value"' in seen[-1]
+    # the first group's series carry no group tag; a later group is asked by name
+    assert 'not exists r["group"]' in seen[0]
+    _pub().query_history("total_power", bucket="b", device_tag="plant", aggregate=True, group="meter")
+    assert 'r["group"] == "meter"' in seen[-1] and 'not exists' not in seen[-1]
