@@ -2,7 +2,10 @@
 # RTU-over-TCP. A python supervisor manages ser2net dynamically (hotplug), keeps
 # stable per-adapter TCP ports, and exposes GET /adapters for MBG to scan.
 FROM debian:bookworm-slim@sha256:f3034a6ec3c1205360777c4aae76234998866ad18806ae62b63a3f84ccad782b
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# upgrade: the pinned base lags the security archive — take the published
+# fixes (CVE scan gate in CI/release) without waiting for a new base digest
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
         ser2net python3 python3-pyudev tini \
     && rm -rf /var/lib/apt/lists/*
 COPY supervisor.py /app/supervisor.py
