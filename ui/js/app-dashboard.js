@@ -258,6 +258,17 @@ Object.assign(JanitzaMonitor.prototype, {
             if (!el || el.dataset.address == null) return;
             this.openValueHistory(el.dataset.address);
         });
+        grid.addEventListener('keydown', (e) => this._historyKey(e, '.widget-card, tr[data-address]'));
+    },
+
+    // Enter / Space on a focused card or row opens its history — the same
+    // thing a click does, for keyboard and switch users.
+    _historyKey(e, sel) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const el = e.target.closest(sel);
+        if (!el || el.dataset.address == null || e.target !== el) return;
+        e.preventDefault();
+        this.openValueHistory(el.dataset.address);
     },
 
     openValueHistory(address) {
@@ -284,6 +295,32 @@ Object.assign(JanitzaMonitor.prototype, {
         this.loadValueHistory();
     },
 
+    // The socket badge says "nothing is arriving"; this one says "this DEVICE
+    // has stopped" while everything else flows — its last values would
+    // otherwise sit on the page looking live.
+    _syncDeviceStaleBadge(grid) {
+        const dev = this._dashDeviceId();
+        const s = (this.status?.devices || []).find(d => d.id === dev) || {};
+        const h = s.data_health;
+        let b = document.getElementById('devStaleBadge');
+        const show = (h === 'stale' || h === 'down') && !document.body.classList.contains('ws-stale');
+        if (!show) { if (b) b.remove(); return; }
+        if (!b) {
+            b = document.createElement('div');
+            b.id = 'devStaleBadge';
+            b.className = 'stale-badge';
+            b.setAttribute('role', 'status');
+            (grid?.parentElement || document.body).insertBefore(b, grid || null);
+        }
+        const age = typeof s.staleness_age_s === 'number' ? s.staleness_age_s : null;
+        const ageTxt = age == null ? '' : ' · ' + this.t('dash.devLastUpdate', 'last update') + ' '
+            + (age < 120 ? `${Math.round(age)} s` : age < 7200 ? `${Math.round(age / 60)} min` : `${Math.round(age / 3600)} h`)
+            + ' ' + this.t('dash.ago', 'ago');
+        b.textContent = (h === 'down'
+            ? this.t('dash.devDownBanner', 'This device is not responding — the values shown are the last received')
+            : this.t('dash.devStaleBanner', 'This device’s values are not updating')) + ageTxt;
+    },
+
     async loadValueHistory() {
         const reg = this._vhReg;
         if (!reg) return;
@@ -295,11 +332,17 @@ Object.assign(JanitzaMonitor.prototype, {
         if (info) info.textContent = this.t('common.loading', 'Loading…');
         if (leg) leg.innerHTML = '';
         this._clearCanvas(canvas);
+        // the device on screen, not the primary — a secondary's history lives
+        // in its own bucket; and the last request wins over a slower one
+        const devQs = this._dashIsPrimary() ? '' : `&device=${encodeURIComponent(this._dashDeviceId())}`;
+        const seq = this._vhSeq = (this._vhSeq || 0) + 1;
         try {
-            const r = await fetch(`/api/history?name=${encodeURIComponent(reg.name)}&start=${encodeURIComponent(range)}&every=${every}&fn=all`);
+            const r = await fetch(`/api/history?name=${encodeURIComponent(reg.name)}&start=${encodeURIComponent(range)}&every=${every}&fn=all${devQs}`);
+            if (seq !== this._vhSeq) return;
             if (r.status === 503) { if (info) info.textContent = this.t('valhist.needInflux'); return; }
             if (!r.ok) { if (info) info.textContent = `HTTP ${r.status}`; return; }
             const d = await r.json();
+            if (seq !== this._vhSeq) return;
             const mean = d.series_mean || [];
             if (!mean.length) { if (info) info.textContent = this.t('valhist.noData'); return; }
             const series = [{
@@ -319,6 +362,7 @@ Object.assign(JanitzaMonitor.prototype, {
         // fleet face active → the widget grid is hidden, don't paint it
         if (this._fleetVisible && this._fleetVisible()) return;
         const grid = document.getElementById('dashboardGrid');
+        this._syncDeviceStaleBadge(grid);
 
         // Per-device empty state: distinguish "no widgets picked" from "source
         // is down" so the operator isn't guessing which problem they have.
@@ -439,7 +483,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div class="empty-state-desc">
                         ${this.t('dash.emptyDesc', 'Add measurements to your dashboard to monitor values in real-time.')}
                     </div>
-                    <button class="empty-state-action" ${this._act('_jumpToRegisters', ['primary'])}>
+                    <button class="empty-state-action" ${this._act('jumpToDeviceRegisters', [this._dashDeviceId()])}>
                         📋 ${this.t('dash.goMeasurements', 'Go to Measurements')}
                     </button>
                 </div>
@@ -476,6 +520,9 @@ Object.assign(JanitzaMonitor.prototype, {
         card.className = `widget-card widget-${reg.ui_widget || 'value'}`;
         if (reg.ui_config?.wide) card.classList.add('widget-wide');
         card.dataset.address = reg.address;
+        card.tabIndex = 0;
+        card.setAttribute('role', 'button');
+        card.setAttribute('aria-label', `${reg.label || reg.name} — ${this.t('valhist.open', 'show history')}`);
 
         // Poll-group badge only when this row DIFFERS from the dashboard's
         // dominant group — the majority chip is noise, the exception is signal.
@@ -632,7 +679,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 .map(([id, label]) => {
                     const regs = groups.get(id);
                     const rows = regs.map(r => `
-                        <tr data-address="${r.address}">
+                        <tr data-address="${r.address}" tabindex="0">
                             <td class="ds-label" title="${this._esc(r.name)}">${this._esc(r.label || r.name)}</td>
                             <td class="ds-value"><span class="table-value value-normal">--</span></td>
                             <td class="ds-unit"></td>
@@ -676,6 +723,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 const tr = e.target.closest('tr[data-address]');
                 if (tr) this.openValueHistory(tr.dataset.address);
             });
+            box.addEventListener('keydown', (e) => this._historyKey(e, 'tr[data-address]'));
         }
         // 'toggle' does not bubble — capture it; persist per device+section
         if (!box._secToggleWired) {
@@ -860,15 +908,15 @@ Object.assign(JanitzaMonitor.prototype, {
                     <path class="gauge-bg" d="M 5 55 A 45 45 0 0 1 95 55" />
                     <!-- Value arc -->
                     <path class="gauge-value" d="M 5 55 A 45 45 0 0 1 95 55"
-                          style="stroke: ${color}; stroke-dasharray: ${circumference}; stroke-dashoffset: ${offset};" />
+                          style="stroke: ${this._esc(color)}; stroke-dasharray: ${circumference}; stroke-dashoffset: ${offset};" />
                 </svg>
                 <div class="gauge-reading">
                     <span class="gauge-number">${displayValue}</span>
                     <span class="gauge-unit">${this._esc(displayUnit)}</span>
                 </div>
                 <div class="gauge-range">
-                    <span>${min}</span>
-                    <span>${max}</span>
+                    <span>${this._esc(String(min))}</span>
+                    <span>${this._esc(String(max))}</span>
                 </div>
             </div>
         `;

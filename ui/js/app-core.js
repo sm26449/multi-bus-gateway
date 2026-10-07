@@ -988,7 +988,19 @@ Object.assign(JanitzaMonitor.prototype, {
         const dev = this._dashDeviceId();
         try {
             const qs = this._dashIsPrimary() ? '' : ('?device=' + encodeURIComponent(dev));
-            const d = await (await fetch('/api/registers/selected' + qs)).json();
+            const r = await fetch('/api/registers/selected' + qs);
+            if (r.status === 404 && this.dashDevice === dev) {
+                // a remembered device that no longer exists — the page can
+                // load before the device list that would have caught it
+                this.dashDevice = null;
+                try { localStorage.removeItem('mbg-dash-device'); } catch (e2) { /* private mode */ }
+                return this._refreshDashRegisters();
+            }
+            const d = await r.json();
+            // last device wins: a slow answer for a device the operator has
+            // already switched away from must not put ITS labels on the new
+            // device's values
+            if (dev !== this._dashDeviceId()) return;
             this.dashRegisters = d.registers || [];
         } catch (e) { this.dashRegisters = this.dashRegisters || []; }
     },
@@ -1006,7 +1018,9 @@ Object.assign(JanitzaMonitor.prototype, {
         if (this.dashDevice) {
             jobs.push(fetch('/api/values?device=' + encodeURIComponent(dev))
                 .then(r => r.json())
-                .then(d => { if (seq === this._dashSeq) this.dashValues = d.values || {}; })
+                // the snapshot only fills what the socket has not delivered
+                // yet — a value pushed while the fetch was pending is newer
+                .then(d => { if (seq === this._dashSeq) this.dashValues = { ...(d.values || {}), ...(this.dashValues || {}) }; })
                 .catch(() => {}));
         }
         await Promise.all(jobs);
@@ -1017,6 +1031,7 @@ Object.assign(JanitzaMonitor.prototype, {
             // Route by device: primary messages feed currentValues (as always);
             // the ACTIVE dashboard device also feeds the dashboard store +
             // sparkline history. Everything else is ignored client-side.
+            if (msg.type === 'init' && msg.device) this._primaryIdHint = msg.device;
             const msgDev = msg.device || this._primaryDeviceId();
             const isPrimary = msgDev === this._primaryDeviceId();
             const isDashActive = msgDev === this._dashDeviceId();
@@ -1112,6 +1127,8 @@ Object.assign(JanitzaMonitor.prototype, {
     // ═══════════════════ Devices (Tier 2) ═══════════════════
 
     _primaryDeviceId() {
-        return (this._devices || []).find(d => d.primary)?.id || 'umg512';
+        // the device list, else the id the server named in its WS init; ''
+        // means "the primary" to every API route, so it is a safe default
+        return (this._devices || []).find(d => d.primary)?.id || this._primaryIdHint || '';
     }
 });

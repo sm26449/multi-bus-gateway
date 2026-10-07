@@ -26,6 +26,7 @@
     --success: #46a86b;
     --success-text: #5ec488;
     --warning-text: #e3b341;
+    --warning-tint: rgba(227, 179, 65, 0.14);
     --purple-text: #d0a9ee;
     --danger: #d4635d;
     /* -text variant = AA-contrast ink for TEXT on the theme's grounds; the
@@ -74,6 +75,7 @@
     --danger-text: #c0392b;
     --warning: #b58414;
     --warning-text: #8a5a00;
+    --warning-tint: rgba(181, 132, 20, 0.12);
     --purple-text: #7c3aed;
     /* was missing (a11y audit): the dark #ff9f0a bled through at 2.06:1 on
        white — .btn-warning text/border was illegible in light mode */

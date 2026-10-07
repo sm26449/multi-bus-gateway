@@ -59,6 +59,12 @@ Object.assign(JanitzaMonitor.prototype, {
         try {
             const r = await fetch('/api/devices');
             this._devices = (await r.json()).devices || [];
+            // the dashboard device is remembered across visits; one that has
+            // since been deleted (or renamed) must not be restored blindly
+            if (this.dashDevice && !this._devices.some(d => d.id === this.dashDevice)) {
+                this.dashDevice = null;
+                try { localStorage.removeItem('mbg-dash-device'); } catch (e2) { /* private mode */ }
+            }
         } catch (e) { console.error('devices load failed:', e); this._devices = this._devices || []; }
         return this._devices;
     },
