@@ -85,7 +85,17 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     _endpointCensusText(p) {
-        return `${p.online_units}/${p.total_units} ${this.t('endpoints.answering', 'units answering')}`;
+        const al = p.units_alarming ? ` · ${p.units_alarming} ${this.t('endpoints.alarming', 'alarming')}` : '';
+        return `${p.online_units}/${p.total_units} ${this.t('endpoints.answering', 'units answering')}${al}`;
+    },
+
+    // what the unit itself declares wrong (its template's alarm fields)
+    _unitAlarmPill(al) {
+        if (!al || !(al.danger || al.warning)) return '';
+        const sev = al.danger ? 'danger' : 'warning';
+        const n = (al.danger || 0) + (al.warning || 0);
+        const what = (al.active || []).map(a => `${a.label}: ${a.value}`).join(' · ');
+        return ` <span class="sink-pill ${sev === 'danger' ? 'bad' : 'warn'}" title="${this._esc(what)}"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i><span class="col-wide-text"> ${n}</span></span>`;
     },
 
     // The four numbers an operator looks for first. Only what the installation
@@ -1054,7 +1064,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 ${cols.map((c, i) => `<td ${i > 1 ? 'class="col-wide"' : ''} style="text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;">${
                     live[c] == null ? '<span style="color:var(--text-tertiary,#8a94a0);">—</span>'
                                     : this._endpointValue(live[c], (meta[c] || {}).unit || '')}</td>`).join('')}
-                <td style="white-space:nowrap;" title="${this._esc(u.health || 'idle')}"><span class="status-dot" style="--dot:${hc[u.health] || hc.idle}" aria-hidden="true"></span> <span class="col-wide-text">${this._esc(u.health || 'idle')}</span></td>
+                <td style="white-space:nowrap;" title="${this._esc(u.health || 'idle')}"><span class="status-dot" style="--dot:${hc[u.health] || hc.idle}" aria-hidden="true"></span> <span class="col-wide-text">${this._esc(u.health || 'idle')}</span>${this._unitAlarmPill(u.alarms)}</td>
                 <td class="col-wide" title="${this._esc(u.last_seen || '')}">${age}</td>
                 <td class="col-wide">${via || '—'}</td>
                 <td style="text-align:right;white-space:nowrap;">

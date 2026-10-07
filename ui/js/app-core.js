@@ -1002,6 +1002,8 @@ Object.assign(JanitzaMonitor.prototype, {
             // device's values
             if (dev !== this._dashDeviceId()) return;
             this.dashRegisters = d.registers || [];
+            // how the template presents this unit (sections, bitmasks, alarms)
+            this.dashDisplay = d.display || {};
         } catch (e) { this.dashRegisters = this.dashRegisters || []; }
     },
     async _setDashDevice(id) {

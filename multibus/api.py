@@ -1644,6 +1644,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         entry['group_id'] = getattr(dev_cfg, 'group_id', '') or 'units'
         entry['role'] = role
         entry['glance'] = list(_glance_names(dev_cfg))
+        entry['alarms'] = _unit_alarms(dev_cfg)
         entry['live'] = _unit_live(dev_cfg, entry['glance'])
         _sm = _store_meta([dev_cfg])
         entry['fields'] = {n: m for n, m in ((n, _field_meta_any(n, _sm)) for n in entry['glance']) if m}
@@ -3379,13 +3380,20 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     # ── presentation, from the template's `display` block ─────────────────────
     def _display_of(dev) -> Dict:
-        """The `display` block of the template a device is read with (its
-        own, else its first source's) — {} when it declares none."""
-        tid = getattr(dev, 'template', '') or next(
-            (getattr(sx, 'template', '') for sx in (getattr(dev, 'sources', None) or [])
-             if getattr(sx, 'template', '')), '')
-        tpl = template_registry.get(tid) if (tid and template_registry) else None
-        return dict(getattr(tpl, 'display', None) or {})
+        from .display import display_of
+        return display_of(template_registry, dev)
+
+    def _unit_alarms(dev) -> Dict:
+        """What the unit itself says is wrong — the template-declared alarm
+        fields that are active now (fresh values only)."""
+        from .display import active_alarms
+        now = time.time()
+
+        def fresh(e):
+            ts = e.get('ts')
+            return ts is not None and (now - ts) <= max(4 * float(e.get('interval') or 30), 60.0)
+        return active_alarms(_display_of(dev),
+                             list((registry.store_for(dev.id) or {}).values()), fresh)
 
     def _glance_names(dev) -> tuple:
         names = _display_of(dev).get('glance')
@@ -3657,6 +3665,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 # what the unit shows at a glance, and each source's verdict
                 # for it — "read fine over HTTP, Modbus side dead" in one row
                 'live': _unit_live(dev, _glance_names(dev), now),
+                'alarms': _unit_alarms(dev),
                 'sources': src_verdicts,
             })
         from .canonical_fields import field_meta
@@ -3768,6 +3777,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 # power/energy/autonomy headline the page falls back to
                 'headline_items': next((g['headline_items'] for g in groups
                                         if g.get('headline_items')), []),
+                # units whose own declared alarm fields are active right now
+                'units_alarming': sum(1 for u in units
+                                      if (u.get('alarms') or {}).get('danger')
+                                      or (u.get('alarms') or {}).get('warning')),
                 'status': ('' if not units else 'online' if online == len(units)
                            else 'offline' if online == 0 else 'partial'),
                 'online_units': online,

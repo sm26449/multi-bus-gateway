@@ -1266,6 +1266,8 @@ Object.assign(JanitzaMonitor.prototype, {
                         <div style="color:var(--text-secondary);font-size:12px;margin-top:8px;">${t('devices.overview.lastRead', 'Last read')} ${entry.staleness_age_s != null ? entry.staleness_age_s + ' s ago' : '—'}</div>
                     </div>
                     <div style="display:flex;gap:18px 32px;flex-wrap:wrap;">${glance || `<span class="field-hint">${t('devices.overview.noValues', 'No values yet — the device may not be polling.')}</span>`}</div>
+                    ${((entry.alarms || {}).active || []).length ? `<div style="flex-basis:100%;display:flex;gap:6px;flex-wrap:wrap;">${entry.alarms.active.map(a =>
+                        `<span class="sink-pill ${a.severity === 'danger' ? 'bad' : 'warn'}"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> ${this._esc(a.label)}: ${this._esc(String(a.value))}</span>`).join('')}</div>` : ''}
                 </div>
                 <div style="margin-top:16px;">
                     <div style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px;">${t('endpoints.readVia', 'Read via')}</div>
@@ -1331,7 +1333,10 @@ Object.assign(JanitzaMonitor.prototype, {
                 return { ...v, category: v.category || r.category, category_label: r.category_label };
             });
             if (!vals.length) { box.innerHTML = `<span class="field-hint">${this.t('devices.overview.noValues', 'No values yet — the device may not be polling.')}</span>`; return; }
-            const fmt = (val) => (typeof val === 'number' && !Number.isInteger(val))
+            const bitmasks = (sel.display || {}).bitmasks || {};
+            const fmt = (val, name) => (bitmasks[name] && typeof val === 'number')
+                ? this._esc(this._bitList(val, bitmasks[name]))     // a mask: what is set
+                : (typeof val === 'number' && !Number.isInteger(val))
                 ? Number(val.toFixed(3)).toString()   // cap noise at 3 decimals, drop trailing zeros
                 : this._esc(String(val));
             // grouped by what they measure; a unit read two ways says which
@@ -1346,7 +1351,7 @@ Object.assign(JanitzaMonitor.prototype, {
             vals.slice(0, 120).forEach(v => { const k = catOf(v); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(v); });
             const row = v => `<tr>
                 <td style="padding:2px 12px 2px 0;color:var(--text-secondary);">${this._esc(v.label || v.name || '')}${v.label && v.name && v.label !== v.name ? ` <span style="color:var(--text-tertiary,#9aa4af);font-size:11px;">${this._esc(v.name)}</span>` : ''}</td>
-                <td style="padding:2px 0;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;">${fmt(v.value)} <span style="color:var(--text-secondary);">${this._esc(v.unit || '')}</span>${manySources && v.source ? ` <span class="dev-chip" style="margin-left:6px;" title="${this.t('devices.valueSource', 'Source of this value')}">${this._esc(v.source)}</span>` : ''}</td></tr>`;
+                <td style="padding:2px 0;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;">${fmt(v.value, v.name)} <span style="color:var(--text-secondary);">${bitmasks[v.name] ? '' : this._esc(v.unit || '')}</span>${manySources && v.source ? ` <span class="dev-chip" style="margin-left:6px;" title="${this.t('devices.valueSource', 'Source of this value')}">${this._esc(v.source)}</span>` : ''}</td></tr>`;
             box.innerHTML = [...groups.entries()].map(([cat, items]) => `
                 <div style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;margin:10px 0 2px;">${this._esc(cat)}</div>
                 <table style="width:100%;font-size:13px;">${items.map(row).join('')}</table>`).join('');

@@ -690,25 +690,49 @@ Object.assign(JanitzaMonitor.prototype, {
                 .filter(([id]) => groups.has(id))
                 .map(([id, label]) => {
                     const regs = groups.get(id);
-                    const rows = regs.map(r => `
+                    const widget = ((this.dashDisplay || {}).sections || {})[id]?.widget || '';
+                    const rowHtml = r => `
                         <tr data-address="${r.address}" tabindex="0">
                             <td class="ds-label" title="${this._esc(r.name)}">${this._esc(r.label || r.name)}</td>
                             <td class="ds-value"><span class="table-value value-normal">--</span></td>
                             <td class="ds-unit"></td>
-                        </tr>`).join('');
+                        </tr>`;
+                    let body;
+                    if (widget === 'grid') {
+                        // the template asks for a grid (a pack's cells): the
+                        // fields sharing the section's main unit become tiles,
+                        // the rest (a mask, a count) stay as rows below
+                        const units = {};
+                        regs.forEach(r => { units[r.unit || ''] = (units[r.unit || ''] || 0) + 1; });
+                        const main = Object.entries(units).sort((a, b) => b[1] - a[1])[0]?.[0];
+                        const tiles = regs.filter(r => (r.unit || '') === main && main);
+                        const others = regs.filter(r => !tiles.includes(r));
+                        body = `<div class="cell-grid">${tiles.map(r => `
+                            <div class="cell-tile" data-address="${r.address}" data-grid="${id}" tabindex="0" role="button" title="${this._esc(r.name)}">
+                                <div class="ct-label">${this._esc(r.label || r.name)}</div>
+                                <div class="ct-val"><span class="table-value value-normal">--</span> <span class="ds-unit"></span></div>
+                            </div>`).join('')}</div>`
+                            + (others.length ? `<table class="dev-sec-table"><tbody>${others.map(rowHtml).join('')}</tbody></table>` : '');
+                    } else {
+                        body = `<table class="dev-sec-table"><tbody>${regs.map(rowHtml).join('')}
+                            ${widget === 'active_only' ? `<tr class="ds-none" hidden><td colspan="3">${this._esc(this.t('dash.noActive', 'Nothing active'))}</td></tr>` : ''}</tbody></table>`;
+                    }
                     return `
-                    <details class="dev-section" data-sec="${id}" ${this._secOpen(dev, id) ? 'open' : ''}>
+                    <details class="dev-section" data-sec="${id}" data-widget="${widget}" ${this._secOpen(dev, id) ? 'open' : ''}>
                         <summary><i aria-hidden="true" class="bi bi-chevron-right"></i>
                             ${this._esc(label)} <span class="dev-sec-count">${regs.length}</span></summary>
-                        <table class="dev-sec-table"><tbody>${rows}</tbody></table>
+                        ${body}
                     </details>`;
                 }).join('');
             box.innerHTML = html;
             // cache the live cells once — the per-tick update touches text only
-            box.querySelectorAll('tr[data-address]').forEach(tr => {
-                this._sectionCells[tr.dataset.address] = {
-                    val: tr.querySelector('.table-value'),
-                    unit: tr.querySelector('.ds-unit'),
+            box.querySelectorAll('tr[data-address], .cell-tile[data-address]').forEach(el => {
+                const sec = el.closest('details.dev-section');
+                this._sectionCells[el.dataset.address] = {
+                    val: el.querySelector('.table-value'),
+                    unit: el.querySelector('.ds-unit'),
+                    el, grid: el.classList.contains('cell-tile'),
+                    activeOnly: sec?.dataset.widget === 'active_only', sec,
                 };
             });
             this._wireDeviceSections(box, dev);
@@ -716,26 +740,73 @@ Object.assign(JanitzaMonitor.prototype, {
 
         // value pass (every tick, in place)
         const store = this._dashStore();
+        const bitmasks = (this.dashDisplay || {}).bitmasks || {};
+        const gridVals = new Map();         // grid section → [[tile, value]]
+        const active = new Map();           // active-only section → active rows
         rest.forEach(r => {
             const cell = this._sectionCells[String(r.address)];
             if (!cell || !cell.val) return;
             const numValue = store[r.address]?.value;
-            const disp = this._displayValue(numValue, r);
+            let disp = this._displayValue(numValue, r);
+            if (bitmasks[r.name] && typeof numValue === 'number') {
+                disp = { text: this._bitList(numValue, bitmasks[r.name]), unit: '' };
+            }
             if (cell.val.textContent !== disp.text) cell.val.textContent = disp.text;
             const cls = 'table-value ' + (this.getValueColorClass(numValue, r) || 'value-normal');
             if (cell.val.className !== cls) cell.val.className = cls;
             if (cell.unit.textContent !== disp.unit) cell.unit.textContent = disp.unit;
+            if (cell.grid && typeof numValue === 'number') {
+                const k = cell.sec; if (!gridVals.has(k)) gridVals.set(k, []);
+                gridVals.get(k).push([cell.el, numValue]);
+            }
+            if (cell.activeOnly) {
+                const on = this._isActiveValue(numValue);
+                if (cell.el.hidden === on) cell.el.hidden = !on;
+                active.set(cell.sec, (active.get(cell.sec) || 0) + (on ? 1 : 0));
+            }
         });
+        // a grid marks its lowest and highest (the weak and the full cell)
+        gridVals.forEach(list => {
+            const vs = list.map(x => x[1]);
+            const lo = Math.min(...vs), hi = Math.max(...vs), spread = hi > lo;
+            list.forEach(([el, v]) => {
+                el.classList.toggle('ct-min', spread && v === lo);
+                el.classList.toggle('ct-max', spread && v === hi);
+            });
+        });
+        // an active-only section shows what is active, or says nothing is
+        active.forEach((n, sec) => {
+            const none = sec.querySelector('.ds-none');
+            if (none) none.hidden = n > 0;
+            const cnt = sec.querySelector('.dev-sec-count');
+            if (cnt && cnt.textContent !== String(n)) cnt.textContent = String(n);
+            sec.classList.toggle('sec-alert', n > 0);
+        });
+    },
+
+    // a bitmask as the list of what is set: 9 → "Cell 1, Cell 4"; 0 → "—"
+    _bitList(v, pattern) {
+        const n = Math.trunc(v);
+        if (!n) return '—';
+        const out = [];
+        for (let i = 0; i < 32; i++) if (n & (2 ** i)) out.push(String(pattern).replace('{n}', i + 1));
+        return out.join(', ');
+    },
+
+    _isActiveValue(v) {
+        if (v == null || typeof v === 'boolean') return !!v;
+        if (typeof v === 'number') return v !== 0;
+        return !['', '0', 'off', 'none', 'normal', 'ok', 'false', '—'].includes(String(v).trim().toLowerCase());
     },
 
     _wireDeviceSections(box, dev) {
         if (!box._secWired) {
             box._secWired = true;
             box.addEventListener('click', (e) => {
-                const tr = e.target.closest('tr[data-address]');
+                const tr = e.target.closest('tr[data-address], .cell-tile[data-address]');
                 if (tr) this.openValueHistory(tr.dataset.address);
             });
-            box.addEventListener('keydown', (e) => this._historyKey(e, 'tr[data-address]'));
+            box.addEventListener('keydown', (e) => this._historyKey(e, 'tr[data-address], .cell-tile[data-address]'));
         }
         // 'toggle' does not bubble — capture it; persist per device+section
         if (!box._secToggleWired) {

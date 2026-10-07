@@ -792,6 +792,8 @@
   "dash.noDeviceWidgets": "Nicio măsurătoare pe acest dashboard încă",
   "dash.noDeviceWidgetsDesc": "Alege măsurători pentru acest device ca să apară aici.",
   "dash.goMeasurements": "Mergi la Measurements",
+  "dash.noActive": "Nimic activ",
+  "endpoints.alarming": "în alarmă",
   "valhist.open": "arată istoricul",
   "dash.devLastUpdate": "ultima actualizare",
   "dash.ago": "în urmă",

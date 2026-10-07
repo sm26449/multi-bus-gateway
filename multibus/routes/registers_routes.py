@@ -112,6 +112,10 @@ def build(ctx) -> APIRouter:
             })
         return out
 
+    def _display_for(dev_cfg) -> Dict:
+        from ..display import display_of
+        return display_of(template_registry, dev_cfg)
+
     def _with_template_categories(rows: List[Dict], dev_cfg) -> List[Dict]:
         """A canonical name keeps its canonical category; any other field takes
         the category its TEMPLATE files it under (a Seplos pack's cells,
@@ -356,6 +360,9 @@ def build(ctx) -> APIRouter:
                                     for name, g in groups.items()},
                     "source": "",
                     "sources": _sources_out(dev_cfg),
+                    # how the template presents this unit (sections, cells
+                    # grid, bitmasks, alarms) — read live, never seeded
+                    "display": _display_for(dev_cfg),
                 }
             if not dev_cfg.primary or src is not None:
                 regs, groups = config.load_device_registers(dev_cfg, source=src)
@@ -373,6 +380,7 @@ def build(ctx) -> APIRouter:
                     # ticked and how fast it reads, so the picker can say
                     # "solar_api · HTTP · every 2 s · 6/7 ticked"
                     "sources": _sources_out(dev_cfg),
+                    "display": _display_for(dev_cfg),
                 }
         _pi, _pcfg, _pc = registry.find(device) if device else (None, None, None)
         return {

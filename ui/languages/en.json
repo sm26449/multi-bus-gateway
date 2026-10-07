@@ -792,6 +792,8 @@
   "dash.noDeviceWidgets": "No measurements on this dashboard yet",
   "dash.noDeviceWidgetsDesc": "Pick measurements for this device to see them here.",
   "dash.goMeasurements": "Go to Measurements",
+  "dash.noActive": "Nothing active",
+  "endpoints.alarming": "alarming",
   "valhist.open": "show history",
   "dash.devLastUpdate": "last update",
   "dash.ago": "ago",

@@ -32,12 +32,8 @@ def build(ctx) -> APIRouter:
     config, registry = ctx.config, ctx.registry
 
     def _display_of(dev) -> Dict:
-        tr = getattr(ctx, "template_registry", None)
-        tid = getattr(dev, "template", "") or next(
-            (getattr(sx, "template", "") for sx in (getattr(dev, "sources", None) or [])
-             if getattr(sx, "template", "")), "")
-        tpl = tr.get(tid) if (tr and tid) else None
-        return dict(getattr(tpl, "display", None) or {})
+        from ..display import display_of
+        return display_of(getattr(ctx, "template_registry", None), dev)
     modbus_client, ws_manager, last_update = ctx.modbus_client, ctx.ws_manager, ctx.last_update
 
     # Connection-uptime tracking: device id -> (last health, monotonic since).
@@ -198,6 +194,12 @@ def build(ctx) -> APIRouter:
                     danger += 1
                 elif band == "warning":
                     warning += 1
+            # plus what the device itself declares as wrong (a BMS's alarm,
+            # protection and failure counts) — no threshold needed
+            from ..display import active_alarms
+            _decl = active_alarms(_display_of(dev_cfg), list(store.values()))
+            danger += _decl["danger"]
+            warning += _decl["warning"]
             hero = []
             declared = (_display_of(dev_cfg).get("hero") or [])
             if declared:

@@ -575,6 +575,37 @@ def _display_errors(t: Dict[str, Any]) -> List[str]:
     for key in ('unit_label', 'unit_label_plural', 'icon'):
         if key in d and (not isinstance(d[key], str) or len(d[key]) > 64):
             errs.append(f"display.{key}: a short string")
+    al = d.get('alarms')
+    if al is not None:
+        if not isinstance(al, list) or len(al) > 50:
+            errs.append("display.alarms: a list of {field, severity} (at most 50)")
+        else:
+            for i, a in enumerate(al):
+                if not isinstance(a, dict) or a.get('field') not in known:
+                    errs.append(f"display.alarms[{i}]: 'field' must be a field of this template")
+                elif a.get('severity', 'warning') not in ('warning', 'danger'):
+                    errs.append(f"display.alarms[{i}]: severity is warning or danger")
+    secs = d.get('sections')
+    if secs is not None:
+        cats = set((t.get('categories') or {}).keys())
+        if not isinstance(secs, dict):
+            errs.append("display.sections: a mapping of category: {widget}")
+        else:
+            for c, v in secs.items():
+                if cats and c not in cats:
+                    errs.append(f"display.sections.{c}: not a category of this template")
+                if not isinstance(v, dict) or v.get('widget') not in ('grid', 'active_only'):
+                    errs.append(f"display.sections.{c}: widget is grid or active_only")
+    bm = d.get('bitmasks')
+    if bm is not None:
+        if not isinstance(bm, dict):
+            errs.append("display.bitmasks: a mapping of field: label pattern")
+        else:
+            for f, pat in bm.items():
+                if f not in known:
+                    errs.append(f"display.bitmasks.{f}: not a field of this template")
+                elif not isinstance(pat, str) or '{n}' not in pat:
+                    errs.append(f"display.bitmasks.{f}: a label with {{n}} for the bit number, e.g. 'Cell {{n}}'")
     return errs
 
 
