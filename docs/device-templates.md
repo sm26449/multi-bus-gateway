@@ -151,7 +151,14 @@ Standard names (`voltage_l1_n`, `power_active_total`, `energy_active_import`,
 `soc`…) make every device of the same quantity look alike to Grafana, Node-RED,
 the dashboards and virtual meters. Each one also comes with a **unit
 contract**: an `energy_*` name promises Wh, and the editor flags a mismatch
-in amber. The full list is in [canonical-fields.md](canonical-fields.md).
+in amber. The list covers the grid, PV, batteries, the environment,
+water/gas/heat metering, EV charging and tanks:
+[canonical-fields.md](canonical-fields.md).
+
+**A quantity the list does not have?** Add it on **Templates → Canonical
+fields** (name, category = InfluxDB measurement, unit, MQTT topic,
+counter or not). It becomes canonical like the built-in ones, and a
+template you export carries its definition to the next gateway.
 
 ## 4. Example: a Modbus meter from its manual (CSV)
 

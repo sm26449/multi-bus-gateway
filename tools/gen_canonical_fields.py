@@ -10,7 +10,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from multibus.canonical_fields import CANONICAL_FIELDS  # noqa: E402
+from multibus.canonical_fields import BUILTIN_FIELDS as CANONICAL_FIELDS, is_cumulative_field  # noqa: E402
 
 HEADER = (
     "# Canonical field names\n\n"
@@ -31,6 +31,29 @@ HEADER = (
     "warning, because the mismatch becomes a silent 1000× error the moment the "
     "register feeds a virtual meter, a fallback twin, or a cross-device "
     "dashboard.\n\n"
+    "**Beyond the grid.** The same rules cover batteries (`battery`), the "
+    "environment, water/gas/heat metering, EV charging and tank levels. A "
+    "battery's current and power are **positive while charging** (the BMS and "
+    "Victron convention). BMS maps already used clear words (`soc`, `cycles`, "
+    "`cell_1`…), so those are the canonical names; a bare word that would mean "
+    "something else on a meter gets a prefix (`battery_current`, "
+    "`battery_power`, `battery_status`).\n\n"
+    "**Counters** (marked Σ) only grow: every `energy_*` field except a "
+    "battery's two state figures, plus water/gas volume, heat energy, an EV "
+    "charger's lifetime energy and a battery's cycles. A frozen counter is "
+    "still a true statement, so the gateway treats a stale one differently "
+    "from a stale measurement.\n\n"
+    "**Your own fields.** A quantity this list does not cover (a heat pump's "
+    "COP, a pool's chlorine level) can be added on **Templates → Canonical "
+    "fields**: a name, the category (its InfluxDB measurement), a unit, the "
+    "MQTT topic leaf (by default `category/name`), whether it is a counter. "
+    "It is then canonical everywhere a built-in one is: topic, measurement, "
+    "unit contract, editor guidance. Built-in names cannot be redefined; once "
+    "a device reads a field its category and topic are fixed (they hold "
+    "history). A template that names your fields carries their definitions "
+    "when exported, and creates them on the gateway it is uploaded to. They "
+    "are stored in `config/canonical_fields_user.json` "
+    "(`POST/DELETE /api/canonical-fields/user`).\n\n"
 )
 
 
@@ -47,7 +70,8 @@ def main() -> None:
         out.append(f"## {meas}\n\n| InfluxDB field | MQTT topic | Unit | Description |\n"
                    "|---|---|---|---|\n")
         for name, unit, topic, desc in by[meas]:
-            out.append(f"| `{name}` | `{topic}` | {unit or '—'} | {desc} |\n")
+            mark = " Σ" if is_cumulative_field(name) else ""
+            out.append(f"| `{name}`{mark} | `{topic}` | {unit or '—'} | {desc} |\n")
         out.append("\n")
     out.append(f"_Total: {len(CANONICAL_FIELDS)} canonical fields across "
                f"{len(order)} measurements._\n")
