@@ -3421,21 +3421,42 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         meta: Dict[str, Dict[str, str]] = {}
         order: List[str] = []
 
-        def put(out, src, op):
+        def put(out, srcs, op):
             if out in meta:
                 return
-            sm = smeta.get(src) or {}
+            sm = smeta.get(srcs[0] if srcs else '') or {}
             word = _OP_WORD.get(op, op)
-            base = sm.get('label') or src
-            meta[out] = {'label': f"{base} ({word})" if word else base,
+            if len(srcs) == 1:
+                base = sm.get('label') or srcs[0]
+                label = f"{base} ({word})" if word else base
+            else:
+                # pooled over several fields: no one field names it — its own
+                # name does ("pack_min_temp" → "Pack min temp")
+                label = out.replace('_', ' ').strip().capitalize()
+            meta[out] = {'label': label,
                          'unit': '' if op == 'mode' else (sm.get('unit') or '')}
             order.append(out)
-        for out, t in endpoint_totals(config, pid).items():
-            put(out, (t.get('from') or [''])[0], t.get('op'))
+        own = endpoint_totals(config, pid)
+        # the headline's totals first, then the template's declaration order,
+        # then the operator's own totals
+        heads = [h.get('field') for h in (display.get('headline') or []) if h.get('field')]
+        declared: Dict[str, tuple] = {}
         for dev in devs:
             for e in list((registry.store_for(dev.id) or {}).values()):
                 for out, op in (e.get('aggregates') or {}).items():
-                    put(str(out), e.get('name') or '', op)
+                    declared.setdefault(str(out), ([], op))[0].append(e.get('name') or '')
+        for out in heads:
+            if out in own:
+                put(out, own[out].get('from') or [], own[out].get('op'))
+            elif out in declared:
+                put(out, sorted(set(declared[out][0])), declared[out][1])
+        for out, (srcs, op) in declared.items():
+            if out in own:
+                put(out, own[out].get('from') or [], own[out].get('op'))
+            else:
+                put(out, sorted(set(srcs)), op)
+        for out, t in own.items():
+            put(out, t.get('from') or [], t.get('op'))
         for n in agg:
             if n not in meta:
                 m = field_meta(n)

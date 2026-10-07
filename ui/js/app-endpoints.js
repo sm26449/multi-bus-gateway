@@ -1003,7 +1003,10 @@ Object.assign(JanitzaMonitor.prototype, {
             if (Math.abs(v) >= 1e6) return `${(v / 1e6).toFixed(3)} MWh`;
             if (Math.abs(v) >= 1000) return `${(v / 1000).toFixed(2)} kWh`;
         }
-        const r = Math.abs(v) >= 100 ? v.toFixed(1) : v.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+        // a percentage or a temperature reads to one decimal, a voltage to two
+        const nd = (unit === '%' || unit === '°C') ? 1 : unit === 'V' ? 2 : null;
+        const r = nd != null ? v.toFixed(nd)
+            : Math.abs(v) >= 100 ? v.toFixed(1) : v.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
         return unit ? `${r} ${unit}` : r;
     },
 
