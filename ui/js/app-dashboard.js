@@ -699,6 +699,7 @@ Object.assign(JanitzaMonitor.prototype, {
                             <td class="ds-unit"></td>
                         </tr>`;
                     let body;
+                    const fine = new Set();
                     if (widget === 'grid') {
                         // the template asks for a grid (a pack's cells): the
                         // fields its `tiles` pattern names — else those sharing
@@ -711,8 +712,12 @@ Object.assign(JanitzaMonitor.prototype, {
                         const main = Object.entries(units).sort((a, b) => b[1] - a[1])[0]?.[0];
                         const tiles = regs.filter(r => pick ? pick.test(r.name) : ((r.unit || '') === main && main));
                         const others = regs.filter(r => !tiles.includes(r));
+                        // a summary in the tiles' unit (the pack's average,
+                        // max, min cell) reads as finely as the tiles do
+                        const tileUnits = new Set(tiles.map(r => r.unit || '').filter(Boolean));
+                        others.forEach(r => { if (tileUnits.has(r.unit || '')) fine.add(String(r.address)); });
                         body = `<div class="cell-grid">${tiles.map(r => `
-                            <div class="cell-tile" data-address="${r.address}" data-grid="${id}" tabindex="0" role="button" title="${this._esc(r.name)}">
+                            <div class="cell-tile" data-address="${r.address}" data-grid="${id}" data-fine="1" tabindex="0" role="button" title="${this._esc(r.name)}">
                                 <div class="ct-label">${this._esc(r.label || r.name)}</div>
                                 <div class="ct-val"><span class="table-value value-normal">--</span> <span class="ds-unit"></span></div>
                             </div>`).join('')}</div>`
@@ -721,6 +726,9 @@ Object.assign(JanitzaMonitor.prototype, {
                         body = `<table class="dev-sec-table"><tbody>${regs.map(rowHtml).join('')}
                             ${widget === 'active_only' ? `<tr class="ds-none" hidden><td colspan="3">${this._esc(this.t('dash.noActive', 'Nothing active'))}</td></tr>` : ''}</tbody></table>`;
                     }
+                    // rows that read at the grid's resolution, marked for the value pass
+                    body = body.replace(/<tr data-address="([^"]+)"/g,
+                        (m, a) => fine.has(a) ? `${m} data-fine="1"` : m);
                     return `
                     <details class="dev-section" data-sec="${id}" data-widget="${widget}" data-decimals="${Number.isInteger(secCfg.decimals) ? secCfg.decimals : ''}" ${this._secOpen(dev, id) ? 'open' : ''}>
                         <summary><i aria-hidden="true" class="bi bi-chevron-right"></i>
@@ -737,7 +745,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     unit: el.querySelector('.ds-unit'),
                     el, grid: el.classList.contains('cell-tile'),
                     activeOnly: sec?.dataset.widget === 'active_only', sec,
-                    decimals: sec?.dataset.decimals === '' || !sec ? null : Number(sec.dataset.decimals),
+                    decimals: el.dataset.fine && sec?.dataset.decimals !== '' ? Number(sec.dataset.decimals) : null,
                 };
             });
             this._wireDeviceSections(box, dev);
@@ -755,8 +763,8 @@ Object.assign(JanitzaMonitor.prototype, {
             let disp = this._displayValue(numValue, r);
             if (bitmasks[r.name] && typeof numValue === 'number') {
                 disp = { text: this._bitList(numValue, bitmasks[r.name]), unit: '' };
-            } else if (cell.grid && cell.decimals !== null && typeof numValue === 'number') {
-                // the grid reads at the resolution its template asked for
+            } else if (cell.decimals !== null && typeof numValue === 'number') {
+                // the grid (and its summaries) read at the resolution the template asked for
                 disp = { text: this._fmtNum(numValue, cell.decimals), unit: r.unit || '' };
             }
             if (cell.val.textContent !== disp.text) cell.val.textContent = disp.text;

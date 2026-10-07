@@ -169,6 +169,10 @@ try {
   check('D: tiles read at the declared resolution', /^\d\.\d{3}$/.test(tileVal.trim()), tileVal);
   check('D: pack summaries stay rows under the grid',
     await page.locator('details[data-widget="grid"] tr[data-address]', { hasText: 'Average Cell Voltage' }).count() === 1);
+  const avgVal = await page.locator('details[data-widget="grid"] tr[data-address]', { hasText: 'Average Cell Voltage' }).locator('.table-value').innerText();
+  check('D: a summary in the tiles\' unit reads as finely', /^\d\.\d{3}$/.test(avgVal.trim()), avgVal);
+  const cnt = await page.locator('details[data-widget="grid"] tr[data-address]', { hasText: 'Balancing Count' }).locator('.table-value').innerText();
+  check('D: other rows keep their own format', /^\d+$/.test(cnt.trim()), cnt);
   const minTile = await page.locator('details[data-widget="grid"] .cell-tile.ct-min[title="cell_5"]').count();
   check('D: the weak cell is marked', minTile === 1);
   const bal = await page.locator('details.dev-section tr', { hasText: 'Balancing Mask' }).innerText().catch(() => '');
