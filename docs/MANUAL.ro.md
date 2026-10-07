@@ -293,9 +293,10 @@ fără bloc, decide rolul dispozitivului, ca înainte.
 
 Etichetele, unitățile de măsură, descrierile, categoriile și totalurile sunt
 în schimb **copiate** în unitate la creare. Când template-ul le îmbunătățește,
-**Update from template** (admin, pe un dispozitiv sau o instalare) le aduce pe
+**Actualizează din template** (admin, pe pagina instalării) le aduce pe
 rândurile pe care unitatea le are deja; selecția, flag-urile, ieșirile,
-pragurile și formulele rămân ale tale.
+pragurile și formulele rămân ale tale. Un dispozitiv de sine stătător se
+actualizează prin API (`POST /api/devices/{id}/refresh-from-template`).
 
 ---
 

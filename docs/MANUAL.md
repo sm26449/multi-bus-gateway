@@ -294,9 +294,11 @@ without one, the device's role decides as before.
 
 Labels, units, descriptions, categories and totals, on the other hand, are
 **copied** into a unit when it is created. When a template improves them,
-**Update from template** (admin, on a device or an installation) carries them
+**Update from template** (admin) carries them
 over to the rows the unit already has; your selection, flags, sinks,
-thresholds and formulas stay as they are.
+thresholds and formulas stay as they are. The button is on the installation
+page; a standalone device is refreshed through the API
+(`POST /api/devices/{id}/refresh-from-template`).
 
 ---
 
@@ -460,7 +462,8 @@ the installation page — nothing about it is fixed in code:
   unit fields it is built from, marked *template* or *yours*. Edit one to
   change what feeds it (a battery bank's max temperature over the cell
   sensors *and* the ambient one), or **Add total** for a new one (`sum`,
-  `avg`, `min`, `max`, `spread` over any fields the units carry). A total of
+  `avg`, `min`, `max`, `spread` over any fields the units carry, or `mode` —
+  the majority value, text included). A total of
   yours replaces the template's total of the same name; **Back to the
   template** drops your version.
 - **InfluxDB — tags on every unit's points**: static tags such as

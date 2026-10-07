@@ -29,7 +29,9 @@ collector retires); the `mbg/*` convention stays for new devices.
   field names) and `seplos_pack`. Only `seplos_pack` is queried (Grafana).
 
 Deliberately dropped (no consumer found): `pack_status` consensus,
-`balancing_cells` text, `last_update` per battery.
+`balancing_cells` text, `last_update` per battery. (3.86.0 brings the bank
+status back as the `pack_status` total — `mode`, the majority of the packs'
+`status`.)
 
 ## How parity is achieved
 

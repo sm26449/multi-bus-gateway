@@ -38,6 +38,23 @@ informational: loading never depends on it, so the compatibility contract is
 exactly the above. (Device *templates* additionally carry a `schema_version`,
 and newer template schemas are rejected with a clear error.)
 
+## 3.86 — the template decides how a unit is shown
+
+No config migration. What you may notice:
+
+- **Duplicate installation totals stop.** A field whose template says how
+  it combines is no longer also combined by the name rules. On a bank read
+  with `seplos_bms_v3_rtu_tap`, `energy_remaining` stops at once and
+  `power_active_total` after **Update from template** on the installation
+  (an existing unit keeps the totals it was seeded with). Read
+  `pack_energy_remaining` / `pack_total_power` instead. Their last retained
+  message stays on the broker; clear it with
+  `mosquitto_pub -r -n -t '<totals topic>/power_active_total'` (and
+  `…/energy_remaining`).
+- **Labels and totals from an improved template** reach existing units only
+  through **Update from template**; what a unit *shows* (the `display`
+  block) changes at once.
+
 ## 3.84.0 — audit hardening: what you may notice after upgrading
 
 No config migration. Behaviour changes an operator can observe:
