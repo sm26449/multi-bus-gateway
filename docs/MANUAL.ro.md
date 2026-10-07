@@ -293,7 +293,11 @@ fără bloc, decide rolul dispozitivului, ca înainte.
 
 Etichetele, unitățile de măsură, descrierile, categoriile și totalurile sunt
 în schimb **copiate** în unitate la creare. Când template-ul le îmbunătățește,
-**Actualizează din template** (admin, pe pagina instalării) le aduce pe
+pagina instalării (și lista de dispozitive, cu insigna *actualizare template*)
+anunță **Template-ul a fost actualizat** — doar atunci. **Revizuiește și
+aplică** (admin) arată fiecare modificare cu valoarea veche și cea nouă și pe
+câte unități se aplică, plus câmpurile calculate apărute în template (bifezi
+dacă le adaugi), și le aplică pe toate unitățile deodată. Le aduce pe
 rândurile pe care unitatea le are deja; selecția, flag-urile, ieșirile,
 pragurile și formulele rămân ale tale. Un dispozitiv de sine stătător se
 actualizează prin API (`POST /api/devices/{id}/refresh-from-template`).

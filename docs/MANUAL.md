@@ -293,8 +293,12 @@ template and every unit shows it at once. Write your own in a template
 without one, the device's role decides as before.
 
 Labels, units, descriptions, categories and totals, on the other hand, are
-**copied** into a unit when it is created. When a template improves them,
-**Update from template** (admin) carries them
+**copied** into a unit when it is created. When a template improves them, the
+installation page (and the devices list, with a *template update* badge)
+says **The template has been updated** — only then. **Review and apply**
+(admin) lists every change with its old and new value and how many units it
+touches, plus the calculated fields the template gained (tick to add them),
+and applies it to all units at once. It carries them
 over to the rows the unit already has; your selection, flags, sinks,
 thresholds and formulas stay as they are. The button is on the installation
 page; a standalone device is refreshed through the API

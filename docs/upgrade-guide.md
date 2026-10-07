@@ -52,8 +52,9 @@ No config migration. What you may notice:
   `mosquitto_pub -r -n -t '<totals topic>/power_active_total'` (and
   `…/energy_remaining`).
 - **Labels and totals from an improved template** reach existing units only
-  through **Update from template**; what a unit *shows* (the `display`
-  block) changes at once.
+  through **Update from template** — since 3.87 the installation page
+  announces it when there is something to apply and shows the changes
+  first; what a unit *shows* (the `display` block) changes at once.
 
 ## 3.84.0 — audit hardening: what you may notice after upgrading
 

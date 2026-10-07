@@ -678,9 +678,11 @@ Existing devices are **not** re-seeded when a template gains derived
 measurements — a device's selection is a copy taken once. Carry them over with
 a migration (the 3.75 Fronius one shipped as a one-off script and is no longer in the tree).
 
-**Update from template** (3.86, admin: a button on the installation page,
-`POST /api/endpoints/{id}/refresh-from-template`; a standalone device through
-the API, `POST /api/devices/{id}/refresh-from-template`) carries a template's
+**Update from template** (3.86; offered by a notice since 3.87 — the page
+asks `GET …/template-changes` and shows *The template has been updated* only
+when there is something to bring in, with a review of every change before it
+is applied; `POST /api/endpoints/{id}/refresh-from-template`, or
+`/api/devices/{id}/…` for a standalone device) carries a template's
 *descriptions* over to the rows a unit already has: `label`, `unit` (kept
 when the operator changed the row's scale or offset),
 `description`, `category` and `aggregates` on registers, `label` and `unit`
