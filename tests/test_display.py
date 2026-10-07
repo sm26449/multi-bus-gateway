@@ -67,3 +67,14 @@ def test_display_alarms_sections_bitmasks_are_validated():
     for frag in ("display.alarms[3]", "display.alarms[4]", "display.sections.nope",
                  "display.sections.cells", "display.bitmasks.balancing_bits"):
         assert frag in errs, frag
+
+
+def test_grid_tiles_and_decimals_are_validated():
+    p = Path("multibus/device_templates/seplos_bms_v3_rtu_tap.json")
+    data = json.loads(p.read_text())
+    secs = data["device_template"]["display"]["sections"]
+    assert secs["cells"]["tiles"] and secs["cells"]["decimals"] == 3
+    secs["cells"] = {"widget": "grid", "tiles": "cell_(", "decimals": 9}
+    errs = " | ".join(validate_template(data))
+    assert "display.sections.cells.tiles" in errs
+    assert "display.sections.cells.decimals" in errs

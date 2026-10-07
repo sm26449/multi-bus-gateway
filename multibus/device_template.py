@@ -596,6 +596,20 @@ def _display_errors(t: Dict[str, Any]) -> List[str]:
                     errs.append(f"display.sections.{c}: not a category of this template")
                 if not isinstance(v, dict) or v.get('widget') not in ('grid', 'active_only'):
                     errs.append(f"display.sections.{c}: widget is grid or active_only")
+                    continue
+                # a grid may say which fields are tiles (a regex on the name;
+                # default: those sharing the section's main unit) and how
+                # finely they read (a pack's cells differ in millivolts)
+                tiles = v.get('tiles')
+                if tiles is not None:
+                    try:
+                        re.compile(str(tiles))
+                    except re.error:
+                        errs.append(f"display.sections.{c}.tiles: not a valid regular expression")
+                dec = v.get('decimals')
+                if dec is not None and (isinstance(dec, bool) or not isinstance(dec, int)
+                                        or not 0 <= dec <= 6):
+                    errs.append(f"display.sections.{c}.decimals: an integer 0–6")
     bm = d.get('bitmasks')
     if bm is not None:
         if not isinstance(bm, dict):

@@ -164,7 +164,11 @@ try {
   await page.evaluate(() => document.querySelectorAll('details.dev-section').forEach(d => d.open = true));
   await page.waitForTimeout(1200);
   const tiles = await page.locator('details[data-widget="grid"] .cell-tile').count();
-  check('D: the cells section is a grid', tiles >= 16, String(tiles));
+  check('D: the cells section is a grid of the cells alone', tiles === 16, String(tiles));
+  const tileVal = await page.locator('details[data-widget="grid"] .cell-tile[title="cell_5"] .table-value').innerText();
+  check('D: tiles read at the declared resolution', /^\d\.\d{3}$/.test(tileVal.trim()), tileVal);
+  check('D: pack summaries stay rows under the grid',
+    await page.locator('details[data-widget="grid"] tr[data-address]', { hasText: 'Average Cell Voltage' }).count() === 1);
   const minTile = await page.locator('details[data-widget="grid"] .cell-tile.ct-min[title="cell_5"]').count();
   check('D: the weak cell is marked', minTile === 1);
   const bal = await page.locator('details.dev-section tr', { hasText: 'Balancing Mask' }).innerText().catch(() => '');

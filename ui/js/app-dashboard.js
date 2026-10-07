@@ -690,7 +690,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 .filter(([id]) => groups.has(id))
                 .map(([id, label]) => {
                     const regs = groups.get(id);
-                    const widget = ((this.dashDisplay || {}).sections || {})[id]?.widget || '';
+                    const secCfg = ((this.dashDisplay || {}).sections || {})[id] || {};
+                    const widget = secCfg.widget || '';
                     const rowHtml = r => `
                         <tr data-address="${r.address}" tabindex="0">
                             <td class="ds-label" title="${this._esc(r.name)}">${this._esc(r.label || r.name)}</td>
@@ -700,12 +701,15 @@ Object.assign(JanitzaMonitor.prototype, {
                     let body;
                     if (widget === 'grid') {
                         // the template asks for a grid (a pack's cells): the
-                        // fields sharing the section's main unit become tiles,
-                        // the rest (a mask, a count) stay as rows below
+                        // fields its `tiles` pattern names — else those sharing
+                        // the section's main unit — become tiles; the rest (a
+                        // summary, a mask, a count) stay as rows below
+                        let pick;
+                        try { pick = secCfg.tiles ? new RegExp(secCfg.tiles) : null; } catch { pick = null; }
                         const units = {};
                         regs.forEach(r => { units[r.unit || ''] = (units[r.unit || ''] || 0) + 1; });
                         const main = Object.entries(units).sort((a, b) => b[1] - a[1])[0]?.[0];
-                        const tiles = regs.filter(r => (r.unit || '') === main && main);
+                        const tiles = regs.filter(r => pick ? pick.test(r.name) : ((r.unit || '') === main && main));
                         const others = regs.filter(r => !tiles.includes(r));
                         body = `<div class="cell-grid">${tiles.map(r => `
                             <div class="cell-tile" data-address="${r.address}" data-grid="${id}" tabindex="0" role="button" title="${this._esc(r.name)}">
@@ -718,7 +722,7 @@ Object.assign(JanitzaMonitor.prototype, {
                             ${widget === 'active_only' ? `<tr class="ds-none" hidden><td colspan="3">${this._esc(this.t('dash.noActive', 'Nothing active'))}</td></tr>` : ''}</tbody></table>`;
                     }
                     return `
-                    <details class="dev-section" data-sec="${id}" data-widget="${widget}" ${this._secOpen(dev, id) ? 'open' : ''}>
+                    <details class="dev-section" data-sec="${id}" data-widget="${widget}" data-decimals="${Number.isInteger(secCfg.decimals) ? secCfg.decimals : ''}" ${this._secOpen(dev, id) ? 'open' : ''}>
                         <summary><i aria-hidden="true" class="bi bi-chevron-right"></i>
                             ${this._esc(label)} <span class="dev-sec-count">${regs.length}</span></summary>
                         ${body}
@@ -733,6 +737,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     unit: el.querySelector('.ds-unit'),
                     el, grid: el.classList.contains('cell-tile'),
                     activeOnly: sec?.dataset.widget === 'active_only', sec,
+                    decimals: sec?.dataset.decimals === '' || !sec ? null : Number(sec.dataset.decimals),
                 };
             });
             this._wireDeviceSections(box, dev);
@@ -750,6 +755,9 @@ Object.assign(JanitzaMonitor.prototype, {
             let disp = this._displayValue(numValue, r);
             if (bitmasks[r.name] && typeof numValue === 'number') {
                 disp = { text: this._bitList(numValue, bitmasks[r.name]), unit: '' };
+            } else if (cell.grid && cell.decimals !== null && typeof numValue === 'number') {
+                // the grid reads at the resolution its template asked for
+                disp = { text: this._fmtNum(numValue, cell.decimals), unit: r.unit || '' };
             }
             if (cell.val.textContent !== disp.text) cell.val.textContent = disp.text;
             const cls = 'table-value ' + (this.getValueColorClass(numValue, r) || 'value-normal');
