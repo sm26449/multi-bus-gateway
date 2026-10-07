@@ -26,6 +26,8 @@ from typing import Dict, Optional
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+from ..threshold_engine import gate_open
+
 
 def build(ctx) -> APIRouter:
     r = APIRouter(tags=["status"])
@@ -138,7 +140,7 @@ def build(ctx) -> APIRouter:
     # One call serves the whole fleet grid: at 100 devices the UI must not
     # fan out 100 /api/values fetches to paint an overview.
 
-    def _threshold_band(value, t) -> str:
+    def _threshold_band(value, t, value_of=None) -> str:
         """Band for EXPLICIT thresholds only. The UI's implicit grid
         templates are display sugar; a fleet alarm must come from a limit
         someone actually configured."""
@@ -147,6 +149,8 @@ def build(ctx) -> APIRouter:
         try:
             v = float(value)
         except (TypeError, ValueError):
+            return ""
+        if not gate_open(t, value_of or (lambda _n: None)):
             return ""
         def _f(key):
             x = t.get(key)
@@ -188,13 +192,14 @@ def build(ctx) -> APIRouter:
             from ..display import active_alarms, alarm_fields
             _disp = _display_of(dev_cfg)
             _declared_alarms = alarm_fields(_disp)
+            _vals = {e.get("name"): e.get("value") for e in list(store.values())}
             for x in regs:
                 item = store.get(x.address)
                 # a field the template declares as an alarm is counted below,
                 # once — not again by a threshold on it
                 if item is None or getattr(x, "name", None) in _declared_alarms:
                     continue
-                band = _threshold_band(item.get("value"), x.thresholds)
+                band = _threshold_band(item.get("value"), x.thresholds, _vals.get)
                 if band == "danger":
                     danger += 1
                 elif band == "warning":

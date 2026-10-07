@@ -141,6 +141,13 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!thresholds) {
             return 'value-normal';
         }
+        // `onlyWhen`: judged only while another field is above a value
+        const gate = thresholds.onlyWhen;
+        if (gate && gate.field) {
+            const other = Object.values(this._dashStore() || {}).find(v => v && v.name === gate.field);
+            const ov = other && typeof other.value === 'number' ? other.value : null;
+            if (ov === null || (gate.above != null && !(ov > gate.above))) return 'value-normal';
+        }
 
         // Check danger thresholds first (they take priority)
         if (thresholds.dangerLow !== null && thresholds.dangerLow !== undefined && value < thresholds.dangerLow) {
@@ -223,6 +230,19 @@ Object.assign(JanitzaMonitor.prototype, {
         document.getElementById(`${prefix}ThreshWarningLow`).value = thresholds.warningLow ?? '';
         document.getElementById(`${prefix}ThreshWarningHigh`).value = thresholds.warningHigh ?? '';
         document.getElementById(`${prefix}ThreshDangerHigh`).value = thresholds.dangerHigh ?? '';
+        const gate = (existingThresholds || {}).onlyWhen || {};
+        const gf = document.getElementById(`${prefix}ThreshGateField`);
+        const ga = document.getElementById(`${prefix}ThreshGateAbove`);
+        if (gf) gf.value = gate.field || '';
+        if (ga) ga.value = gate.above ?? '';
+        // offer the device's own numeric fields as the condition
+        const dl = document.getElementById(`${prefix}ThreshGateFields`);
+        if (dl) {
+            const names = [...new Set(Object.values(this._dashStore() || {})
+                .filter(v => v && v.name && v.name !== name && typeof v.value === 'number')
+                .map(v => v.name))].sort();
+            dl.innerHTML = names.map(n => `<option value="${this._esc(n)}"></option>`).join('');
+        }
     },
 
     /**
@@ -243,7 +263,13 @@ Object.assign(JanitzaMonitor.prototype, {
             dangerLow: parseVal(`${prefix}ThreshDangerLow`),
             warningLow: parseVal(`${prefix}ThreshWarningLow`),
             warningHigh: parseVal(`${prefix}ThreshWarningHigh`),
-            dangerHigh: parseVal(`${prefix}ThreshDangerHigh`)
+            dangerHigh: parseVal(`${prefix}ThreshDangerHigh`),
+            onlyWhen: (() => {
+                const f = (document.getElementById(`${prefix}ThreshGateField`)?.value || '').trim();
+                if (!f) return null;
+                const a = document.getElementById(`${prefix}ThreshGateAbove`)?.value;
+                return { field: f, above: a === '' || a == null ? null : parseFloat(a) };
+            })()
         };
     },
 

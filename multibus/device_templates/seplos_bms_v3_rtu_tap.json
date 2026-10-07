@@ -5,7 +5,7 @@
     "name": "Seplos BMS V3 pack (RTU tap, listen-only)",
     "vendor": "Seplos",
     "model": "BMS V3",
-    "version": "1.8.1",
+    "version": "1.9.0",
     "author": "Stefan Maldaianu",
     "description": "One Seplos V3 battery pack observed on the inter-pack RS485 bus via protocol rtu_tap (the master pack is the bus master — never poll this bus actively). Telemetry blocks PIA (0x1000, FC04) and PIB (0x1100, FC04); names mirror seplos_bms_mqtt 1:1 so the two read paths compare side by side. Alarm/status coils (PIC 0x1200, FC01) decode in BIT-address space: a coil register reads one bit, a uint16 coil packs 16 bits LSB-first — the same math the collector uses for its masks. Derived counts (alarm_count, balancing_count/cells) are Phase-2 calc registers. Set unit_id to the pack address (1..16). Publishing defaults are ON for every field the retired seplos-modbus-mqtt collector published (topics byte-identical under mqtt.topic_prefix seplos/battery_${unit_id}); the internal per-bit alarms stay MQTT-off and feed the counts.",
     "protocol": {
@@ -78,7 +78,7 @@
       ],
       "alarms": [
         {
-          "field": "alarm_count",
+          "field": "warning_count",
           "severity": "warning"
         },
         {
@@ -2211,6 +2211,13 @@
         "aggregates": {
           "pack_total_alarms": "sum"
         },
+        "measurement": "seplos_battery"
+      },
+      {
+        "name": "warning_count",
+        "label": "Warning Count",
+        "decimals": 0,
+        "expr": "alarm_cell_high_v + alarm_cell_low_v + alarm_pack_high_v + alarm_pack_low_v + alarm_charge_high_temp + alarm_charge_low_temp + alarm_discharge_high_temp + alarm_discharge_low_temp + alarm_ambient_high_temp + alarm_mosfet_high_temp + alarm_charge_current + alarm_discharge_current + alarm_soc_low + alarm_cell_diff",
         "measurement": "seplos_battery"
       },
       {

@@ -49,6 +49,23 @@ def _num(x: Any) -> Optional[float]:
         return None
 
 
+def gate_open(thresholds: Optional[Dict], value_of) -> bool:
+    """Whether a threshold applies right now. ``onlyWhen: {field, above}``
+    limits it to when another field of the same device is above a value — a
+    current's THD means nothing at near-zero load, so it is judged only while
+    that phase carries a real current. No condition → always open; the
+    condition's field missing or non-numeric → closed (nothing to judge by).
+    ``value_of(name)`` returns that field's current value."""
+    cond = (thresholds or {}).get("onlyWhen")
+    if not isinstance(cond, dict) or not cond.get("field"):
+        return True
+    above = _num(cond.get("above"))
+    v = _num(value_of(cond["field"]))
+    if v is None:
+        return False
+    return above is None or v > above
+
+
 class ThresholdEngine:
     """Stateful band tracker across many register keys.
 
@@ -108,7 +125,8 @@ class ThresholdEngine:
 
     # ── evaluation ───────────────────────────────────────────────────────────
     def evaluate(self, key: str, value: Any, thresholds: Optional[Dict],
-                 source: str = "", label: str = "", unit: str = "") -> Optional[Dict]:
+                 source: str = "", label: str = "", unit: str = "",
+                 gated: bool = False) -> Optional[Dict]:
         """Feed one register reading. Returns an alert event dict
         ``{severity, key, source, message, band}`` when the band changes, else
         None. A disabled/empty threshold set is ignored (and clears any tracked
@@ -123,6 +141,14 @@ class ThresholdEngine:
         if dl is None and wl is None and wh is None and dh is None:
             self._band.pop(key, None)
             return None
+        if gated:
+            # its `onlyWhen` condition does not hold: the value is not judged.
+            # An alarm it was in clears with an event, never silently.
+            cur = self._band.get(key, "normal")
+            self._band[key] = "normal"
+            if cur == "normal":
+                return None
+            return self._event(key, "normal", v, source, label, unit, dl, wl, wh, dh)
 
         first = key not in self._band
         cur = self._band.get(key, "normal")

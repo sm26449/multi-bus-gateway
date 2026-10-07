@@ -53,6 +53,9 @@ class ThresholdConfig(BaseModel):
     warningLow: Optional[float] = None
     warningHigh: Optional[float] = None
     dangerHigh: Optional[float] = None
+    # judge only while another field of the device is above a value:
+    # {"field": "current_l1", "above": 2}
+    onlyWhen: Optional[Dict[str, Any]] = None
 
 
 class SelectedRegisterUpdate(BaseModel):

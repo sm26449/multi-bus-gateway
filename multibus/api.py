@@ -899,6 +899,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     # this never touches the poll hot path.
                     if alert_mgr.sig_threshold:
                         store = registry.store_for(did) or {}
+                        from .threshold_engine import gate_open
+                        _by_name = {e.get('name'): e.get('value') for e in list(store.values())}
                         for reg in getattr(client, 'registers', None) or []:
                             th = getattr(reg, 'thresholds', None)
                             entry = store.get(reg.address) if th else None
@@ -916,7 +918,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                             ev = threshold_engine.evaluate(
                                 key, entry.get('value'), th, source=name,
                                 label=(reg.label or reg.name),
-                                unit=getattr(reg, 'unit', ''))
+                                unit=getattr(reg, 'unit', ''),
+                                gated=not gate_open(th, _by_name.get))
                             if ev:
                                 # band CHANGES are edge-triggered: the clear
                                 # must not be swallowed by the per-key rate
@@ -4307,7 +4310,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     @app.post("/api/endpoints/{endpoint_id}/refresh-from-template")
     @_serialized_mutation
-    def refresh_endpoint_from_template(endpoint_id: str):
+    def refresh_endpoint_from_template(endpoint_id: str, add_new: bool = False):
         """Bring every unit's register metadata (labels, units, categories,
         bank totals) up to date with its template — the selection, dashboard
         flags, sinks and calculated expressions stay the operator's. The units
@@ -4318,7 +4321,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         made = config.endpoint_devices(endpoint_id)
         _stop_endpoint_devices(endpoint_id)
         try:
-            results = [refresh_device(config, template_registry, d) for d in made]
+            results = [refresh_device(config, template_registry, d, add_new=add_new) for d in made]
         finally:
             _start_endpoint_devices(config.endpoint_devices(endpoint_id))
             # the stop withdrew the units' HA entities — publish them again
@@ -4330,7 +4333,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     @app.post("/api/devices/{device_id}/refresh-from-template")
     @_serialized_mutation
-    def refresh_device_from_template(device_id: str):
+    def refresh_device_from_template(device_id: str, add_new: bool = False):
         """The same for one device (an installation's unit refreshes through
         its installation, so every unit stays alike)."""
         from .template_refresh import refresh_device
@@ -4344,7 +4347,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         if dev_cfg.primary:
             raise HTTPException(status_code=422, detail={"errors": [
                 "the primary device's map is edited in Measurements"]})
-        res = refresh_device(config, template_registry, dev_cfg)
+        res = refresh_device(config, template_registry, dev_cfg, add_new=add_new)
         if client:
             client.disconnect()
         new_client = _start_device_client(dev_cfg)

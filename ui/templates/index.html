@@ -1278,6 +1278,18 @@
                                 <input type="number" id="editThreshDangerHigh" class="input input-sm" step="any">
                             </div>
                         </div>
+                        <div class="form-row" style="margin-top:8px;align-items:flex-end;">
+                            <div class="form-group">
+                                <label class="form-label" for="editThreshGateField" data-i18n="thr.onlyWhen">Only judge while</label>
+                                <input type="text" id="editThreshGateField" class="input input-sm" list="editThreshGateFields" placeholder="current_l1" autocomplete="off">
+                                <datalist id="editThreshGateFields"></datalist>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="editThreshGateAbove" data-i18n="thr.isAbove">is above</label>
+                                <input type="number" id="editThreshGateAbove" class="input input-sm" step="any" placeholder="2">
+                            </div>
+                        </div>
+                        <div class="field-hint" data-i18n="thr.onlyWhenHint">Optional. A current's THD means nothing at near-zero load: judge it only while that phase carries a real current. Leave empty to always judge.</div>
                     </div>
                 </div>
             </div>
@@ -2006,6 +2018,18 @@
                                 <input type="number" id="addThreshDangerHigh" class="input input-sm" step="any" aria-label="Danger High threshold">
                             </div>
                         </div>
+                        <div class="form-row" style="margin-top:8px;align-items:flex-end;">
+                            <div class="form-group">
+                                <label class="form-label" for="addThreshGateField" data-i18n="thr.onlyWhen">Only judge while</label>
+                                <input type="text" id="addThreshGateField" class="input input-sm" list="addThreshGateFields" placeholder="current_l1" autocomplete="off">
+                                <datalist id="addThreshGateFields"></datalist>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="addThreshGateAbove" data-i18n="thr.isAbove">is above</label>
+                                <input type="number" id="addThreshGateAbove" class="input input-sm" step="any" placeholder="2">
+                            </div>
+                        </div>
+                        <div class="field-hint" data-i18n="thr.onlyWhenHint">Optional. A current's THD means nothing at near-zero load: judge it only while that phase carries a real current. Leave empty to always judge.</div>
                     </div>
                 </div>
             </div>

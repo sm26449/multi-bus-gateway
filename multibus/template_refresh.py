@@ -82,17 +82,30 @@ def _refresh_rows(rows: List[Dict[str, Any]], tpl_rows: Dict[str, Any],
     return changed
 
 
-def refresh_file(path: Path, tpl, lock=None) -> Dict[str, int]:
+def refresh_file(path: Path, tpl, lock=None, add_new: bool = False) -> Dict[str, int]:
     """Refresh one selected-registers file in place. Returns how many register
-    and calculated rows changed; a missing file changes nothing."""
+    and calculated rows changed (and, with ``add_new``, how many of the
+    template's calculated fields the unit did not have were added); a missing
+    file changes nothing."""
     if not path.exists():
-        return {"registers": 0, "calculated": 0}
+        return {"registers": 0, "calculated": 0, "added": 0}
     data = json.loads(path.read_text(encoding="utf-8"))
     regs = data.get("registers") or []
     calcs = data.get("calculated") or []
     n_reg = _refresh_rows(regs, {r.name: r for r in (tpl.registers or [])}, REGISTER_KEYS)
     n_calc = _refresh_rows(calcs, {c.name: c for c in (tpl.calculated or [])}, CALC_KEYS)
-    if n_reg or n_calc:
+    n_add = 0
+    if add_new:
+        # a field the template gained since this unit was seeded (asked for:
+        # a calculated field the operator deleted would come back too)
+        have = {r.get("name") for r in regs} | {c.get("name") for c in calcs}
+        for c in (tpl.calculated or []):
+            if c.name not in have:
+                calcs.append(c.to_dict())
+                n_add += 1
+        if n_add:
+            data["calculated"] = calcs
+    if n_reg or n_calc or n_add:
         tmp = path.with_suffix(path.suffix + ".tmp")
 
         def _write():
@@ -106,13 +119,15 @@ def refresh_file(path: Path, tpl, lock=None) -> Dict[str, int]:
                 _write()
         else:
             _write()
-    return {"registers": n_reg, "calculated": n_calc}
+    return {"registers": n_reg, "calculated": n_calc, "added": n_add}
 
 
-def refresh_device(config, template_registry, dev_cfg) -> Dict[str, Any]:
+def refresh_device(config, template_registry, dev_cfg, add_new: bool = False) -> Dict[str, Any]:
     """Refresh every register file of one device: its own, and each source's
-    against that source's template."""
-    out = {"device": dev_cfg.id, "registers": 0, "calculated": 0, "files": 0}
+    against that source's template. ``add_new`` also adds the template's
+    calculated fields the unit lacks — to the unit's own file, where derived
+    measurements live."""
+    out = {"device": dev_cfg.id, "registers": 0, "calculated": 0, "added": 0, "files": 0}
     jobs = []
     dev_tid = getattr(dev_cfg, "template", "") or ""
     for src in getattr(dev_cfg, "sources", None) or []:
@@ -128,8 +143,10 @@ def refresh_device(config, template_registry, dev_cfg) -> Dict[str, Any]:
         tpl = template_registry.get(tid) if tid else None
         if tpl is None:
             continue
-        res = refresh_file(path, tpl, getattr(config, "_file_lock", None))
+        res = refresh_file(path, tpl, getattr(config, "_file_lock", None),
+                           add_new=add_new and path == root)
         out["registers"] += res["registers"]
         out["calculated"] += res["calculated"]
+        out["added"] += res["added"]
         out["files"] += 1
     return out

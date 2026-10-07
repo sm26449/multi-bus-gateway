@@ -114,3 +114,29 @@ def test_update_from_template_keeps_the_unit_of_a_rescaled_row():
     _refresh_rows(theirs, tpl, ("label", "unit"))
     assert (mine[0]["label"], mine[0]["unit"]) == ("Power", "kW")
     assert (theirs[0]["label"], theirs[0]["unit"]) == ("Power", "W")
+
+
+def test_update_from_template_adds_new_calculated_fields_only_when_asked(tmp_path):
+    from multibus.template_refresh import refresh_file
+    tpl = NS(registers=[], calculated=[
+        NS(name="alarm_count", label="Alarm Count", unit="", aggregates=None,
+           to_dict=lambda: {"name": "alarm_count", "expr": "a"}),
+        NS(name="warning_count", label="Warning Count", unit="", aggregates=None,
+           to_dict=lambda: {"name": "warning_count", "expr": "b"})])
+    f = tmp_path / "selected_registers.json"
+    f.write_text(json.dumps({"registers": [], "calculated": [{"name": "alarm_count", "expr": "mine"}]}))
+    assert refresh_file(f, tpl)["added"] == 0
+    assert refresh_file(f, tpl, add_new=True)["added"] == 1
+    calcs = json.loads(f.read_text())["calculated"]
+    assert [c["name"] for c in calcs] == ["alarm_count", "warning_count"]
+    assert calcs[0]["expr"] == "mine"                       # the operator's formula kept
+    assert refresh_file(f, tpl, add_new=True)["added"] == 0  # idempotent
+
+
+def test_seplos_warnings_exclude_protections():
+    t = json.loads(Path("multibus/device_templates/seplos_bms_v3_rtu_tap.json").read_text())["device_template"]
+    c = {x["name"]: set(x["expr"].split(" + ")) for x in t["calculated"]
+         if x["name"] in ("alarm_count", "protection_count", "warning_count")}
+    assert not (c["warning_count"] & c["protection_count"])
+    assert c["warning_count"] <= c["alarm_count"]
+    assert {"field": "warning_count", "severity": "warning"} in t["display"]["alarms"]

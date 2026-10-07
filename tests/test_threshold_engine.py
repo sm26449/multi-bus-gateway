@@ -135,3 +135,27 @@ def test_forget_drops_key():
     e.evaluate("a", 260, T)
     e.forget("a")
     assert "a" not in e._band
+
+
+# ── onlyWhen: a threshold judged only while another field is above a value ──
+from multibus.threshold_engine import ThresholdEngine as _TE, gate_open  # noqa: E402
+
+_THD = {"enabled": True, "warningHigh": 5, "dangerHigh": 8,
+        "onlyWhen": {"field": "current_l1", "above": 2}}
+
+
+def test_gate_open_follows_the_named_field():
+    assert gate_open(_THD, {"current_l1": 10.0}.get)
+    assert not gate_open(_THD, {"current_l1": 0.4}.get)
+    assert not gate_open(_THD, {}.get)                 # nothing to judge by
+    assert gate_open({"enabled": True, "dangerHigh": 8}, {}.get)   # no condition
+
+
+def test_a_gated_threshold_never_alarms_and_clears_an_active_alarm_loudly():
+    eng = _TE(alert_on_start=True)
+    assert eng.evaluate("k", 80.0, _THD, gated=True) is None      # near-zero load
+    ev = eng.evaluate("k", 9.0, _THD)                               # real load, real THD
+    assert ev and ev["band"] == "danger_high"
+    ev = eng.evaluate("k", 80.0, _THD, gated=True)                  # load gone
+    assert ev and ev["band"] == "normal"
+    assert eng.evaluate("k", 80.0, _THD, gated=True) is None        # and stays quiet

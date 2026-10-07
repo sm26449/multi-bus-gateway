@@ -43,13 +43,13 @@
       {
         "address": 2,
         "name": "power_load",
-        "label": "House load",
+        "label": "Load seen by Fronius (− consuming)",
         "unit": "W",
         "data_type": "float",
         "access": "RD",
         "poll_group": "realtime",
         "json_path": "Body.Data.Site.P_Load",
-        "description": "Not derivable from the inverters: nothing in their register maps knows what the house drew.",
+        "description": "The datalogger's own figure, negative while the site consumes: -(grid + PV) as its meter and inverters see them. A battery or another inverter behind the meter that Fronius does not know about is not in it, so on such a site it is not the house's real consumption.",
         "defaults": {
           "mqtt": {
             "enabled": true
@@ -90,7 +90,7 @@
         "access": "RD",
         "poll_group": "realtime",
         "json_path": "Body.Data.Site.rel_Autonomy",
-        "description": "Computed on the datalogger from generation and load together; we cannot derive it from either alone.",
+        "description": "Computed on the datalogger from generation and load together; we cannot derive it from either alone. Same limit as the load: only what Fronius sees.",
         "defaults": {
           "mqtt": {
             "enabled": true

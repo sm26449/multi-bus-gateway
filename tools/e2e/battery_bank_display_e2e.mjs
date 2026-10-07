@@ -76,6 +76,16 @@ check('fleet row heroes from the template', (frow.hero || []).map(h => h.name).j
   (frow.hero || []).map(h => h.name).join(','));
 
 // ---- 2. Update from template ------------------------------------------------
+{
+  // a re-created installation finds its old register files (kept on delete):
+  // the template's newer calculated fields are added when asked
+  const add = await api(`/api/endpoints/${ID}/refresh-from-template?add_new=true`, { method: 'POST' });
+  const again = await api(`/api/endpoints/${ID}/refresh-from-template?add_new=true`, { method: 'POST' });
+  check('adding the template\'s new fields is idempotent', add.status === 200
+    && (again.body.units || []).every(u => u.added === 0),
+    JSON.stringify([(add.body.units || []).map(u => u.added), (again.body.units || []).map(u => u.added)]));
+  await sleep(4000);
+}
 if (CTR) {
   const f = `/app/config/devices/${u0.device_id}/selected_registers.json`;
   execFileSync('docker', ['exec', CTR, 'sed', '-i', 's/"Max discharge current (BMS limit)"/"MaxDisCurt"/', f]);
@@ -143,8 +153,15 @@ try {
   // ---- 4. C: alarms the template declares; D: grid, active-only, bitmasks
   await page.setViewportSize({ width: 1440, height: 950 });
   const u3 = (g.units || []).find(u => u.unit_id === 3) || {};
-  const pe = (await api(`/api/endpoints/${ID}`)).body;
-  const pu3 = (pe.units || []).find(u => u.unit_id === 3) || {};
+  // the alarm comes from a coil block the bus carries every few seconds:
+  // wait for it rather than sample once
+  let pe = {}, pu3 = {};
+  for (let i = 0; i < 20; i++) {
+    pe = (await api(`/api/endpoints/${ID}`)).body;
+    pu3 = (pe.units || []).find(u => u.unit_id === 3) || {};
+    if ((pu3.alarms || {}).warning) break;
+    await sleep(1000);
+  }
   check('C: the unit with an active alarm is counted', pe.units_alarming === 1 && (pu3.alarms || {}).warning === 1,
     JSON.stringify({ n: pe.units_alarming, a: pu3.alarms }));
   const fl = ((await api('/api/fleet')).body.devices || []).find(d => d.id === u3.device_id) || {};
@@ -157,7 +174,7 @@ try {
   check('C: the unit row carries the alarm pill', /bi-exclamation-triangle/.test(r3));
   await page.evaluate(id => window.app.openDeviceDetail(id), u3.device_id);
   await page.waitForTimeout(2000);
-  check('C: the unit page lists the active alarm', /Alarm Count: 1/i.test(await page.innerText('#mainContent')));
+  check('C: the unit page lists the active alarm', /Warning Count: 1/i.test(await page.innerText('#mainContent')));
   await page.click('[data-page="dashboard"]');
   await page.evaluate(id => window.app.openFleetDevice(id), u3.device_id);
   await page.waitForTimeout(2500);
@@ -177,10 +194,10 @@ try {
   check('D: the weak cell is marked', minTile === 1);
   const bal = await page.locator('details.dev-section tr', { hasText: 'Balancing Mask' }).innerText().catch(() => '');
   check('D: a mask reads as what is set', /Cell 3/.test(bal), bal.replace(/\s+/g, ' '));
-  // the active bit (cell high voltage) and the derived count — nothing else
+  // the active bit (cell high voltage) and the two derived counts — nothing else
   const shown = await page.locator('details[data-widget="active_only"] tr[data-address]:visible').allInnerTexts();
   const noneShown = await page.locator('details[data-widget="active_only"] .ds-none:visible').count();
-  check('D: alarms show only what is active', shown.length === 2 && shown.some(x => /Cell High V/.test(x))
+  check('D: alarms show only what is active', shown.length === 3 && shown.some(x => /Cell High V/.test(x))
     && noneShown === 0, shown.join(' / ').replace(/\s+/g, ' '));
   const u2 = (g.units || []).find(u => u.unit_id === 2) || {};
   await page.evaluate(id => window.app.openFleetDevice(id), u2.device_id);

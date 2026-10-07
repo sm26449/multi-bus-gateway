@@ -895,7 +895,7 @@ def test_template_refresh_updates_metadata_and_keeps_the_operators(tmp_path):
                            aggregates={"pack_max_discharge_current": "sum"})],
              calculated=[NS(name="power", label="Power (− charging)", unit="W",
                             aggregates={"pack_total_power": "sum"})])
-    assert refresh_file(f, tpl) == {"registers": 1, "calculated": 1}
+    assert refresh_file(f, tpl) == {"registers": 1, "calculated": 1, "added": 0}
     d = _json.loads(f.read_text())
     r0, r1, c0 = d["registers"][0], d["registers"][1], d["calculated"][0]
     assert r0["label"] == "Max discharge current (BMS limit)" and r0["category"] == "battery"
@@ -905,7 +905,7 @@ def test_template_refresh_updates_metadata_and_keeps_the_operators(tmp_path):
     assert c0["expr"] == "my * own" and c0["label"] == "Power (− charging)"
     assert c0["aggregates"] == {"pack_total_power": "sum"}   # the duplicate total is gone
     assert d["poll_groups"] == {"tap": {"interval": 1}}      # other keys survive
-    assert refresh_file(f, tpl) == {"registers": 0, "calculated": 0}   # idempotent
+    assert refresh_file(f, tpl) == {"registers": 0, "calculated": 0, "added": 0}   # idempotent
 
 
 @needs_tc

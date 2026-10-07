@@ -106,15 +106,11 @@ class JanitzaMonitor {
             thd: {
                 dangerLow: null, warningLow: null, warningHigh: 5, dangerHigh: 8,
                 type: 'value', unit: '%'
-            },
-            current: {
-                dangerLow: null, warningLow: null, warningHigh: 90, dangerHigh: 100,
-                type: 'percent', unit: 'A'
-            },
-            power: {
-                dangerLow: null, warningLow: null, warningHigh: 90, dangerHigh: 100,
-                type: 'percent', unit: 'kW'
             }
+            // no current/power template: a limit for those is a share of a
+            // rating (the breaker, the inverter) this app cannot know — the
+            // old 90/100 "percent" defaults were applied as raw amps/VA and
+            // painted any load above 100 VA danger-red
         };
 
         this.init();
