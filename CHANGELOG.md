@@ -1,5 +1,66 @@
 # Changelog
 
+## 3.87.0
+
+**Upgrade notes**: the dashboard no longer colours a current or a power
+by itself. Its implicit 90/100 "percent" defaults were compared with raw
+amps and VA (any load above 100 VA showed red), and the threshold editor
+filled them in — check thresholds saved that way (warning 90 / danger 100
+on a power or a current) and set real ones or switch them off. For a bank
+on `seplos_bms_v3_rtu_tap`, the installation page announces the template
+update — review and apply it with the new calculated fields ticked (the new
+`warning_count`); until then the bank's warnings are not counted.
+
+### 2026-10-07 — a template update is announced, reviewed, then applied
+
+The *Update from template* button was always there and said nothing about
+what it would do — an operator could not tell whether to press it. Now:
+
+- The installation page shows **The template has been updated** only when
+  the template has something the units lack (the devices list carries a
+  *template update* badge); otherwise there is nothing to press.
+- **Review and apply** opens a review computed with the very rule the apply
+  uses: every change with its old and new value and on how many units, the
+  calculated fields the template gained (tick to add them), what stays as
+  you set it — then applies it to every unit at once.
+- The **Templates** page says where an update from each map is waiting
+  (*Update waiting in: Battery bank*, with the review a click away), and
+  counts a map as in use by the units that reach it through a source too.
+- A unit whose template is **missing** (deleted, renamed, failed to load)
+  says so — *Template not available* on its page, a *template missing*
+  badge in the list — instead of quietly never being updatable; it keeps
+  reading with its own copy.
+- `GET /api/endpoints/{id}/template-changes` (and `/api/devices/{id}/…`)
+  return that review without writing anything; `/api/endpoints` carries a
+  short `template_update` summary.
+- A unit created from a template now starts identical to it (its rows carry
+  the template's descriptions and sections), so a new installation is never
+  "out of date"; filling a section or a description an older unit never had
+  is done with the next update but announces nothing (the page reads them
+  from the template anyway); the log says how many rows changed and fields
+  were added.
+
+### 2026-10-07 — thresholds that know when they apply
+
+- **`onlyWhen`** on a register's thresholds: judge them only while another
+  field of the same device is above a value — a current's THD at
+  near-zero load is noise, so `{field: current_l1, above: 2}`. Set in the
+  threshold editor (*Only judge while … is above …*); applied alike on the
+  dashboard, the fleet's alarm count and value alerts, and an alarm it was
+  in clears with an event.
+- **No implicit current/power limits**: a limit for those is a share of a
+  rating (a breaker, an inverter) the gateway cannot know. Voltage,
+  frequency, power factor and THD keep their grid defaults.
+- **Update from template can add what the template gained** (ticked in
+  the review, or `?add_new=true`): the template's calculated fields a unit
+  lacks; existing rows and formulas stay as they are.
+- `seplos_bms_v3_rtu_tap` 1.9.0: `warning_count` (the alarm flags without
+  the protections) is the declared warning, so one protection event is one
+  danger, not a warning and a danger.
+- `fronius_solar_api_site`: the load reads *Load seen by Fronius
+  (− consuming)* — the datalogger's figure is negative while consuming and
+  leaves out a battery or an inverter behind the meter it does not know.
+
 ## 3.86.1
 
 Fixes from the post-release audit of 3.86.0; nothing to do when upgrading.
