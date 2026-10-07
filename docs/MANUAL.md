@@ -234,7 +234,13 @@ Devices → *Discover devices*:
      masters would evict each other forever), and Test-connection refuses
      an endpoint a running device is polling. **Direct serial** — serial
      port (e.g. `/dev/ttyUSB0`), baud, parity, stop bits, with the adapter
-     mapped into the container.
+     mapped into the container. **Listen only (tap)** — for a bus that
+     already has a master (a BMS master pack, a vendor datalogger): the
+     gateway never transmits and decodes the answers the observed unit
+     gives, at the master's rhythm. No *Test connection* here; after saving,
+     *Test* on the device says what the tap has heard. A port is either
+     polled or tapped, and taps sharing a port share its baud/parity
+     ([rtu-serial.md §7](rtu-serial.md)).
    - **HTTP/JSON**: a URL returning JSON; each register extracts its value
      with a `json_path` (e.g. `Body.Data.PowerReal_P_Sum`). URLs must point
      at a private LAN host unless `security.allow_nonlan_http_devices` is
@@ -398,8 +404,9 @@ field: [config-reference.md](config-reference.md).
 
 ### 5b.4 Safety notes
 
-- **Routing identity is fixed after creation** (topic prefix, bucket, tag)
-  — changing it would orphan history and HA entities; a unit's hand-written
+- **Routing identity is fixed after creation** (topic prefix, bucket, device
+  tag) — changing it would orphan history and HA entities (the static tags,
+  totals and extra outputs of §5b.5 stay editable); a unit's hand-written
   id survives regrouping for the same reason. **Write lock, HTTP output and
   REST push are declared once** and apply to every unit; writes go to the
   first source that can perform them — a Solar API source is read-only.
@@ -424,7 +431,36 @@ field: [config-reference.md](config-reference.md).
   measurement (`scripts/calibrate_endpoint.py`); a missed turn is a
   `bus_busy` event, not a device failure.
 
-### 5b.5 Troubleshooting
+### 5b.5 Your own totals, tags and InfluxDB outputs
+
+How the totals are made and where they are written is yours to decide, on
+the installation page — nothing about it is fixed in code:
+
+- **How the totals are made** lists every total with its operation and the
+  unit fields it is built from, marked *template* or *yours*. Edit one to
+  change what feeds it (a battery bank's max temperature over the cell
+  sensors *and* the ambient one), or **Add total** for a new one (`sum`,
+  `avg`, `min`, `max`, `spread` over any fields the units carry). A total of
+  yours replaces the template's total of the same name; **Back to the
+  template** drops your version.
+- **InfluxDB — tags on every unit's points**: static tags such as
+  `battery_id = ${unit_id}`, substituted per unit and written on raw and
+  calculated points. A tag is part of a series' identity — changing it
+  starts a new series.
+- **The totals are also written to**: extra InfluxDB outputs — a
+  measurement, a bucket (empty = the installation's), when to write
+  (on change or every cycle), static tags, and a field map
+  *name ← total × scale*. This is how a dashboard or a report that reads a
+  measurement of its own keeps working when the device behind it changes
+  (e.g. `total_power ← pack_total_power`, `energy_remaining ←
+  pack_energy_remaining × 0.001` for kWh).
+
+Saving an output never restarts a unit; changing tags does. A malformed
+entry is refused with the field named. The same three live in
+`config.yaml` (`totals:`, `influxdb.tags`, `influxdb.outputs` —
+[config-reference.md](config-reference.md)).
+
+### 5b.6 Troubleshooting
 
 | Symptom | Check |
 |---------|-------|

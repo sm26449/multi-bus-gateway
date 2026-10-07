@@ -228,7 +228,13 @@ Devices → *Discover devices*:
      Test-connection refuză un endpoint pe care un dispozitiv pornit face
      deja poll. **Serial direct** — port serial (de ex.
      `/dev/ttyUSB0`), baud, paritate, biți de stop, cu adaptorul mapat în
-     container.
+     container. **Doar ascultare (tap)** — pentru un bus care are deja un
+     master (pachetul master al unui BMS, un datalogger de vendor):
+     gateway-ul nu transmite niciodată și decodează răspunsurile unității
+     observate, în ritmul masterului. Aici nu există *Test connection*; după
+     salvare, *Test* pe pagina dispozitivului spune ce a auzit tap-ul. Un
+     port e fie interogat, fie ascultat, iar tap-urile care împart un port
+     au același baud/aceeași paritate ([rtu-serial.md §7](rtu-serial.md)).
    - **HTTP/JSON**: un URL care întoarce JSON; fiecare registru își extrage
      valoarea cu un `json_path` (de ex. `Body.Data.PowerReal_P_Sum`).
      URL-urile trebuie să indice un host din LAN-ul privat, cu excepția

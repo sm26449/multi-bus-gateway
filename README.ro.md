@@ -94,17 +94,23 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
 **Southbound (achiziție)**
 - **Modbus TCP** și **Modbus RTU master** (serial RS-485), cu citiri batch,
   retry-uri și taxonomie de erori (`timeout` / `exception_N` / `connection`).
+- **Modbus RTU tap (doar ascultare)** — observă un bus care are deja un master
+  (pachetul master al unui BMS, un datalogger de vendor) fără să transmită
+  vreodată: framing pe CRC, împerechere cerere/răspuns, decodare FC01/03/04,
+  scrierile se văd; configurabil din wizard-ul de dispozitiv
+  ([rtu-serial.md §7](docs/rtu-serial.md)).
 - **HTTP/JSON** — orice endpoint JSON, cu `json_path` per registru și gardă
   SSRF (doar LAN privat, implicit).
 - **MQTT-in** — abonare la un broker; valoare din payload JSON (`json_path`)
   sau payload brut; topic per registru cu wildcard-uri `+`/`#`.
 - **Template-uri de dispozitiv** — harta de registre ca fișier JSON portabil;
-  16 hărți incluse, cu proveniență documentată
+  19 hărți incluse, cu proveniență documentată
   ([catalog](docs/device-catalog.md)): Janitza UMG 512-PRO (4.126 registre),
   ABB B21/B23, Carlo Gavazzi EM24, Eastron SDM120/SDM630, Schneider iEM3000,
   Fronius Smart Meter 65A-3, invertor și contor Fronius SunSpec, trei hărți
-  Fronius Solar API (invertor, invertor pe faze, instalație) și trei hărți
-  MQTT (Zigbee2MQTT, Theengs BLE, JSON generic). Proveniența și gradul de
+  Fronius Solar API (invertor, invertor pe faze, instalație), Seplos BMS V3
+  (tap RTU per pachet, MQTT pachet și bancă) și trei hărți MQTT (Zigbee2MQTT,
+  Theengs BLE, JSON generic). Proveniența și gradul de
   încredere sunt scrise în catalog, la fiecare hartă. Editor + upload + export + **import CSV**
   ([ghid](docs/csv-import.md)).
 - **Nume canonice de câmpuri** — nume uniforme de registre pe orice dispozitiv
@@ -136,7 +142,10 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
   scriabile devin entități **`number`/`select`** cu limite din template).
 - **InfluxDB** — bucket per dispozitiv (auto-creat), timestamp = ora citirii,
   **buffer store-and-forward persistat pe disc** (zero pierderi la pană,
-  replay idempotent cu timestamp-urile originale).
+  replay idempotent cu timestamp-urile originale). Tag-uri statice per
+  dispozitiv/unitate (`battery_id = ${unit_id}`), iar totalurile unei instalații
+  se pot scrie și sub o măsurare și nume de câmpuri alese de tine — așa
+  supraviețuiește schimbării sursei un dashboard care își citește propria schemă.
 - **REST push** — POST periodic de telemetrie JSON către un URL/webhook,
   format `native`/`flat`, headere de auth mascate, fără redirecturi.
 - **HTTP/JSON output** — valorile live ca feed read-only la

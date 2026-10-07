@@ -94,18 +94,24 @@ all the same. No vendor lock-in, no per-box cost.
 - **Modbus TCP** and **Modbus RTU master** (RS-485 serial), with batched
   reads, retries and an error taxonomy
   (`timeout` / `exception_N` / `connection`).
+- **Modbus RTU listen-only tap** — observe a bus that already has a master
+  (a BMS master pack, a vendor datalogger) without ever transmitting:
+  CRC-driven framing, request/response pairing, FC01/03/04 decode, writes
+  watched; configurable from the device wizard
+  ([rtu-serial.md §7](docs/rtu-serial.md)).
 - **HTTP/JSON** — any JSON endpoint, per-register `json_path`, SSRF-guarded
   (private LAN only by default).
 - **MQTT-in** — subscribe to a broker; value from the JSON payload
   (`json_path`) or the bare payload; per-register topics with `+`/`#`
   wildcards.
-- **Device templates** — the register map as a portable JSON file; 16
+- **Device templates** — the register map as a portable JSON file; 19
   bundled maps with documented provenance
   ([catalog](docs/device-catalog.md)): Janitza UMG 512-PRO (4,126
   registers), ABB B21/B23, Carlo Gavazzi EM24, Eastron SDM120/SDM630,
   Schneider iEM3000, Fronius Smart Meter 65A-3, Fronius SunSpec inverter
   and meter, three Fronius Solar API maps (inverter, per-phase inverter,
-  site) and three MQTT maps (Zigbee2MQTT, Theengs BLE, generic JSON).
+  site), Seplos BMS V3 (RTU tap per pack, MQTT pack and bank) and three
+  MQTT maps (Zigbee2MQTT, Theengs BLE, generic JSON).
   Provenance and confidence are stated per map in the catalog.
   In-UI editor + upload + export + **CSV/YAML import**
   ([CSV](docs/csv-import.md), [YAML](docs/yaml-import.md)). Per-register
@@ -144,7 +150,10 @@ all the same. No vendor lock-in, no per-box cost.
   become **`number`/`select` entities** with template-declared bounds).
 - **InfluxDB** — per-device bucket (auto-created), timestamps = read time,
   **disk-persisted store-and-forward buffer** (no data loss across
-  outages; idempotent replay with original timestamps).
+  outages; idempotent replay with original timestamps). Static tags per
+  device/unit (`battery_id = ${unit_id}`), and an installation's totals can
+  also be written under a measurement and field names of your choosing —
+  how a dashboard that reads its own schema survives a change of source.
 - **REST push** — periodic JSON telemetry POST to a URL/webhook,
   `native`/`flat` formats, masked auth headers, redirects refused.
 - **HTTP/JSON output** — live values as a read-only feed at

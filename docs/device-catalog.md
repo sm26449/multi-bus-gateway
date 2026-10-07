@@ -4,26 +4,29 @@
 
 Every built-in device map, with its Modbus transport (function code + byte/word order), the exact register table, and the **source it was verified against**. We do not fabricate maps — each entry cites its provenance. **Confidence varies by entry:** some are *vendor-verified* (confirmed against the manufacturer manual or a field-tested driver — e.g. ABB B23 vs the ABB manual, Schneider iEM3000 vs volkszaehler/mbmd, Carlo Gavazzi EM24 vs Victron), while others are *community-sourced* and their description says to verify against your specific unit's manual before billing-grade use (e.g. the Eastron SDM entries). Read each entry's Source line. `scale` is a divisor — engineering value = raw / scale.
 
-**16 device maps.**
+**19 device maps.**
 
 | Map | Vendor | Model | Registers | Transport |
 |---|---|---|---|---|
 | [Janitza UMG 512-PRO](#janitza-umg-512-pro) | Janitza electronics GmbH | UMG 512-PRO | 4126 | FC03 / big |
 | [ABB B21 (single-phase)](#abb-b21-single-phase) | ABB | B21 (System pro M compact) | 10 | FC03 / big |
 | [ABB B23 (3-phase)](#abb-b23-3-phase) | ABB | B23 (System pro M compact) | 32 | FC03 / big |
-| [BLE sensor (Theengs / BTHome → MQTT)](#ble-sensor-theengs--bthome--mqtt) | Theengs | BLE advertisement sensor | 5 | FC03 / big |
+| [BLE sensor (Theengs / BTHome → MQTT)](#ble-sensor-theengs--bthome--mqtt) | Theengs | BLE advertisement sensor | 5 | MQTT |
 | [Carlo Gavazzi EM24 (AV5/AV53, 3-phase)](#carlo-gavazzi-em24-av5av53-3-phase) | Carlo Gavazzi | EM24-DIN AV5(3) | 17 | FC03 / little |
 | [Eastron SDM120 (single-phase)](#eastron-sdm120-single-phase) | Eastron | SDM120 Modbus | 10 | FC04 / big |
 | [Eastron SDM630 (3-phase)](#eastron-sdm630-3-phase) | Eastron | SDM630 Modbus V2 | 29 | FC04 / big |
 | [Fronius Smart Meter 65A-3 (RTU)](#fronius-smart-meter-65a-3-rtu) | Fronius | Smart Meter 65A-3 | 30 | FC03 / little |
-| [Fronius inverter (Solar API / HTTP-JSON)](#fronius-inverter-solar-api--http-json) | — | — | 7 | FC03 / big |
-| [Fronius inverter, per-phase AC (Solar API / HTTP-JSON)](#fronius-inverter-per-phase-ac-solar-api--http-json) | — | — | 6 | FC03 / big |
-| [Fronius installation (Solar API site totals)](#fronius-installation-solar-api-site-totals) | — | — | 9 | FC03 / big |
+| [Fronius inverter (Solar API / HTTP-JSON)](#fronius-inverter-solar-api--http-json) | — | — | 7 | HTTP/JSON |
+| [Fronius inverter, per-phase AC (Solar API / HTTP-JSON)](#fronius-inverter-per-phase-ac-solar-api--http-json) | — | — | 6 | HTTP/JSON |
+| [Fronius installation (Solar API site totals)](#fronius-installation-solar-api-site-totals) | — | — | 9 | HTTP/JSON |
 | [Fronius SunSpec inverter (int+SF, via datalogger)](#fronius-sunspec-inverter-intsf-via-datalogger) | Fronius | Symo / Primo / Eco (SunSpec 103) | 69 | FC03 / big |
 | [Fronius SunSpec meter (int+SF, via datalogger)](#fronius-sunspec-meter-intsf-via-datalogger) | Fronius | Smart Meter 63A/50kA (SunSpec 203) | 48 | FC03 / big |
-| [Generic MQTT (JSON)](#generic-mqtt-json) | Generic | MQTT JSON source | 3 | FC03 / big |
+| [Generic MQTT (JSON)](#generic-mqtt-json) | Generic | MQTT JSON source | 3 | MQTT |
 | [Schneider iEM3000 (3-phase)](#schneider-iem3000-3-phase) | Schneider Electric | iEM3155 / iEM3255 / iEM3455 / iEM3555 | 22 | FC03 / big |
-| [Zigbee sensor (zigbee2mqtt)](#zigbee-sensor-zigbee2mqtt) | Zigbee2MQTT | climate / battery sensor | 6 | FC03 / big |
+| [Seplos BMS V3 bank (via seplos-bms-mqtt)](#seplos-bms-v3-bank-via-seplos-bms-mqtt) | Seplos | BMS V3 bank | 28 | MQTT |
+| [Seplos BMS V3 (via seplos-bms-mqtt)](#seplos-bms-v3-via-seplos-bms-mqtt) | Seplos | BMS V3 | 58 | MQTT |
+| [Seplos BMS V3 pack (RTU tap, listen-only)](#seplos-bms-v3-pack-rtu-tap-listen-only) | Seplos | BMS V3 | 84 | RTU tap FC01+FC04 / big |
+| [Zigbee sensor (zigbee2mqtt)](#zigbee-sensor-zigbee2mqtt) | Zigbee2MQTT | climate / battery sensor | 6 | MQTT |
 
 ---
 
@@ -108,7 +111,7 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 
 **id** `ble_theengs_sensor` · **vendor** Theengs · **model** BLE advertisement sensor · **version** 1.0.0 · **registers** 5
 
-- **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
+- **Transport:** MQTT — values by `json_path` from the subscribed payload
 - **Source / provenance:** https://decoder.theengs.io/devices/devices_by_brand.html
 
 > A BLE sensor (Xiaomi LYWSD03MMC/ATC, RuuviTag, Govee, SwitchBot…) whose advertisements are decoded to MQTT JSON by Theengs Gateway or OpenMQTTGateway. Set the device connection topic to the gateway's per-device topic (e.g. home/TheengsGateway/BTtoMQTT/<MAC>). Field names follow the Theengs decoder properties (tempc/hum/batt/volt/rssi) — edit per your sensor model. BLE advertising is slow: keep generous per-row stale bounds when used in composites.
@@ -259,7 +262,7 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 
 **id** `fronius_solar_api_inverter` · **vendor** — · **model** — · **version** — · **registers** 7
 
-- **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
+- **Transport:** HTTP/JSON — values by `json_path`
 
 > ONE HTTP request per inverter to the DataManager's Solar API (GetInverterRealtimeData.cgi?Scope=Device&DeviceId=${unit_id}&DataCollection=CommonInverterData).
 
@@ -283,7 +286,7 @@ NIGHT BEHAVIOUR, measured 2026-09-12 19:31: when an inverter stops producing, th
 
 **id** `fronius_solar_api_inverter_3p` · **vendor** — · **model** — · **version** — · **registers** 6
 
-- **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
+- **Transport:** HTTP/JSON — values by `json_path`
 
 > ONE HTTP request per inverter to the DataManager's Solar API (GetInverterRealtimeData.cgi?Scope=Device&DeviceId=${unit_id}&DataCollection=3PInverterData): the three line-to-neutral voltages and the three phase currents that CommonInverterData does not carry.
 
@@ -306,7 +309,7 @@ NIGHT: like CommonInverterData, the DataManager omits UAC_*/IAC_* once the inver
 
 **id** `fronius_solar_api_site` · **vendor** — · **model** — · **version** — · **registers** 9
 
-- **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
+- **Transport:** HTTP/JSON — values by `json_path`
 
 > The whole INSTALLATION in one call — GetPowerFlowRealtimeData.fcgi — not a device on a bus.
 
@@ -485,7 +488,7 @@ The URL carries no ${unit_id}: an installation is one thing, so this group holds
 
 **id** `mqtt_json_generic` · **vendor** Generic · **model** MQTT JSON source · **version** 1.0.0 · **registers** 3
 
-- **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
+- **Transport:** MQTT — values by `json_path` from the subscribed payload
 
 > Starter map for a device that publishes JSON on MQTT (Shelly, Tasmota, Zigbee2MQTT, ESPHome, custom). Each measurement reads a topic and a json_path into the payload — edit these to match your device, then add or remove rows in Measurements.
 
@@ -529,11 +532,227 @@ The URL carries no ${unit_id}: an installation is one thing, so this group holds
 | 3521 / 0x0DC1 | `energy_active_import_l2` | Active energy import L2 | int64 | 1.0 | Wh | slow |
 | 3525 / 0x0DC5 | `energy_active_import_l3` | Active energy import L3 | int64 | 1.0 | Wh | slow |
 
+## Seplos BMS V3 bank (via seplos-bms-mqtt)
+
+**id** `seplos_bms_bank_mqtt` · **vendor** Seplos · **model** BMS V3 bank · **version** 1.0 · **registers** 28
+
+- **Transport:** MQTT — values by `json_path` from the subscribed payload
+
+> The whole battery BANK as one device: the seplos-bms-mqtt collector aggregates its packs under seplos/pack/pack_* (sums, averages, min/max, worst-cell). Set the device input topic to seplos/pack/# — register topics are relative. Pairs with seplos_bms_mqtt for per-pack detail.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 1 / 0x0001 | `average_soc` | State of charge (avg) | float | 1 | % | normal |
+| 2 / 0x0002 | `total_power` | Total power | float | 1 | W | normal |
+| 3 / 0x0003 | `total_voltage` | Bank voltage (avg) | float | 1 | V | normal |
+| 4 / 0x0004 | `total_current` | Total current | float | 1 | A | normal |
+| 5 / 0x0005 | `status` | Status | uint16 | 1 | — | normal |
+| 6 / 0x0006 | `energy_remaining` | Energy remaining | float | 0.001 | Wh | normal |
+| 7 / 0x0007 | `energy_to_full` | Energy to full | float | 0.001 | Wh | normal |
+| 8 / 0x0008 | `batteries_online` | Packs online | float | 1 | — | normal |
+| 9 / 0x0009 | `cell_delta` | Cell delta (worst) | float | 1 | mV | normal |
+| 10 / 0x000A | `soc_spread` | SOC spread | float | 1 | % | normal |
+| 11 / 0x000B | `min_soc` | SOC (min pack) | float | 1 | % | normal |
+| 12 / 0x000C | `max_soc` | SOC (max pack) | float | 1 | % | normal |
+| 13 / 0x000D | `min_soh` | SOH (min pack) | float | 1 | % | normal |
+| 14 / 0x000E | `remaining_capacity` | Remaining capacity | float | 1 | Ah | normal |
+| 15 / 0x000F | `total_capacity` | Total capacity | float | 1 | Ah | normal |
+| 16 / 0x0010 | `max_cycles` | Cycles (max pack) | float | 1 | — | normal |
+| 17 / 0x0011 | `avg_cell_voltage` | Cell voltage (avg) | float | 1 | V | normal |
+| 18 / 0x0012 | `min_cell_voltage` | Cell voltage (min) | float | 1 | V | normal |
+| 19 / 0x0013 | `max_cell_voltage` | Cell voltage (max) | float | 1 | V | normal |
+| 20 / 0x0014 | `balancing_cells` | Cells balancing | float | 1 | — | normal |
+| 21 / 0x0015 | `avg_temp` | Temperature (avg) | float | 1 | °C | normal |
+| 22 / 0x0016 | `min_temp` | Temperature (min) | float | 1 | °C | normal |
+| 23 / 0x0017 | `max_temp` | Temperature (max) | float | 1 | °C | normal |
+| 24 / 0x0018 | `max_charge_current` | Charge current limit | float | 1 | A | normal |
+| 25 / 0x0019 | `max_discharge_current` | Discharge current limit | float | 1 | A | normal |
+| 26 / 0x001A | `total_alarms` | Active alarms | float | 1 | — | normal |
+| 27 / 0x001B | `total_protections` | Active protections | float | 1 | — | normal |
+| 28 / 0x001C | `last_update` | Last aggregate | string:8 | 1 | — | normal |
+
+## Seplos BMS V3 (via seplos-bms-mqtt)
+
+**id** `seplos_bms_mqtt` · **vendor** Seplos · **model** BMS V3 · **version** 1.0 · **registers** 58
+
+- **Transport:** MQTT — values by `json_path` from the subscribed payload
+
+> One battery pack of the seplos-bms-mqtt collector (https://github.com/sm2669/seplos-bms-mqtt): the collector passively snoops the RS485 pack bus and publishes seplos/battery_N/<field>; this template ingests the full field set over MQTT. Set the device input topic to seplos/battery_N/# — register topics are RELATIVE (~/).
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 1 / 0x0001 | `alarm_cell_overvolt` | Alarm Cell Overvolt | float | 1 | — | normal |
+| 2 / 0x0002 | `alarm_cell_temp` | Alarm Cell Temp | float | 1 | — | normal |
+| 3 / 0x0003 | `alarm_cell_undervolt` | Alarm Cell Undervolt | float | 1 | — | normal |
+| 4 / 0x0004 | `alarm_count` | Alarm Count | float | 1 | — | normal |
+| 5 / 0x0005 | `ambient_temp` | Ambient Temp | float | 1 | °C | normal |
+| 6 / 0x0006 | `average_cell_temp` | Average Cell Temp | float | 1 | °C | normal |
+| 7 / 0x0007 | `average_cell_voltage` | Average Cell Voltage | float | 1 | V | normal |
+| 8 / 0x0008 | `balancing_bits` | Balancing Bits | float | 1 | — | normal |
+| 9 / 0x0009 | `balancing_count` | Balancing Count | float | 1 | — | normal |
+| 10 / 0x000A | `cell_1` | Cell 1 | float | 1 | V | normal |
+| 11 / 0x000B | `cell_10` | Cell 10 | float | 1 | V | normal |
+| 12 / 0x000C | `cell_11` | Cell 11 | float | 1 | V | normal |
+| 13 / 0x000D | `cell_12` | Cell 12 | float | 1 | V | normal |
+| 14 / 0x000E | `cell_13` | Cell 13 | float | 1 | V | normal |
+| 15 / 0x000F | `cell_14` | Cell 14 | float | 1 | V | normal |
+| 16 / 0x0010 | `cell_15` | Cell 15 | float | 1 | V | normal |
+| 17 / 0x0011 | `cell_16` | Cell 16 | float | 1 | V | normal |
+| 18 / 0x0012 | `cell_2` | Cell 2 | float | 1 | V | normal |
+| 19 / 0x0013 | `cell_3` | Cell 3 | float | 1 | V | normal |
+| 20 / 0x0014 | `cell_4` | Cell 4 | float | 1 | V | normal |
+| 21 / 0x0015 | `cell_5` | Cell 5 | float | 1 | V | normal |
+| 22 / 0x0016 | `cell_6` | Cell 6 | float | 1 | V | normal |
+| 23 / 0x0017 | `cell_7` | Cell 7 | float | 1 | V | normal |
+| 24 / 0x0018 | `cell_8` | Cell 8 | float | 1 | V | normal |
+| 25 / 0x0019 | `cell_9` | Cell 9 | float | 1 | V | normal |
+| 26 / 0x001A | `cell_delta` | Cell Delta | float | 1 | mV | normal |
+| 27 / 0x001B | `cell_temp_1` | Cell Temp 1 | float | 1 | °C | normal |
+| 28 / 0x001C | `cell_temp_2` | Cell Temp 2 | float | 1 | °C | normal |
+| 29 / 0x001D | `cell_temp_3` | Cell Temp 3 | float | 1 | °C | normal |
+| 30 / 0x001E | `cell_temp_4` | Cell Temp 4 | float | 1 | °C | normal |
+| 31 / 0x001F | `current` | Current | float | 1 | A | normal |
+| 32 / 0x0020 | `cycles` | Cycles | float | 1 | cycles | normal |
+| 33 / 0x0021 | `failure_count` | Failure Count | float | 1 | — | normal |
+| 34 / 0x0022 | `max_cell_temp` | Max Cell Temp | float | 1 | °C | normal |
+| 35 / 0x0023 | `max_cell_voltage` | Max Cell Voltage | float | 1 | V | normal |
+| 36 / 0x0024 | `maxchgcurt` | MaxChgCurt | float | 1 | A | normal |
+| 37 / 0x0025 | `maxdiscurt` | MaxDisCurt | float | 1 | A | normal |
+| 38 / 0x0026 | `min_cell_temp` | Min Cell Temp | float | 1 | °C | normal |
+| 39 / 0x0027 | `min_cell_voltage` | Min Cell Voltage | float | 1 | V | normal |
+| 40 / 0x0028 | `mosfet_temp` | MOSFET Temp | float | 1 | °C | normal |
+| 41 / 0x0029 | `pack_voltage` | Pack Voltage | float | 1 | V | normal |
+| 42 / 0x002A | `power` | Power | float | 1 | W | normal |
+| 43 / 0x002B | `protection_count` | Protection Count | float | 1 | — | normal |
+| 44 / 0x002C | `remaining_capacity` | Remaining Capacity | float | 1 | Ah | normal |
+| 45 / 0x002D | `soc` | SOC | float | 1 | % | normal |
+| 46 / 0x002E | `soh` | SOH | float | 1 | % | normal |
+| 47 / 0x002F | `total_capacity` | Total Capacity | float | 1 | Ah | normal |
+| 48 / 0x0030 | `total_discharge_capacity` | Total Discharge Capacity | float | 1 | Ah | normal |
+| 49 / 0x0031 | `balancing_active` | Balancing Active | uint16 | 1 | — | normal |
+| 50 / 0x0032 | `fet_charge` | FET Charge | uint16 | 1 | — | normal |
+| 51 / 0x0033 | `fet_discharge` | FET Discharge | uint16 | 1 | — | normal |
+| 52 / 0x0034 | `fet_heater` | FET Heater | uint16 | 1 | — | normal |
+| 53 / 0x0035 | `heating_active` | Heating Active | uint16 | 1 | — | normal |
+| 54 / 0x0036 | `fet_current_limit` | FET Current Limit | uint16 | 1 | — | normal |
+| 55 / 0x0037 | `status` | Status | uint16 | 1 | — | normal |
+| 56 / 0x0038 | `state` | Collector availability | uint16 | 1 | — | normal |
+| 57 / 0x0039 | `balancing_cells` | Balancing cells | string:8 | 1 | — | normal |
+| 58 / 0x003A | `last_update` | Last BMS frame | string:8 | 1 | — | normal |
+
+## Seplos BMS V3 pack (RTU tap, listen-only)
+
+**id** `seplos_bms_v3_rtu_tap` · **vendor** Seplos · **model** BMS V3 · **version** 1.6.0 · **registers** 84
+
+- **Transport:** Modbus RTU **listen-only tap** (decodes another master's exchanges): FC01 (read coils), FC04 (read input registers) · byte order **big-endian, high word first (ABCD)**
+
+> One Seplos V3 battery pack observed on the inter-pack RS485 bus via protocol rtu_tap (the master pack is the bus master — never poll this bus actively). Telemetry blocks PIA (0x1000, FC04) and PIB (0x1100, FC04); names mirror seplos_bms_mqtt 1:1 so the two read paths compare side by side. Alarm/status coils (PIC 0x1200, FC01) decode in BIT-address space: a coil register reads one bit, a uint16 coil packs 16 bits LSB-first — the same math the collector uses for its masks. Derived counts (alarm_count, balancing_count/cells) are Phase-2 calc registers. Set unit_id to the pack address (1..16). Publishing defaults are ON for every field the retired seplos-modbus-mqtt collector published (topics byte-identical under mqtt.topic_prefix seplos/battery_${unit_id}); the internal per-bit alarms stay MQTT-off and feed the counts.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 4608 / 0x1200 | `alarm_cell_undervolt` | Cell Undervolt Mask | uint16 | 1 | — | realtime |
+| 4624 / 0x1210 | `alarm_cell_overvolt` | Cell Overvolt Mask | uint16 | 1 | — | realtime |
+| 4640 / 0x1220 | `alarm_cell_temp` | Cell Temp Alarm Mask | uint16 | 1 | — | realtime |
+| 4656 / 0x1230 | `balancing_bits` | Balancing Mask | uint16 | 1 | — | realtime |
+| 4672 / 0x1240 | `status` | Status | uint16 | 1 | — | realtime |
+| 4680 / 0x1248 | `alarm_cell_high_v` | Cell High V | uint16 | 1 | — | realtime |
+| 4681 / 0x1249 | `alarm_cell_overvolt_prot` | Cell OV Prot | uint16 | 1 | — | realtime |
+| 4682 / 0x124A | `alarm_cell_low_v` | Cell Low V | uint16 | 1 | — | realtime |
+| 4683 / 0x124B | `alarm_cell_undervolt_prot` | Cell UV Prot | uint16 | 1 | — | realtime |
+| 4684 / 0x124C | `alarm_pack_high_v` | Pack High V | uint16 | 1 | — | realtime |
+| 4685 / 0x124D | `alarm_pack_overvolt_prot` | Pack OV Prot | uint16 | 1 | — | realtime |
+| 4686 / 0x124E | `alarm_pack_low_v` | Pack Low V | uint16 | 1 | — | realtime |
+| 4687 / 0x124F | `alarm_pack_undervolt_prot` | Pack UV Prot | uint16 | 1 | — | realtime |
+| 4688 / 0x1250 | `alarm_charge_high_temp` | Chg High Temp | uint16 | 1 | — | realtime |
+| 4689 / 0x1251 | `alarm_charge_overtemp_prot` | Chg OT Prot | uint16 | 1 | — | realtime |
+| 4690 / 0x1252 | `alarm_charge_low_temp` | Chg Low Temp | uint16 | 1 | — | realtime |
+| 4691 / 0x1253 | `alarm_charge_undertemp_prot` | Chg UT Prot | uint16 | 1 | — | realtime |
+| 4692 / 0x1254 | `alarm_discharge_high_temp` | Dis High Temp | uint16 | 1 | — | realtime |
+| 4693 / 0x1255 | `alarm_discharge_overtemp_prot` | Dis OT Prot | uint16 | 1 | — | realtime |
+| 4694 / 0x1256 | `alarm_discharge_low_temp` | Dis Low Temp | uint16 | 1 | — | realtime |
+| 4695 / 0x1257 | `alarm_discharge_undertemp_prot` | Dis UT Prot | uint16 | 1 | — | realtime |
+| 4696 / 0x1258 | `alarm_ambient_high_temp` | Ambient High Temp | uint16 | 1 | — | realtime |
+| 4697 / 0x1259 | `alarm_ambient_overtemp_prot` | Ambient OT Prot | uint16 | 1 | — | realtime |
+| 4700 / 0x125C | `alarm_mosfet_high_temp` | MOSFET High Temp | uint16 | 1 | — | realtime |
+| 4701 / 0x125D | `alarm_mosfet_overtemp_prot` | MOSFET OT Prot | uint16 | 1 | — | realtime |
+| 4702 / 0x125E | `heating_active` | Heating | uint16 | 1 | — | realtime |
+| 4704 / 0x1260 | `alarm_charge_current` | Chg Current | uint16 | 1 | — | realtime |
+| 4705 / 0x1261 | `alarm_charge_overcurrent_prot` | Chg OC Prot | uint16 | 1 | — | realtime |
+| 4706 / 0x1262 | `alarm_charge_overcurrent_2_prot` | Chg OC2 Prot | uint16 | 1 | — | realtime |
+| 4707 / 0x1263 | `alarm_discharge_current` | Dis Current | uint16 | 1 | — | realtime |
+| 4708 / 0x1264 | `alarm_discharge_overcurrent_prot` | Dis OC Prot | uint16 | 1 | — | realtime |
+| 4709 / 0x1265 | `alarm_discharge_overcurrent_2_prot` | Dis OC2 Prot | uint16 | 1 | — | realtime |
+| 4710 / 0x1266 | `alarm_short_circuit_prot` | Short Circuit Prot | uint16 | 1 | — | realtime |
+| 4722 / 0x1272 | `alarm_soc_low` | SOC Low | uint16 | 1 | — | realtime |
+| 4723 / 0x1273 | `alarm_soc_prot` | SOC Prot | uint16 | 1 | — | realtime |
+| 4724 / 0x1274 | `alarm_cell_diff` | Cell Diff Alarm | uint16 | 1 | — | realtime |
+| 4728 / 0x1278 | `fet_discharge` | FET Discharge | uint16 | 1 | — | realtime |
+| 4729 / 0x1279 | `fet_charge` | FET Charge | uint16 | 1 | — | realtime |
+| 4730 / 0x127A | `fet_current_limit` | FET Current Limit | uint16 | 1 | — | realtime |
+| 4731 / 0x127B | `fet_heater` | FET Heater | uint16 | 1 | — | realtime |
+| 4736 / 0x1280 | `balancing_active` | Balancing | uint16 | 1 | — | realtime |
+| 4744 / 0x1288 | `failure_ntc` | Failure NTC | uint16 | 1 | — | realtime |
+| 4745 / 0x1289 | `failure_afe` | Failure AFE | uint16 | 1 | — | realtime |
+| 4746 / 0x128A | `failure_charge_mosfet` | Failure Chg MOSFET | uint16 | 1 | — | realtime |
+| 4747 / 0x128B | `failure_discharge_mosfet` | Failure Dis MOSFET | uint16 | 1 | — | realtime |
+| 4748 / 0x128C | `failure_cell_diff` | Failure Cell Diff | uint16 | 1 | — | realtime |
+| 4096 / 0x1000 | `pack_voltage` | Pack Voltage | uint16 | 100 | V | realtime |
+| 4097 / 0x1001 | `current` | Current | int16 | 100 | A | realtime |
+| 4098 / 0x1002 | `remaining_capacity` | Remaining Capacity | uint16 | 100 | Ah | realtime |
+| 4099 / 0x1003 | `total_capacity` | Total Capacity | uint16 | 100 | Ah | realtime |
+| 4100 / 0x1004 | `total_discharge_capacity` | Total Discharge Capacity | uint16 | 0.1 | Ah | realtime |
+| 4101 / 0x1005 | `soc` | SOC | uint16 | 10 | % | realtime |
+| 4102 / 0x1006 | `soh` | SOH | uint16 | 10 | % | realtime |
+| 4103 / 0x1007 | `cycles` | Cycles | uint16 | 1 | cycles | realtime |
+| 4104 / 0x1008 | `average_cell_voltage` | Average Cell Voltage | uint16 | 1000 | V | realtime |
+| 4105 / 0x1009 | `average_cell_temp` | Average Cell Temp | uint16 | 10 | °C | realtime |
+| 4106 / 0x100A | `max_cell_voltage` | Max Cell Voltage | uint16 | 1000 | V | realtime |
+| 4107 / 0x100B | `min_cell_voltage` | Min Cell Voltage | uint16 | 1000 | V | realtime |
+| 4108 / 0x100C | `max_cell_temp` | Max Cell Temp | uint16 | 10 | °C | realtime |
+| 4109 / 0x100D | `min_cell_temp` | Min Cell Temp | uint16 | 10 | °C | realtime |
+| 4111 / 0x100F | `maxdiscurt` | MaxDisCurt | uint16 | 1 | A | realtime |
+| 4112 / 0x1010 | `maxchgcurt` | MaxChgCurt | uint16 | 1 | A | realtime |
+| 4352 / 0x1100 | `cell_1` | Cell 1 | uint16 | 1000 | V | realtime |
+| 4353 / 0x1101 | `cell_2` | Cell 2 | uint16 | 1000 | V | realtime |
+| 4354 / 0x1102 | `cell_3` | Cell 3 | uint16 | 1000 | V | realtime |
+| 4355 / 0x1103 | `cell_4` | Cell 4 | uint16 | 1000 | V | realtime |
+| 4356 / 0x1104 | `cell_5` | Cell 5 | uint16 | 1000 | V | realtime |
+| 4357 / 0x1105 | `cell_6` | Cell 6 | uint16 | 1000 | V | realtime |
+| 4358 / 0x1106 | `cell_7` | Cell 7 | uint16 | 1000 | V | realtime |
+| 4359 / 0x1107 | `cell_8` | Cell 8 | uint16 | 1000 | V | realtime |
+| 4360 / 0x1108 | `cell_9` | Cell 9 | uint16 | 1000 | V | realtime |
+| 4361 / 0x1109 | `cell_10` | Cell 10 | uint16 | 1000 | V | realtime |
+| 4362 / 0x110A | `cell_11` | Cell 11 | uint16 | 1000 | V | realtime |
+| 4363 / 0x110B | `cell_12` | Cell 12 | uint16 | 1000 | V | realtime |
+| 4364 / 0x110C | `cell_13` | Cell 13 | uint16 | 1000 | V | realtime |
+| 4365 / 0x110D | `cell_14` | Cell 14 | uint16 | 1000 | V | realtime |
+| 4366 / 0x110E | `cell_15` | Cell 15 | uint16 | 1000 | V | realtime |
+| 4367 / 0x110F | `cell_16` | Cell 16 | uint16 | 1000 | V | realtime |
+| 4368 / 0x1110 | `cell_temp_1` | Cell Temp 1 | uint16 | 10 | °C | realtime |
+| 4369 / 0x1111 | `cell_temp_2` | Cell Temp 2 | uint16 | 10 | °C | realtime |
+| 4370 / 0x1112 | `cell_temp_3` | Cell Temp 3 | uint16 | 10 | °C | realtime |
+| 4371 / 0x1113 | `cell_temp_4` | Cell Temp 4 | uint16 | 10 | °C | realtime |
+| 4376 / 0x1118 | `ambient_temp` | Ambient Temp | uint16 | 10 | °C | realtime |
+| 4377 / 0x1119 | `mosfet_temp` | MOSFET Temp | uint16 | 10 | °C | realtime |
+
+**Derived measurements** — computed from the registers above and seeded into every device made from this template, so each unit publishes them identically.
+
+| Name | MQTT topic | Formula | Decoded |
+|---|---|---|---|
+| `power` | `power` | `0 - current * pack_voltage` | — |
+| `cell_delta` | `cell_delta` | `(max_cell_voltage - min_cell_voltage) * 1000` | — |
+| `balancing_count` | `balancing_count` | `popcount(balancing_bits)` | — |
+| `alarm_count` | `alarm_count` | `alarm_cell_high_v + alarm_cell_overvolt_prot + alarm_cell_low_v + alarm_cell_undervolt_prot + alarm_pack_high_v + alarm_pack_overvolt_prot + alarm_pack_low_v + alarm_pack_undervolt_prot + alarm_charge_high_temp + alarm_charge_overtemp_prot + alarm_charge_low_temp + alarm_charge_undertemp_prot + alarm_discharge_high_temp + alarm_discharge_overtemp_prot + alarm_discharge_low_temp + alarm_discharge_undertemp_prot + alarm_ambient_high_temp + alarm_ambient_overtemp_prot + alarm_mosfet_high_temp + alarm_mosfet_overtemp_prot + alarm_charge_current + alarm_charge_overcurrent_prot + alarm_discharge_current + alarm_discharge_overcurrent_prot + alarm_short_circuit_prot + alarm_soc_low + alarm_cell_diff` | — |
+| `protection_count` | `protection_count` | `alarm_cell_overvolt_prot + alarm_cell_undervolt_prot + alarm_pack_overvolt_prot + alarm_pack_undervolt_prot + alarm_charge_overtemp_prot + alarm_charge_undertemp_prot + alarm_discharge_overtemp_prot + alarm_discharge_undertemp_prot + alarm_ambient_overtemp_prot + alarm_mosfet_overtemp_prot + alarm_charge_overcurrent_prot + alarm_charge_overcurrent_2_prot + alarm_discharge_overcurrent_prot + alarm_discharge_overcurrent_2_prot + alarm_short_circuit_prot + alarm_soc_prot` | — |
+| `failure_count` | `failure_count` | `failure_ntc + failure_afe + failure_charge_mosfet + failure_discharge_mosfet + failure_cell_diff` | — |
+| `energy_remaining` | `energy_remaining` | `remaining_capacity * pack_voltage` | — |
+| `energy_to_full` | `energy_to_full` | `(total_capacity - remaining_capacity) * pack_voltage` | — |
+
 ## Zigbee sensor (zigbee2mqtt)
 
 **id** `zigbee2mqtt_sensor` · **vendor** Zigbee2MQTT · **model** climate / battery sensor · **version** 1.0.0 · **registers** 6
 
-- **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
+- **Transport:** MQTT — values by `json_path` from the subscribed payload
 - **Source / provenance:** https://www.zigbee2mqtt.io/guide/usage/exposes.html
 
 > A Zigbee sensor bridged by zigbee2mqtt (Sonoff SNZB, Aqara, Tuya, Xiaomi…). Set the device connection topic to zigbee2mqtt/<friendly_name> — z2m publishes one JSON payload there and every row below reads a field from it (standard z2m exposes; field names per zigbee2mqtt.io). Rows are editable: remove what your sensor lacks, add plug fields (power/current/energy/state) or occupancy/contact for other device classes.

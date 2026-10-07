@@ -332,6 +332,7 @@ devices:
       bucket: sdm630_garage      # default: the global bucket
       device_tag: sdm630_garage  # default: the device id
       enabled: true
+      tags: {}                   # static tags on every point (see endpoints: below)
     http_output: {enabled: false}
     rest_push: {}                # same shape as the primary's block
     pq_recorder: {}              # same shape as the primary's block (Janitza only)
@@ -369,7 +370,7 @@ endpoints:
     template: fronius_sunspec_inverter
     enabled: true                # false = units stay listed but do not poll
     connection:                  # shared by every unit (no unit_id here)
-      protocol: tcp              # tcp | rtu-tcp
+      protocol: tcp              # tcp | rtu-tcp | rtu_tap (serial_port + baudrate instead of host/port)
       host: 192.168.1.50
       port: 502
     units: [1, 2, 3, 4]          # bare ids, or {unit_id: 3, id: inv3, name: East roof}
@@ -435,6 +436,74 @@ counters hostage nor makes `online` unreachable.
 The aggregate's InfluxDB bucket resolves `${endpoint_id}` / `${device_id}` /
 `${unit_id}` all to the endpoint itself — the endpoint's own points belong to no
 single unit.
+
+**Template-declared totals and your own (`totals:`).** Beyond the three rules,
+a template may declare how a vendor's fields combine across a bank or a farm:
+a register (or calculated register) carries `aggregates: {output_name: op}`
+with `op` one of `sum`, `avg`, `min`, `max`, `spread` — `soc` →
+`pack_average_soc: avg, pack_min_soc: min, pack_max_soc: max` all at once.
+The endpoint may override any of them, or add its own, without touching the
+template:
+
+```yaml
+endpoints:
+  - id: battery-bank
+    totals:
+      # replaces the template's pack_max_temp (cells only) with cells + ambient
+      pack_max_temp: {op: max, from: [cell_temp_1, cell_temp_2, cell_temp_3, cell_temp_4,
+                                      ambient_temp, min_cell_temp, max_cell_temp]}
+      pack_balancing_cells: {op: sum, from: [balancing_count]}
+```
+
+Every listed field of every **fresh** unit goes into one pool, then the
+operation runs over it. A total named here replaces the template's
+declaration of the same name; the rest of the template's totals still apply.
+Totals publish with the others (MQTT under the totals topic, InfluxDB under
+the canonical measurement or `endpoint`). The endpoint page shows the
+template's totals, the fields the units carry, and edits these.
+
+**Static InfluxDB tags (`influxdb.tags`).** Tags written on every point of
+every unit, raw and calculated — `${unit_id}`, `${endpoint_id}` and
+`${device_id}` are substituted per unit (a device can carry them too, under
+its own `influxdb:`). They never displace the identity tags (`device`,
+`address`, `name`) nor a tag a register declares itself. A tag is part of a
+series' identity: changing one starts a new series.
+
+```yaml
+    influxdb:
+      bucket: seplos
+      device_tag: battery_${unit_id}
+      tags: {battery_id: "${unit_id}"}     # → device=battery_3,battery_id=3
+```
+
+**Extra InfluxDB outputs (`influxdb.outputs`).** The totals can also be
+written under a measurement and field names of the operator's choosing — the
+way a consumer that reads a measurement of its own (a dashboard, a report)
+keeps reading it when the source behind it changes. Each output is one point
+per cycle with every field whose total exists:
+
+```yaml
+    influxdb:
+      outputs:
+        - id: legacy-pack            # a-z 0-9 - _ ; unique per endpoint
+          enabled: true
+          measurement: seplos_pack
+          bucket: ""                 # empty = the endpoint's bucket; ${endpoint_id} allowed
+          group: ""                  # empty = the first group's totals
+          mode: changed              # changed (default) | every
+          tags: {}                   # static, ${endpoint_id} allowed
+          fields:
+            - {name: total_power, source: pack_total_power}
+            - {name: energy_remaining, source: pack_energy_remaining, scale: 0.001}   # Wh → kWh
+            - {name: batteries_online, source: units_online}
+```
+
+`source` is any total of the group (template-declared, your own, the
+rule-based ones, `units_online`, `units_total`); a total that does not exist
+this cycle is simply left out of the point. Outputs stop with the endpoint's
+`influxdb.enabled`. Editing outputs never restarts a unit; static tags do (they
+change what the units write). Both are edited on the endpoint page; a form
+that does not send them (the settings dialog) keeps them.
 
 **Device liveness leaves** (every device, endpoint units included): retained
 `availability` (`online`/`offline`), `runtime/status` (same verdict),

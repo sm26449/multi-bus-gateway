@@ -102,10 +102,47 @@ retopiced (backups in the MBG config dir); the two Grafana bank queries
 moved to measurement `endpoint`. The collector service sits in the
 compose `retired` profile — rollback is documented inline there.
 
+## After the cutover — what the Phase 3 inventory missed (2026-10-07)
+
+The inventory covered Node-RED topics, Grafana, alertd and Home Assistant.
+It missed consumers that read the collector's **side channels** and its
+**InfluxDB measurement** rather than its value topics. Found the same day:
+
+| Consumer | Read | Effect | Fix |
+|---|---|---|---|
+| Charge controller (DVCC) and grid controller | `seplos/health/uptime` as the BMS heartbeat, `seplos/pack/state` as online | charging clamped to 0 A and discharge blocked for ~3 h | the controllers read canonical keys (`battery.heartbeat`, `battery.bms_online`, …); the flow maps MBG's `seplos/pack/status` — republished at least every 30 s — onto them |
+| Web UI (control view, battery pages, energy-today, freshness probe) | `seplos_pack` measurement; `seplos/pack/state` | empty charts and "today" figures; a false *BMS offline* | MBG writes `seplos_pack` again through an endpoint **InfluxDB output** (below); the control view reads its battery/inverter sources from the device registry |
+| Nightly daily profiles, two Grafana dashboards | `seplos_pack` | empty profile / panels | same output |
+| Energy-flow display | `seplos/pack/state` for its status badge | badge stuck | re-pointed to `seplos/pack/status` in its own editor |
+| The retired collector's stopped container | — | a *container down* alert every 30 min | container removed (image and config kept for rollback) |
+
+What changed in MBG because of it (all generic, all configurable from the
+endpoint page — nothing Seplos-specific in code):
+
+- **`totals:`** — the operator decides what a total is made of. The bank's
+  min/max/avg temperature is again pooled over the cell sensors **and** the
+  ambient sensor, as the collector did (the template's default is cells
+  only, ~3–5 °C lower — and the charge controller's temperature limit reads
+  this value). `pack_balancing_cells` is back too.
+- **`influxdb.outputs`** — the bank's totals are also written as
+  `seplos_pack` with the collector's 26 field names, energy in kWh
+  (`scale: 0.001` on the Wh totals), no tags. Every consumer of that
+  measurement works unchanged, and its history is continuous.
+- **`influxdb.tags`** — `battery_id: ${unit_id}` restores the tag the
+  collector's per-battery series were keyed on.
+- The 04:36–08:21 gap was backfilled from the `endpoint` series (on a 10 s
+  grid so rows are complete; temperatures recomputed from the per-battery
+  sensors).
+
+**Lesson for the next migration:** inventory what consumers *depend on*,
+not only what they *subscribe to* — liveness signals (LWT, heartbeat,
+state), measurement names, field units and the definition of an aggregate
+are part of the contract as much as the value topics are.
+
 ## Pre-release checklist (before the public 3.85.0 push)
 
-- [ ] Device wizard (Add/Edit) supports `protocol: rtu_tap` — serial
-      port, baudrate, unit_id, stale_after_s — so a listen-only device
-      is configurable from the UI, not only from config.yaml.
+- [x] Device wizard (Add/Edit) supports `protocol: rtu_tap` — serial
+      port, baudrate, unit_id — so a listen-only device is configurable
+      from the UI, not only from config.yaml.
 - [ ] CHANGELOG entries for 3.85.0 (fleet-first dashboard + rtu_tap +
-      seplos migration features).
+      seplos migration features + endpoint totals/tags/outputs).

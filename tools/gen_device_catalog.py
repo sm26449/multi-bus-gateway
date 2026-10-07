@@ -44,7 +44,9 @@ DUMP_LIMIT = 120
 PRIMARY_ID = "janitza_umg512_pro"
 
 FC_BY_TYPE = {"holding": "FC03 (read holding registers)",
-              "input": "FC04 (read input registers)"}
+              "input": "FC04 (read input registers)",
+              "coil": "FC01 (read coils)",
+              "discrete": "FC02 (read discrete inputs)"}
 ORDER_LABEL = {"big": "big-endian, high word first (ABCD)",
                "little": "little-endian, low word first (CDAB / word-swapped)",
                "badc": "byte-swapped (BADC)",
@@ -61,6 +63,48 @@ def _fc_summary(regs):
     return ", ".join(FC_BY_TYPE.get(k, k) for k in kinds) or FC_BY_TYPE["holding"]
 
 
+def _transport(tpl):
+    """The map's transport, decided like the app does (device_template.
+    template_transport): declared transports first, else the register shape."""
+    tr = [str(x).lower() for x in ((tpl.get("protocol") or {}).get("transports") or [])]
+    regs = tpl.get("registers", [])
+    if "mqtt" in tr or (not tr and any(r.get("topic") for r in regs)):
+        return "mqtt"
+    if "rtu_tap" in tr:
+        return "rtu_tap"
+    if any(x in ("tcp", "rtu", "rtu-tcp") for x in tr):
+        return "modbus"
+    if "http" in tr or (regs and all(r.get("json_path") for r in regs)):
+        return "http"
+    return "modbus"
+
+
+def _transport_long(tpl):
+    regs = tpl.get("registers", [])
+    bo = (tpl.get("protocol", {}) or {}).get("byte_order", "big")
+    kind = _transport(tpl)
+    if kind == "http":
+        return "HTTP/JSON — values by `json_path`"
+    if kind == "mqtt":
+        return "MQTT — values by `json_path` from the subscribed payload"
+    fc = _fc_summary(regs)
+    pre = "Modbus RTU **listen-only tap** (decodes another master's exchanges): " if kind == "rtu_tap" else ""
+    return f"{pre}{fc} · byte order **{ORDER_LABEL.get(bo, bo)}**"
+
+
+def _transport_short(tpl):
+    regs = tpl.get("registers", [])
+    bo = (tpl.get("protocol", {}) or {}).get("byte_order", "big")
+    kind = _transport(tpl)
+    if kind == "http":
+        return "HTTP/JSON"
+    if kind == "mqtt":
+        return "MQTT"
+    fcs = "+".join(FC_BY_TYPE.get(k, k).split(" ")[0]
+                   for k in sorted({r.get("register_type", "holding") for r in regs})) or "FC03"
+    return f"{'RTU tap ' if kind == 'rtu_tap' else ''}{fcs} / {bo}"
+
+
 def _reg_table(regs):
     rows = ["| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |",
             "|---|---|---|---|---|---|---|"]
@@ -75,8 +119,6 @@ def _reg_table(regs):
 
 def _section(tpl):
     regs = tpl.get("registers", [])
-    proto = tpl.get("protocol", {}) or {}
-    bo = proto.get("byte_order", "big")
     lines = []
     lines.append(f"## {tpl.get('name', tpl['id'])}")
     lines.append("")
@@ -85,7 +127,7 @@ def _section(tpl):
             f"**registers** {len(regs)}"]
     lines.append(" · ".join(meta))
     lines.append("")
-    lines.append(f"- **Transport:** {_fc_summary(regs)} · byte order **{ORDER_LABEL.get(bo, bo)}**")
+    lines.append(f"- **Transport:** {_transport_long(tpl)}")
     if tpl.get("source_document"):
         lines.append(f"- **Source / provenance:** {tpl['source_document']}")
     if tpl.get("description"):
@@ -156,10 +198,9 @@ def main():
     out.append("|---|---|---|---|---|")
     for t in ordered:
         regs = t.get("registers", [])
-        bo = (t.get("protocol", {}) or {}).get("byte_order", "big")
         out.append(f"| [{t.get('name', t['id'])}](#{_anchor(t.get('name', t['id']))}) "
                    f"| {t.get('vendor', '—')} | {t.get('model', '—')} | {len(regs)} "
-                   f"| {_fc_summary(regs).split(' ')[0]} / {bo} |")
+                   f"| {_transport_short(t)} |")
     out.append("")
     out.append("---")
     out.append("")

@@ -152,7 +152,7 @@ has one — a BMS master pack polling its slave packs, a vendor datalogger
 polling its meters, a PLC owning its drives — a second active poller corrupts
 frames for both. The **tap** makes the gateway a silent observer instead: it
 opens the serial port, **never transmits a byte**, reassembles the frames the
-existing exchange produces (3.5-character silence + CRC-16), pairs requests
+existing exchange produces (CRC-16 framing, §7.3), pairs requests
 with responses, and feeds the decoded values through the exact same
 correction/store/publish pipeline a polled device uses.
 
@@ -184,3 +184,49 @@ Notes:
   device's stats; the last ~200 decoded frames (direction, FC, address,
   window) are kept in memory as a debug trace.
 - Tap devices are read-only by nature: no write face, no commands.
+
+### 7.1 From the UI
+
+**Devices → Add Device → Modbus RTU → Listen only (tap)**: serial port, baud,
+parity and the observed unit ID — there is no *Test connection* in the wizard
+(a tap never transmits, so there is nothing to ask). Once saved, **Test** on
+the device page reports what the tap has *heard*, naming the layer that is
+silent: the port could not be opened (permissions, missing adapter) → the
+port is open but no valid frame arrived (master off, A/B swapped, wrong
+baud/parity) → the bus is live but nothing for this unit yet → *hearing
+unit N — W windows, last X s ago*. A tap is edited like any device; its
+protocol is fixed after creation.
+
+For a whole bank behind one master (eight battery packs, a row of meters),
+declare an **endpoint** with `connection.protocol: rtu_tap` instead — one
+unit per observed slave, one shared reader, and the endpoint's totals
+(MANUAL §5b, config-reference `endpoints:`).
+
+### 7.2 Line rules (enforced when saving)
+
+- A serial line is either **polled or tapped, never both**: a device with
+  `protocol: rtu` and a tap cannot share a port (the tty opens once, and an
+  active master on a tapped bus would collide with the real one).
+- Several taps **may** share a port — one reader fans the frames out by unit
+  ID — but only with the **same baud and parity**: the reader opens the line
+  once, with the first tap's settings.
+
+### 7.3 What the wire taught us (real bus, 2026-10)
+
+- **Framing is CRC-driven, not timing-driven.** The serial layer hands over
+  20–50 ms chunks, so every chunk boundary looks like a 3.5-character gap.
+  The tap extracts frames by trying the candidate lengths for the head byte
+  and accepting the one whose CRC validates; a head that validates at no
+  length is junk and the stream slides one byte. The `resync` counter in the
+  log (`… frames (crc_err 0, orphans 0, …, resync N B)`) is the bytes skipped
+  that way — on a healthy bus it grows steadily (bytes the framer does not
+  recognise), what matters is `crc_err` and `orphans` staying at 0.
+- **A bus master answers no requests.** On a Seplos bank the master pack
+  emits its own blocks unsolicited. Every paired exchange teaches the tap
+  which address a response of that shape (function code, byte count) belongs
+  to, so an unpaired response is dispatched at the learned address; a shape
+  seen at two addresses becomes ambiguous and is never inferred.
+- **FC 01 (coils)** are decoded too, in bit-address space: one `uint16` of a
+  register map holds 16 coils, LSB first.
+- After a failed open (adapter missing, permissions), the next successful
+  open clears the error — a tap that recovers reports healthy again.

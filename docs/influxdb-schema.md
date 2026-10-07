@@ -144,6 +144,20 @@ endpoint's bucket:
 | fields | the canonical name (`power_active_total`, `energy_active_import`…) plus `units_online`, `units_total` (floats). **No `value` twin, no `address`/`name`/`poll_group` tags** — filter these by `aggregate == "endpoint"` |
 | not written | `status` (text; MQTT only) |
 
+**Operator-defined outputs** (`endpoints[].influxdb.outputs`, edited on the
+endpoint page): besides the series above, each enabled output writes ONE
+point per cycle (on change, or every cycle with `mode: every`) into its
+`bucket` (empty = the endpoint's), measurement and static tags exactly as
+configured — no `device`/`aggregate` tags are added — with one field per
+mapping `name ← total × scale`. A total absent this cycle is left out of the
+point. The production battery bank uses one to keep writing the retired
+collector's `seplos_pack` shape (26 fields, energy in kWh, no tags).
+
+**Static unit tags** (`influxdb.tags` on a device or an endpoint, `${unit_id}`
+substituted per unit) ride on every point the units write, raw and
+calculated, next to `device`/`address`/`name`/`poll_group`; they never
+replace those, nor a tag a register declares.
+
 ## PQ recorder measurements
 
 `multibus/pq_recorder.py` archives a Janitza/Jasic meter's on-device
