@@ -20,6 +20,13 @@ Document-level metadata (`id`, `name`, `vendor`, `model`, `device`, `title`,
 `description`) is picked up automatically and pre-fills the template header —
 you can override id/name/vendor/model in the import dialog.
 
+How the map is read can be declared in the file too: `byte_order` (or
+`word_order`: `big`/`ABCD`, `little`/`CDAB`, `badc`, `dcba`) and
+`transports` (`[tcp, rtu]`, `[http]`, `[mqtt]`…) at the top, or a native
+template's whole `protocol:` block (unit id and read size included). The
+import dialog's *Read over* / *Word order* override them. Why word order
+matters: [device-templates.md §2.2](device-templates.md#22-word-order-the-most-common-reason-for-nonsense-values).
+
 ## Field mapping
 
 Field names are matched **loosely** (case-insensitive; spaces, underscores,

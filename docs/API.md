@@ -188,12 +188,12 @@ rather than silently reading the primary's bucket.
 |---|---|---|---|
 | GET | `/api/device-templates` | Template library (built-ins + user) with `used_by` (devices naming the map, through a source too) and `pending_updates` (`[{kind: endpoint\|device, id, name}]` — where an update from it is waiting) | viewer |
 | GET | `/api/device-templates/{id}` | Full template | viewer |
-| POST | `/api/device-templates` | Create/update a user template (built-in ids shielded; per-row validation errors) | admin |
+| POST | `/api/device-templates` | Create/update a user template (built-in ids shielded; per-row validation errors). When its `protocol` changed (word order, read size), every running device reading with it restarts at once: `restarted: [device ids]` | admin |
 | DELETE | `/api/device-templates/{id}` | Delete a user template (blocked while in use) | admin |
 | GET | `/api/device-templates/{id}/export` | Download as JSON (round-trips through upload) | viewer |
 | POST | `/api/device-templates/upload` | Validated save; 409 on id conflict unless `overwrite: true` | admin |
-| POST | `/api/device-templates/import-csv` | Convert a CSV register map into a template **preview** (save via upload) | admin |
-| POST | `/api/device-templates/import-yaml` | Convert an upstream/community YAML register map into a template **preview** (`{yaml, id?, name?, vendor?, model?, default_data_type?, default_poll_group?}`; richer than CSV — enum/bits/thresholds/write envelope pass through; save via upload) | admin |
+| POST | `/api/device-templates/import-csv` | Convert a CSV register map into a template **preview** (save via upload). `{csv, id?, name?, vendor?, model?, default_data_type?, byte_order?: big\|little\|badc\|dcba (ABCD/CDAB accepted), transports?: [tcp\|rtu\|rtu-tcp\|rtu_tap\|http\|mqtt]}`; an `fc`/`register_type` column takes FC1–FC4 aliases (coil, DI, input…); warns when every address looks like 1-based 40001/30001 notation | admin |
+| POST | `/api/device-templates/import-yaml` | Convert an upstream/community YAML register map into a template **preview** (`{yaml, id?, name?, vendor?, model?, default_data_type?, default_poll_group?, byte_order?, transports?}` — the YAML's own header may carry `byte_order`/`word_order` and `transports` too; richer than CSV — enum/bits/thresholds/write envelope pass through; save via upload) | admin |
 
 ## Device Builder (ESPHome integration)
 
@@ -358,6 +358,8 @@ New rules are **shadow** (they decide and say so, never write); arming needs
 | GET | `/api/rules/{id}` | One rule, same shape | viewer |
 | POST / PUT / DELETE | `/api/rules`, `/api/rules/{id}` | Create, edit, delete. Validated in words: target exists and offers the command (enabled, not an alias), signal parses and names its device (`device.register`, hyphenated ids allowed), steps ascending with a `release_below` under the first, `normal` present, timing bounds, one armed owner per target+command. Deleting or un-arming a rule that moved its target away from the command's `safe` values restores them first (`on_disable: safe`) | admin (armed: + writes on) |
 | POST | `/api/rules/validate` | The rule as a body → what it would see and want **now**: `signal`, `signal_age_s`, `stale`, `state`, `want`, per-unit `actual`. No state kept | admin |
+| GET | `/api/rules/export[?ids=a,b]` | The rules as a YAML file (definitions only — no live state); 404 names an unknown id | viewer |
+| POST | `/api/rules/import` | `{yaml, apply: false\|true, replace: false\|true}` — a `rules:` list or one rule. Without `apply` nothing is written: `{rules: [{id, label, kind, status: new\|replace\|exists\|invalid, errors, was_armed}], ok, total}`; with it, valid rules are saved (`created`/`replaced`). Imported rules always arrive in **shadow**; an armed rule here is never replaced | admin |
 | POST | `/api/rules/{id}/mode` | `{mode: shadow\|armed}` — arming is explicit and audited (`rule armed`); shadow releases the target | admin |
 | POST | `/api/rules/{id}/enable` | `{enabled: bool}` — disabling applies `on_disable` | admin |
 | POST / DELETE | `/api/rules/{id}/clamp` | `{max, expires_s}` — a ceiling on the numeric want; never expires *into* a step (holds until the signal is under `release_below`) | admin |

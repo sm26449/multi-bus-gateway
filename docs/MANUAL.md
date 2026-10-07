@@ -254,8 +254,11 @@ Devices → *Discover devices*:
    an exception — proves a live device; for HTTP with a template chosen the
    test reports how many `json_path`s resolved; for MQTT it connects and
    waits briefly for a sample message.
-2. **Template** — choose from the library (11 bundled maps, see
-   [device-catalog.md](device-catalog.md)), **upload** a `.json` template
+2. **Template** — choose from the library (the bundled maps are in
+   [device-catalog.md](device-catalog.md)). To write your own from the
+   manufacturer's register list, follow **[device-templates.md](device-templates.md)**:
+   addresses, word order, scale, the editor, CSV/YAML and testing, with
+   examples. You can **upload** a `.json` template
    (validated row by row; id conflicts ask before overwriting), **create**
    one in the editor, or **import a CSV or YAML** register map
    ([csv-import.md](csv-import.md), [yaml-import.md](yaml-import.md)). Built-ins are read-only — *Duplicate to
@@ -1425,6 +1428,13 @@ rules:
     timing: { every_s: 2, debounce: 2, min_interval_s: 60 }
     stale_after_s: 30
 ```
+
+**Moving rules.** **Export** (all, or one from its card) gives a YAML file
+of definitions; **Import** checks every rule against this installation
+first (*new* / *replaces* / *already here* / *cannot import*, with the
+reason) and then saves the valid ones. Imported rules always arrive in
+shadow, and an armed rule is never replaced by an import. Recipes and the
+workflow: **[rules.md](rules.md)**.
 
 Defaults and bounds: `every_s` 2 (0.5–3600), `debounce` 3 (1–100 samples),
 `min_interval_s` 30, `reassert_s` 120 (0 = never), `stale_after_s` 60,

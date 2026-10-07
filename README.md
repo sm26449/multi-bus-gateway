@@ -55,6 +55,8 @@ single meter behind it. See [History](#history) for where it came from.
 🔌 **[API Reference](docs/API.md)** ·
 📡 **[Virtual meter spec](docs/virtual-meter-spec.md)** ·
 🗂️ **[Device catalog](docs/device-catalog.md)** ·
+🧩 **[Write a device template](docs/device-templates.md)** ·
+🧠 **[Rules: guide & recipes](docs/rules.md)** ·
 🖼️ **[Visual UI guide](docs/GHID-UI.md)** (RO notes) ·
 🛡️ **[Reliability & fail-safety](docs/reliability.md)** ·
 ⚙️ **[Config reference](docs/config-reference.md)** ·

@@ -248,8 +248,11 @@ Devices → *Discover devices*:
    protocol — chiar și o excepție — dovedește un dispozitiv viu; la HTTP cu
    un template ales, testul raportează câte `json_path`-uri s-au rezolvat;
    la MQTT se conectează și așteaptă scurt un mesaj de probă.
-2. **Template** — alege din bibliotecă (11 hărți incluse, vezi
-   [device-catalog.md](device-catalog.md)), **încarcă** un template `.json`
+2. **Template** — alege din bibliotecă (hărțile incluse sunt în
+   [device-catalog.md](device-catalog.md)). Ca să scrii unul din lista de
+   registre a producătorului, urmează **[device-templates.md](device-templates.md)**
+   (adrese, ordinea cuvintelor, scală, editor, CSV/YAML, testare — cu
+   exemple). **Încarcă** un template `.json`
    (validat rând cu rând; conflictele de id întreabă înainte de suprascriere),
    **creează** unul în editor sau **importă un CSV sau YAML** cu harta de
    registre ([csv-import.md](csv-import.md),
@@ -1014,6 +1017,30 @@ de export / setpoint de putere: un controller căzut nu poate lăsa în urmă un
 setpoint periculos. Lease-urile active: `GET /api/writes/leases`.
 
 ---
+
+## 14c. Reguli — controlerul declarativ
+
+O **regulă** decide *când* rulează o comandă a unui dispozitiv (de exemplu
+limita de putere a unui invertor) și *cu ce valoare*. Urmărește un semnal
+calculat din valori live, așteaptă să se stabilizeze și cere ținta să se
+conformeze. Exemple: limitează invertoarele când tensiunea rețelei urcă,
+eliberează-le când scade.
+
+- **Shadow întâi.** Orice regulă nouă pornește în *shadow*: decide și
+  spune ce ar face, dar nu scrie nimic. Abia după ce ai urmărit-o într-o zi
+  relevantă o **armezi** (buton separat, cu confirmare, auditat; necesită
+  `security.allow_writes` și autentificare).
+- **Export / Import.** Pagina Rules exportă toate regulile (sau una, de pe
+  cardul ei) ca YAML. Importul verifică întâi fiecare regulă pe ACEASTĂ
+  instalare (*nouă* / *înlocuiește* / *există deja* / *nu se poate importa*,
+  cu motivul) și abia apoi le salvează pe cele valide. Regulile importate
+  intră **mereu în shadow**, iar o regulă armată nu e niciodată înlocuită
+  printr-un import.
+
+Ghidul complet, cu rețete (protecție la supratensiune, derating la
+supra-frecvență, baterie plină și export mare, restaurare la căderea rețelei)
+și depanare: **[rules.md](rules.md)** (EN). Referința tuturor câmpurilor:
+[MANUAL.md §14c](MANUAL.md#14c-rules--the-declarative-controller).
 
 ## 15. Siguranța configurației: snapshot-uri, rollback, backup
 

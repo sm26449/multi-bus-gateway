@@ -22,8 +22,17 @@ required:
 | `category` | no | `group`, `cat` | grouping for the UI |
 | `poll_group` | no | `poll`, `rate` | `realtime` / `normal` / `slow` |
 | `access` | no | `rw`, `mode` | `RW`/`WR` → marks writable (informative) |
-| `register_type` | no | `regtype`, `rtype`, `fc`, `table`, `block` | `holding` (FC3, default) or `input` (aliases `input`/`ir`/`fc4`/`4` → FC4) |
+| `register_type` | no | `regtype`, `rtype`, `fc`, `table`, `block` | `holding` (FC3, default), `input` (`ir`, `fc4`, `4`), `coil` (`fc1`, `do`), `discrete` (`di`, `fc2`) |
 | `json_path` | yes* | `path`, `json` | for HTTP/JSON devices (no Modbus address) |
+
+**Template-wide settings, in the import form:** *Read over* (Modbus, HTTP/JSON
+or MQTT) and *Word order* of 32/64-bit values (ABCD / CDAB / BADC / DCBA).
+They become the template's `protocol` — a map imported with the wrong word
+order reads floats as nonsense; see
+[device-templates.md §2.2](device-templates.md#22-word-order-the-most-common-reason-for-nonsense-values).
+**Addresses** are protocol addresses (0-based): if every address sits in
+40001… or 30001…, the import warns that the manual probably uses the 1-based
+register-number notation ([§2.1](device-templates.md#21-addresses-protocol-address-not-register-number)).
 
 \* Provide **`address`** for Modbus devices, or **`json_path`** for HTTP/JSON
 devices (then a synthetic address is assigned automatically).
