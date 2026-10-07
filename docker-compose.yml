@@ -266,6 +266,9 @@ services:
       # adapters to NEVER expose (claimed by another service). Comma-separated;
       # each token matches a stable id, /dev path, or USB port-path.
       - BRIDGE_EXCLUDE=${BRIDGE_EXCLUDE:-}
+      # default serial params for adapters without their own (set per
+      # adapter via POST /adapters/<key>/serial — docs/serial-bridge-api.md)
+      - BRIDGE_SERIAL_PARAMS=${BRIDGE_SERIAL_PARAMS:-9600n81}
     # Unprivileged access to hotplugged USB serial lines: /dev is bound
     # READ-ONLY (blocks node creation/renames from inside; opening a tty for
     # I/O is unaffected) and only ttyUSB (major 188) / ttyACM (major 166)

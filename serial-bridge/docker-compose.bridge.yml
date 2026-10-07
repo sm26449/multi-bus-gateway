@@ -1,0 +1,87 @@
+# Multi-Bus Gateway — standalone serial bridge for a REMOTE host.
+# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Runs ONLY the serial bridge — on a Raspberry Pi next to the RS-485 bus, or
+# any Linux host with USB serial adapters — so a gateway on ANOTHER machine
+# reaches the buses over the LAN. One bus per adapter; each adapter gets a
+# stable TCP port and its own serial settings (POST /adapters/<key>/serial).
+#
+#   BRIDGE_TOKEN=$(openssl rand -hex 24) docker compose -f docker-compose.bridge.yml up -d
+#
+# (keep the token in a .env next to this file; the gateway needs the same one)
+#
+# SECURITY — read before exposing anything:
+#   * FIREWALL both the control port and the data ports to the gateway's IP
+#     only (e.g. `ufw allow from <gateway-ip> to any port 7000:7016 proto tcp`
+#     and deny the rest), or bind them to a dedicated interface with
+#     BRIDGE_PUBLISH_IP.
+#   * The DATA ports carry RAW Modbus RTU — there is NO authentication on them
+#     (RTU has none): whoever can connect to a data port controls that bus.
+#   * BRIDGE_TOKEN protects ONLY the control API (port 7000: inventory and
+#     serial settings). It travels as plain HTTP — trust the LAN segment or
+#     tunnel it (WireGuard/SSH) when the path is not yours.
+#
+# The data-port range is published 1:1 (host port = container port) because
+# the bridge reports each adapter's tcp_port and the gateway dials exactly
+# that. BRIDGE_PORT_LOW/HIGH bound the allocation AND the published range;
+# 16 ports = up to 16 adapters. Changing the range drops port assignments
+# that fall outside it (loudly, in the log).
+#
+# docker run equivalent (one line):
+#   docker run -d --name mbg-serial-bridge --restart unless-stopped -e BRIDGE_TOKEN=<token> -e BRIDGE_PORT_LOW=7001 -e BRIDGE_PORT_HIGH=7016 -v /dev:/dev:ro -v /etc/hostname:/etc/host-hostname:ro -v serial-bridge-data:/data --device-cgroup-rule='c 188:* rmw' --device-cgroup-rule='c 166:* rmw' --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --cap-add SETUID --cap-add SETGID --security-opt no-new-privileges:true -p 7000:7000 -p 7001-7016:7001-7016 ghcr.io/sm26449/multi-bus-gateway-serial-bridge:latest
+
+name: mbg-serial-bridge
+
+services:
+  serial-bridge:
+    image: ghcr.io/sm26449/multi-bus-gateway-serial-bridge:${MBG_VERSION:-latest}
+    container_name: mbg-serial-bridge
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      # REQUIRED: the control API must not be open on a LAN
+      - BRIDGE_TOKEN=${BRIDGE_TOKEN:?set BRIDGE_TOKEN}
+      - BRIDGE_PORT_LOW=${BRIDGE_PORT_LOW:-7001}
+      - BRIDGE_PORT_HIGH=${BRIDGE_PORT_HIGH:-7016}
+      # default serial params for adapters without their own (ser2net form)
+      - BRIDGE_SERIAL_PARAMS=${BRIDGE_SERIAL_PARAMS:-9600n81}
+      # adapters to NEVER expose (claimed by another service on this host).
+      # Comma-separated; each token matches a stable id, /dev path or USB port-path.
+      - BRIDGE_EXCLUDE=${BRIDGE_EXCLUDE:-}
+      # optional display name; default = this host's /etc/hostname (mounted below)
+      - BRIDGE_HOSTNAME=${BRIDGE_HOSTNAME:-}
+    # Unprivileged access to hotplugged USB serial lines: /dev is bound
+    # READ-ONLY and only ttyUSB (major 188) / ttyACM (major 166) nodes are
+    # allowed. The process runs non-root (uid 10002, dialout).
+    volumes:
+      - /dev:/dev:ro
+      - /etc/hostname:/etc/host-hostname:ro
+      - serial-bridge-data:/data
+    device_cgroup_rules:
+      - 'c 188:* rmw'
+      - 'c 166:* rmw'
+    # the entrypoint's root phase chowns /data and drops to uid 10002;
+    # nothing after that can regain a capability
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      # control API (token-protected) + the adapters' raw-Modbus data ports.
+      # FIREWALL BOTH to the gateway's IP (see the header).
+      - "${BRIDGE_PUBLISH_IP:-0.0.0.0}:7000:7000"
+      - "${BRIDGE_PUBLISH_IP:-0.0.0.0}:${BRIDGE_PORT_LOW:-7001}-${BRIDGE_PORT_HIGH:-7016}:${BRIDGE_PORT_LOW:-7001}-${BRIDGE_PORT_HIGH:-7016}"
+
+volumes:
+  serial-bridge-data:

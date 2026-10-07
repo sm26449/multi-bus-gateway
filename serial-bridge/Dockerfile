@@ -9,6 +9,10 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends \
         ser2net python3 python3-pyudev tini \
     && rm -rf /var/lib/apt/lists/*
 COPY supervisor.py /app/supervisor.py
+# Reported by GET /adapters and /health so a gateway can tell which bridge
+# build it talks to (release: --build-arg BRIDGE_VERSION=<tag>).
+ARG BRIDGE_VERSION=dev
+ENV BRIDGE_VERSION=${BRIDGE_VERSION}
 # Non-root: a dedicated user in `dialout` (gid 20 matches the host's group on
 # the bound /dev tty nodes, root:dialout 0660). The supervisor's writable
 # paths get explicit ownership: /etc/ser2net/ (config rewritten per reconcile),
@@ -20,9 +24,10 @@ RUN useradd --uid 10002 --user-group --no-create-home --shell /usr/sbin/nologin 
     && mkdir -p /etc/ser2net /var/lock /run/lock /data \
     && chown bridge:bridge /etc/ser2net /var/lock /run/lock /data
 # Only the control API is declared here. The adapter data ports (7001-7099) are
-# deliberately NOT EXPOSEd: they carry raw Modbus to live buses and must stay
-# reachable ONLY on the internal Docker network — never publish them to the LAN
-# (no `-p 7001-7099`, no `-P`). MBG reaches them by container name internally.
+# deliberately NOT EXPOSEd: they carry raw Modbus to live buses. Same-host
+# deployments keep them on the internal Docker network (MBG reaches them by
+# container name). A REMOTE bridge (docker-compose.bridge.yml) publishes a
+# narrow range on purpose — firewalled to the gateway's IP; never `-P`.
 EXPOSE 7000
 # Health: the control API answering implies the supervisor loop is alive (it
 # also owns ser2net respawn). stdlib urllib — no curl in the slim image.

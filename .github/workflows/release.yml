@@ -115,6 +115,8 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ./serial-bridge
+          build-args: |
+            BRIDGE_VERSION=${{ steps.meta-bridge.outputs.version }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta-bridge.outputs.tags }}
