@@ -355,3 +355,51 @@ devices:
     assert by['pack_voltage'].influxdb_enabled is True
     assert by['pack_voltage'].mqtt_enabled is True
     assert by['alarm_pack_low_v'].mqtt_enabled is False   # internal bit feeds counts only
+
+
+def test_open_error_clears_once_the_port_opens(monkeypatch):
+    """A tap that failed to open once (tty busy, wrong permissions) and then
+    opened must stop reporting the old error — data flowing under a 'down'
+    health/Test verdict is what the e2e caught."""
+    import serial
+    attempts = []
+
+    class FakeSerial:
+        def __init__(self, **kw):
+            attempts.append(kw)
+            if len(attempts) == 1:
+                raise serial.SerialException("Permission denied")
+
+        def read(self, n):
+            import time as _t
+            _t.sleep(0.01)
+            return b''
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(serial, 'Serial', FakeSerial)
+    reader = TapReader(conn(port='/dev/null-tap-reopen'))
+    assert reader.register(1, object()) is False and 'Permission' in reader.open_error
+    reader.unregister(1)
+    assert reader.register(1, object()) is True
+    assert reader.open_error == ''
+    reader.unregister(1)
+
+
+def test_reader_for_rebuilds_only_an_idle_reader_with_other_settings():
+    from multibus import rtu_tap
+    port = '/dev/null-tap-shared'
+    rtu_tap._READERS.pop(port, None)
+    a = rtu_tap.reader_for(conn(port=port))
+    # units are built before any connects: same settings → the SAME reader
+    assert rtu_tap.reader_for(conn(port=port, unit=2)) is a
+    # idle, new baud → rebuilt with the new line settings
+    c19 = conn(port=port)
+    c19.baudrate = 19200
+    b = rtu_tap.reader_for(c19)
+    assert b is not a and b.baudrate == 19200
+    # attached → never swapped out from under its devices
+    b._clients[1] = object()
+    assert rtu_tap.reader_for(conn(port=port)) is b
+    rtu_tap._READERS.pop(port, None)

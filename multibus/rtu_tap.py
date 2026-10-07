@@ -157,12 +157,18 @@ class RtuFramer:
 class TapReader:
     """One serial port, one reader thread, many per-unit clients."""
 
+    @staticmethod
+    def line_of(conn_cfg) -> Tuple[int, str, int, int]:
+        """(baud, parity, stopbits, bytesize) as the port is opened."""
+        return (int(getattr(conn_cfg, 'baudrate', 9600) or 9600),
+                str(getattr(conn_cfg, 'parity', 'N') or 'N').upper(),
+                int(getattr(conn_cfg, 'stopbits', 1) or 1),
+                int(getattr(conn_cfg, 'bytesize', 8) or 8))
+
     def __init__(self, conn_cfg):
         self.port = conn_cfg.serial_port
-        self.baudrate = int(getattr(conn_cfg, 'baudrate', 9600) or 9600)
-        self.parity = str(getattr(conn_cfg, 'parity', 'N') or 'N')
-        self.stopbits = int(getattr(conn_cfg, 'stopbits', 1) or 1)
-        self.bytesize = int(getattr(conn_cfg, 'bytesize', 8) or 8)
+        self.line = self.line_of(conn_cfg)
+        self.baudrate, self.parity, self.stopbits, self.bytesize = self.line
         self._clients: Dict[int, 'RtuTapClient'] = {}
         self._pending: Dict[int, Tuple[int, int, int, float]] = {}  # unit -> (fc, addr, count, t)
         # learned window shapes: (fc, byte_count) -> start address. On a
@@ -215,6 +221,7 @@ class TapReader:
             self._serial = None
             logger.warning("rtu_tap %s: cannot open port — %s", self.port, e)
             return False
+        self.open_error = ""                       # a past failure is not today's
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, daemon=True,
                                         name=f"rtu-tap:{self.port}")
@@ -392,9 +399,14 @@ _READERS_LOCK = threading.Lock()
 
 
 def reader_for(conn_cfg) -> TapReader:
+    """The port's shared reader. An idle one (nobody attached) whose line
+    settings no longer match is rebuilt — it was opened for devices that are
+    gone, and an edited device may have changed its baud. Only on a MISMATCH:
+    units are constructed before any of them connects, so "idle" alone would
+    hand each its own reader, and the tty would be opened N times."""
     with _READERS_LOCK:
         r = _READERS.get(conn_cfg.serial_port)
-        if r is None:
+        if r is None or (not r._clients and r.line != TapReader.line_of(conn_cfg)):
             r = _READERS[conn_cfg.serial_port] = TapReader(conn_cfg)
         return r
 
