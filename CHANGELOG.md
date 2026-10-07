@@ -1,5 +1,76 @@
 # Changelog
 
+## 3.86.0
+
+**Upgrade notes** (no config change needed): an installation total is no
+longer computed twice — a field whose template says how it combines is not
+also combined by the name rules. For a bank on the bundled
+`seplos_bms_v3_rtu_tap` map this drops two duplicate totals:
+`power_active_total` (same value as `pack_total_power`) and
+`energy_remaining` (same as `pack_energy_remaining`). Their last retained
+MQTT message stays on the broker until you clear it; read the `pack_*`
+names. The serial-bridge image now takes Debian security updates at build
+time (the scan flagged perl-base and libpcre2).
+
+### 2026-10-07 — the template decides how a unit is shown
+
+An audit of a real battery bank, through a viewer account, found the UI
+choosing what to show from lists hardcoded by role and by name. A battery
+fit neither: its units showed "—" for power, its totals were raw names
+without units, its headline read "Producing now", its cells read "3.29 V"
+sixteen times, and 34 alarm flags at zero filled a section. What a unit of
+a kind shows now comes from its template's **`display`** block — read live,
+so improving a template improves every unit at once:
+
+- **Names and columns**: `unit_label`, `icon`, `glance` (the columns of a
+  unit row: power and SOC for a pack), `hero` (its fleet row), `headline`
+  (the installation's top line, from its totals, with a hint such as the
+  sign of a battery's power).
+- **Alarms** (`alarms: [{field, severity}]`): fields whose non-zero value
+  *is* an alarm — a BMS's alarm, protection and failure counts. The fleet
+  counts them (a pack in alarm no longer shows 0), each installation unit
+  carries `alarms`, the installation `units_alarming`; the unit row gets a
+  pill, the unit page lists what is active.
+- **Sections** (`sections: {category: {widget}}`): `grid` turns a
+  section into tiles with the lowest and highest marked — a pack's weak
+  cell at a glance — with `tiles` (which fields) and `decimals` (read to the
+  millivolt, summaries included); `active_only` shows only what is active,
+  or *Nothing active*.
+- **Bitmasks** (`bitmasks: {field: "Cell {n}"}`): a mask reads as what is
+  set — *Cell 3, Cell 7*, `—` when clear.
+
+Everything in it is validated against the template's own fields and
+categories. Without a block, the role decides as before. Reference:
+config-reference `display:`, MANUAL §5.3.
+
+- **Totals speak**: each inherits its source field's label and unit
+  (*SOC (average) %*); a total pooled over several fields is named after
+  itself; the grid lists the headline first, then the template's order,
+  folds after 12, and reads percentages and temperatures to one decimal.
+  New operation `mode` — the majority value, text included: a bank's
+  one-word status.
+- **Template categories** reach the register list, so the dashboard and
+  the unit page group a vendor's fields as its template files them.
+- **Update from template** (admin, device or installation): carries
+  improved labels, units, descriptions, categories and totals over to the
+  rows a unit already has; the selection, flags, sinks, thresholds and
+  formulas stay yours.
+- A **viewer** sees no control it cannot use; the unit table fits a phone;
+  the tap's wire health (frames, CRC errors, resyncs) shows under *How it
+  is read*.
+
+`seplos_bms_v3_rtu_tap` 1.8.1 declares all of the above, with clear labels
+for the BMS current limits and the signs of power and current, and a bank
+`pack_status`.
+
+Fixed along the way:
+- Formulas loaded at boot only: a device or installation created or edited
+  at runtime ran no calculated field until the next restart.
+- An installation's history charts were always empty — the picker now
+  offers its totals.
+- The login no longer says "Session expired" on a first visit; a unit page
+  no longer shows "No values yet" over live values.
+
 ## 3.85.0
 
 **Upgrade notes** (nothing to do for most installs; no config, MQTT or
