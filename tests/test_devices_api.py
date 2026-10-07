@@ -1002,3 +1002,50 @@ def test_adhoc_broker_probe_blocks_nonlan_host(tmp_path):
     r = client.post("/api/devices/test", json={
         "connection": {"protocol": "mqtt", "broker": "8.8.8.8", "topic": "t"}})
     assert r.status_code == 422 and "connection.broker" in str(r.json())
+
+
+@needs_tc
+def test_rtu_tap_device_crud_and_line_rules(tmp_path):
+    """A listen-only tap is a first-class device: created, echoed back with its
+    serial block (the edit form reads it), kept as rtu_tap on update. Taps
+    share a line only on the same settings; an active RTU master never shares
+    one with a tap (one tty, one opener)."""
+    _cfg, client = make_app(tmp_path)
+
+    def tap(did, **conn):
+        c = {"protocol": "rtu_tap", "serial_port": "/dev/ttyTAP0",
+             "baudrate": 19200, "parity": "N", "unit_id": 2}
+        c.update(conn)
+        return {"id": did, "enabled": False, "template": "seplos_bms_v3_rtu_tap",
+                "connection": c}
+
+    r = client.post("/api/devices", json=tap("pack-2"))
+    assert r.status_code == 200, r.text
+    dev = next(d for d in client.get("/api/devices").json()["devices"] if d["id"] == "pack-2")
+    assert dev["protocol"] == "rtu_tap"
+    assert dev["serial"]["serial_port"] == "/dev/ttyTAP0" and dev["serial"]["baudrate"] == 19200
+
+    # a second tap on the same line, same settings, other unit: fine
+    assert client.post("/api/devices", json=tap("pack-3", unit_id=3)).status_code == 200
+    # ...but not at another baud — the shared reader opens the line once
+    r = client.post("/api/devices", json=tap("pack-4", unit_id=4, baudrate=9600))
+    assert r.status_code == 422 and "same line settings" in json.dumps(r.json())
+    # an active master on a tapped line is refused
+    r = client.post("/api/devices", json={
+        "id": "poller", "enabled": False,
+        "connection": {"protocol": "rtu", "serial_port": "/dev/ttyTAP0", "unit_id": 9}})
+    assert r.status_code == 422 and "polled or tapped" in json.dumps(r.json())
+    # a tap needs its port
+    r = client.post("/api/devices", json=tap("pack-5", serial_port=""))
+    assert r.status_code == 422 and "serial_port" in json.dumps(r.json())
+
+    # an edit keeps the protocol — the device is not its own conflict
+    r = client.put("/api/devices/pack-2", json=tap("pack-2", unit_id=5))
+    assert r.status_code == 200, r.text
+    assert Config(str(tmp_path / "config.yaml")).get_device("pack-2").protocol == "rtu_tap"
+
+    # the ad-hoc probe never transmits; the saved device reports what it heard
+    adhoc = client.post("/api/devices/test", json={"connection": tap("x")["connection"]}).json()
+    assert adhoc["ok"] is None and "listen-only" in adhoc["message"]
+    saved = client.post("/api/devices/pack-2/test").json()
+    assert saved["ok"] is False and "not listening" in saved["message"]

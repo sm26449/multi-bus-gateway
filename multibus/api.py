@@ -1240,6 +1240,36 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                          name=f"Device-Init-{dev_cfg.id}").start()
         return client
 
+    def _serial_line_conflicts(protocol: str, sp: str, conn: Dict,
+                               existing_id: str = None) -> List[str]:
+        """Who else holds serial line `sp`. One physical line cannot be driven
+        by two independent masters (each ModbusClient owns its own lock), and a
+        tty opens once — so an active RTU device and a tap never share a port.
+        Taps DO share one (a single TapReader per port fans frames out by unit
+        id), but that reader opens the line once, with the first tap's settings:
+        a second tap must agree on them or it would silently decode garbage."""
+        for d in config.devices:
+            dproto = getattr(d, 'protocol', '')
+            if (getattr(d, 'id', None) == existing_id or dproto not in ('rtu', 'rtu_tap')
+                    or str(getattr(d.connection, 'serial_port', '')).strip() != sp):
+                continue
+            if protocol == 'rtu' and dproto == 'rtu':
+                return [f"connection.serial_port: '{sp}' is already used by "
+                        f"device '{d.id}' — one RTU master per serial line"]
+            if protocol != dproto:
+                return [f"connection.serial_port: '{sp}' is already used by device "
+                        f"'{d.id}' as {dproto} — a serial line is either polled or "
+                        f"tapped, never both"]
+            ours = (int(conn.get('baudrate', 9600) or 9600),
+                    str(conn.get('parity', 'N') or 'N').upper())
+            theirs = (int(d.connection.baudrate or 9600),
+                      str(d.connection.parity or 'N').upper())
+            if ours != theirs:
+                return [f"connection.baudrate: '{sp}' is tapped by '{d.id}' at "
+                        f"{theirs[0]} {theirs[1]} — every tap on one line uses the "
+                        f"same line settings"]
+        return []
+
     def _validate_device_payload(payload: Dict, *, existing_id: str = None) -> Dict:
         """Normalize + validate the raw device dict from the UI. Raises
         HTTPException(422) with a per-field error list."""
@@ -1258,8 +1288,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         if conn.get('password') == '$GATEWAY_MQTT_PASSWORD':
             conn['password'] = config.mqtt.password
         protocol = str(conn.get('protocol', 'tcp')).lower()
-        if protocol not in ('tcp', 'rtu', 'rtu-tcp', 'http', 'mqtt'):
-            errors.append("connection.protocol: must be 'tcp', 'rtu', 'rtu-tcp', 'http' or 'mqtt'")
+        if protocol not in ('tcp', 'rtu', 'rtu-tcp', 'rtu_tap', 'http', 'mqtt'):
+            errors.append("connection.protocol: must be 'tcp', 'rtu', 'rtu-tcp', "
+                          "'rtu_tap', 'http' or 'mqtt'")
         # A template's register map is transport-specific (Modbus reads by address,
         # HTTP/MQTT by json_path), so the device protocol MUST match the template's
         # transport class — otherwise every read silently resolves to nothing.
@@ -1267,7 +1298,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         _classmap = {'http': 'http', 'mqtt': 'mqtt'}
         if template_id and _tpl is None:
             errors.append(f"template: '{template_id}' not found")
-        elif _tpl is not None and protocol in ('tcp', 'rtu', 'rtu-tcp', 'http', 'mqtt'):
+        elif _tpl is not None and protocol in ('tcp', 'rtu', 'rtu-tcp', 'rtu_tap', 'http', 'mqtt'):
             from .device_template import template_transport
             dev_class = _classmap.get(protocol, 'modbus')
             tpl_class = template_transport(_tpl)
@@ -1296,22 +1327,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     raise ValueError
             except (TypeError, ValueError):
                 errors.append("connection.port: must be 1..65535")
-        elif protocol == 'rtu':
+        elif protocol in ('rtu', 'rtu_tap'):
             sp = str(conn.get('serial_port', '')).strip()
             if not sp:
                 errors.append("connection.serial_port: required for Modbus RTU")
             else:
-                # One physical serial line cannot be driven by two independent
-                # masters (each ModbusClient owns its own lock) without bus
-                # collisions. Until a shared-bus arbiter lands (Tier 3), refuse a
-                # second RTU device on a serial port already in use.
-                for d in config.devices:
-                    if (getattr(d, 'id', None) != existing_id
-                            and getattr(d, 'protocol', '') == 'rtu'
-                            and str(getattr(d.connection, 'serial_port', '')).strip() == sp):
-                        errors.append(f"connection.serial_port: '{sp}' is already used by "
-                                      f"device '{d.id}' — one RTU master per serial line")
-                        break
+                errors.extend(_serial_line_conflicts(protocol, sp, conn, existing_id))
             for fld, lo, hi in (("baudrate", 300, 4_000_000), ("stopbits", 1, 2),
                                 ("bytesize", 5, 8), ("unit_id", 0, 255)):
                 if fld in conn or fld == "unit_id":
@@ -1425,7 +1446,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'tls': bool(m.get('tls', False)),
                 'password': '******' if m.get('password') else '',   # never echo the secret
             })
-        if dev_cfg.protocol == 'rtu':
+        if dev_cfg.protocol in ('rtu', 'rtu_tap'):
             entry['serial'] = dev_cfg.serial
         if dev_cfg.protocol == 'http':
             # Never echo header VALUES back — they can carry Authorization / API
@@ -3190,7 +3211,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'template': (r.get('template', '') or h.get('template', '')
                              or p.get('template', '')),
                 'address': (r.get('url')
-                            or (r.get('serial_port') if r.get('protocol') == 'rtu'
+                            or (r.get('serial_port') if r.get('protocol') in ('rtu', 'rtu_tap')
                                 else f"{r.get('host', '')}:{r.get('port', 502)}")),
                 'poll_groups': pg,
                 # the fastest rhythm this source reads at — what "every N s"
@@ -4153,6 +4174,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                         "message": f"connected · message on {got['topic']}: {got['msg'][:80]}"}
             return {"ok": True, "connected": True, "message_received": False,
                     "message": "connected — no message on the topic within 3s (it may be idle)"}
+        if protocol == 'rtu_tap':
+            # nothing to ask: a tap never transmits, and the tty may already be
+            # held by a running tap — the saved device's test reports what it hears
+            return {"ok": None, "message": "listen-only — nothing to probe; save "
+                                           "the device, then Test shows what the tap hears"}
         if protocol == 'rtu' and not str(conn.get('serial_port', '')).strip():
             raise HTTPException(status_code=422, detail={"errors": ["connection.serial_port required"]})
         if protocol in ('tcp', 'rtu-tcp') and not str(conn.get('host', '')).strip():
@@ -4161,6 +4187,32 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                              float(conn.get('timeout', 3)),
                              int(payload.get('address', 0)))
 
+    def _tap_hearing(dev_cfg, client) -> Dict:
+        """A tap's "test": not a probe (it never transmits) but what it has
+        HEARD — the line open, the bus alive, this unit's windows arriving.
+        Each failure names the layer, so "wrong A/B" reads differently from
+        "the master never asks unit 7"."""
+        c = dev_cfg.connection
+        if client is None or not hasattr(client, 'get_stats'):
+            return {"ok": False, "message": f"not listening on {c.serial_port} "
+                                            "(device disabled or not started)"}
+        st = client.get_stats()
+        bus = st.get('bus') or {}
+        if bus.get('open_error'):
+            return {"ok": False, "message": f"{c.serial_port}: {bus['open_error']}"}
+        frames = int(bus.get('frames') or 0)
+        if not frames:
+            return {"ok": False, "message": f"{c.serial_port} is open but silent — no "
+                                            "valid frame yet (master off? A/B swapped? "
+                                            f"line not {c.baudrate} {c.parity})"}
+        wins, age = st.get('successful_reads') or 0, st.get('staleness_age_s')
+        if not wins:
+            return {"ok": False, "message": f"the bus is live ({frames} frames) but "
+                                            f"nothing for unit {c.unit_id} yet"}
+        return {"ok": True, "message": f"hearing unit {c.unit_id} — {wins} windows, "
+                                       f"last {age} s ago · {frames} frames on "
+                                       f"{c.serial_port}"}
+
     @app.post("/api/devices/{device_id}/test")
     def test_device(device_id: str):
         """Probe a saved device (TCP or RTU). Uses its first selected register
@@ -4168,6 +4220,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         _idx, dev_cfg, _client = _find_device(device_id)
         if dev_cfg is None:
             raise HTTPException(status_code=404, detail="device not found")
+        if dev_cfg.protocol == 'rtu_tap':
+            return _tap_hearing(dev_cfg, _client)
         regs, _g = config.load_device_registers(dev_cfg)
         address = regs[0].address if regs else 0
         c = dev_cfg.connection

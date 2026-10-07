@@ -86,8 +86,9 @@ Object.assign(JanitzaMonitor.prototype, {
         const d = this._devWiz.data;
         const tcp = d.protocol === 'tcp';
         const http = d.protocol === 'http';
-        const isRtu = d.protocol === 'rtu' || d.protocol === 'rtu-tcp';
+        const isRtu = d.protocol === 'rtu' || d.protocol === 'rtu-tcp' || d.protocol === 'rtu_tap';
         const rtuBridge = d.protocol === 'rtu-tcp';   // over-network (ser2net) vs direct serial
+        const tap = d.protocol === 'rtu_tap';         // listen-only: another master owns the bus
         // Protocol is fixed after creation: the template's register map is
         // transport-specific (Modbus reads by address, HTTP by json_path), so
         // switching transport would orphan the map.
@@ -141,7 +142,8 @@ Object.assign(JanitzaMonitor.prototype, {
         <div id="devWizRtuFields" style="display:${isRtu ? '' : 'none'}">
             <div class="seg seg-sm" role="radiogroup" aria-label="${this.t('devices.wizard.rtuMode', 'RTU connection mode')}" style="margin-bottom:12px;">
                 <label class="seg-btn ${rtuBridge ? 'on' : ''}"><input type="radio" name="devWizRtuMode" value="rtu-tcp" ${rtuBridge ? 'checked' : ''}><span class="s"></span> ${this.t('devices.wizard.rtuOverNet', 'Over network (auto-detect)')} <span class="seg-reco">${this.t('common.recommended', 'recommended')}</span></label>
-                <label class="seg-btn ${rtuBridge ? '' : 'on'}"><input type="radio" name="devWizRtuMode" value="rtu" ${rtuBridge ? '' : 'checked'}><span class="s"></span> ${this.t('devices.wizard.rtuDirect', 'Direct serial')}</label>
+                <label class="seg-btn ${d.protocol === 'rtu' ? 'on' : ''}"><input type="radio" name="devWizRtuMode" value="rtu" ${d.protocol === 'rtu' ? 'checked' : ''}><span class="s"></span> ${this.t('devices.wizard.rtuDirect', 'Direct serial')}</label>
+                <label class="seg-btn ${tap ? 'on' : ''}"><input type="radio" name="devWizRtuMode" value="rtu_tap" ${tap ? 'checked' : ''}><span class="s"></span> ${this.t('devices.wizard.rtuTap', 'Listen only (tap)')}</label>
             </div>
             <div id="devWizRtuBridge" style="display:${rtuBridge ? '' : 'none'}">
                 <div class="form-row" style="align-items:end;">
@@ -190,9 +192,10 @@ Object.assign(JanitzaMonitor.prototype, {
                         <input type="number" id="devWizUnitR" class="input" aria-label="Unit ID" value="${d.unit_id}" min="0" max="255">
                     </div>
                 </div>
+                ${tap ? `<div class="field-hint" style="margin-top:6px;"><i aria-hidden="true" class="bi bi-ear"></i> ${this.t('devices.wizard.rtuTapNote', 'Listen-only: another master already polls this bus — the gateway never transmits, it decodes the answers that unit gives. Values arrive at the master’s rhythm; several taps can share one port (same baud/parity). The adapter must be mapped into the container (e.g. devices: /dev/ttyUSB1). After saving, Test on the device shows what the tap hears.')}</div>` : `
                 <button class="btn btn-secondary btn-sm" data-action="devWizardTest" data-with-el>
                     <i aria-hidden="true" class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
-                <div class="field-hint" style="margin-top:6px;">${this.t('devices.wizard.rtuNote', 'The serial device must be attached to the host and mapped into the container (e.g. devices: /dev/ttyUSB0). It starts polling right after saving.')}</div>
+                <div class="field-hint" style="margin-top:6px;">${this.t('devices.wizard.rtuNote', 'The serial device must be attached to the host and mapped into the container (e.g. devices: /dev/ttyUSB0). It starts polling right after saving.')}</div>`}
             </div>
             <div class="wiz-test-result" id="devWizTestResult2" role="status"></div>
         </div>
@@ -452,7 +455,7 @@ Object.assign(JanitzaMonitor.prototype, {
             document.querySelectorAll('input[name="devWizRtuMode"]').forEach(r =>
                 r.addEventListener('change', () => {
                     this._devWizCollect();
-                    w.data.protocol = r.value;          // 'rtu' | 'rtu-tcp'
+                    w.data.protocol = r.value;          // 'rtu' | 'rtu-tcp' | 'rtu_tap'
                     this._devWizRender();
                 }));
         } else if (w.step === 2) {
@@ -595,7 +598,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 d.mqtt_username = g('devWizMqttUser')?.value.trim() ?? d.mqtt_username;
                 d.mqtt_password = g('devWizMqttPass')?.value ?? d.mqtt_password;
                 d.mqtt_tls = !!g('devWizMqttTls')?.checked;
-            } else {   // rtu (direct serial) or rtu-tcp (over the bridge)
+            } else {   // rtu (direct serial), rtu_tap (listening) or rtu-tcp (over the bridge)
                 const mode = document.querySelector('input[name="devWizRtuMode"]:checked')?.value;
                 if (mode) d.protocol = mode;
                 if (d.protocol === 'rtu-tcp') {
@@ -633,7 +636,8 @@ Object.assign(JanitzaMonitor.prototype, {
     _devWizValidate() {
         const w = this._devWiz, d = w.data;
         if (w.step === 1 && d.protocol === 'tcp' && !d.host) return this._wizInvalid('devWizHost');
-        if (w.step === 1 && d.protocol === 'rtu' && !d.serial_port) return this._wizInvalid('devWizSerial');
+        if (w.step === 1 && (d.protocol === 'rtu' || d.protocol === 'rtu_tap') && !d.serial_port)
+            return this._wizInvalid('devWizSerial');
         if (w.step === 1 && d.protocol === 'rtu-tcp' && !d.host) return this._wizInvalid('devWizAdapter');
         if (w.step === 1 && d.protocol === 'http' && !/^https?:\/\//.test(d.url || ''))
             return this._wizInvalid('devWizUrl');
@@ -719,8 +723,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 ? { protocol: 'tcp', host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout }
                 : d.protocol === 'rtu-tcp'
                 ? { protocol: 'rtu-tcp', host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout }
-                : { protocol: 'rtu', serial_port: d.serial_port, baudrate: d.baudrate,
-                    parity: d.parity, stopbits: d.stopbits, unit_id: d.unit_id },
+                : { protocol: d.protocol === 'rtu_tap' ? 'rtu_tap' : 'rtu', serial_port: d.serial_port,
+                    baudrate: d.baudrate, parity: d.parity, stopbits: d.stopbits, unit_id: d.unit_id },
             mqtt: { topic_prefix: d.topic_prefix || `meters/${d.id}` },
             influxdb: { bucket: d.bucket || undefined, device_tag: d.device_tag || undefined },
             ha_discovery_enabled: d.ha_discovery_enabled,

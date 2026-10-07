@@ -152,11 +152,11 @@ Object.assign(JanitzaMonitor.prototype, {
 
     _deviceRowHtml(d, healthColor, nested = false) {
         {
-            const PROTO = { http: 'HTTP', tcp: 'Modbus TCP', 'rtu-tcp': 'Modbus RTU/TCP', rtu: 'Modbus RTU', mqtt: 'MQTT' };
+            const PROTO = { http: 'HTTP', tcp: 'Modbus TCP', 'rtu-tcp': 'Modbus RTU/TCP', rtu: 'Modbus RTU', rtu_tap: 'RTU tap', mqtt: 'MQTT' };
             const proto = (d.read_via || []).length
                 ? d.read_via.map(r => `${this._esc(r.id)} ${PROTO[r.protocol] || this._esc(r.protocol)}${r.interval_s != null ? ` ${r.interval_s} s` : ''}`).join(' · ')
-                : d.protocol === 'rtu'
-                ? `RTU · ${this._esc(d.serial?.serial_port || '—')}`
+                : (d.protocol === 'rtu' || d.protocol === 'rtu_tap')
+                ? `${d.protocol === 'rtu_tap' ? 'RTU tap' : 'RTU'} · ${this._esc(d.serial?.serial_port || '—')}`
                 : d.protocol === 'http'
                 ? `HTTP · ${this._esc((d.connection?.url || d.http_url || '').replace(/^https?:\/\//, '').split('/')[0] || '—')}`
                 : d.protocol === 'mqtt'
@@ -604,6 +604,7 @@ Object.assign(JanitzaMonitor.prototype, {
                         <label><input type="radio" name="ddvProto" value="tcp" ${d.protocol === 'tcp' ? 'checked' : ''} disabled> Modbus TCP</label>
                         <label><input type="radio" name="ddvProto" value="rtu-tcp" ${d.protocol === 'rtu-tcp' ? 'checked' : ''} disabled> Modbus RTU over TCP</label>
                         <label style="opacity:.55;"><input type="radio" name="ddvProto" value="rtu" ${d.protocol === 'rtu' ? 'checked' : ''} disabled> Modbus RTU</label>
+                        <label><input type="radio" name="ddvProto" value="rtu_tap" ${d.protocol === 'rtu_tap' ? 'checked' : ''} disabled> ${t('devices.wizard.rtuTapLabel', 'Modbus RTU tap (listen-only)')}</label>
                         <label><input type="radio" name="ddvProto" value="http" ${d.protocol === 'http' ? 'checked' : ''} disabled> HTTP / JSON</label>
                         <label><input type="radio" name="ddvProto" value="mqtt" ${d.protocol === 'mqtt' ? 'checked' : ''} disabled> MQTT</label>
                     </div>
@@ -625,7 +626,7 @@ Object.assign(JanitzaMonitor.prototype, {
                             <input type="number" id="ddvTimeout" class="input" aria-label="Timeout seconds" value="${d.timeout}" ${endpointLk} min="1" max="30"></div>
                     </div>
                 </div>
-                <div id="ddvRtu" style="display:${d.protocol === 'rtu' ? '' : 'none'}">
+                <div id="ddvRtu" style="display:${(d.protocol === 'rtu' || d.protocol === 'rtu_tap') ? '' : 'none'}">
                     <div class="form-row">
                         <div class="form-group flex-2"><label class="form-label" for="ddvSerial">${t('devices.wizard.serialPort', 'Serial port')}</label>
                             <input type="text" id="ddvSerial" class="input" value="${this._esc(d.serial_port)}" ${endpointLk} placeholder="/dev/ttyUSB0"></div>
@@ -839,7 +840,7 @@ Object.assign(JanitzaMonitor.prototype, {
             r.addEventListener('change', () => {
                 const p = document.querySelector('input[name="ddvProto"]:checked')?.value || 'tcp';
                 const show = (id, on) => { const e = document.getElementById(id); if (e) e.style.display = on ? '' : 'none'; };
-                show('ddvTcp', p === 'tcp' || p === 'rtu-tcp'); show('ddvRtu', p === 'rtu'); show('ddvHttp', p === 'http'); show('ddvMqtt', p === 'mqtt');
+                show('ddvTcp', p === 'tcp' || p === 'rtu-tcp'); show('ddvRtu', p === 'rtu' || p === 'rtu_tap'); show('ddvHttp', p === 'http'); show('ddvMqtt', p === 'mqtt');
             }));
         // in-place workspace tabs (Overview / Edit / Outputs)
         document.querySelectorAll('#deviceWsTabs .config-main-tab[data-dtab]').forEach(tab =>
@@ -1119,7 +1120,7 @@ Object.assign(JanitzaMonitor.prototype, {
         if (this._stopMonitorPoll) this._stopMonitorPoll();   // stop the monitor poll when leaving
     },
 
-    _PROTO_LABEL: { http: 'HTTP', tcp: 'Modbus TCP', 'rtu-tcp': 'Modbus RTU/TCP', rtu: 'Modbus RTU', mqtt: 'MQTT' },
+    _PROTO_LABEL: { http: 'HTTP', tcp: 'Modbus TCP', 'rtu-tcp': 'Modbus RTU/TCP', rtu: 'Modbus RTU', rtu_tap: 'Modbus RTU tap', mqtt: 'MQTT' },
 
     // Every way this unit is read, one line each: protocol, address, rhythm,
     // cost and verdict — the same shape the installation page uses.
@@ -1269,9 +1270,9 @@ Object.assign(JanitzaMonitor.prototype, {
         </div>`;
         }
         const src = d.protocol === 'http' ? this._esc(d.url || '—')
-                  : d.protocol === 'rtu' ? `${this._esc(d.serial_port || '—')} · ${d.baudrate}${d.parity} · unit ${d.unit_id}`
+                  : (d.protocol === 'rtu' || d.protocol === 'rtu_tap') ? `${this._esc(d.serial_port || '—')} · ${d.baudrate}${d.parity} · unit ${d.unit_id}`
                   : `${this._esc(d.host || '—')}:${d.port} · unit ${d.unit_id}`;
-        const proto = { tcp: 'Modbus TCP', rtu: 'Modbus RTU', http: 'HTTP / JSON' }[d.protocol] || d.protocol;
+        const proto = this._PROTO_LABEL[d.protocol] || d.protocol;
         const fact = (label, val) => `<div><div style="color:var(--text-secondary);font-size:11.5px;">${label}</div><div style="font-weight:600;font-size:13.5px;">${val}</div></div>`;
         const mp = this._sinkStatusPill(this._devDetail.sinks?.mqtt, d.mqtt_enabled, entry.connected);
         const ip = this._sinkStatusPill(this._devDetail.sinks?.influxdb, d.influxdb_enabled, entry.connected);
@@ -1392,7 +1393,7 @@ Object.assign(JanitzaMonitor.prototype, {
             d.mqtt_username = g('ddvMqttUser')?.value.trim() || '';
             d.mqtt_password = g('ddvMqttPass')?.value ?? '';   // blank = keep stored
             d.mqtt_tls = !!g('ddvMqttTls')?.checked;
-        } else if (d.protocol === 'tcp') {
+        } else if (d.protocol === 'tcp' || d.protocol === 'rtu-tcp') {
             d.host = g('ddvHost')?.value.trim() || '';
             d.port = parseInt(g('ddvPort')?.value, 10) || 502;
             d.unit_id = parseInt(g('ddvUnit')?.value, 10) || 0;
@@ -1425,10 +1426,13 @@ Object.assign(JanitzaMonitor.prototype, {
                     username: d.mqtt_username || '', password: d.mqtt_password || '', tls: !!d.mqtt_tls }
                 : d.protocol === 'rtu'
                 ? { protocol: 'rtu', serial_port: d.serial_port, baudrate: d.baudrate, parity: d.parity, stopbits: d.stopbits, unit_id: d.unit_id, timeout: d.timeout }
-                : { protocol: 'tcp', host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout };
-            const r = await fetch('/api/devices/test', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ connection: conn }),
-            });
+                : { protocol: d.protocol === 'rtu-tcp' ? 'rtu-tcp' : 'tcp', host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout };
+            // a tap never transmits — the saved device reports what it has heard
+            const r = d.protocol === 'rtu_tap'
+                ? await fetch(`/api/devices/${encodeURIComponent(this._devDetail.id)}/test`, { method: 'POST' })
+                : await fetch('/api/devices/test', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ connection: conn }),
+                });
             const res = await r.json();
             out.className = 'wiz-test-result ' + (res.ok ? 'ok' : 'err');
             out.textContent = (res.ok ? '✓ ' : '✗ ') + (res.message || '');
@@ -1732,7 +1736,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     username: d.mqtt_username || '', password: d.mqtt_password || '', tls: !!d.mqtt_tls }
                 : (d.protocol === 'tcp' || d.protocol === 'rtu-tcp')
                 ? { protocol: d.protocol, host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout }
-                : { protocol: 'rtu', serial_port: d.serial_port, baudrate: d.baudrate, parity: d.parity, stopbits: d.stopbits, unit_id: d.unit_id },
+                : { protocol: d.protocol === 'rtu_tap' ? 'rtu_tap' : 'rtu', serial_port: d.serial_port, baudrate: d.baudrate, parity: d.parity, stopbits: d.stopbits, unit_id: d.unit_id },
             mqtt: { topic_prefix: d.topic_prefix || `meters/${s.id}`, enabled: d.mqtt_enabled },
             influxdb: { bucket: d.bucket || undefined, device_tag: d.device_tag || undefined, enabled: d.influxdb_enabled },
             ha_discovery_enabled: d.ha_discovery_enabled,
