@@ -1011,6 +1011,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         template_registry = TemplateRegistry(
             user_dir=config.config_path.parent / "device_templates")
     app.state.template_registry = template_registry
+    from .canonical_fields import load_user_fields as _load_uf
+    _uf_path = config.config_path.parent / "canonical_fields_user.json"
+    for _bad in _load_uf(_uf_path):
+        logger.warning("canonical field skipped: %s", _bad)
 
     # ── Config snapshots (rollback + last-known-good) ───────────────────────
     from pathlib import Path as _PathSnap
@@ -3410,8 +3414,16 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         return meta
 
     def _field_meta_any(name: str, smeta: Dict) -> Optional[Dict]:
+        # what the unit itself says (its row's label and unit) first; the
+        # canonical dictionary fills in only what the row does not say
         from .canonical_fields import field_meta
-        return field_meta(name) or smeta.get(name)
+        own, canon = smeta.get(name) or {}, field_meta(name) or {}
+        if not own and not canon:
+            return None
+        mine = {k: v for k, v in own.items() if v not in (None, '')}
+        if mine.get('label') == name and canon.get('label'):
+            mine.pop('label')          # a bare name is no label; the dictionary's is
+        return {**canon, **mine}
 
     _OP_WORD = {'sum': 'total', 'avg': 'average', 'min': 'min', 'max': 'max',
                 'spread': 'spread', 'mode': ''}

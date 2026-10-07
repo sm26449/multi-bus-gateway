@@ -170,9 +170,211 @@ CANONICAL_FIELDS: Dict[str, Tuple[str, str, str, str]] = {
     'status_text':   ('status', '', 'status/text', 'Operating state, decoded to vendor wording'),
     'status_alarm':  ('status', '', 'status/alarm', 'Operating state is an alarm condition (1/0)'),
     'status_active': ('status', '', 'status/active', 'Device is actively producing (1/0)'),
+
+    # ── Battery / BMS (measurement: battery) ───────────────────────────────
+    # The names BMS maps already use where they are clear (soc, cycles,
+    # cell_N…); battery_* where a bare word would mean something else on a
+    # meter (current, power, status). Signs: current and power are POSITIVE
+    # WHILE CHARGING (the BMS and Victron convention).
+    'soc':                     ('battery', '%', 'battery/soc', 'State of charge'),
+    'soh':                     ('battery', '%', 'battery/soh', 'State of health'),
+    'cycles':                  ('battery', '', 'battery/cycles', 'Charge/discharge cycles'),
+    'pack_voltage':            ('battery', 'V', 'battery/voltage', 'Pack voltage'),
+    'battery_current':         ('battery', 'A', 'battery/current', 'Battery current (+ charging)'),
+    'battery_power':           ('battery', 'W', 'battery/power', 'Battery power (+ charging)'),
+    'battery_status':          ('battery', '', 'battery/status', 'Battery state (charge / discharge / standby…)'),
+    'remaining_capacity':      ('battery', 'Ah', 'battery/capacity/remaining', 'Remaining capacity'),
+    'total_capacity':          ('battery', 'Ah', 'battery/capacity/total', 'Full-charge capacity'),
+    'total_discharge_capacity':('battery', 'Ah', 'battery/capacity/discharged', 'Lifetime discharged capacity'),
+    'energy_remaining':        ('battery', 'Wh', 'battery/energy/remaining', 'Energy stored now'),
+    'energy_to_full':          ('battery', 'Wh', 'battery/energy/to_full', 'Energy still to charge'),
+    'charge_current_limit':    ('battery', 'A', 'battery/limit/charge_current', 'Max charge current (BMS limit)'),
+    'discharge_current_limit': ('battery', 'A', 'battery/limit/discharge_current', 'Max discharge current (BMS limit)'),
+    'charge_voltage_limit':    ('battery', 'V', 'battery/limit/charge_voltage', 'Charge voltage limit'),
+    'discharge_voltage_limit': ('battery', 'V', 'battery/limit/discharge_voltage', 'Discharge cut-off voltage'),
+    'min_cell_voltage':        ('battery', 'V', 'battery/cells/min', 'Lowest cell voltage'),
+    'max_cell_voltage':        ('battery', 'V', 'battery/cells/max', 'Highest cell voltage'),
+    'average_cell_voltage':    ('battery', 'V', 'battery/cells/avg', 'Average cell voltage'),
+    'cell_delta':              ('battery', 'mV', 'battery/cells/delta', 'Highest − lowest cell voltage'),
+    'balancing_count':         ('battery', '', 'battery/cells/balancing', 'Cells balancing now'),
+    'cell_1': ('battery', 'V', 'battery/cells/1', 'Cell 1 voltage'),
+    'cell_2': ('battery', 'V', 'battery/cells/2', 'Cell 2 voltage'),
+    'cell_3': ('battery', 'V', 'battery/cells/3', 'Cell 3 voltage'),
+    'cell_4': ('battery', 'V', 'battery/cells/4', 'Cell 4 voltage'),
+    'cell_5': ('battery', 'V', 'battery/cells/5', 'Cell 5 voltage'),
+    'cell_6': ('battery', 'V', 'battery/cells/6', 'Cell 6 voltage'),
+    'cell_7': ('battery', 'V', 'battery/cells/7', 'Cell 7 voltage'),
+    'cell_8': ('battery', 'V', 'battery/cells/8', 'Cell 8 voltage'),
+    'cell_9': ('battery', 'V', 'battery/cells/9', 'Cell 9 voltage'),
+    'cell_10': ('battery', 'V', 'battery/cells/10', 'Cell 10 voltage'),
+    'cell_11': ('battery', 'V', 'battery/cells/11', 'Cell 11 voltage'),
+    'cell_12': ('battery', 'V', 'battery/cells/12', 'Cell 12 voltage'),
+    'cell_13': ('battery', 'V', 'battery/cells/13', 'Cell 13 voltage'),
+    'cell_14': ('battery', 'V', 'battery/cells/14', 'Cell 14 voltage'),
+    'cell_15': ('battery', 'V', 'battery/cells/15', 'Cell 15 voltage'),
+    'cell_16': ('battery', 'V', 'battery/cells/16', 'Cell 16 voltage'),
+    'cell_17': ('battery', 'V', 'battery/cells/17', 'Cell 17 voltage'),
+    'cell_18': ('battery', 'V', 'battery/cells/18', 'Cell 18 voltage'),
+    'cell_19': ('battery', 'V', 'battery/cells/19', 'Cell 19 voltage'),
+    'cell_20': ('battery', 'V', 'battery/cells/20', 'Cell 20 voltage'),
+    'cell_21': ('battery', 'V', 'battery/cells/21', 'Cell 21 voltage'),
+    'cell_22': ('battery', 'V', 'battery/cells/22', 'Cell 22 voltage'),
+    'cell_23': ('battery', 'V', 'battery/cells/23', 'Cell 23 voltage'),
+    'cell_24': ('battery', 'V', 'battery/cells/24', 'Cell 24 voltage'),
+    'cell_25': ('battery', 'V', 'battery/cells/25', 'Cell 25 voltage'),
+    'cell_26': ('battery', 'V', 'battery/cells/26', 'Cell 26 voltage'),
+    'cell_27': ('battery', 'V', 'battery/cells/27', 'Cell 27 voltage'),
+    'cell_28': ('battery', 'V', 'battery/cells/28', 'Cell 28 voltage'),
+    'cell_29': ('battery', 'V', 'battery/cells/29', 'Cell 29 voltage'),
+    'cell_30': ('battery', 'V', 'battery/cells/30', 'Cell 30 voltage'),
+    'cell_31': ('battery', 'V', 'battery/cells/31', 'Cell 31 voltage'),
+    'cell_32': ('battery', 'V', 'battery/cells/32', 'Cell 32 voltage'),
+    'min_cell_temp':           ('battery', '°C', 'battery/cell_temp/min', 'Lowest cell temperature'),
+    'max_cell_temp':           ('battery', '°C', 'battery/cell_temp/max', 'Highest cell temperature'),
+    'average_cell_temp':       ('battery', '°C', 'battery/cell_temp/avg', 'Average cell temperature'),
+    'cell_temp_1': ('battery', '°C', 'battery/cell_temp/1', 'Cell temperature sensor 1'),
+    'cell_temp_2': ('battery', '°C', 'battery/cell_temp/2', 'Cell temperature sensor 2'),
+    'cell_temp_3': ('battery', '°C', 'battery/cell_temp/3', 'Cell temperature sensor 3'),
+    'cell_temp_4': ('battery', '°C', 'battery/cell_temp/4', 'Cell temperature sensor 4'),
+    'cell_temp_5': ('battery', '°C', 'battery/cell_temp/5', 'Cell temperature sensor 5'),
+    'cell_temp_6': ('battery', '°C', 'battery/cell_temp/6', 'Cell temperature sensor 6'),
+    'cell_temp_7': ('battery', '°C', 'battery/cell_temp/7', 'Cell temperature sensor 7'),
+    'cell_temp_8': ('battery', '°C', 'battery/cell_temp/8', 'Cell temperature sensor 8'),
+    'mosfet_temp':             ('battery', '°C', 'battery/mosfet_temp', 'Power switch (MOSFET) temperature'),
+
+    # ── Environment (measurement: environment) ─────────────────────────────
+    'ambient_temp':   ('environment', '°C', 'environment/temperature', 'Ambient temperature'),
+    'humidity':       ('environment', '%', 'environment/humidity', 'Relative humidity'),
+    'air_pressure':   ('environment', 'hPa', 'environment/pressure', 'Air pressure'),
+    'irradiance':     ('environment', 'W/m²', 'environment/irradiance', 'Solar irradiance on the panel plane'),
+    'module_temp':    ('environment', '°C', 'environment/module_temp', 'PV module (back-sheet) temperature'),
+    'wind_speed':     ('environment', 'm/s', 'environment/wind/speed', 'Wind speed'),
+    'wind_direction': ('environment', '°', 'environment/wind/direction', 'Wind direction (0 = north)'),
+    'illuminance':    ('environment', 'lx', 'environment/illuminance', 'Illuminance'),
+    'co2':            ('environment', 'ppm', 'environment/co2', 'CO₂ concentration'),
+
+    # ── Water / gas / heat metering (measurements: water, gas, heat) ───────
+    'water_volume': ('water', 'm³', 'water/volume', 'Water meter total (counter)'),
+    'water_flow':   ('water', 'm³/h', 'water/flow', 'Water flow'),
+    'gas_volume':   ('gas', 'm³', 'gas/volume', 'Gas meter total (counter)'),
+    'gas_flow':     ('gas', 'm³/h', 'gas/flow', 'Gas flow'),
+    'heat_energy':  ('heat', 'Wh', 'heat/energy', 'Heat meter energy total (counter)'),
+    'heat_power':   ('heat', 'W', 'heat/power', 'Thermal power'),
+    'heat_flow':    ('heat', 'm³/h', 'heat/flow', 'Heat-carrier volume flow'),
+    'supply_temp':  ('heat', '°C', 'heat/supply_temp', 'Supply (flow) temperature'),
+    'return_temp':  ('heat', '°C', 'heat/return_temp', 'Return temperature'),
+
+    # ── EV charging (measurement: ev) ──────────────────────────────────────
+    'ev_power':          ('ev', 'W', 'ev/power', 'Charging power'),
+    'ev_energy_session': ('ev', 'Wh', 'ev/energy/session', 'Energy of the current session'),
+    'ev_energy_total':   ('ev', 'Wh', 'ev/energy/total', 'Charger lifetime energy (counter)'),
+    'ev_current_limit':  ('ev', 'A', 'ev/current_limit', 'Charging current limit'),
+    'ev_status':         ('ev', '', 'ev/status', 'Charger state'),
+    'ev_connected':      ('ev', '', 'ev/connected', 'Vehicle connected (1/0)'),
+
+    # ── Tanks and levels (measurement: level) ──────────────────────────────
+    'tank_level':  ('level', '%', 'level/percent', 'Tank fill level'),
+    'tank_volume': ('level', 'L', 'level/volume', 'Tank contents'),
 }
 
+# Lifetime counters: they only grow, and a frozen value is still a TRUE
+# statement. Every energy_* field is one, except the battery's two state
+# figures; a few counters are not energy.
+_COUNTERS = frozenset({'water_volume', 'gas_volume', 'heat_energy', 'ev_energy_total',
+                        'total_discharge_capacity', 'cycles'})
+_NOT_COUNTERS = frozenset({'energy_remaining', 'energy_to_full', 'ev_energy_session'})
+
+# ── Your own canonical fields ─────────────────────────────────────────────
+# The dictionary above is the gateway's; an installation adds the quantities
+# it needs (a heat pump's COP, a pool's chlorine level) in
+# config/canonical_fields_user.json, managed from Templates → Fields. They
+# join CANONICAL_FIELDS — the SAME dict object every module imported — so a
+# user field is canonical everywhere a built-in one is: MQTT topic, InfluxDB
+# measurement, unit contract, editor guidance. A built-in name is never
+# overridden.
+BUILTIN_FIELDS: Dict[str, Tuple[str, str, str, str]] = dict(CANONICAL_FIELDS)
+USER_FIELDS: Dict[str, Dict] = {}
 CANONICAL_NAMES = frozenset(CANONICAL_FIELDS)
+
+def validate_user_field(name: str, d: Dict) -> List[str]:
+    """Errors in words for one user field definition (empty = fine)."""
+    import re
+    errs = []
+    if not re.fullmatch(r"[a-z][a-z0-9_]{1,47}", str(name or "")):
+        errs.append("name: lowercase letters, digits and _ (2-48 chars, starts with a letter)")
+    elif name in BUILTIN_FIELDS:
+        errs.append(f"name: '{name}' is a built-in canonical field — use it as it is")
+    cat = str((d or {}).get("category") or "")
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,31}", cat):
+        errs.append("category: the InfluxDB measurement, lowercase a-z 0-9 _ (e.g. heat_pump)")
+    topic = str((d or {}).get("topic") or "")
+    if topic and not re.fullmatch(r"[a-z0-9_]+(/[a-z0-9_]+){0,5}", topic):
+        errs.append("topic: lowercase path segments separated by / (e.g. heat_pump/cop)")
+    unit = (d or {}).get("unit", "")
+    if not isinstance(unit, str) or len(unit) > 16:
+        errs.append("unit: text up to 16 characters (W, °C, m³/h…; empty for a plain number)")
+    desc = (d or {}).get("description", "")
+    if not isinstance(desc, str) or len(desc) > 160:
+        errs.append("description: text up to 160 characters")
+    if "counter" in (d or {}) and not isinstance(d.get("counter"), bool):
+        errs.append("counter: true or false")
+    return errs
+
+
+def set_user_fields(fields: Dict[str, Dict]) -> List[str]:
+    """Replace the user fields (already validated or not — bad ones are
+    skipped and named). Rebuilds the shared dictionary in place."""
+    global CANONICAL_NAMES
+    bad, good = [], {}
+    for name, d in (fields or {}).items():
+        e = validate_user_field(name, d)
+        if e:
+            bad.append(f"{name}: {'; '.join(e)}")
+            continue
+        good[name] = {"category": d["category"], "unit": d.get("unit", "") or "",
+                      "topic": d.get("topic") or f"{d['category']}/{name}",
+                      "description": d.get("description", "") or "",
+                      "counter": bool(d.get("counter", False))}
+    USER_FIELDS.clear()
+    USER_FIELDS.update(good)
+    CANONICAL_FIELDS.clear()
+    CANONICAL_FIELDS.update(BUILTIN_FIELDS)
+    for name, d in good.items():
+        CANONICAL_FIELDS[name] = (d["category"], d["unit"], d["topic"], d["description"])
+    CANONICAL_NAMES = frozenset(CANONICAL_FIELDS)
+    return bad
+
+
+def load_user_fields(path) -> List[str]:
+    """Read config/canonical_fields_user.json at boot. A missing file means
+    none; a broken one is reported, never fatal (the built-ins still work)."""
+    import json
+    from pathlib import Path
+    p = Path(path)
+    if not p.exists():
+        set_user_fields({})
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001
+        set_user_fields({})
+        return [f"{p.name}: unreadable ({e})"]
+    return set_user_fields((data or {}).get("fields") or {})
+
+
+def save_user_fields(path) -> None:
+    """Write the user fields atomically."""
+    import json
+    import os
+    from pathlib import Path
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"version": 1, "fields": USER_FIELDS}, f, indent=2, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, p)
 
 
 def mqtt_topic_for(name: str) -> Optional[str]:
@@ -223,7 +425,12 @@ def is_cumulative_field(name: str) -> bool:
     switching a counter row to another physical meter's lifetime total is a
     non-monotonic jump that corrupts downstream kWh statistics (Victron /
     DataManager). Used to exclude counter rows from device_fallback wiring."""
-    return str(name).lower().startswith('energy_')
+    n = str(name).lower()
+    if n in USER_FIELDS:
+        return USER_FIELDS[n]["counter"]
+    if n in _NOT_COUNTERS:
+        return False
+    return n in _COUNTERS or n.startswith('energy_')
 
 
 def suggest(name: str) -> Optional[str]:

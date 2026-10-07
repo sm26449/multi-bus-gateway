@@ -1126,3 +1126,45 @@ def test_a_native_template_reimported_from_yaml_keeps_its_protocol(tmp_path):
     r = client.post("/api/device-templates/import-yaml", json={"yaml": _yaml.safe_dump(native)})
     assert r.status_code == 200, r.text
     assert r.json()["device_template"]["device_template"]["protocol"] == native["device_template"]["protocol"]
+
+
+@needs_tc
+def test_own_canonical_fields_are_canonical_everywhere_and_travel_with_a_template(tmp_path, monkeypatch):
+    import multibus.device_template as dt
+    from multibus import canonical_fields as cf
+    monkeypatch.setattr(dt, 'USER_DIR', tmp_path / 'user_templates')
+    cfg, client = make_app(tmp_path)
+    r = client.post("/api/canonical-fields/user", json={
+        "name": "heat_pump_cop", "category": "heat_pump", "unit": "",
+        "description": "Coefficient of performance"})
+    assert r.status_code == 200, r.text
+    assert r.json()["field"]["topic"] == "heat_pump/heat_pump_cop"
+    f = client.get("/api/canonical-fields").json()["fields"]["heat_pump_cop"]
+    assert f["user"] is True and f["measurement"] == "heat_pump"
+    assert cf.is_canonical("heat_pump_cop") and cf.measurement_for("heat_pump_cop") == "heat_pump"
+    assert (cfg.config_path.parent / "canonical_fields_user.json").exists()
+    # built-ins are never overridden; bad names are refused in words
+    assert client.post("/api/canonical-fields/user", json={"name": "soc", "category": "x"}).status_code == 422
+    assert client.post("/api/canonical-fields/user", json={"name": "Bad Name", "category": "x"}).status_code == 422
+    # a template naming it carries the definition on export
+    tpl = {"device_template": {"schema_version": 1, "id": "hp", "name": "Heat pump",
+           "registers": [{"address": 0, "name": "heat_pump_cop", "data_type": "float"}]}}
+    assert client.post("/api/device-templates", json=tpl).status_code == 200
+    exp = client.get("/api/device-templates/hp/export").json()
+    assert exp["device_template"]["fields"]["heat_pump_cop"]["category"] == "heat_pump"
+    # once a device reads it, where it is written stays put
+    assert client.post("/api/devices", json={"id": "hp1", "template": "hp", "enabled": True,
+        "connection": {"protocol": "tcp", "host": "127.0.0.1", "port": 9, "timeout": 1}}).status_code == 200
+    r = client.post("/api/canonical-fields/user", json={"name": "heat_pump_cop", "category": "other"})
+    assert r.status_code == 409 and "hp1" in r.json()["detail"]["used_by"]
+    assert client.delete("/api/canonical-fields/user/heat_pump_cop").status_code == 409
+    # a description may still change
+    assert client.post("/api/canonical-fields/user", json={"name": "heat_pump_cop", "category": "heat_pump",
+                       "description": "COP (heat out / electricity in)"}).status_code == 200
+    # another gateway: uploading the export creates the field there
+    (tmp_path / "gw2").mkdir()
+    cfg2, client2 = make_app(tmp_path / "gw2")
+    assert not cf.is_canonical("heat_pump_cop")
+    up = client2.post("/api/device-templates/upload", json={"template": exp})
+    assert up.status_code == 200, up.text
+    assert up.json()["fields"]["added"] == ["heat_pump_cop"] and cf.is_canonical("heat_pump_cop")

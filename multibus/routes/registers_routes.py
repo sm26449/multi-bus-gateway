@@ -131,9 +131,12 @@ def build(ctx) -> APIRouter:
         cats = getattr(tpl, 'categories', None) or {}
         by_name = {r.name: getattr(r, 'category', '') for r in (tpl.registers or [])}
         for row in rows:
-            if CANONICAL_FIELDS.get(str(row.get('name') or '').lower()):
-                continue
             c = by_name.get(row.get('name'))
+            # a template that DECLARES its sections groups its fields its own
+            # way (a pack's cells) — that wins even for a canonical name; the
+            # canonical category is for maps that declare none
+            if CANONICAL_FIELDS.get(str(row.get('name') or '').lower()) and not (c and c in cats):
+                continue
             if not c and row.get('calculated'):
                 continue
             if c:
@@ -725,14 +728,83 @@ def build(ctx) -> APIRouter:
         register naming. The register editor reads it for inline autocomplete +
         'did you mean' guidance and to auto-fill the hierarchical MQTT topic +
         InfluxDB measurement, so a user names fields uniformly across devices."""
-        from ..canonical_fields import CANONICAL_FIELDS
+        from ..canonical_fields import CANONICAL_FIELDS, USER_FIELDS, is_cumulative_field
         return {
             "fields": {
                 name: {"measurement": meas, "unit": unit,
-                       "mqtt_topic": topic, "description": desc}
+                       "mqtt_topic": topic, "description": desc,
+                       "user": name in USER_FIELDS, "counter": is_cumulative_field(name)}
                 for name, (meas, unit, topic, desc) in CANONICAL_FIELDS.items()
             }
         }
+
+    # ── the installation's own canonical fields ─────────────────────────────
+    def _user_fields_path():
+        return config.config_path.parent / "canonical_fields_user.json"
+
+    def _field_users(name: str):
+        """Devices that read a field by this name — its MQTT topic and InfluxDB
+        series exist already, so where it is written must not move."""
+        import json as _json
+        out = []
+        for dev_cfg, _client in list(registry):
+            paths = [config.device_registers_path(dev_cfg.id)] + [
+                config.source_registers_path(dev_cfg.id, sx.id)
+                for sx in (getattr(dev_cfg, "sources", None) or [])]
+            names = set()
+            for pth in paths:
+                try:
+                    d = _json.loads(pth.read_text(encoding="utf-8"))
+                except Exception:  # noqa: BLE001 — missing/unreadable: nothing read from it
+                    continue
+                names |= {r.get("name") for r in (d.get("registers") or []) + (d.get("calculated") or [])}
+            if name in names:
+                out.append(dev_cfg.id)
+        return out
+
+    @r.post("/api/canonical-fields/user")
+    def save_user_field(payload: Dict = Body(...)):
+        """Create or change one of this installation's canonical fields:
+        ``{name, category, unit, topic?, description?, counter?}``. A field
+        some device already reads keeps its category (InfluxDB measurement)
+        and topic — moving them would split its history."""
+        from .. import canonical_fields as cf
+        name = str(payload.get("name") or "").strip()
+        d = {k: payload.get(k) for k in ("category", "unit", "topic", "description", "counter")
+             if payload.get(k) is not None}
+        d.setdefault("unit", "")
+        if not d.get("topic") and d.get("category"):
+            d["topic"] = f"{d['category']}/{name}"
+        errs = cf.validate_user_field(name, d)
+        if errs:
+            raise HTTPException(status_code=422, detail={"errors": errs})
+        old = cf.USER_FIELDS.get(name)
+        if old and (old["category"] != d["category"] or old["topic"] != d["topic"]):
+            users = _field_users(name)
+            if users:
+                raise HTTPException(status_code=409, detail={"errors": [
+                    f"'{name}' is read by {', '.join(users)}: its measurement and topic hold "
+                    "history — keep them, or create a new field"], "used_by": users})
+        fields = dict(cf.USER_FIELDS)
+        fields[name] = d
+        cf.set_user_fields(fields)
+        cf.save_user_fields(_user_fields_path())
+        return {"status": "saved", "field": {"name": name, **cf.USER_FIELDS[name]}}
+
+    @r.delete("/api/canonical-fields/user/{name}")
+    def delete_user_field(name: str):
+        from .. import canonical_fields as cf
+        if name not in cf.USER_FIELDS:
+            raise HTTPException(status_code=404, detail="no such user field")
+        users = _field_users(name)
+        if users:
+            raise HTTPException(status_code=409, detail={"errors": [
+                f"'{name}' is read by {', '.join(users)} — rename those registers first"],
+                "used_by": users})
+        fields = {k: v for k, v in cf.USER_FIELDS.items() if k != name}
+        cf.set_user_fields(fields)
+        cf.save_user_fields(_user_fields_path())
+        return {"status": "deleted"}
 
     @r.post("/api/canonical-fields/guess")
     async def guess_canonical_names(payload: Dict = Body(...)):

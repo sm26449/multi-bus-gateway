@@ -142,6 +142,10 @@ class GatewayApp:
         from multibus.device_template import TemplateRegistry
         self.template_registry = TemplateRegistry(
             user_dir=self.config.config_path.parent / 'device_templates')
+        # the installation's own canonical fields, before anything is seeded
+        from multibus.canonical_fields import load_user_fields
+        for _bad in load_user_fields(self.config.config_path.parent / 'canonical_fields_user.json'):
+            logger.warning("canonical field skipped: %s", _bad)
 
         # Endpoint-materialized devices seed their register selection from the
         # template at BOOT — the API's create path covers CRUD devices, but a

@@ -587,8 +587,9 @@ Object.assign(JanitzaMonitor.prototype, {
     // naming) and wire the register editor to it: datalist autocomplete on Name
     // + a hint that flags non-canonical names, and manual-edit tracking so we
     // stop auto-overwriting the topic/measurement once the user touches them.
-    async _loadCanonicalFields() {
-        if (this._canonicalFields) return this._canonicalFields;
+    async _loadCanonicalFields(force = false) {
+        // force: a field was just added or changed on Templates → Fields
+        if (this._canonicalFields && !force) return this._canonicalFields;
         try {
             const r = await fetch('/api/canonical-fields');
             if (!r.ok) return null;

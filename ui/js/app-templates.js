@@ -107,16 +107,20 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="config-main-tabs" id="tmTabs">
               <button class="config-main-tab ${activeTab === 'devmaps' ? 'active' : ''}" data-tmtab="devmaps"><i aria-hidden="true" class="bi bi-table"></i> ${t('templates.tab.devmaps', 'Device maps')} <span style="opacity:.6;">(${devTpls.length})</span></button>
               <button class="config-main-tab ${activeTab === 'emulations' ? 'active' : ''}" data-tmtab="emulations"><i aria-hidden="true" class="bi bi-hdd-network"></i> ${t('templates.tab.emu', 'Meter emulations')} <span style="opacity:.6;">(${vmTpls.length})</span></button>
+              <button class="config-main-tab ${activeTab === 'fields' ? 'active' : ''}" data-tmtab="fields"><i aria-hidden="true" class="bi bi-tags"></i> ${t('templates.tab.fields', 'Canonical fields')}</button>
             </div>
             <div data-tmpanel="devmaps" ${activeTab === 'devmaps' ? '' : 'hidden'}>${errBanner}${warnBanner}${devToolbar}${devCards}</div>
-            <div data-tmpanel="emulations" ${activeTab === 'emulations' ? '' : 'hidden'}>${vmToolbar}${vmCards}</div>`;
+            <div data-tmpanel="emulations" ${activeTab === 'emulations' ? '' : 'hidden'}>${vmToolbar}${vmCards}</div>
+            <div data-tmpanel="fields" id="tmFieldsPanel" ${activeTab === 'fields' ? '' : 'hidden'}></div>`;
 
         // tab switch
         el.querySelectorAll('[data-tmtab]').forEach(b => b.addEventListener('click', () => {
             this._tmTab = b.dataset.tmtab;
             el.querySelectorAll('[data-tmtab]').forEach(x => x.classList.toggle('active', x === b));
             el.querySelectorAll('[data-tmpanel]').forEach(p => { p.hidden = p.dataset.tmpanel !== this._tmTab; });
+            if (this._tmTab === 'fields') this.renderFieldsPanel();
         }));
+        if (activeTab === 'fields') this.renderFieldsPanel();
         // search (re-render + keep focus)
         const searchEl = document.getElementById('tmSearch');
         if (searchEl) searchEl.addEventListener('input', () => {
@@ -1002,5 +1006,113 @@ Object.assign(JanitzaMonitor.prototype, {
             fb.textContent = e.message;
             fb.className = 'save-feedback err';
         }
-    }
+    },
+
+    // ── canonical fields: the gateway's dictionary + this installation's own ──
+    async renderFieldsPanel() {
+        const t = (k, d, p) => this.t(k, d, p);
+        const box = document.getElementById('tmFieldsPanel');
+        if (!box) return;
+        let fields = {};
+        try { fields = (await (await fetch('/api/canonical-fields')).json()).fields || {}; } catch (e) {}
+        this._canonFieldsAll = fields;
+        const q = (this._tfSearch || '').toLowerCase();
+        const rows = Object.entries(fields)
+            .filter(([n, f]) => !q || `${n} ${f.measurement} ${f.description} ${f.unit}`.toLowerCase().includes(q))
+            .sort((a, b) => (b[1].user - a[1].user) || a[1].measurement.localeCompare(b[1].measurement) || a[0].localeCompare(b[0], undefined, { numeric: true }));
+        const cats = [...new Set(Object.values(fields).map(f => f.measurement))].sort();
+        const own = Object.values(fields).filter(f => f.user).length;
+        box.innerHTML = `
+            <p class="field-hint" style="max-width:820px;">${t('fields.intro', 'A register\'s name becomes its MQTT topic and its InfluxDB field. Canonical names make the same quantity look the same on every device, so dashboards, Node-RED and virtual meters can rely on them; each also promises a unit. The gateway ships a dictionary; add your own for quantities it does not cover — they become canonical everywhere, and travel with a template you export.')}
+               <a href="https://github.com/sm26449/multi-bus-gateway/blob/main/docs/canonical-fields.md" target="_blank" rel="noopener">${t('fields.guide', 'How names are built')}</a></p>
+            <details class="tpl-proto" id="tfForm" ${this._tfEdit ? 'open' : ''} data-admin>
+              <summary><i aria-hidden="true" class="bi bi-plus-lg"></i> ${this._tfEdit ? t('fields.editTitle', 'Edit your field') : t('fields.addTitle', 'Add your own field')}</summary>
+              <div class="tpl-proto-body">
+                <div class="form-row">
+                  <div class="form-group"><label class="form-label" for="tfName">${t('fields.name', 'Name')}</label>
+                    <input class="input" id="tfName" placeholder="heat_pump_cop" ${this._tfEdit ? 'disabled' : ''} value="${this._esc(this._tfEdit?.name || '')}">
+                    <div class="field-hint">${t('fields.nameHint', '<quantity>_<where>, lowercase: pool_chlorine, heat_pump_cop')}</div></div>
+                  <div class="form-group"><label class="form-label" for="tfCat">${t('fields.category', 'Category (InfluxDB measurement)')}</label>
+                    <input class="input" id="tfCat" list="tfCatList" placeholder="heat_pump" value="${this._esc(this._tfEdit?.measurement || '')}">
+                    <datalist id="tfCatList">${cats.map(c => `<option value="${this._esc(c)}"></option>`).join('')}</datalist></div>
+                  <div class="form-group"><label class="form-label" for="tfUnit">${t('fields.unit', 'Unit')}</label>
+                    <input class="input" id="tfUnit" placeholder="°C, W, m³/h…" value="${this._esc(this._tfEdit?.unit || '')}"></div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group"><label class="form-label" for="tfTopic">${t('fields.topic', 'MQTT topic leaf')}</label>
+                    <input class="input" id="tfTopic" placeholder="${t('fields.topicAuto', 'category/name (automatic)')}" value="${this._esc(this._tfEdit?.mqtt_topic || '')}"></div>
+                  <div class="form-group flex-2"><label class="form-label" for="tfDesc">${t('fields.description', 'Description')}</label>
+                    <input class="input" id="tfDesc" maxlength="160" value="${this._esc(this._tfEdit?.description || '')}"></div>
+                  <div class="form-group"><label class="checkbox-label" style="margin-top:24px;"><input type="checkbox" id="tfCounter" ${this._tfEdit?.counter ? 'checked' : ''}> <span>${t('fields.counter', 'Counter (only grows)')}</span></label></div>
+                </div>
+                <div class="field-hint">${t('fields.lockHint', 'Once a device reads a field, its category and topic stay as they are — they hold history. Unit and description can still change.')}</div>
+                <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+                  <button class="btn btn-primary btn-sm" ${this._act('saveUserField', [])}><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('common.save', 'Save')}</button>
+                  ${this._tfEdit ? `<button class="btn btn-ghost btn-sm" ${this._act('editUserField', [''])}>${t('common.cancel', 'Cancel')}</button>` : ''}
+                  <span class="save-feedback" id="tfFeedback"></span>
+                </div>
+              </div>
+            </details>
+            <div style="display:flex;gap:10px;align-items:center;margin:10px 0;flex-wrap:wrap;">
+              <input type="text" id="tfSearch" class="input" style="max-width:260px;" placeholder="${t('common.search', 'Search')}…" value="${this._esc(this._tfSearch || '')}">
+              <span class="field-hint">${t('fields.count', '{n} fields · {own} yours', { n: Object.keys(fields).length, own })}</span>
+            </div>
+            <div class="table-container" style="max-height:520px;overflow:auto;">
+              <table class="data-table"><thead><tr>
+                <th>${t('fields.name', 'Name')}</th><th>${t('fields.unit', 'Unit')}</th><th>${t('fields.categoryShort', 'Category')}</th>
+                <th>MQTT</th><th>${t('fields.description', 'Description')}</th><th></th></tr></thead><tbody>
+              ${rows.map(([n, f]) => `<tr>
+                <td><code>${this._esc(n)}</code>${f.user ? ` <span class="sink-pill ok">${t('fields.yours', 'yours')}</span>` : ''}${f.counter ? ` <span class="sink-pill" title="${this._esc(t('fields.counterHint', 'a lifetime counter'))}">Σ</span>` : ''}</td>
+                <td>${this._esc(f.unit || '—')}</td><td>${this._esc(f.measurement)}</td>
+                <td><code>${this._esc(f.mqtt_topic)}</code></td><td>${this._esc(f.description || '')}</td>
+                <td style="white-space:nowrap;">${f.user ? `<button data-admin class="btn btn-ghost btn-sm" ${this._act('editUserField', [n])} aria-label="${t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
+                  <button data-admin class="btn btn-ghost btn-sm" ${this._act('deleteUserField', [n])} aria-label="${t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>` : ''}</td></tr>`).join('')}
+              </tbody></table></div>`;
+        const s = document.getElementById('tfSearch');
+        s?.addEventListener('input', () => {
+            this._tfSearch = s.value;
+            clearTimeout(this._tfT);
+            this._tfT = setTimeout(async () => { await this.renderFieldsPanel(); const x = document.getElementById('tfSearch'); x?.focus(); x?.setSelectionRange(x.value.length, x.value.length); }, 200);
+        });
+    },
+
+    editUserField(name) {
+        this._tfEdit = name ? { name, ...(this._canonFieldsAll || {})[name] } : null;
+        this.renderFieldsPanel();
+    },
+
+    async saveUserField() {
+        const t = (k, d, p) => this.t(k, d, p);
+        const v = id => (document.getElementById(id)?.value || '').trim();
+        const fb = document.getElementById('tfFeedback');
+        const body = { name: this._tfEdit ? this._tfEdit.name : v('tfName'), category: v('tfCat'),
+                       unit: v('tfUnit'), description: v('tfDesc'),
+                       counter: !!document.getElementById('tfCounter')?.checked };
+        if (v('tfTopic')) body.topic = v('tfTopic');
+        try {
+            const r = await fetch('/api/canonical-fields/user', { method: 'POST',
+                headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error((d.detail?.errors || [r.statusText]).join(' · '));
+            this._tfEdit = null;
+            this.showToast('success', t('fields.saved', 'Field saved'), `${d.field.name} → ${d.field.topic}`);
+            await this._loadCanonicalFields?.(true);
+            this.renderFieldsPanel();
+        } catch (e) {
+            if (fb) { fb.textContent = String(e.message || e); fb.className = 'save-feedback err'; }
+        }
+    },
+
+    async deleteUserField(name) {
+        const t = (k, d, p) => this.t(k, d, p);
+        if (!confirm(t('fields.deleteConfirm', 'Delete the field {name}?', { name }))) return;
+        const r = await fetch(`/api/canonical-fields/user/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) {
+            this.showToast('error', t('fields.deleteFail', 'Cannot delete'), (d.detail?.errors || [r.statusText]).join(' · '));
+            return;
+        }
+        await this._loadCanonicalFields?.(true);
+        this.renderFieldsPanel();
+    },
 });

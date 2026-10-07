@@ -136,14 +136,53 @@ def build(ctx) -> APIRouter:
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
         return {"status": "deleted"}
 
+    def _own_fields_of(t) -> Dict[str, Dict]:
+        """The installation's own canonical fields this template names — they
+        travel with it, so it reads the same way on another gateway."""
+        from ..canonical_fields import USER_FIELDS
+        names = {r.name for r in (t.registers or [])} | {c.name for c in (t.calculated or [])}
+        return {n: dict(USER_FIELDS[n]) for n in sorted(names) if n in USER_FIELDS}
+
+    def _adopt_fields(data: Dict) -> Dict[str, List[str]]:
+        """Create the canonical fields a template brings that this gateway
+        lacks. One that exists with another definition is left as it is and
+        named — the local definition holds history already."""
+        from .. import canonical_fields as cf
+        dt = (data or {}).get("device_template") or data or {}
+        brought = dt.get("fields") or {}
+        added, kept = [], []
+        if not isinstance(brought, dict) or not brought:
+            return {"added": added, "kept": kept}
+        fields = dict(cf.USER_FIELDS)
+        for name, d in brought.items():
+            if name in cf.BUILTIN_FIELDS:
+                continue
+            if name in fields:
+                if {k: fields[name].get(k) for k in ("category", "unit", "topic")} != \
+                        {k: (d or {}).get(k) for k in ("category", "unit", "topic")}:
+                    kept.append(name)
+                continue
+            if not cf.validate_user_field(name, d or {}):
+                fields[name] = d
+                added.append(name)
+        if added:
+            cf.set_user_fields(fields)
+            cf.save_user_fields(ctx.config.config_path.parent / "canonical_fields_user.json")
+        return {"added": added, "kept": kept}
+
     @r.get("/api/device-templates/{template_id}/export")
     def export_device_template(template_id: str):
-        """Download the template as a JSON file (round-trips through upload)."""
+        """Download the template as a JSON file (round-trips through upload).
+        The installation's own canonical fields it names ride along."""
         t = template_registry.get(template_id)
         if t is None:
             raise HTTPException(status_code=404, detail="template not found")
+        content = t.to_dict()
+        own = _own_fields_of(t)
+        if own:
+            content["device_template"]["fields"] = own
         return JSONResponse(
-            content=t.to_dict(),
+            content=content,
             headers={"Content-Disposition":
                      f'attachment; filename="{template_id}.json"'})
 
@@ -165,12 +204,13 @@ def build(ctx) -> APIRouter:
                 "errors": [f"a template with id '{tid}' already exists ({kind})"],
                 "conflict": tid, "builtin": existing.builtin})
         old_proto = dict(getattr(existing, "protocol", None) or {}) if existing else None
+        adopted = _adopt_fields(data)
         try:
             t = template_registry.save_user(data)
         except ValueError as e:
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
         return {"status": "saved", "template": t.summary(),
-                "restarted": _apply_protocol_change(t, old_proto)}
+                "restarted": _apply_protocol_change(t, old_proto), "fields": adopted}
 
     BYTE_ORDERS = ("big", "little", "badc", "dcba")
     TRANSPORTS = ("tcp", "rtu", "rtu-tcp", "rtu_tap", "http", "mqtt")
