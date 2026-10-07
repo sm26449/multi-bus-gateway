@@ -66,6 +66,9 @@ try {
   const later = page.locator('button:has-text("Later")');
   if (await later.count()) await later.first().click().catch(() => {});
   await page.evaluate(id => window.app.openEndpointDetail(id), ID);
+  await page.waitForSelector('#plTotals details', { state: 'attached' });
+  // the totals list folds by default (it is long) — open it
+  await page.click('#plTotals details > summary');
   await page.waitForSelector('#plTotals table');
 
   // ---- 1. the template's totals are in the open ---------------------------
@@ -153,6 +156,9 @@ try {
 
   // ---- 6. undo from the page -----------------------------------------------
   await page.evaluate(id => window.app.openEndpointDetail(id), ID);
+  await page.waitForSelector('#plTotals details', { state: 'attached' });
+  // the totals list folds by default (it is long) — open it
+  await page.click('#plTotals details > summary');
   await page.waitForSelector('#plTotals table');
   page.once('dialog', d => d.accept());
   await page.click('#plInfluxExtras [data-action="removeInfluxOutput"]');
