@@ -57,6 +57,7 @@ PQ, care are un singur contor în spate. Vezi [Istoric](#istoric).
 📡 **[Spec meter virtual](docs/virtual-meter-spec.md)** ·
 🗂️ **[Catalog de dispozitive](docs/device-catalog.md)** ·
 🧩 **[Cum scrii un template de dispozitiv](docs/device-templates.md)** (EN) ·
+🔌 **[RS-485 prin rețea (bridge-uri)](docs/rtu-over-network.md)** (EN) ·
 🧠 **[Reguli: ghid și rețete](docs/rules.md)** (EN) ·
 🖼️ **[Ghid vizual UI](docs/GHID-UI.md)** ·
 🛡️ **[Fiabilitate & fail-safety](docs/reliability.md)** ·

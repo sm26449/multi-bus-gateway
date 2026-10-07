@@ -226,7 +226,12 @@ Devices → *Discover devices*:
 
 1. **Connection** — pick the protocol:
    - **Modbus TCP**: host, port, unit ID, timeout.
-   - **Modbus RTU**: two modes (see [rtu-serial.md](rtu-serial.md)).
+   - **Modbus RTU**: two modes (see [rtu-serial.md](rtu-serial.md)). A bus
+     reached through a **bridge** (our serial bridge on a Raspberry Pi or
+     server, or an RS-485-to-Ethernet converter) is picked by bridge and bus:
+     add bridges with **Add bridge** on the Devices page —
+     [rtu-over-network.md](rtu-over-network.md). Several slaves on one bus are
+     several devices with different unit IDs.
      **Over network (recommended)** — press **Scan** and pick a USB adapter
      from the serial bridge (plug in → appears; unplug → gone), MBG stays
      unprivileged. **One master per bridged line** is enforced: a second

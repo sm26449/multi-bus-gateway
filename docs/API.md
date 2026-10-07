@@ -146,6 +146,26 @@ rather than silently reading the primary's bucket.
 | GET | `/api/devices/{id}/write-info/{register_type}/{address}` | What a write to this register would be allowed to do: the lock state and the register's envelope (writability, bounds, allowed values, safe value) — the UI's write dialog reads it | operator |
 | GET | `/api/writes/leases` | Active write leases with time remaining | viewer |
 
+### Bridges (the boxes a serial bus is reached through — [rtu-over-network.md](rtu-over-network.md))
+
+| Method | Path | Description | Role |
+|---|---|---|---|
+| GET | `/api/bridge-types` | The kinds of bridge (`multibus/bridge_types/*.json`): framing `rtu`/`modbus_tcp`, discovery `api`/`manual`, serial config, health, default ports, set-up steps | viewer |
+| GET | `/api/bridges` | Every bridge (token never included; `has_token`) with `state` (`online`/`offline`/`degraded`/`unknown`, `detail`, `source`: the box's own `/health`, or what its devices see), `protocol`, and `ports[]` with the `devices` on each (`id, name, unit_id, endpoint_id, health`) | viewer |
+| GET | `/api/bridges/{id}` | One bridge, same shape | viewer |
+| POST / PUT / DELETE | `/api/bridges`, `/api/bridges/{id}` | `{id, name, type, host, ports: [{port, label?, serial?}], max_connections?, control_port?}`. Our bridge type gets a generated token. Devices on it follow a changed host/port at once (`restarted`). Delete refused (409) while a device uses it | admin |
+| GET | `/api/bridges/{id}/scan` | Buses: asked of our bridge (`port, key, label, dev, serial_params, serial_text, available, excluded`), declared for a converter | viewer |
+| POST | `/api/bridges/{id}/ports/{key}/serial` | `{baud, parity, databits, stopbits}` for one bus of our bridge | admin |
+| GET | `/api/bridges/{id}/setup` | What to set on the box; for our bridge the `docker run` command with its token (the token only to an admin when login or an API key is on) | viewer |
+| POST | `/api/bridges/{id}/probe` | `{port, unit_id, address?}` — one register asked as RTU then as Modbus TCP: `rtu`, `modbus_tcp`, `speaks`, `verdict` (right type, wrong type, serial settings, no answer). Opens its own connection | admin |
+
+A device on a bridge: `connection: {bridge, bridge_port, unit_id}`; host,
+port, protocol (`rtu-tcp` or `tcp`) and connection limit come from the bridge.
+`GET /api/devices` carries `bridge` / `bridge_port`. Several devices may share
+a bus (one connection, taking turns); one unit id twice on a bus is refused.
+`POST /api/devices/test` on a bus a running device already reads goes through
+that shared connection (`shared_with`).
+
 ## Registers & values
 
 | Method | Path | Description | Role |

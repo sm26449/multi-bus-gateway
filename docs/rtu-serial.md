@@ -38,12 +38,17 @@ can live in its own container.
    port, baud, parity, unit ID.
 3. **Test connection** → any protocol-level answer proves the slave is alive.
 
-> One physical serial line = one master. MBG refuses a second RTU device on a
-> serial port already in use (see §5, multi-slave).
+> Several slaves on one line are several devices on the same port, with
+> different unit IDs (§5).
 
 ---
 
 ## 2. Over network — the serial bridge
+
+> **Bridges on other hosts, several of them, and hardware converters
+> (Waveshare, USR, Elfin…)** are covered by
+> [rtu-over-network.md](rtu-over-network.md): add them on the Devices page
+> as **bridges**. This section is the bridge running next to the gateway.
 
 The `serial-bridge` service wraps [ser2net](https://github.com/cminyard/ser2net):
 it exposes each USB serial adapter as a **stable internal TCP endpoint** and
@@ -122,18 +127,13 @@ The map lives in `/data/portmap.json` inside the `serial-bridge-data` volume.
 
 ---
 
-## 5. Multi-slave on one bus (current limit)
+## 5. Several slaves on one bus
 
-RS-485 is a shared half-duplex bus: one transaction at a time. MBG currently
-creates one client per device, so **one master per serial line / bridge
-endpoint**. Two RTU devices on the same line collide; the wizard blocks a second
-direct-serial device on a port already in use.
-
-Putting several slave IDs on one bus needs a shared per-endpoint bus lock that
-serialises all their transactions — planned, not yet shipped. Until then: one
-slave per adapter, or one adapter per bus.
-
----
+Supported since 3.89. Each slave is its own device on the same serial port,
+or the same bridge port, with its own unit ID. They share one open line, or
+one connection to the bridge, and take turns on it. The unit ID must differ,
+and on a direct port the baud and parity must agree. Details and bus-time
+budget: [rtu-over-network.md §4](rtu-over-network.md#4-several-devices-on-one-bus).
 
 ## 6. Troubleshooting
 
