@@ -3631,7 +3631,16 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 payload.pop('units', None)          # units live in the groups
             if 'sources' not in payload and prev.get('sources'):
                 payload = {**payload, 'sources': prev['sources']}
+            # same rule for FLAT units: a settings dialog that does not list
+            # them must not dissolve the endpoint's membership
+            if 'units' not in payload and prev.get('units'):
+                payload = {**payload, 'units': prev['units']}
         conn = payload.get('connection', {}) or {}
+        # A form that does not SPEAK of the connection keeps the stored one —
+        # the settings dialog saved with an empty conn and wiped the serial
+        # port out from under 8 running units (seplos cutover, 2026-10-07).
+        if prev is not None and not conn and prev.get('connection'):
+            conn = dict(prev['connection'])
         # An endpoint that declares GROUPS carries its address per group — each
         # holds a different kind of thing and may be reached a different way. The
         # top-level connection is then only the shorthand for a single implicit
@@ -3639,12 +3648,17 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         _grouped = bool(payload.get('groups'))
         if not _grouped:
             protocol = str(conn.get('protocol', 'tcp')).lower()
-            if protocol not in ('tcp', 'rtu-tcp'):
+            if protocol not in ('tcp', 'rtu-tcp', 'rtu_tap'):
                 # plain RTU shares one serial line across masters — the same
                 # one-master-per-line rule the device CRUD enforces; multi-drop
                 # RTU endpoints need the shared-bus arbiter (Tier 3) first.
-                errors.append("connection.protocol: must be 'tcp' or 'rtu-tcp'")
-            if not str(conn.get('host', '')).strip():
+                # rtu_tap is the exception: listen-only, it masters nothing,
+                # and a multi-drop bus is exactly what it is for.
+                errors.append("connection.protocol: must be 'tcp', 'rtu-tcp' or 'rtu_tap'")
+            if protocol == 'rtu_tap':
+                if not str(conn.get('serial_port', '')).strip():
+                    errors.append("connection.serial_port: required for rtu_tap")
+            elif not str(conn.get('host', '')).strip():
                 errors.append("connection.host: required")
         if conn:
             try:
@@ -3761,7 +3775,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             # Routing identity is FIXED after creation, exactly as for a device
             # (see update_device): changing it re-routes every unit's future
             # data and orphans their history + Home Assistant entities.
-            for sect, keys in (('mqtt', ('topic_prefix',)),
+            for sect, keys in (('mqtt', ('topic_prefix', 'aggregate_prefix')),
                                ('influxdb', ('bucket', 'device_tag'))):
                 for k in keys:
                     old = (prev.get(sect) or {}).get(k)

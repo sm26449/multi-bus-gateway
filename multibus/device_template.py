@@ -226,11 +226,14 @@ class TemplateCalculated:
     mqtt: bool = True
     influxdb: bool = True
     aggregates: Optional[Dict[str, str]] = None   # endpoint fan-out, like registers
+    ui: Optional[Dict[str, Any]] = None           # {'show_on_dashboard', 'widget'}
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {'name': self.name, 'expr': self.expr}
         if self.aggregates:
             d['aggregates'] = self.aggregates
+        if self.ui:
+            d['ui'] = self.ui
         for k in ('label', 'unit', 'poll_group', 'topic', 'measurement'):
             if getattr(self, k):
                 d[k] = getattr(self, k)
@@ -584,6 +587,7 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         influxdb=bool(c.get('influxdb', True)),
         aggregates=(dict(c['aggregates'])
                     if isinstance(c.get('aggregates'), dict) else None),
+        ui=(dict(c['ui']) if isinstance(c.get('ui'), dict) else None),
     ) for c in (t.get('calculated') or [])]
     return DeviceTemplate(
         id=t['id'], name=t['name'],

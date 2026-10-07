@@ -704,3 +704,49 @@ def test_a_group_carries_its_own_sources(tmp_path):
     fast = next(x for x in d.sources if x.id == 'fast')
     assert fast.http['url'].endswith('d=2')
     assert [x.id for x in d.sources] == ['fast', 'full']
+
+
+@needs_tc
+def test_settings_only_update_preserves_connection_and_aggregate_prefix(tmp_path):
+    """The endpoint settings dialog sends only the fields it knows. A save
+    like that wiped connection.serial_port out from under 8 running rtu_tap
+    units and dropped mqtt.aggregate_prefix (seplos cutover, 2026-10-07) —
+    both must survive an edit that does not speak of them."""
+    from tests.test_devices import write_config
+    cfg = write_config(tmp_path, extra_yaml="""
+endpoints:
+  - id: bank
+    name: Bank
+    template: seplos_bms_v3_rtu_tap
+    mqtt:
+      enabled: true
+      topic_prefix: seplos/battery_${unit_id}
+      aggregate_prefix: seplos/pack
+    influxdb:
+      enabled: true
+      bucket: seplos
+    connection:
+      protocol: rtu_tap
+      serial_port: /dev/ttyTAP
+      baudrate: 19200
+    units: [1, 2]
+""")
+    from multibus.api import create_api
+    devices = [(d, None) for d in cfg.devices]
+    app, _ = create_api(cfg, None, None, None, devices=devices)
+    client = TestClient(app, raise_server_exceptions=False)
+    r = client.put("/api/endpoints/bank",
+                   json={"name": "Bank renamed", "enabled": True,
+                         "mqtt": {"enabled": True, "ha_discovery": False}})
+    if r.status_code == 405:
+        r = client.patch("/api/endpoints/bank",
+                         json={"name": "Bank renamed", "enabled": True,
+                               "mqtt": {"enabled": True, "ha_discovery": False}})
+    assert r.status_code == 200, r.text
+    raw = cfg.get_raw_endpoint("bank")
+    assert raw["connection"]["serial_port"] == "/dev/ttyTAP"
+    assert raw["connection"]["protocol"] == "rtu_tap"
+    assert raw["mqtt"]["aggregate_prefix"] == "seplos/pack"
+    assert raw["mqtt"]["topic_prefix"] == "seplos/battery_${unit_id}"
+    assert raw["influxdb"]["bucket"] == "seplos"
+    assert raw["name"] == "Bank renamed"

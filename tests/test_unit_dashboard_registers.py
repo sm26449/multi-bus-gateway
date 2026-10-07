@@ -104,3 +104,40 @@ def test_fleet_hero_uses_the_union_for_units(tmp_path):
     ep = next(p for p in data["endpoints"] if p["id"] == u1["endpoint_id"])
     assert {"name", "status", "units_online", "units_total",
             "power_active_total"} <= set(ep)
+
+
+@needs_tc
+def test_calculated_pseudo_registers_ride_the_get_and_not_the_post(tmp_path):
+    """A device's calculated registers appear in /api/registers/selected as
+    read-only pseudo-rows (synthetic addresses, calculated: true, ui flags
+    from the calc def) — and a dashboard save sends them back without
+    duplicating them into the register file."""
+    from multibus.calc_engine import CALC_ADDR_BASE
+    cfg, _app, client = make_plant_app(tmp_path)
+    cfg.save_calculated('pv-u1', [
+        {'name': 'power', 'expr': 'power_active_total * 1', 'unit': 'W',
+         'ui': {'show_on_dashboard': True, 'widget': 'chart'}},
+        {'name': 'quiet', 'expr': '1 + 1'},
+    ])
+    rows = client.get("/api/registers/selected?device=pv-u1").json()["registers"]
+    calc = [r for r in rows if r.get('calculated')]
+    assert [c['name'] for c in calc] == ['power', 'quiet']
+    assert calc[0]['address'] == CALC_ADDR_BASE
+    assert calc[0]['ui_show_on_dashboard'] is True and calc[0]['ui_widget'] == 'chart'
+    assert calc[1]['ui_show_on_dashboard'] is False
+    # POST the whole list back (the UI does exactly this on Customize save)
+    resp = client.post("/api/registers/selected?device=pv-u1", json=rows)
+    assert resp.status_code == 200
+    import json as _json
+    sun = _json.loads(cfg.source_registers_path('pv-u1', 'sunspec').read_text())
+    assert all(r['address'] < CALC_ADDR_BASE for r in sun['registers'])
+
+
+def test_calc_engine_wildcards_the_tap_group():
+    """Push-driven groups ('mqtt', 'tap') evaluate every calc register —
+    the tap's calcs were dead because only 'mqtt' wildcarded (cutover bug:
+    battery power/counts were retained ghosts from the collector)."""
+    import re
+    src = open('multibus/calc_engine.py').read()
+    m = re.search(r"_wildcard = poll_group in \('mqtt', 'tap'\)", src)
+    assert m, "tap must wildcard calc groups like mqtt does"

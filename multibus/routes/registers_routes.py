@@ -74,6 +74,44 @@ def build(ctx) -> APIRouter:
     config, registry, template_registry = ctx.config, ctx.registry, ctx.template_registry
     modbus_client = ctx.modbus_client
 
+    def _calc_pseudo_registers(device_id: str) -> List[Dict]:
+        """The device's CALCULATED registers, shaped like selected-register
+        rows (synthetic addresses), so the dashboard lists them alongside the
+        real ones — sections, hero cards, the site-card metric picker. They
+        are read-only here: the POST below drops them (their home is the
+        Calculated tab), and `calculated: true` marks them for the UI."""
+        from ..calc_engine import CALC_ADDR_BASE
+        out = []
+        for i, e in enumerate(config.load_calculated(device_id)):
+            name = str(e.get('name') or f'CALC_{i}')
+            unit = str(e.get('unit') or '')
+            ui = e.get('ui') if isinstance(e.get('ui'), dict) else {}
+            out.append({
+                'address': CALC_ADDR_BASE + i,
+                'name': name,
+                'label': str(e.get('label') or name),
+                'unit': unit, 'data_type': 'float',
+                'poll_group': str(e.get('poll_group') or 'normal'),
+                'register_type': 'calc', 'calculated': True,
+                'category': canonical_category(name, unit),
+                'json_path': '', 'topic': '', 'scale': 1.0, 'offset': 0.0,
+                'scale_from': '', 'nan': None, 'monotonic': False,
+                'enum': e.get('enum'), 'bits': None, 'mask': None, 'shift': None,
+                'device_class': '', 'state_class': '', 'entity_category': '',
+                'enabled_by_default': None, 'icon': '',
+                'suggested_display_precision': e.get('decimals'),
+                'mqtt_enabled': bool(e.get('mqtt', True)),
+                'mqtt_topic': str(e.get('topic') or ''),
+                'influxdb_enabled': bool(e.get('influxdb', True)),
+                'influxdb_measurement': str(e.get('measurement') or ''),
+                'influxdb_tags': {},
+                'ui_show_on_dashboard': bool(ui.get('show_on_dashboard', False)),
+                'ui_widget': str(ui.get('widget', 'value')),
+                'ui_config': dict(ui),
+                'thresholds': None,
+            })
+        return out
+
     def _has_source_files(dev_cfg) -> bool:
         """True when the device's registers live in per-source files (an
         endpoint unit, or a standalone multi-source device). Every plain
@@ -281,7 +319,8 @@ def build(ctx) -> APIRouter:
                     for gname, g in (getattr(s, 'poll_groups', None) or {}).items():
                         groups[gname] = g
                 return {
-                    "registers": [_selected_register_out(x) for x in regs],
+                    "registers": [_selected_register_out(x) for x in regs]
+                                 + _calc_pseudo_registers(dev_cfg.id),
                     "poll_groups": {name: {"interval": g.interval,
                                            "description": g.description}
                                     for name, g in groups.items()},
@@ -291,7 +330,9 @@ def build(ctx) -> APIRouter:
             if not dev_cfg.primary or src is not None:
                 regs, groups = config.load_device_registers(dev_cfg, source=src)
                 return {
-                    "registers": [_selected_register_out(x) for x in regs],
+                    "registers": [_selected_register_out(x) for x in regs]
+                                 + ([] if src is not None
+                                    else _calc_pseudo_registers(dev_cfg.id)),
                     "poll_groups": {name: {"interval": g.interval,
                                            "description": g.description}
                                     for name, g in groups.items()},
@@ -304,7 +345,8 @@ def build(ctx) -> APIRouter:
                 }
         _pi, _pcfg, _pc = registry.find(device) if device else (None, None, None)
         return {
-            "registers": [_selected_register_out(x) for x in config.selected_registers],
+            "registers": [_selected_register_out(x) for x in config.selected_registers]
+                         + _calc_pseudo_registers(config.primary_device.id),
             "poll_groups": {
                 name: {"interval": g.interval, "description": g.description}
                 for name, g in config.poll_groups.items()
@@ -321,6 +363,11 @@ def build(ctx) -> APIRouter:
         a non-primary device saves to its own file and hot-reloads only its
         own pollers)."""
         try:
+            from ..calc_engine import CALC_ADDR_BASE
+            # calculated pseudo-rows ride the GET for display; their home is
+            # the Calculated tab — a dashboard save must not duplicate them
+            # into the register file
+            registers = [x for x in registers if x.address < CALC_ADDR_BASE]
             reg_list = [
                 {
                     "address": x.address,
