@@ -57,9 +57,13 @@ def _classify_lan(addrs) -> Optional[str]:
         # the class checks (mapped addresses report is_link_local/is_loopback=False).
         if getattr(ip, "ipv4_mapped", None) is not None:
             ip = ip.ipv4_mapped
-        if (not ip.is_private or ip.is_loopback or ip.is_link_local
+        if ip.is_loopback:
+            return (f"{a} is the gateway itself (inside Docker, the container — not "
+                    f"the host): give the device's address on your LAN instead")
+        if (not ip.is_private or ip.is_link_local
                 or ip.is_multicast or ip.is_unspecified or ip.is_reserved):
-            return f"host must be a private LAN address ({a} is not)"
+            return (f"{a} is not on your local network — for safety the gateway "
+                    f"only fetches from private LAN addresses (192.168.x, 10.x, 172.16–31.x)")
     return None
 
 
@@ -178,7 +182,7 @@ class _GuardedRedirect(urllib.request.HTTPRedirectHandler):
             err = lan_url_error(newurl)
             if err:
                 raise urllib.error.HTTPError(
-                    newurl, code, f"SSRF guard (redirect): {err}", headers, fp)
+                    newurl, code, f"redirect refused: {err}", headers, fp)
         # Never follow an HTTPS→HTTP downgrade — it would send the request (and
         # any auth) in clear, and is a classic redirect-attack primitive.
         if urlparse(req.full_url).scheme == 'https' and urlparse(newurl).scheme == 'http':
@@ -212,7 +216,7 @@ class _SameHostRedirect(_GuardedRedirect):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         if _origin(newurl) != _origin(req.full_url):
             raise urllib.error.HTTPError(
-                newurl, code, "SSRF guard (redirect): cross-origin redirect blocked "
+                newurl, code, "redirect refused: cross-origin redirect blocked "
                 "(scheme/host/port change)", headers, fp)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 

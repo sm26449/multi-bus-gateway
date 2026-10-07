@@ -1120,6 +1120,8 @@
                     </div>
                     <div style="display:flex;gap:8px;">
                         <button class="btn btn-primary btn-sm" id="rulesAddBtn"><i aria-hidden="true" class="bi bi-plus-lg"></i> <span data-i18n="rules.add">Add rule</span></button>
+                        <a class="btn btn-sm" href="/api/rules/export" download id="rulesExportBtn"><i aria-hidden="true" class="bi bi-download"></i> <span data-i18n="rules.export">Export</span></a>
+                        <button data-admin class="btn btn-sm" id="rulesImportBtn"><i aria-hidden="true" class="bi bi-upload"></i> <span data-i18n="rules.import">Import</span></button>
                         <button class="btn btn-sm" id="rulesRefreshBtn"><i aria-hidden="true" class="bi bi-arrow-clockwise"></i> <span data-i18n="common.refresh">Refresh</span></button>
                     </div>
                 </div>
@@ -1685,6 +1687,21 @@
                             <option value="float">float</option><option value="int16">int16</option>
                             <option value="uint16">uint16</option><option value="int32">int32</option>
                             <option value="uint32">uint32</option></select></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label class="form-label" data-i18n="csv.transport" for="csvTransport">Read over</label>
+                        <select id="csvTransport" class="input">
+                            <option value="">Modbus (TCP or RTU)</option>
+                            <option value="http">HTTP/JSON (rows by json_path)</option>
+                            <option value="mqtt">MQTT (rows by json_path / topic)</option></select></div>
+                    <div class="form-group flex-2"><label class="form-label" data-i18n="csv.byteOrder" for="csvByteOrder">Word order of 32/64-bit values</label>
+                        <select id="csvByteOrder" class="input">
+                            <option value="">ABCD · high word first (Modbus default, or what the YAML file says)</option>
+                            <option value="big">ABCD · force it</option>
+                            <option value="little">CDAB · low word first (word-swapped)</option>
+                            <option value="badc">BADC · bytes swapped</option>
+                            <option value="dcba">DCBA · fully little-endian</option></select>
+                        <div class="field-hint" data-i18n="csv.byteOrderHint">The manual says it as "word order", "swapped", "LSW first" or shows a float example. Unsure? Import with ABCD, then Diagnostics → Probe shows which order gives a sane value; change it in the template editor.</div></div>
                 </div>
                 <div class="form-group">
                     <div class="form-label"><label for="csvText"><span id="csvTextLabel">CSV</span></label>
@@ -2299,6 +2316,31 @@
                 <span class="save-feedback" id="energyFieldsFeedback"></span>
                 <button class="btn btn-secondary btn-sm" data-action="closeModal" data-args='["energyFieldsModal"]'><span data-i18n="common.cancel">Cancel</span></button>
                 <button class="btn btn-primary btn-sm" data-action="saveEnergyFields"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Rules import: preview what happens to each rule, then apply (always in shadow) -->
+    <div class="modal" id="rulesImportModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i aria-hidden="true" class="bi bi-upload"></i> <span data-i18n="rules.import.title">Import rules</span></h3>
+                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["rulesImportModal"]'>&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="field-hint" style="margin-top:0;" data-i18n="rules.import.intro">Paste a rules file exported from a gateway (Rules → Export) or written by hand. Each rule is checked against THIS installation first — its target device and command must exist here. Imported rules always arrive in shadow: they decide and say so, but write nothing until you arm them.</p>
+                <p class="field-hint" style="margin-top:-6px;"><a href="https://github.com/sm26449/multi-bus-gateway/blob/main/docs/rules.md#3-recipes" target="_blank" rel="noopener" data-i18n="rules.import.recipes">Recipes to start from</a></p>
+                <div class="form-group">
+                    <div class="form-label"><label for="rulesImportText">YAML</label> · <label for="rulesImportFile" style="display:inline;cursor:pointer;color:var(--primary,#2563eb);font-size:12px;" data-i18n="rules.import.open">open a .yaml file</label>
+                        <input type="file" id="rulesImportFile" accept=".yaml,.yml,text/yaml" style="display:none;"></div>
+                    <textarea id="rulesImportText" class="input" rows="10" spellcheck="false" style="font-family:var(--font-mono,monospace);font-size:12px;" placeholder="rules:&#10;  - id: ov-u1&#10;    kind: stepped&#10;    ..."></textarea>
+                </div>
+                <label class="checkbox-label"><input type="checkbox" id="rulesImportReplace"> <span data-i18n="rules.import.replaceLabel">Replace rules that already exist here (never an armed one)</span></label>
+                <div id="rulesImportResult" style="margin-top:10px;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary btn-sm" data-action="rulesImportPreview"><i aria-hidden="true" class="bi bi-eye"></i> <span data-i18n="rules.import.check">Check</span></button>
+                <button class="btn btn-primary btn-sm" id="rulesImportApply" data-admin data-action="rulesImportApply" disabled>Import</button>
             </div>
         </div>
     </div>

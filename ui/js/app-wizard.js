@@ -666,7 +666,8 @@ Object.assign(JanitzaMonitor.prototype, {
         const out = document.getElementById(
             d.protocol === 'http' ? 'devWizTestResult3'
             : d.protocol === 'mqtt' ? 'devWizTestResult4'
-            : d.protocol === 'rtu' ? 'devWizTestResult2' : 'devWizTestResult');
+            // both RTU modes (direct serial, over the network bridge) live in the RTU block
+            : (d.protocol === 'rtu' || d.protocol === 'rtu-tcp') ? 'devWizTestResult2' : 'devWizTestResult');
         const orig = btn.innerHTML;
         btn.disabled = true;
         btn.innerHTML = '<span class="btn-spinner"></span> …';

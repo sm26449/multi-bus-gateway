@@ -59,8 +59,14 @@ Object.assign(JanitzaMonitor.prototype, {
                 <i aria-hidden="true" class="bi bi-plus-lg"></i> ${this.t('vmeter.addInstance', 'Add instance')}</button>
               ${portHint ? `<span style="color:var(--text-secondary);font-size:12px;">${noFree ? `<span style="color:#e08e0b;">${this.t('vmeter.noFreePort', 'No free port in range — widen VMETER_PORT_END.')}</span> ` : ''}${portHint}</span>` : ''}
             </div>`;
+        // say what to do FIRST: an instance needs a template, and the button
+        // stays disabled until one exists that is not already in use
+        const noTpl = !templates.length || !opts;
         const cards = !insts.length
-            ? `<p style="color:var(--text-secondary);">${this.t('vmeter.noneConfigured', 'No virtual meters configured. Use “Add instance”.')}</p>`
+            ? `<p style="color:var(--text-secondary);">${noTpl
+                ? this.t('vmeter.needTemplate', 'No virtual meters yet. A virtual meter serves a register map you define: first create one on the Templates tab (which registers, from which device values), then come back and use “Add instance”.')
+                  + ` <a href="#" ${this._act('vmShowTab', ['templates'])}>${this.t('vmeter.goTemplates', 'Open Templates')}</a>`
+                : this.t('vmeter.noneConfigured', 'No virtual meters configured. Use “Add instance”.')}</p>`
             : insts.map(m => {
             const mid = this._esc(m.template);
             // One status component app-wide (same pill as the Outputs sinks) —
@@ -455,6 +461,7 @@ Object.assign(JanitzaMonitor.prototype, {
             this._stopVmPolls();                      // leaving Meters → stop any per-meter poller
         };
         tabs.forEach(t => t.addEventListener('click', () => show(t.dataset.vmtab)));
+
     },
 
     _stopVmPolls() {
@@ -966,5 +973,9 @@ Object.assign(JanitzaMonitor.prototype, {
     _afterVmTemplateChange() {
         if (this.currentPage === 'templates') this.renderTemplateManager();
         else this.renderVirtualMeters();
-    }
+    },
+
+    vmShowTab(name) {
+        document.querySelector(`[data-vmtab="${name}"]`)?.click();
+    },
 });

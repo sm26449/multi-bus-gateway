@@ -526,12 +526,14 @@ Object.assign(JanitzaMonitor.prototype, {
             tab.addEventListener('click', (e) => {
                 e.preventDefault();
                 const page = tab.dataset.page;
-                this.navigateTo(page);
+                // a click on the tab means "take me to that page's start" —
+                // Devices goes back to the list even with a device open
+                this.navigateTo(page, { fromNav: true });
             });
         });
     },
 
-    navigateTo(page) {
+    navigateTo(page, opts = {}) {
         // Update nav tabs (class + ARIA selected state for the tablist)
         document.querySelectorAll('.nav-tab').forEach(t => {
             t.classList.remove('active');
@@ -574,7 +576,7 @@ Object.assign(JanitzaMonitor.prototype, {
             const detailOpen = document.getElementById('deviceDetailView')?.style.display !== 'none'
                             && document.getElementById('deviceDetailView')?.innerHTML;
             const regOpen = document.getElementById('deviceRegistersView')?.style.display !== 'none';
-            if (!detailOpen && !regOpen) {
+            if (opts.fromNav || (!detailOpen && !regOpen)) {
                 this._showDevicesList();
                 this.renderDevicesList();
                 this.renderBuilder();          // the Builder card lives on this page

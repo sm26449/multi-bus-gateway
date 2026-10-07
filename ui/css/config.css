@@ -750,3 +750,15 @@ body.role-viewer .tpl-update-viewer { display: inline; }
 .tm-pending { margin-top: 4px; font-size: 12px; color: var(--text-secondary); display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
 .tm-pending > .bi { color: var(--accent); }
 .tm-pending-item { display: inline-flex; align-items: center; gap: 4px; }
+
+/* ── template editor: how the device is read ─────────────────────────────── */
+.tpl-proto { border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); margin: 10px 0; }
+.tpl-proto > summary { cursor: pointer; padding: 8px 12px; font-weight: 600; }
+.tpl-proto-body { padding: 4px 12px 10px; }
+.tpl-proto-checks { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.tpl-proto-groups { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.tpl-pg { display: inline-flex; gap: 6px; align-items: center; }
+.tpl-pg input { width: 74px; }
+.probe-apply { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+
+.tpl-guide { float: right; font-weight: 400; font-size: 12.5px; }
