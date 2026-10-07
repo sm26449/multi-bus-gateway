@@ -93,6 +93,14 @@ def build(ctx) -> APIRouter:
         d['device_template']['builtin'] = t.builtin
         return d
 
+    def _apply_protocol_change(t, old_proto) -> List[str]:
+        """The word order and read size are taken when a device's client is
+        made — a changed protocol restarts the devices reading with this map."""
+        if old_proto is None or dict(getattr(t, "protocol", None) or {}) == old_proto:
+            return []
+        restart = getattr(ctx, "restart_devices_using_template", None)
+        return restart(t.id) if restart else []
+
     @r.post("/api/device-templates")
     def save_device_template(payload: Dict = Body(...)):
         """Create or update a USER template (built-in ids are shielded).
@@ -102,12 +110,15 @@ def build(ctx) -> APIRouter:
         errors = validate_template(payload)
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors})
+        old = template_registry.get(str((payload.get("device_template") or payload).get("id") or ""))
+        old_proto = dict(getattr(old, "protocol", None) or {}) if old else None
         try:
             t = template_registry.save_user(payload)
         except ValueError as e:
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
         logger.info(f"device template {t.id}: saved ({len(t.registers)} registers)")
-        return {"status": "saved", "template": t.summary()}
+        return {"status": "saved", "template": t.summary(),
+                "restarted": _apply_protocol_change(t, old_proto)}
 
     @r.delete("/api/device-templates/{template_id}")
     def delete_device_template(template_id: str):
@@ -153,11 +164,43 @@ def build(ctx) -> APIRouter:
             raise HTTPException(status_code=409, detail={
                 "errors": [f"a template with id '{tid}' already exists ({kind})"],
                 "conflict": tid, "builtin": existing.builtin})
+        old_proto = dict(getattr(existing, "protocol", None) or {}) if existing else None
         try:
             t = template_registry.save_user(data)
         except ValueError as e:
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
-        return {"status": "saved", "template": t.summary()}
+        return {"status": "saved", "template": t.summary(),
+                "restarted": _apply_protocol_change(t, old_proto)}
+
+    BYTE_ORDERS = ("big", "little", "badc", "dcba")
+    TRANSPORTS = ("tcp", "rtu", "rtu-tcp", "rtu_tap", "http", "mqtt")
+
+    def _protocol_from(payload: Dict, meta: Dict) -> Dict:
+        """The map's protocol block from the import form (or the YAML's own
+        header): how its 32-bit words are laid out and how it is reached. A map
+        imported without it reads as ABCD over Modbus — say so in the form."""
+        native = meta.get("protocol") if isinstance(meta.get("protocol"), dict) else {}
+        out: Dict = dict(native)          # an exported template keeps its whole block
+        bo = str(payload.get("byte_order") or meta.get("byte_order") or meta.get("word_order")
+                 or native.get("byte_order") or "").strip().lower()
+        alias = {"abcd": "big", "cdab": "little", "word_swap": "little"}   # "le" is ambiguous: refused
+        bo = alias.get(bo, bo)
+        if bo:
+            if bo not in BYTE_ORDERS:
+                raise HTTPException(status_code=422, detail={"errors": [
+                    f"byte_order {bo!r}: use big (ABCD), little (CDAB), badc or dcba"]})
+            out["byte_order"] = bo
+        tr = payload.get("transports") or meta.get("transports") or native.get("transports")
+        if isinstance(tr, str):
+            tr = [tr]
+        if tr:
+            tr = [str(x).strip().lower() for x in tr if str(x).strip()]
+            bad = [x for x in tr if x not in TRANSPORTS]
+            if bad:
+                raise HTTPException(status_code=422, detail={"errors": [
+                    f"transports {bad}: use {', '.join(TRANSPORTS)}"]})
+            out["transports"] = tr
+        return out
 
     @r.post("/api/device-templates/import-csv")
     def import_csv_template(payload: Dict = Body(...)):
@@ -188,6 +231,9 @@ def build(ctx) -> APIRouter:
             "source_document": "CSV import",
             "registers": parsed['registers'],
         }}
+        proto = _protocol_from(payload, {})
+        if proto:
+            tpl["device_template"]["protocol"] = proto
         return {
             "device_template": tpl,
             "register_count": len(parsed['registers']),
@@ -226,6 +272,9 @@ def build(ctx) -> APIRouter:
             "source_document": "YAML import",
             "registers": parsed['registers'],
         }}
+        proto = _protocol_from(payload, m)
+        if proto:
+            tpl["device_template"]["protocol"] = proto
         return {
             "device_template": tpl,
             "register_count": len(parsed['registers']),

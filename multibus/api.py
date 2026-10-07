@@ -5283,7 +5283,33 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                          diagnostics, discovery_routes, energy, general_config,
                          languages, metrics, pq, registers_routes, rules as rules_routes,
                          status_routes, system, values_routes, vmeters)
+    def _restart_devices_using_template(template_id: str) -> List[str]:
+        """A map's protocol (word order, read size) is read when a client is
+        made: restart every running device that reads with it, so a saved
+        change takes effect now instead of at the next container restart."""
+        out = []
+        for dev_cfg, client in list(registry):
+            if dev_cfg.primary:
+                continue
+            tids = {getattr(dev_cfg, 'template', '') or ''} | {
+                getattr(sx, 'template', '') or '' for sx in (getattr(dev_cfg, 'sources', None) or [])}
+            if template_id not in tids:
+                continue
+            try:
+                if client:
+                    client.disconnect()
+                new_client = _start_device_client(dev_cfg)
+                registry.replace(dev_cfg.id, dev_cfg, client=new_client, add_if_missing=True)
+                out.append(dev_cfg.id)
+            except Exception as e:  # noqa: BLE001 — one device must not stop the rest
+                logger.error("restart of %s after template %s change failed: %s",
+                             dev_cfg.id, template_id, e)
+        if out:
+            logger.info("template %s: protocol changed — restarted %s", template_id, ", ".join(out))
+        return out
+
     ctx = ApiCtx(
+        restart_devices_using_template=_restart_devices_using_template,
         app=app, config=config, registry=registry, calc_engine=calc_engine,
         event_log=event_log, alert_mgr=alert_mgr,
         auth_state=auth_state, api_key=_api_key,

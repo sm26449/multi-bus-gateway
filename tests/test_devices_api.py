@@ -1066,3 +1066,63 @@ def test_device_edit_keeps_its_influx_tags(tmp_path):
     body["influxdb"] = {"enabled": True}
     assert client.put("/api/devices/em-t", json=body).status_code == 200
     assert Config(str(tmp_path / "config.yaml")).get_device("em-t").influxdb_tags == {"site": "hala"}
+
+
+@needs_tc
+def test_a_template_saved_with_a_new_word_order_restarts_its_devices(tmp_path, monkeypatch):
+    """Word order is taken when a client is made: changing it must reach the
+    running devices now, not at the next container restart — and a label
+    change must not restart anything."""
+    import multibus.device_template as dt
+    monkeypatch.setattr(dt, 'USER_DIR', tmp_path / 'user_templates')
+    _cfg, client = make_app(tmp_path)
+    tpl = {"device_template": {
+        "schema_version": 1, "id": "cdab_meter", "name": "Word-swapped meter",
+        "protocol": {"transports": ["tcp"], "byte_order": "big"},
+        "registers": [{"address": 0, "name": "voltage_l1_n", "unit": "V", "data_type": "float"}]}}
+    assert client.post("/api/device-templates", json=tpl).status_code == 200
+    assert client.post("/api/devices", json={
+        "id": "m1", "template": "cdab_meter", "enabled": True,
+        "connection": {"protocol": "tcp", "host": "127.0.0.1", "port": 9, "timeout": 1}}).status_code == 200
+    tpl["device_template"]["registers"][0]["label"] = "L1 voltage"
+    assert client.post("/api/device-templates", json=tpl).json()["restarted"] == []
+    tpl["device_template"]["protocol"]["byte_order"] = "little"
+    r = client.post("/api/device-templates", json=tpl)
+    assert r.status_code == 200 and r.json()["restarted"] == ["m1"]
+    # the device now reads with the new order
+    reg = client.app.state.ctx.template_registry
+    assert reg.byte_order_for("cdab_meter") == "little"
+
+
+@needs_tc
+def test_imports_carry_word_order_transport_and_bit_tables(tmp_path):
+    _cfg, client = make_app(tmp_path)
+    csv = "address,name,unit,type,fc\n0,voltage_l1_n,V,float,fc4\n16,relay_1,,uint16,coil\n17,door,,uint16,DI\n"
+    r = client.post("/api/device-templates/import-csv",
+                    json={"csv": csv, "id": "imp", "byte_order": "little", "transports": ["rtu"]})
+    assert r.status_code == 200, r.text
+    t = r.json()["device_template"]["device_template"]
+    assert t["protocol"] == {"byte_order": "little", "transports": ["rtu"]}
+    assert [x.get("register_type", "holding") for x in t["registers"]] == ["input", "coil", "discrete"]
+    assert r.json()["validation_errors"] == []
+    # an ambiguous order is refused with the choices named
+    r = client.post("/api/device-templates/import-csv", json={"csv": csv, "byte_order": "le"})
+    assert r.status_code == 422 and "CDAB" in json.dumps(r.json())
+    # YAML may declare it in its own header
+    y = "byte_order: CDAB\nregisters:\n  - {address: 0, name: voltage_l1_n, unit: V, data_type: float}\n"
+    r = client.post("/api/device-templates/import-yaml", json={"yaml": y})
+    assert r.status_code == 200, r.text
+    assert r.json()["device_template"]["device_template"]["protocol"]["byte_order"] == "little"
+
+
+@needs_tc
+def test_a_native_template_reimported_from_yaml_keeps_its_protocol(tmp_path):
+    import yaml as _yaml
+    _cfg, client = make_app(tmp_path)
+    native = {"device_template": {"id": "rt", "name": "Round trip",
+              "protocol": {"transports": ["rtu"], "byte_order": "little",
+                           "default_unit_id": 7, "max_registers_per_read": 40},
+              "registers": [{"address": 0, "name": "voltage_l1_n", "unit": "V", "data_type": "float"}]}}
+    r = client.post("/api/device-templates/import-yaml", json={"yaml": _yaml.safe_dump(native)})
+    assert r.status_code == 200, r.text
+    assert r.json()["device_template"]["device_template"]["protocol"] == native["device_template"]["protocol"]

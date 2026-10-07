@@ -60,7 +60,7 @@ Object.assign(JanitzaMonitor.prototype, {
         try {
             const r = await fetch('/api/devices');
             const devs = ((await r.json()).devices || [])
-                .filter(d => (d.protocol || 'tcp') === 'tcp' || d.protocol === 'rtu');
+                .filter(d => ['tcp', 'rtu', 'rtu-tcp'].includes(d.protocol || 'tcp'));   // every polling Modbus client
             const opts = devs.map(d =>
                 `<option value="${this._esc(d.id)}">${this._esc(d.name || d.id)}</option>`).join('');
             const sel = document.getElementById('diagDeviceFilter');
@@ -160,7 +160,46 @@ Object.assign(JanitzaMonitor.prototype, {
                     <tbody>${rows}</tbody>
                 </table>
             </div>
-            <p class="field-hint" data-i18n="probe.hint">The column that yields a plausible value is the device's word order — set it as byte_order in the device template.</p>`;
+            <p class="field-hint" data-i18n="probe.hint">The column that yields a plausible value is the device's word order — set it as byte_order in the device template.</p>
+            <div class="probe-apply">
+                <span class="field-hint">${this._esc(this.t('probe.applyLead', 'Use this order on the device\'s template:'))}</span>
+                ${[['big', 'ABCD'], ['little', 'CDAB'], ['badc', 'BADC'], ['dcba', 'DCBA']].map(([v, l]) =>
+                    `<button data-admin class="btn btn-ghost btn-sm" ${this._act('applyProbeOrder', [v])}>${l}</button>`).join('')}
+            </div>`;
+    },
+
+    // the probe found the order that reads sanely: write it into the template
+    // the device reads with (its devices restart and read with it at once)
+    async applyProbeOrder(order) {
+        const t = (k, d, p) => this.t(k, d, p);
+        const devId = document.getElementById('probeDevice')?.value;
+        try {
+            const devs = (await (await fetch('/api/devices')).json()).devices || [];
+            const dev = devs.find(d => d.id === devId) || {};
+            const tid = dev.template || ((dev.sources || []).find(sx => sx.template) || {}).template;
+            if (!tid) throw new Error(t('probe.noTemplate', 'This device has no template to change.'));
+            const r = await fetch(`/api/device-templates/${encodeURIComponent(tid)}`);
+            const full = await r.json();
+            const tpl = full.device_template || {};
+            if (tpl.builtin) {
+                this.showToast('info', t('probe.builtinTitle', 'Built-in map'),
+                    t('probe.builtinMsg', '{tpl} is built in and read-only: on Templates, Duplicate it, set the order there, and point the device at the copy.', { tpl: tid }));
+                return;
+            }
+            delete tpl.builtin;
+            tpl.protocol = { ...(tpl.protocol || {}), byte_order: order };
+            const s = await fetch('/api/device-templates', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ device_template: tpl }) });
+            const res = await s.json();
+            if (!s.ok) throw new Error((res.detail?.errors || [s.statusText]).slice(0, 3).join(' · '));
+            this.showToast('success', t('probe.applied', 'Word order saved on {tpl}', { tpl: tid }),
+                (res.restarted || []).length
+                    ? t('devtpl.restarted', 'how it is read changed — restarted {list}', { list: res.restarted.join(', ') })
+                    : t('probe.noRestart', 'No running device needed a restart.'));
+        } catch (e) {
+            this.showToast('error', t('probe.applyFail', 'Could not change the template'), String(e.message || e));
+        }
     },
 
     async _toggleBusTrace() {

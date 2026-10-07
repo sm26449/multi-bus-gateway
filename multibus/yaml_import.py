@@ -33,7 +33,9 @@ _PASSTHROUGH = ('enum', 'bits', 'mask', 'shift', 'offset', 'monotonic', 'nan',
 # where the register list can hide in an upstream doc
 _LIST_KEYS = ('registers', 'registry', 'points', 'signals', 'measurements',
               'sensors', 'parameters', 'map', 'items')
-_META_KEYS = ('id', 'name', 'vendor', 'model', 'device', 'title', 'description')
+_META_KEYS = ('id', 'name', 'vendor', 'model', 'device', 'title', 'description',
+              # how the map is read, when the file says so itself
+              'byte_order', 'word_order', 'transports', 'protocol')
 
 
 def _get(d: Dict, canon: str, default=None):

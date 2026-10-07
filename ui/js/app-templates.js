@@ -221,7 +221,7 @@ Object.assign(JanitzaMonitor.prototype, {
             }
         }
         this._csvTemplate = null;
-        ['csvId', 'csvName', 'csvVendor', 'csvModel', 'csvText'].forEach(k => { const e = document.getElementById(k); if (e) e.value = ''; });
+        ['csvId', 'csvName', 'csvVendor', 'csvModel', 'csvText', 'csvByteOrder', 'csvTransport'].forEach(k => { const e = document.getElementById(k); if (e) e.value = ''; });
         document.getElementById('csvPreviewResult').innerHTML = '';
         // dress the shared modal for the chosen format
         const yaml = this._importFmt === 'yaml';
@@ -278,6 +278,11 @@ Object.assign(JanitzaMonitor.prototype, {
                     vendor: document.getElementById('csvVendor').value.trim(),
                     model: document.getElementById('csvModel').value.trim(),
                     default_data_type: document.getElementById('csvDefType').value,
+                    byte_order: document.getElementById('csvByteOrder')?.value || '',
+                    transports: (() => {
+                        const v = document.getElementById('csvTransport')?.value || '';
+                        return v ? [v] : [];
+                    })(),
                 }),
             });
             const res = await r.json();
@@ -497,8 +502,13 @@ Object.assign(JanitzaMonitor.prototype, {
 
     _tplEditorRender() {
         const e = this._tplEdit, d = e.data;
-        const dataTypes = ['float', 'float32', 'double', 'int16', 'uint16', 'short',
-                           'int32', 'uint32', 'int64', 'uint64'];
+        const dataTypes = ['float', 'double', 'int16', 'uint16', 'int32', 'uint32',
+                           'int64', 'uint64', 'sm16', 'sm32', 'string:8', 'string:16'];
+        const proto = d.protocol || (d.protocol = {});
+        const tr = (proto.transports || []).map(x => String(x).toLowerCase());
+        const isModbus = !tr.length || tr.some(x => ['tcp', 'rtu', 'rtu-tcp', 'rtu_tap'].includes(x));
+        const usesPath = tr.includes('http') || tr.includes('mqtt');
+        const usesTopic = tr.includes('mqtt');
         // Offer every category / poll group the registers actually use (bundled
         // templates ship categories:{} and no poll_groups block, yet their rows
         // reference voltage/current/realtime/slow/…), plus any declared — and
@@ -518,13 +528,16 @@ Object.assign(JanitzaMonitor.prototype, {
                 ${this._tplNameCell(r)}
                 <td><input class="input tpl-cell" data-f="label" value="${this._esc(r.label || '')}" aria-label="Label"></td>
                 ${this._tplUnitCell(r)}
-                <td><select class="input tpl-cell" data-f="data_type" aria-label="Data type">
-                    ${dataTypes.map(t => `<option ${t === r.data_type ? 'selected' : ''}>${t}</option>`).join('')}</select></td>
+                <td><input class="input tpl-cell" data-f="data_type" list="tplTypeList" value="${this._esc(r.data_type || 'float')}" style="width:84px" aria-label="Data type"></td>
                 <td><input class="input tpl-cell" data-f="scale" type="number" step="any" value="${r.scale ?? 1}" style="width:68px" aria-label="Scale"></td>
                 <td><input class="input tpl-cell" data-f="offset" type="number" step="any" value="${r.offset ?? 0}" style="width:68px" aria-label="Offset" title="engineering = raw / scale + offset"></td>
-                <td><select class="input tpl-cell" data-f="register_type" aria-label="Register type" title="Function code">
+                ${isModbus ? `<td><select class="input tpl-cell" data-f="register_type" aria-label="Register type" title="${this._esc(this.t('devtpl.fcHint', 'Modbus function code: FC3 holding / FC4 input registers; FC1 coils / FC2 discrete inputs are single bits'))}">
                     <option value="holding" ${(r.register_type || 'holding') === 'holding' ? 'selected' : ''}>FC3</option>
-                    <option value="input" ${r.register_type === 'input' ? 'selected' : ''}>FC4</option></select></td>
+                    <option value="input" ${r.register_type === 'input' ? 'selected' : ''}>FC4</option>
+                    <option value="coil" ${r.register_type === 'coil' ? 'selected' : ''}>FC1</option>
+                    <option value="discrete" ${r.register_type === 'discrete' ? 'selected' : ''}>FC2</option></select></td>` : ''}
+                ${usesPath ? `<td><input class="input tpl-cell" data-f="json_path" value="${this._esc(r.json_path || '')}" style="width:150px" placeholder="Body.Data.PAC" aria-label="JSON path"></td>` : ''}
+                ${usesTopic ? `<td><input class="input tpl-cell" data-f="topic" value="${this._esc(r.topic || '')}" style="width:120px" placeholder="~/soc" aria-label="MQTT topic"></td>` : ''}
                 <td><input class="input tpl-cell" data-f="category" list="tplCatList" value="${this._esc(r.category || '')}" style="width:118px" aria-label="Category"></td>
                 <td><input class="input tpl-cell" data-f="poll_group" list="tplGroupList" value="${this._esc(r.poll_group || '')}" style="width:96px" aria-label="Poll group"></td>
                 <td style="text-align:center;"><input type="checkbox" class="tpl-cell" data-f="writable" ${r.writable ? 'checked' : ''} title="Writable via the write API" aria-label="Writable"></td>
@@ -557,6 +570,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 <input class="input" id="tplModel" value="${this._esc(d.model || '')}">
             </div>
         </div>
+        ${this._tplProtocolHtml(proto, d)}
+        <datalist id="tplTypeList">${dataTypes.map(t => `<option value="${t}"></option>`).join('')}</datalist>
         <div style="display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap;">
             <input type="text" id="tplSearch" class="input" placeholder="${this.t('common.search', 'Search')}…"
                    value="${this._esc(e.search || '')}" style="max-width:220px;">
@@ -582,7 +597,7 @@ Object.assign(JanitzaMonitor.prototype, {
         <datalist id="tplGroupList">${groups.map(g => `<option value="${this._esc(g)}"></option>`).join('')}</datalist>
         <div class="table-container" style="max-height:320px;overflow:auto;">
             <table class="data-table tpl-table">
-                <thead><tr><th>Addr</th><th>${this.t('devtpl.colName', 'Name')}</th><th>${this.t('devtpl.colLabel', 'Label')}</th><th>${this.t('devtpl.colUnit', 'Unit')}</th><th>${this.t('devtpl.colType', 'Type')}</th><th>${this.t('devtpl.colScale', 'Scale')}</th><th title="engineering = raw / scale + offset">${this.t('devtpl.colOffset', 'Offset')}</th><th title="Function code">${this.t('devtpl.colFC', 'FC')}</th><th>${this.t('devtpl.colCategory', 'Category')}</th><th>${this.t('devtpl.colGroup', 'Poll group')}</th><th title="Writable via the write API">${this.t('devtpl.colWr', 'Wr')}</th><th>${this.t('devtpl.colMin', 'Min')}</th><th>${this.t('devtpl.colMax', 'Max')}</th><th title="Auto-revert value on lease expiry">${this.t('devtpl.colSafe', 'Safe')}</th><th></th></tr></thead>
+                <thead><tr><th>Addr</th><th>${this.t('devtpl.colName', 'Name')}</th><th>${this.t('devtpl.colLabel', 'Label')}</th><th>${this.t('devtpl.colUnit', 'Unit')}</th><th>${this.t('devtpl.colType', 'Type')}</th><th>${this.t('devtpl.colScale', 'Scale')}</th><th title="engineering = raw / scale + offset">${this.t('devtpl.colOffset', 'Offset')}</th>${isModbus ? `<th title="Function code">${this.t('devtpl.colFC', 'FC')}</th>` : ''}${usesPath ? `<th title="${this._esc(this.t('devtpl.jsonPathHint', 'Where the value sits in the JSON payload, dot/bracket path'))}">json_path</th>` : ''}${usesTopic ? `<th title="${this._esc(this.t('devtpl.topicHint', 'Its own MQTT topic; ~/leaf is relative to the device topic'))}">topic</th>` : ''}<th>${this.t('devtpl.colCategory', 'Category')}</th><th>${this.t('devtpl.colGroup', 'Poll group')}</th><th title="Writable via the write API">${this.t('devtpl.colWr', 'Wr')}</th><th>${this.t('devtpl.colMin', 'Min')}</th><th>${this.t('devtpl.colMax', 'Max')}</th><th title="Auto-revert value on lease expiry">${this.t('devtpl.colSafe', 'Safe')}</th><th></th></tr></thead>
                 <tbody>${rows}</tbody>
             </table>
         </div>
@@ -629,6 +644,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 }
             });
         });
+        this._tplWireProtocol();
         const search = document.getElementById('tplSearch');
         search.addEventListener('input', () => {
             this._tplCollectMeta();
@@ -648,6 +664,114 @@ Object.assign(JanitzaMonitor.prototype, {
         d.model = g('tplModel')?.value.trim() ?? d.model;
         const canon = g('tplCanonical');
         if (canon) d.canonical = canon.checked;
+        const p = d.protocol || (d.protocol = {});
+        const tr = (p.transports || []);
+        if (!tr.length || tr.some(x => ['tcp', 'rtu', 'rtu-tcp', 'rtu_tap'].includes(x))) {
+            const uid = parseInt(g('tplUnitId')?.value, 10);
+            if (Number.isFinite(uid)) p.default_unit_id = uid;
+            const mx = parseInt(g('tplMaxRead')?.value, 10);
+            if (Number.isFinite(mx)) p.max_registers_per_read = mx;
+            if (g('tplByteOrder')) p.byte_order = g('tplByteOrder').value;
+        }
+    },
+
+    // ── how the device is reached and how its words are laid out ──────────
+    _tplProtocolHtml(proto, d) {
+        const t = (k, def) => this.t(k, def);
+        const tr = (proto.transports || []).map(x => String(x).toLowerCase());
+        const TRANSPORTS = [['tcp', 'Modbus TCP'], ['rtu', 'Modbus RTU'], ['rtu_tap', t('devtpl.trTap', 'RTU listen-only')],
+                            ['http', 'HTTP/JSON'], ['mqtt', 'MQTT']];
+        const bo = proto.byte_order || 'big';
+        // word order, unit id and read size mean something only over Modbus
+        const modbus = !tr.length || tr.some(x => ['tcp', 'rtu', 'rtu-tcp', 'rtu_tap'].includes(x));
+        const ORDERS = [
+            ['big', 'ABCD', t('devtpl.boBig', 'big-endian, high word first — the Modbus default (most meters)')],
+            ['little', 'CDAB', t('devtpl.boLittle', 'word-swapped: low word first (common on many meters and PLCs)')],
+            ['badc', 'BADC', t('devtpl.boBadc', 'bytes swapped inside each word')],
+            ['dcba', 'DCBA', t('devtpl.boDcba', 'fully little-endian')]];
+        // every group the rows use, with its interval (declared, else the
+        // gateway's default) — a map without a poll_groups block still shows them
+        const DEF = { realtime: 1, normal: 5, slow: 60 };
+        // a row without a group reads on `normal`: show it, so its rate can be set
+        const names = [...new Set([...Object.keys(d.poll_groups || {}),
+            ...(d.registers || []).map(r => r.poll_group || 'normal')])];
+        const groups = names.map(n => [n, (d.poll_groups || {})[n] || { interval: DEF[n] ?? 5 }]);
+        return `
+        <details class="tpl-proto" open>
+          <summary><i aria-hidden="true" class="bi bi-plug"></i> ${t('devtpl.protoTitle', 'How the device is read')}
+            <a class="tpl-guide" href="https://github.com/sm26449/multi-bus-gateway/blob/main/docs/device-templates.md" target="_blank" rel="noopener">${t('devtpl.guide', 'Guide: writing a template')} <i aria-hidden="true" class="bi bi-box-arrow-up-right"></i></a></summary>
+          <div class="tpl-proto-body">
+            <div class="form-group">
+              <label class="form-label">${t('devtpl.transports', 'Ways to reach it')}</label>
+              <div class="tpl-proto-checks">${TRANSPORTS.map(([v, l]) => `
+                <label class="checkbox-label"><input type="checkbox" class="tpl-tr" value="${v}" ${tr.includes(v) ? 'checked' : ''}> <span>${l}</span></label>`).join('')}</div>
+              <div class="field-hint">${t('devtpl.transportsHint', 'What the map is written for. HTTP and MQTT rows read a value by its json_path instead of an address; the columns appear when you tick them.')}</div>
+            </div>
+            <div class="form-row" ${modbus ? '' : 'style="display:none"'}>
+              <div class="form-group flex-2">
+                <label class="form-label" for="tplByteOrder">${t('devtpl.byteOrder', 'Word / byte order (32- and 64-bit values)')}</label>
+                <select class="input" id="tplByteOrder">${ORDERS.map(([v, code, help]) => `
+                  <option value="${v}" ${bo === v ? 'selected' : ''}>${code} · ${this._esc(help)}</option>`).join('')}</select>
+                <div class="field-hint">${t('devtpl.byteOrderHint', 'If 230 V reads as a huge or tiny number, the order is wrong: try CDAB. Diagnostics → Probe shows every order side by side on the live device.')}</div>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="tplUnitId">${t('devtpl.unitId', 'Default unit ID')}</label>
+                <input class="input" id="tplUnitId" type="number" min="0" max="255" value="${proto.default_unit_id ?? 1}">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="tplMaxRead">${t('devtpl.maxRead', 'Max registers per read')}</label>
+                <input class="input" id="tplMaxRead" type="number" min="1" max="125" value="${proto.max_registers_per_read ?? 125}">
+                <div class="field-hint">${t('devtpl.maxReadHint', 'Lower it (e.g. 40) for devices that reject long reads.')}</div>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">${t('devtpl.pollGroups', 'Poll groups (seconds between reads)')}</label>
+              <div class="tpl-proto-groups">${groups.map(([n, g]) => `
+                <label class="tpl-pg"><code>${this._esc(n)}</code>
+                  <input class="input input-sm tpl-pg-iv" data-pg="${this._esc(n)}" type="number" min="0.05" step="any" value="${g.interval ?? 5}" aria-label="${this._esc(n)} interval"></label>`).join('')}
+                <button class="btn btn-ghost btn-sm" data-action="tplAddPollGroup"><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('devtpl.addGroup', 'Group')}</button>
+              </div>
+            </div>
+          </div>
+        </details>`;
+    },
+
+    _tplWireProtocol() {
+        const d = this._tplEdit.data;
+        const p = d.protocol || (d.protocol = {});
+        document.querySelectorAll('#devTplBody .tpl-tr').forEach(cb => cb.addEventListener('change', () => {
+            this._tplCollectMeta();
+            p.transports = [...document.querySelectorAll('#devTplBody .tpl-tr:checked')].map(x => x.value);
+            if (p.transports.length && !p.transports.some(x => ['tcp', 'rtu', 'rtu-tcp', 'rtu_tap'].includes(x))) {
+                // an HTTP / MQTT map carries no Modbus settings
+                ['functions', 'max_registers_per_read', 'byte_order', 'default_unit_id'].forEach(k => delete p[k]);
+            }
+            this._tplEditorRender();       // json_path / topic / FC columns follow
+        }));
+        document.querySelectorAll('#devTplBody .tpl-pg-iv').forEach(inp => inp.addEventListener('change', () => {
+            // once a map declares poll_groups, every group a row uses must be
+            // declared — so write them all, not just the one edited
+            const all = {};
+            document.querySelectorAll('#devTplBody .tpl-pg-iv').forEach(x => {
+                const v = parseFloat(x.value);
+                all[x.dataset.pg] = { ...((d.poll_groups || {})[x.dataset.pg] || {}), interval: v > 0 ? v : 5 };
+            });
+            d.poll_groups = all;
+        }));
+    },
+
+    tplAddPollGroup() {
+        this._tplCollectMeta();
+        const name = (prompt(this.t('devtpl.groupName', 'Name of the new poll group (e.g. fast, hourly):')) || '').trim().toLowerCase();
+        if (!name || !/^[a-z][a-z0-9_]{0,31}$/.test(name)) return;
+        const d = this._tplEdit.data;
+        const all = {};
+        document.querySelectorAll('#devTplBody .tpl-pg-iv').forEach(x => {
+            const v = parseFloat(x.value);
+            all[x.dataset.pg] = { ...((d.poll_groups || {})[x.dataset.pg] || {}), interval: v > 0 ? v : 5 };
+        });
+        d.poll_groups = { ...all, [name]: { interval: 10 } };
+        this._tplEditorRender();
     },
 
     // Infer canonical names for the non-canonical rows from label/name/unit.
@@ -868,8 +992,11 @@ Object.assign(JanitzaMonitor.prototype, {
                 return;
             }
             this.closeModal('devTplModal');
+            const rs = res.restarted || [];
             this.showToast('success', this.t('devtpl.saved', 'Template saved'),
-                           `${res.template.id} · ${res.template.registers} reg`);
+                           `${res.template.id} · ${res.template.registers} reg` + (rs.length
+                               ? ' · ' + this.t('devtpl.restarted', 'how it is read changed — restarted {list}', { list: rs.join(', ') })
+                               : ''));
             await this._refreshWizTemplates(res.template.id);
         } catch (e) {
             fb.textContent = e.message;

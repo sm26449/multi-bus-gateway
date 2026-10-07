@@ -169,8 +169,14 @@ def parse_csv(text: str, *, default_data_type: str = 'float',
             rec['poll_group'] = default_poll_group
         if _norm(cell(row, 'access')) in ('rw', 'readwrite', 'wr', 'w'):
             rec['access'] = 'RD/WR'
-        if _norm(cell(row, 'register_type')) in _INPUT_REGISTER_ALIASES:
-            rec['register_type'] = 'input'
+        # FC3 holding (default) / FC4 input / FC1 coil / FC2 discrete — one
+        # reading of "fc4", "coil", "DI"… for CSV, YAML and the config alike
+        rt = cell(row, 'register_type')
+        if rt:
+            from .config import normalize_register_type
+            nrt = normalize_register_type(rt)
+            if nrt != 'holding':
+                rec['register_type'] = nrt
 
         registers.append(rec)
 
@@ -184,4 +190,21 @@ def parse_csv(text: str, *, default_data_type: str = 'float',
             r['address'] = nxt
             used.add(nxt)
 
+    warnings.extend(one_based_hint([r.get('address') for r in registers if r.get('json_path') is None]))
     return {'registers': registers, 'errors': [], 'warnings': warnings, 'columns': list(colmap)}
+
+
+def one_based_hint(addresses) -> List[str]:
+    """Manuals often print Modbus addresses in the 1-based "register number"
+    notation — 40001 is holding register 0, 30001 is input register 0. Taken
+    as they are, every value comes from the wrong place. Say so when EVERY
+    address sits in one of those ranges."""
+    a = [x for x in addresses if isinstance(x, int)]
+    if not a:
+        return []
+    for base, fc in ((40001, 'holding (FC3)'), (30001, 'input (FC4)')):
+        if all(base <= x < base + 10000 for x in a):
+            return [f"every address is in {base}…{base + 9998}: that looks like the 1-based "
+                    f"register-number notation, where {base} means {fc} address 0. If the "
+                    f"manual means that, subtract {base} from each address (and pick {fc})."]
+    return []
