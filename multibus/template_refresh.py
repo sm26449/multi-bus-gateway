@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 REGISTER_KEYS = ("label", "unit", "description", "category")
+SILENT_FILL = ("description", "category")
 CALC_KEYS = ("label", "unit")
 
 
@@ -100,6 +101,11 @@ def _row_changes(rows: List[Dict[str, Any]], tpl_rows: Dict[str, Any],
         after = copy.deepcopy(row)
         _apply_row(after, t, keys)
         for k in keys + ("aggregates",):
+            # a section or a description the row never had is read from the
+            # template anyway: filling it in changes nothing anyone sees, so it
+            # is done with the next update but is no reason to announce one
+            if k in SILENT_FILL and row.get(k) in (None, ""):
+                continue
             if row.get(k) != after.get(k):
                 out.append({"field": row.get("name"), "label": after.get("label") or row.get("name"),
                             "key": k, "before": row.get(k), "after": after.get(k)})

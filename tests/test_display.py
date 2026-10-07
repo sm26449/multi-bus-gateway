@@ -140,3 +140,16 @@ def test_seplos_warnings_exclude_protections():
     assert not (c["warning_count"] & c["protection_count"])
     assert c["warning_count"] <= c["alarm_count"]
     assert {"field": "warning_count", "severity": "warning"} in t["display"]["alarms"]
+
+
+def test_filling_a_blank_section_or_description_is_no_reason_to_announce(tmp_path):
+    from multibus.template_refresh import plan_file
+    tpl = NS(registers=[NS(name="p", label="Power", unit="W", description="what it is",
+                           category="power", aggregates=None, scale=1, offset=0)], calculated=[])
+    f = tmp_path / "selected_registers.json"
+    f.write_text(json.dumps({"registers": [{"name": "p", "label": "Power", "unit": "W"}]}))
+    assert plan_file(f, tpl)["changes"] == []                 # blanks only: nothing to say
+    f.write_text(json.dumps({"registers": [{"name": "p", "label": "Pwr", "unit": "W",
+                                            "category": "other"}]}))
+    keys = sorted(c["key"] for c in plan_file(f, tpl)["changes"])
+    assert keys == ["category", "label"]                      # a real change still shows
