@@ -216,3 +216,29 @@ client reading it, a rule and a snapshot — never at production.
 MBG_URL=http://localhost:18090 MBG_USER=admin MBG_PASS=… CHROME_PATH=<chrome> \
   node capture_docs_screenshots.mjs          # SUNSPEC_HOST/PORT for the scan panel
 ```
+
+## New user, every protocol
+
+`new_user_e2e.mjs` walks the path of someone who has a register spec and a
+device and nothing else: maps written by CSV import (word order and "read over"
+from the form, an `fc` column for FC1/FC2/FC4), YAML import (refusing a map
+that puts two rows on one address), and the visual editor (a coil row, HTTP and
+MQTT maps with json_path / topic, a poll interval); one device per protocol
+through the Add Device wizard (Modbus TCP, Modbus RTU on a serial line, HTTP —
+loopback refused, LAN accepted —, MQTT); EXACT decoded values from simulators
+that hold known numbers; the wrong word order found in Diagnostics → Probe and
+fixed there with no restart; the dashboard; a virtual meter re-serving two
+values read back with pymodbus, its export and re-import; and the rules
+import/export smoke.
+
+```bash
+cd tools/e2e
+MBG_URL=http://127.0.0.1:8099 CTR=mbg-ui-sandbox CHROMIUM_PATH=<chrome> node new_user_e2e.mjs
+```
+
+Config it expects: auth off, a container it may `docker exec` into (app user
+uid 10001, pymodbus + paho-mqtt installed) on `pv-stack-network`, the vmeter
+port range starting at a free port. The script starts its own throwaway
+anonymous broker (`mbg-e2e-mqtt`) and `sims/new_user_sims.py` inside the
+container, and removes every `e2e_nu_*` / `e2e-nu-*` thing it made, at the start
+and at the end. Lines starting `NOTE` are UX observations, not failures.
