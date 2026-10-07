@@ -31,7 +31,9 @@ import ast
 import math
 import operator
 
-MAX_EXPR_LEN = 500
+# Long enough for a 30-term alarm roll-up (a BMS alarm_count sums ~27
+# individually named bits); the AST walk is depth- and node-bounded anyway.
+MAX_EXPR_LEN = 2000
 
 _BINOPS = {
     ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
@@ -49,6 +51,9 @@ _FUNCS = {
     'sqrt': math.sqrt, 'pow': math.pow, 'floor': math.floor, 'ceil': math.ceil,
     'avg': lambda *a: (sum(a) / len(a)) if a else 0.0,
     'clamp': lambda x, lo, hi: max(lo, min(hi, x)),
+    # set bits in an integer bitmask (optionally AND-masked first) — the
+    # BMS staple: balancing_count = popcount(balancing_bits)
+    'popcount': lambda x, mask=-1: bin(int(round(abs(x))) & (int(mask) if mask != -1 else -1) & 0xFFFFFFFFFFFFFFFF).count('1'),
 }
 _CONSTS = {'pi': math.pi, 'e': math.e, 'true': True, 'false': False}
 # Argument count per function: (min, max|None). Wrong arity is rejected at save
@@ -57,6 +62,7 @@ _FUNC_ARITY = {
     'min': (2, None), 'max': (2, None), 'avg': (1, None),
     'abs': (1, 1), 'round': (1, 2), 'sqrt': (1, 1), 'pow': (2, 2),
     'floor': (1, 1), 'ceil': (1, 1), 'clamp': (3, 3),
+    'popcount': (1, 2),
 }
 MAX_POW_EXP = 64          # cap exponents so base**exp can't blow up CPU/RAM
 MAX_ROUND_DIGITS = 15     # round(x, n): |n| beyond this is meaningless for a float
@@ -323,6 +329,7 @@ FUNCTIONS = [
     {"name": "abs", "sig": "abs(x)", "desc": "absolute value"},
     {"name": "round", "sig": "round(x, n)", "desc": "round to n decimals"},
     {"name": "sqrt", "sig": "sqrt(x)", "desc": "square root"},
+    {"name": "popcount", "sig": "popcount(x, mask)", "desc": "set bits in a bitmask (mask optional)"},
     {"name": "pow", "sig": "pow(x, y)", "desc": "x to the power y"},
     {"name": "floor", "sig": "floor(x)", "desc": "round down"},
     {"name": "ceil", "sig": "ceil(x)", "desc": "round up"},

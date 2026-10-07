@@ -381,3 +381,50 @@ def test_round_decimals_bounded_and_results_finite():
     with pytest.raises(ex.ExpressionError):
         ex.evaluate("2 ** 64 * 2 ** 64", lambda n: None)   # 128-bit int
     assert ex.evaluate("2 ** 62", lambda n: None) == 2 ** 62
+
+
+# ── popcount (Seplos PIC derived counts, 3.85 Phase 2) ──────────────────────
+
+def test_popcount_validates_and_evaluates():
+    import multibus.expressions as ex
+    ok, err, _refs = ex.validate_expression("popcount(balancing_bits)")
+    assert ok, err
+    assert ex.evaluate("popcount(x)", lambda n: {"x": 0b1011}.get(n)) == 3
+    assert ex.evaluate("popcount(x, 255)", lambda n: {"x": 0x0104}.get(n)) == 1
+    assert ex.evaluate("popcount(x)", lambda n: {"x": 0}.get(n)) == 0
+
+
+def test_popcount_arity_rejected():
+    import multibus.expressions as ex
+    ok, _e, _r = ex.validate_expression("popcount()")
+    assert not ok
+    ok, _e, _r = ex.validate_expression("popcount(a, b, c)")
+    assert not ok
+
+
+def test_seplos_tap_template_counts_match_the_collector_math():
+    """The template's shipped calculated registers reproduce the collector's
+    derived fields: popcount of the balancing mask, the 27-term alarm_count,
+    power = -I*V and cell delta in mV."""
+    import json
+    import multibus.expressions as ex
+    tpl = json.load(open('multibus/device_templates/seplos_bms_v3_rtu_tap.json'))
+    calcs = {c['name']: c for c in tpl['device_template']['calculated']}
+    reg_names = [r['name'] for r in tpl['device_template']['registers']]
+    ns = {n: 0 for n in reg_names}
+    ns.update({'current': -2.78, 'pack_voltage': 53.18,
+               'max_cell_voltage': 3.329, 'min_cell_voltage': 3.322,
+               'balancing_bits': 0b0000000000000011,
+               'alarm_pack_low_v': 1, 'alarm_soc_low': 1,
+               'alarm_soc_prot': 1, 'failure_afe': 1})
+    for c in calcs.values():                         # every expr validates
+        ok, err, refs = ex.validate_expression(c['expr'])
+        assert ok, f"{c['name']}: {err}"
+        assert {r[0] if isinstance(r, tuple) else r for r in refs} <= set(reg_names)
+    look = lambda n: ns.get(n)
+    assert round(ex.evaluate(calcs['power']['expr'], look)) == 148
+    assert round(ex.evaluate(calcs['cell_delta']['expr'], look)) == 7
+    assert ex.evaluate(calcs['balancing_count']['expr'], look) == 2
+    assert ex.evaluate(calcs['alarm_count']['expr'], look) == 2     # pack_low_v + soc_low
+    assert ex.evaluate(calcs['protection_count']['expr'], look) == 1  # soc_prot
+    assert ex.evaluate(calcs['failure_count']['expr'], look) == 1     # afe

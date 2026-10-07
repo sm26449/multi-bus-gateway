@@ -91,6 +91,8 @@ class CalcEngine:
                 # a computed CODE becomes text through the same decoder real
                 # status registers use — one decode path, not two
                 enum=e.get('enum') or None,
+                aggregates=(dict(e['aggregates'])
+                            if isinstance(e.get('aggregates'), dict) else None),
             )
             _ok, _err, refs = expressions.validate_expression(e.get('expr', ''))
             # An entry that fails validation is kept IN PLACE but marked
@@ -246,6 +248,7 @@ class CalcEngine:
                 'unit': reg.unit, 'poll_group': reg.poll_group,
                 'timestamp': _result_ts, 'calculated': True,
                 'ts': _ts, 'mono': _mono, 'interval': _interval,
+                'aggregates': getattr(reg, 'aggregates', None),
             }
             # same item shape as the poller batch: downstream publishers stamp
             # points with the OLDEST input's time, not a fabricated now()

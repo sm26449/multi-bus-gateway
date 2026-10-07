@@ -687,6 +687,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     # row must not be judged by a 15s instance bound). None for
                     # push sources → the instance bound applies.
                     'interval': item.get('interval'),
+                    # endpoint fan-out rules the template declared for this
+                    # field — the aggregator reads them straight off the store
+                    'aggregates': getattr(item.get('register'), 'aggregates', None),
                 }
 
             last_update['timestamp'] = datetime.now().isoformat()

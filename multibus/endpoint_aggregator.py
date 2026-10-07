@@ -48,7 +48,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .canonical_fields import mqtt_topic_for
 
@@ -139,6 +139,10 @@ def compute_endpoint_aggregates(config, registry, endpoint_id: str,
                      or (getattr(d, "group_id", "") or "units") == group_id)]
     fresh: Dict[str, List[float]] = {}
     counters: Dict[str, List[float]] = {}
+    # template-declared fan-out: {output_name: (op, [unit values])} — how a
+    # vendor's fields combine across a bank/farm (soc -> pack_average_soc avg,
+    # pack_min_soc min, ... all at once). Ops: sum|avg|min|max|spread.
+    declared: Dict[str, Tuple[str, List[float]]] = {}
     online = 0
     for dev in expected:
         store = registry.store_for(dev.id) or {}
@@ -163,6 +167,11 @@ def compute_endpoint_aggregates(config, registry, endpoint_id: str,
                 counters.setdefault(name, []).append(float(val))
             elif rule and is_fresh:
                 fresh.setdefault(name, []).append(float(val))
+            decl = entry.get("aggregates")
+            if isinstance(decl, dict) and is_fresh:
+                for out_name, op in decl.items():
+                    if op in ("sum", "avg", "min", "max", "spread"):
+                        declared.setdefault(str(out_name), (op, []))[1].append(float(val))
         if fresh_any:
             online += 1
 
@@ -170,6 +179,15 @@ def compute_endpoint_aggregates(config, registry, endpoint_id: str,
     for name, vals in fresh.items():
         out[name] = round(sum(vals) if _rule_for(name) == "sum"
                           else sum(vals) / len(vals), 3)
+    for out_name, (op, vals) in declared.items():
+        if not vals:
+            continue
+        out[out_name] = round(
+            sum(vals) if op == "sum"
+            else sum(vals) / len(vals) if op == "avg"
+            else min(vals) if op == "min"
+            else max(vals) if op == "max"
+            else max(vals) - min(vals), 3)        # spread
     n_expected = len(expected)
     for name, vals in counters.items():
         if n_expected and len(vals) == n_expected:

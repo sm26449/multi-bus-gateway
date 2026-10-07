@@ -597,6 +597,9 @@ class SelectedRegister:
     ui_widget: str = "value"
     ui_config: Dict[str, Any] = field(default_factory=dict)
     thresholds: Optional[Dict[str, Any]] = None  # Color coding thresholds
+    # endpoint fan-out: {output_name: sum|avg|min|max|spread} — how this field
+    # combines across the units of an endpoint (declared by the template)
+    aggregates: Optional[Dict[str, str]] = None
 
 
 class Config:
@@ -1910,6 +1913,8 @@ class Config:
                 ui_widget=ui.get('widget', 'value'),
                 ui_config=ui,
                 thresholds=reg.get('thresholds'),
+                aggregates=(dict(reg['aggregates'])
+                            if isinstance(reg.get('aggregates'), dict) else None),
             ))
         return out
 

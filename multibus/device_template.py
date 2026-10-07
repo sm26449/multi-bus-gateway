@@ -131,6 +131,11 @@ class TemplateRegister:
     enabled_by_default: Optional[bool] = None
     icon: str = ""
     suggested_display_precision: Optional[int] = None
+    # how this field combines across the UNITS of an endpoint (a battery
+    # bank, an inverter farm): {output_name: op}, op in sum|avg|min|max|spread.
+    # The template teaches the endpoint aggregator the vendor's semantics —
+    # soc can fan out to pack_average_soc/pack_min_soc/pack_max_soc at once.
+    aggregates: Optional[Dict[str, str]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {
@@ -220,9 +225,12 @@ class TemplateCalculated:
     enum: Optional[Dict[Any, str]] = None    # computed code → text
     mqtt: bool = True
     influxdb: bool = True
+    aggregates: Optional[Dict[str, str]] = None   # endpoint fan-out, like registers
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {'name': self.name, 'expr': self.expr}
+        if self.aggregates:
+            d['aggregates'] = self.aggregates
         for k in ('label', 'unit', 'poll_group', 'topic', 'measurement'):
             if getattr(self, k):
                 d[k] = getattr(self, k)
@@ -560,6 +568,8 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         enabled_by_default=r.get('enabled_by_default'),
         icon=str(r.get('icon', '') or ''),
         suggested_display_precision=r.get('suggested_display_precision'),
+        aggregates=(dict(r['aggregates'])
+                    if isinstance(r.get('aggregates'), dict) else None),
     ) for r in t['registers']]
     calcs = [TemplateCalculated(
         name=str(c['name']), expr=str(c.get('expr', '') or ''),
@@ -572,6 +582,8 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         enum=c.get('enum'),
         mqtt=bool(c.get('mqtt', True)),
         influxdb=bool(c.get('influxdb', True)),
+        aggregates=(dict(c['aggregates'])
+                    if isinstance(c.get('aggregates'), dict) else None),
     ) for c in (t.get('calculated') or [])]
     return DeviceTemplate(
         id=t['id'], name=t['name'],

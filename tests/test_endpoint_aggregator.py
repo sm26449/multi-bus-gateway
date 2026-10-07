@@ -507,3 +507,46 @@ def test_unit_freshness_prefers_the_monotonic_stamp():
     })
     agg = compute_endpoint_aggregates(cfg, reg, "p", now=now)
     assert agg["power_active_total"] == 10000 and agg["units_online"] == 1
+
+
+# ── template-declared fan-out (battery bank, 3.85 Phase 2) ──────────────────
+
+def test_declared_aggregates_fan_out_across_units(tmp_path):
+    """A field with template-declared `aggregates` produces every declared
+    output at once (avg/min/max/spread/sum); a stale unit's value stays out;
+    canonical rules keep working beside the declared ones."""
+    import time
+    from multibus.endpoint_aggregator import compute_endpoint_aggregates
+    from tests.test_devices import write_config
+    from tests.test_commands_api import PLANT_YAML
+    cfg = write_config(tmp_path, extra_yaml=PLANT_YAML)
+    pid = cfg.endpoints[0]['id']
+
+    class _Reg:
+        def __init__(self, stores): self._s = stores
+        def store_for(self, dev_id): return self._s.get(dev_id, {})
+
+    units = cfg.endpoint_devices(pid)
+    mono = time.monotonic()
+    agg = {'pack_average_soc': 'avg', 'pack_min_soc': 'min',
+           'pack_max_soc': 'max', 'pack_soc_spread': 'spread'}
+    def entry(val, aggs=None, fresh=True):
+        return {'name': 'soc', 'value': val, 'ts': time.time(),
+                'mono': mono if fresh else mono - 9999,
+                'interval': 5, 'aggregates': aggs}
+    stores = {
+        units[0].id: {1: entry(80.0, agg),
+                      3: dict(entry(100.0, {'pack_total_x': 'sum'}),
+                              name='x', value=2.5)},
+        units[1].id: {1: entry(70.0, agg),
+                      2: entry(10.0, agg, fresh=False)},   # stale -> excluded
+    }
+    out = compute_endpoint_aggregates(cfg, _Reg(stores), pid)
+    assert out['pack_average_soc'] == 75.0
+    assert out['pack_min_soc'] == 70.0 and out['pack_max_soc'] == 80.0
+    assert out['pack_soc_spread'] == 10.0
+    assert out['pack_total_x'] == 2.5
+    # an unknown op is ignored, not crashed on
+    stores[units[0].id][2] = dict(entry(1.0, {'bogus': 'median'}), name='y')
+    out2 = compute_endpoint_aggregates(cfg, _Reg(stores), pid)
+    assert 'bogus' not in out2

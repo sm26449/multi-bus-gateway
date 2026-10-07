@@ -111,6 +111,7 @@ def autoselect_template_registers(config: Any, template_registry: Any,
            if getattr(r, 'enabled_by_default', None) is not None else {}),
         **({'suggested_display_precision': r.suggested_display_precision}
            if getattr(r, 'suggested_display_precision', None) is not None else {}),
+        **({'aggregates': r.aggregates} if getattr(r, 'aggregates', None) else {}),
         **_seed_output(r),
     } for r in chosen]
     tpg = {n: {'interval': g.get('interval', 5), 'description': g.get('description', '')}
