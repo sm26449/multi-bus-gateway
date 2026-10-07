@@ -1,5 +1,115 @@
 # Changelog
 
+## 3.85.0
+
+**Upgrade notes** (nothing to do for most installs; no config, MQTT or
+InfluxDB shape changes): `GET /api/registers/selected` now also returns a
+device's calculated registers as read-only rows (`calculated: true`, a
+synthetic address) — a script that POSTs the list back is unaffected, the
+POST drops them. The dashboard's grid/table toggle is gone and the gateway's
+own pipeline counters moved to the Status page. The bundled
+`seplos_bms_bank_mqtt` map declares its two energies in Wh (scale 0.001)
+instead of kWh — the UI shows the same kWh; an InfluxDB series written by
+that map changes unit.
+
+### 2026-10-07 — the installation decides its totals and where they are written
+
+How an installation's totals are made and where they land is the
+operator's now, in the open on the installation page — nothing about it is
+vendor-specific code:
+
+- **Totals** (`totals:`): every total shows its operation and the unit
+  fields it is built from, marked *template* or *yours*. Override one (a
+  battery bank's max temperature over the cell sensors *and* the ambient
+  one) or add your own (`sum` / `avg` / `min` / `max` / `spread` over any
+  fields the units carry); yours replaces the template's total of the same
+  name.
+- **Static InfluxDB tags** (`influxdb.tags`, device or installation,
+  `${unit_id}` substituted per unit) ride every raw and calculated point —
+  `battery_id = ${unit_id}` keeps a migrated series continuous. They never
+  displace the identity tags or a tag a register declares.
+- **Extra InfluxDB outputs** (`influxdb.outputs`): the totals can also be
+  written under a measurement, bucket, tags and field names of your
+  choosing — one point per cycle, `name ← total × scale`. This is how a
+  dashboard or a report that reads its own schema keeps working when the
+  device behind it changes. Saving an output never restarts a unit.
+
+All three are validated with the offending field named, kept by forms
+that do not send them, and documented in config-reference and MANUAL §5b.5.
+
+### 2026-10-07 — listen-only RTU from the UI
+
+- **Add Device → Modbus RTU → Listen only (tap)**: serial port, baud,
+  parity, unit ID. *Test* on a saved tap reports what it has HEARD and
+  names the silent layer — port not open, port open but no valid frame,
+  bus live but nothing for this unit, or *hearing unit N*. The device
+  editor knows taps too; installations offer `rtu_tap` as a protocol.
+- Line rules enforced on save: a serial line is either polled or tapped,
+  never both; taps sharing a port must agree on baud and parity (one
+  reader opens it once).
+- Fixed along the way: a tap whose first open failed kept reporting
+  "down" after the port opened and data flowed; an idle shared reader
+  kept the line settings of devices that were gone; editing an `rtu-tcp`
+  device silently dropped host/port changes.
+
+### 2026-10-07 — dashboard fixes (review batch)
+
+- Switching devices quickly no longer puts the previous device's labels on
+  the new one's values, and a value pushed over the socket while the
+  snapshot was loading is no longer overwritten by the older snapshot.
+- A value's history comes from the device on screen (it came from the
+  primary's bucket for every secondary device).
+- Cards and section rows open their history from the keyboard (Enter /
+  Space), with a focus ring.
+- A device whose data is stale or down gets its own banner with the age of
+  its last update — its frozen values no longer pass for live.
+- A remembered dashboard device that was deleted is dropped instead of
+  restored; the empty state goes to the device on screen; gauge colours and
+  ranges are escaped; the primary's id comes from the server.
+
+### 2026-10-04…07 — the listen-only tap, and a battery bank that moved onto it
+
+- **`protocol: rtu_tap`** — a silent observer for a Modbus RTU bus that
+  already has a master (a BMS master pack, a vendor datalogger): never
+  transmits a byte, reassembles frames by CRC (the serial layer's 20–50 ms
+  chunks make timing useless), pairs requests with responses, decodes
+  FC 01/03/04 reads and FC 06/16 writes, and learns which address an
+  unsolicited block of a given shape belongs to — a bus master answers no
+  requests, it emits. One shared reader per port, a ~200-frame debug ring,
+  CRC/orphan/exception counters. docs/rtu-serial.md §7.
+- **New built-in `seplos_bms_v3_rtu_tap`**: one Seplos V3 pack as seen on
+  the inter-pack bus — telemetry (PIA/PIB), the PIC alarm/status block as
+  coils, and the derived layer (power, cell delta, alarm/protection/failure
+  counts, energy remaining/to full) with the whole bank fan-out declared.
+  It replaced a dedicated collector in production; the migration, the
+  consumers it surprised and how each was fixed are in
+  docs/seplos-migration-plan.md.
+- **Templates declare how fields combine across units**:
+  `aggregates: {output: op}` per register and per calculated field, so one
+  field fans out to several totals (`soc` → average / min / max / spread).
+  Expressions gain `popcount(x[, mask])`, and their length cap rises to
+  2000 characters.
+- Calculated registers run on every acquisition path (they ran only for
+  MQTT-fed devices besides Modbus polling — tap devices never computed),
+  and they appear on the dashboard (sections, hero cards, site-card
+  metrics).
+- An installation's settings-only save no longer rebuilds the entry from
+  the form: the serial port, the totals topic and flat unit lists survive.
+- An installation unit read through several sources lists the union of
+  its sources' registers (it showed "no measurements").
+
+### 2026-10-04 — fleet-first dashboard
+
+The dashboard tells the plant's story instead of the gateway's: with two or
+more devices it opens on a **fleet view** — one row per device with health,
+alarm counts and hero values, grouped by installation, worst first, with
+search and an *only problems* filter (`/api/fleet` serves it in one call).
+A **site strip** on top carries one card per installation plus devices you
+pin, each card personalizable (metric, label, order). The **per-device
+view** shows up to 12 hero widgets above collapsible sections that group
+every value by measurement; a searchable **device switcher** replaces the
+chips row.
+
 ## 3.84.2
 
 ### 2026-10-03 — direct serial that works, MQTT input that speaks BMS
