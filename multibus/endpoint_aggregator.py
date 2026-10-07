@@ -112,7 +112,17 @@ def _derive_power_factor(out: Dict[str, Any]) -> Optional[float]:
     return round(max(-1.0, min(1.0, p / s)), 4)
 
 
-_OPS = ("sum", "avg", "min", "max", "spread")
+_OPS = ("sum", "avg", "min", "max", "spread", "mode")
+# ops that take numbers; ``mode`` (the most common value) also takes text — a
+# bank's one-word status is the packs' majority status
+
+
+def _mode(vals):
+    counts: Dict[Any, int] = {}
+    for v in vals:
+        counts[v] = counts.get(v, 0) + 1
+    # most common; a tie goes to the value seen first (stable, no flapping by order)
+    return max(counts.items(), key=lambda kv: (kv[1], -vals.index(kv[0])))[0]
 
 
 def endpoint_totals(config, endpoint_id: str) -> Dict[str, Dict[str, Any]]:
@@ -163,7 +173,7 @@ def compute_endpoint_aggregates(config, registry, endpoint_id: str,
     # template-declared fan-out: {output_name: (op, [unit values])} — how a
     # vendor's fields combine across a bank/farm (soc -> pack_average_soc avg,
     # pack_min_soc min, ... all at once). Ops: sum|avg|min|max|spread.
-    declared: Dict[str, Tuple[str, List[float]]] = {}
+    declared: Dict[str, Tuple[str, List[Any]]] = {}
     # The operator's own totals (endpoint ``totals:``) — {name: {op, from}}.
     # A total named here REPLACES the template's declaration of the same name
     # (what a bank's max temperature is made of is the operator's call), and
@@ -181,7 +191,9 @@ def compute_endpoint_aggregates(config, registry, endpoint_id: str,
             name = entry.get("name") or ""
             val = entry.get("value")
             ts = entry.get("ts")
-            if not name or not isinstance(val, (int, float)) or isinstance(val, bool):
+            numeric = isinstance(val, (int, float)) and not isinstance(val, bool)
+            text = isinstance(val, str) and val.strip() != ""
+            if not name or not (numeric or text):
                 continue
             interval = entry.get("interval") or 30
             # freshness on the store's monotonic stamp when it has one — an
@@ -192,19 +204,25 @@ def compute_endpoint_aggregates(config, registry, endpoint_id: str,
                 (now - ts) if ts is not None else None)
             is_fresh = age is not None and age <= max(4 * float(interval), 60.0)
             fresh_any = fresh_any or is_fresh
-            rule = _rule_for(name)
+            decl = entry.get("aggregates")
+            # a field whose template declares how it combines is combined that
+            # way ONLY — the name rules would add a second, unasked total
+            # (energy_remaining summed as a lifetime counter, without freshness)
+            rule = _rule_for(name) if numeric and not decl else None
             if rule == "counter":
                 counters.setdefault(name, []).append(float(val))
             elif rule and is_fresh:
                 fresh.setdefault(name, []).append(float(val))
-            decl = entry.get("aggregates")
             if isinstance(decl, dict) and is_fresh:
                 for out_name, op in decl.items():
-                    if op in _OPS and str(out_name) not in totals:
-                        declared.setdefault(str(out_name), (op, []))[1].append(float(val))
+                    if op in _OPS and str(out_name) not in totals and (numeric or op == "mode"):
+                        declared.setdefault(str(out_name), (op, []))[1].append(
+                            float(val) if numeric else val)
             if is_fresh:
                 for out_name, op in feeds.get(name, ()):
-                    declared.setdefault(out_name, (op, []))[1].append(float(val))
+                    if numeric or op == "mode":
+                        declared.setdefault(out_name, (op, []))[1].append(
+                            float(val) if numeric else val)
         if fresh_any:
             online += 1
 
@@ -213,6 +231,12 @@ def compute_endpoint_aggregates(config, registry, endpoint_id: str,
         out[name] = round(sum(vals) if _rule_for(name) == "sum"
                           else sum(vals) / len(vals), 3)
     for out_name, (op, vals) in declared.items():
+        if not vals:
+            continue
+        if op == "mode":
+            out[out_name] = _mode(vals)
+            continue
+        vals = [v for v in vals if isinstance(v, float)]
         if not vals:
             continue
         out[out_name] = round(

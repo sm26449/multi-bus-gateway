@@ -635,3 +635,31 @@ def test_operator_totals_replace_the_template_declaration():
     assert agg["pack_max_temp"] == 27.5                      # operator: + ambient
     assert agg["pack_balancing_cells"] == 3
     assert "broken" not in agg
+
+
+def test_mode_total_and_declared_fields_skip_the_name_rules():
+    """`mode` gives a bank its one-word status (text included); a field the
+    template declares totals for is combined that way ONLY — energy_remaining
+    is not also summed as a lifetime counter."""
+    from multibus.endpoint_aggregator import compute_endpoint_aggregates
+    ent = lambda n, v, decl=None: dict(_entry(n, v), aggregates=decl)  # noqa: E731
+    reg = _Reg({
+        "u1": {1: ent("status", "Charge", {"pack_status": "mode"}),
+               2: ent("energy_remaining", 1000.0, {"pack_energy_remaining": "sum"})},
+        "u2": {1: ent("status", "Charge", {"pack_status": "mode"}),
+               2: ent("energy_remaining", 2000.0, {"pack_energy_remaining": "sum"})},
+        "u3": {1: ent("status", "Standby", {"pack_status": "mode"}),
+               2: ent("energy_remaining", 500.0, {"pack_energy_remaining": "sum"})},
+    })
+    agg = compute_endpoint_aggregates(_Cfg(["u1", "u2", "u3"]), reg, "p")
+    assert agg["pack_status"] == "Charge"
+    assert agg["pack_energy_remaining"] == 3500.0
+    assert "energy_remaining" not in agg            # no second, unasked total
+
+
+def test_a_text_value_never_reaches_a_numeric_total():
+    from multibus.endpoint_aggregator import compute_endpoint_aggregates
+    ent = lambda n, v, decl=None: dict(_entry(n, v), aggregates=decl)  # noqa: E731
+    reg = _Reg({"u1": {1: ent("x", "n/a", {"x_sum": "sum"})},
+                "u2": {1: ent("x", 5.0, {"x_sum": "sum"})}})
+    assert compute_endpoint_aggregates(_Cfg(["u1", "u2"]), reg, "p")["x_sum"] == 5.0

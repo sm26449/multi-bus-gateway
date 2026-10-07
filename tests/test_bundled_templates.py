@@ -298,3 +298,20 @@ def test_validate_template_rejects_bool_addresses_non_finite_scales_and_unsafe_s
     assert one({"writable": True, "write_allowed": [0, 1], "write_safe": 7})
     assert one({"writable": True, "write_min": float("nan")})
     assert one({"writable": True, "write_min": 0, "write_max": 100, "write_safe": 100}) == []
+
+
+def test_display_block_is_validated_and_loaded():
+    """`display` names fields the template declares; a typo is refused rather
+    than silently showing nothing. The Seplos tap map ships one."""
+    import json
+    from pathlib import Path
+    from multibus.device_template import load_template, validate_template
+    p = Path("multibus/device_templates/seplos_bms_v3_rtu_tap.json")
+    t = load_template(str(p), builtin=True)
+    assert "power" in t.display["glance"] and t.display["headline"][0]["field"] == "pack_total_power"
+    data = json.loads(p.read_text())
+    data["device_template"]["display"]["glance"].append("no_such_field")
+    data["device_template"]["display"]["headline"].append({"label": "x"})
+    errs = validate_template(data)
+    assert any("no_such_field" in e for e in errs)
+    assert any("headline[5]" in e for e in errs)

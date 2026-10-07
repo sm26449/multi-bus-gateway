@@ -528,7 +528,7 @@ Object.assign(JanitzaMonitor.prototype, {
         // dominant group — the majority chip is noise, the exception is signal.
         const dom = this._dashDominantGroup;
         const pollBadge = (reg.poll_group && reg.poll_group !== dom)
-            ? `<span class="badge poll-${this._esc(reg.poll_group)}" title="${this.t('dash.pollGroup', 'Poll group')}">${this._esc(reg.poll_group)}</span>`
+            ? `<span class="poll-hint" title="${this.t('dash.pollGroup', 'Poll group')}: ${this._esc(reg.poll_group)}"><i aria-hidden="true" class="bi bi-clock"></i> ${this._esc(reg.poll_group)}</span>`
             : '';
 
         // Header with edit button
@@ -620,6 +620,9 @@ Object.assign(JanitzaMonitor.prototype, {
     HERO_CAP: 12,
 
     _sectionCat(reg) {
+        // the template's own filing wins (it knows its cells from its alarms);
+        // the name heuristics stay for maps that declare no categories
+        if (reg.category_label) return reg.category;
         const n = String(reg.name || '').toLowerCase();
         if (/(^|_)(alarm|protect|fault|warn)(_|$|s_|ing)/.test(n)) return 'alarms';
         if (/^cell_?\d|^balancing/.test(n)) return 'cells';
@@ -649,7 +652,7 @@ Object.assign(JanitzaMonitor.prototype, {
     // noise-prone groups fold by default (HA folds Diagnostics the same way);
     // the operator's toggles stick per device+section
     _secOpen(dev, sec) {
-        const def = !(sec === 'alarms' || sec === 'status' || sec === 'other');
+        const def = !(sec === 'alarms' || sec === 'status' || sec === 'other' || sec === 'diagnostics');
         try {
             const v = localStorage.getItem(`mbg-sec-${dev}-${sec}`);
             return v == null ? def : v === '1';
@@ -674,7 +677,16 @@ Object.assign(JanitzaMonitor.prototype, {
                 if (!groups.has(c)) groups.set(c, []);
                 groups.get(c).push(r);
             });
-            const html = this._sectionMeta()
+            // categories the dashboard does not know by name come from the
+            // template, labelled as it labels them, before "Other"
+            const known = this._sectionMeta();
+            const knownIds = new Set(known.map(([id]) => id));
+            const extra = [...groups.keys()].filter(id => !knownIds.has(id)).map(id => {
+                const r = groups.get(id).find(x => x.category_label) || {};
+                return [id, r.category_label || (id.charAt(0).toUpperCase() + id.slice(1))];
+            });
+            const ordered = known.filter(([id]) => id !== 'other').concat(extra, known.filter(([id]) => id === 'other'));
+            const html = ordered
                 .filter(([id]) => groups.has(id))
                 .map(([id, label]) => {
                     const regs = groups.get(id);

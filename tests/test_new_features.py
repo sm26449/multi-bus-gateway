@@ -373,3 +373,28 @@ def test_data_health_selected_but_not_running_is_not_idle():
     connection gate downstream, which paints it degraded, never grey."""
     mc = _mc([], last_success=None)          # registers selected, no poller
     assert mc.data_health(30)["status"] == "ok"
+
+
+def test_query_history_reads_an_endpoint_total_as_a_field(monkeypatch):
+    """An endpoint's totals are fields named after the total (tagged
+    aggregate=endpoint), not a `name` tag over `value` — the per-register
+    filter found nothing for every installation chart."""
+    import influxdb_client
+    seen = []
+
+    class _QA:
+        def query(self, flux, org=None):
+            seen.append(flux)
+            return []
+
+    class _Client:
+        def __init__(self, **kw): pass
+        def query_api(self): return _QA()
+        def close(self): pass
+    monkeypatch.setattr(influxdb_client, "InfluxDBClient", _Client)
+    _pub().query_history("pack_average_soc", bucket="seplos", device_tag="battery-bank",
+                         aggregate=True)
+    _pub().query_history("_TEMPERATUR")
+    assert 'r["_field"] == "pack_average_soc" and r["aggregate"] == "endpoint"' in seen[0]
+    assert 'r["name"] ==' not in seen[0]
+    assert 'r["name"] == "_TEMPERATUR"' in seen[-1] and 'r["_field"] == "value"' in seen[-1]

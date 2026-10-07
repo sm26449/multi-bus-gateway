@@ -30,6 +30,14 @@ from fastapi.responses import JSONResponse
 def build(ctx) -> APIRouter:
     r = APIRouter(tags=["status"])
     config, registry = ctx.config, ctx.registry
+
+    def _display_of(dev) -> Dict:
+        tr = getattr(ctx, "template_registry", None)
+        tid = getattr(dev, "template", "") or next(
+            (getattr(sx, "template", "") for sx in (getattr(dev, "sources", None) or [])
+             if getattr(sx, "template", "")), "")
+        tpl = tr.get(tid) if (tr and tid) else None
+        return dict(getattr(tpl, "display", None) or {})
     modbus_client, ws_manager, last_update = ctx.modbus_client, ctx.ws_manager, ctx.last_update
 
     # Connection-uptime tracking: device id -> (last health, monotonic since).
@@ -190,18 +198,29 @@ def build(ctx) -> APIRouter:
                     danger += 1
                 elif band == "warning":
                     warning += 1
-            dash = sorted(
-                (x for x in regs if x.ui_show_on_dashboard),
-                key=lambda x: (x.ui_config or {}).get("dashboard_order", 999))
             hero = []
-            for x in dash[:3]:
-                item = store.get(x.address) or {}
-                hero.append({
-                    "address": x.address, "name": x.name,
-                    "label": getattr(x, "label", "") or x.name,
-                    "unit": getattr(x, "unit", "") or "",
-                    "value": item.get("value"),
-                })
+            declared = (_display_of(dev_cfg).get("hero") or [])
+            if declared:
+                # the template says what a fleet row of this kind shows —
+                # calculated fields included (a pack's power is one)
+                by_name = {e.get("name"): (addr, e) for addr, e in list(store.items())}
+                for n in declared[:3]:
+                    addr, e = by_name.get(n, (None, {}))
+                    hero.append({"address": addr, "name": n,
+                                 "label": e.get("label") or n, "unit": e.get("unit") or "",
+                                 "value": e.get("value")})
+            else:
+                dash = sorted(
+                    (x for x in regs if x.ui_show_on_dashboard),
+                    key=lambda x: (x.ui_config or {}).get("dashboard_order", 999))
+                for x in dash[:3]:
+                    item = store.get(x.address) or {}
+                    hero.append({
+                        "address": x.address, "name": x.name,
+                        "label": getattr(x, "label", "") or x.name,
+                        "unit": getattr(x, "unit", "") or "",
+                        "value": item.get("value"),
+                    })
             health, stale_s = "idle", None
             if client:
                 health = client.data_health().get("status")
@@ -229,6 +248,25 @@ def build(ctx) -> APIRouter:
                     agg = compute_endpoint_aggregates(config, registry, pid)
                 except Exception:  # noqa: BLE001 — overview must never 500
                     agg = {}
+            # the installation card's metric: the template's headline when
+            # the units declare one (a battery bank's power, not "PV power")
+            card = None
+            udevs = config.endpoint_devices(pid) if hasattr(config, "endpoint_devices") else []
+            head = (_display_of(udevs[0]).get("headline") or []) if udevs else []
+            # the first headline total that exists right now
+            h0 = next((h for h in head if h.get("field") in agg), None)
+            if h0:
+                f = h0["field"]
+                src_unit = ""
+                for d in udevs:
+                    for e in list(((registry.store_for(d.id) if registry else None) or {}).values()):
+                        if f in (e.get("aggregates") or {}):
+                            src_unit = e.get("unit") or ""
+                            break
+                    if src_unit:
+                        break
+                card = {"field": f, "label": h0.get("label") or f,
+                        "hint": h0.get("hint", ""), "unit": src_unit, "value": agg[f]}
             endpoints.append({
                 "id": pid, "name": p.get("name") or pid,
                 "enabled": bool(p.get("enabled", True)),
@@ -236,6 +274,7 @@ def build(ctx) -> APIRouter:
                 "units_online": agg.get("units_online", 0),
                 "units_total": agg.get("units_total", 0),
                 "power_active_total": agg.get("power_active_total"),
+                "card": card,
             })
         return {"devices": devices_out, "endpoints": endpoints}
 

@@ -874,3 +874,53 @@ def test_endpoint_totals_are_shown_validated_and_kept(tmp_path):
                    "totals": {"t": {"op": "median", "from": []}}})
     assert r.status_code == 422
     assert "totals.t.op" in json.dumps(r.json()) and "totals.t.from" in json.dumps(r.json())
+
+
+def test_template_refresh_updates_metadata_and_keeps_the_operators(tmp_path):
+    """A seeded file gets the template's labels/units/aggregates; selection,
+    dashboard flags and calculated expressions stay as the operator left them."""
+    import json as _json
+    from types import SimpleNamespace as NS
+    from multibus.template_refresh import refresh_file
+    f = tmp_path / "selected_registers.json"
+    f.write_text(_json.dumps({"version": "1.0", "poll_groups": {"tap": {"interval": 1}},
+        "registers": [
+            {"address": 1, "name": "maxdiscurt", "label": "MaxDisCurt", "unit": "A",
+             "ui": {"show_on_dashboard": True}, "aggregates": {"old": "sum"}},
+            {"address": 2, "name": "operator_only", "label": "mine"}],
+        "calculated": [{"name": "power", "expr": "my * own", "label": "Power",
+                        "aggregates": {"pack_total_power": "sum", "power_active_total": "sum"}}]}))
+    tpl = NS(registers=[NS(name="maxdiscurt", label="Max discharge current (BMS limit)",
+                           unit="A", description="", category="battery",
+                           aggregates={"pack_max_discharge_current": "sum"})],
+             calculated=[NS(name="power", label="Power (− charging)", unit="W",
+                            aggregates={"pack_total_power": "sum"})])
+    assert refresh_file(f, tpl) == {"registers": 1, "calculated": 1}
+    d = _json.loads(f.read_text())
+    r0, r1, c0 = d["registers"][0], d["registers"][1], d["calculated"][0]
+    assert r0["label"] == "Max discharge current (BMS limit)" and r0["category"] == "battery"
+    assert r0["aggregates"] == {"pack_max_discharge_current": "sum"}
+    assert r0["ui"] == {"show_on_dashboard": True}           # operator's flag kept
+    assert r1 == {"address": 2, "name": "operator_only", "label": "mine"}
+    assert c0["expr"] == "my * own" and c0["label"] == "Power (− charging)"
+    assert c0["aggregates"] == {"pack_total_power": "sum"}   # the duplicate total is gone
+    assert d["poll_groups"] == {"tap": {"interval": 1}}      # other keys survive
+    assert refresh_file(f, tpl) == {"registers": 0, "calculated": 0}   # idempotent
+
+
+@needs_tc
+def test_an_endpoint_created_at_runtime_runs_its_template_formulas(tmp_path):
+    """The calc engine loaded formulas at boot only: a bank created from the UI
+    had its template's derived fields (a pack's power) saved but never run
+    until the next restart."""
+    from multibus.api import create_api
+    cfg = write_config(tmp_path)
+    app, _ = create_api(cfg, None, None, None, devices=[(d, None) for d in cfg.devices])
+    client = TestClient(app, raise_server_exceptions=False)
+    r = client.post("/api/endpoints", json={
+        "id": "bank", "name": "Bank", "template": "seplos_bms_v3_rtu_tap", "enabled": True,
+        "connection": {"protocol": "rtu_tap", "serial_port": "/dev/null-tap-rt", "baudrate": 9600},
+        "units": [1, 2], "influxdb": {"enabled": False}})
+    assert r.status_code == 200, r.text
+    names = {e["_reg"].name for e in (app.state.calc_engine.store.get("bank-u1") or [])}
+    assert {"power", "cell_delta", "alarm_count"} <= names, names

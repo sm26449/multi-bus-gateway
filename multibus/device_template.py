@@ -271,6 +271,15 @@ class DeviceTemplate:
     # command presets: what a controller may ask of this kind of device and
     # how it is said (docs/commands-design.md) — offered, enabled per device
     commands: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    # how a unit of this kind is PRESENTED — read live from the template (never
+    # seeded), so improving it reaches every existing unit at once:
+    #   unit_label / unit_label_plural / icon — what a unit / a group of them is
+    #   glance   — the fields of a unit row (installation table, device list)
+    #   hero     — the fields of a fleet row
+    #   headline — the installation's top line, from its TOTALS:
+    #              [{field, label?, hint?}]
+    # Absent → the role/canonical defaults the UI has always used.
+    display: Dict[str, Any] = field(default_factory=dict)
     registers: List[TemplateRegister] = field(default_factory=list)
     # derived measurements the template ships with (seeded into each device's
     # `calculated` list) — see TemplateCalculated
@@ -294,6 +303,7 @@ class DeviceTemplate:
             'canonical': self.canonical,
             **({'pq_recorder': self.pq_recorder} if self.pq_recorder else {}),
             **({'commands': self.commands} if self.commands else {}),
+            **({'display': self.display} if self.display else {}),
             'registers': [r.to_dict() for r in self.registers],
             **({'calculated': [c.to_dict() for c in self.calculated]}
                if self.calculated else {}),
@@ -526,7 +536,46 @@ def validate_template(data: Dict[str, Any]) -> List[str]:
         for pname in (params or {}):
             if not isinstance(pname, str) or not _ID_RE.match(pname):
                 errors.append(f"command {cname!r}: param {pname!r} invalid (a-z 0-9 - _, 2-64 chars)")
+    errors.extend(_display_errors(t))
     return errors
+
+
+def _display_errors(t: Dict[str, Any]) -> List[str]:
+    """The template's `display` block: glance/hero name fields the template
+    itself declares (a typo would silently show nothing); headline names
+    totals, which the template's aggregates or the operator's totals declare,
+    so only its shape is checked here."""
+    d = t.get('display')
+    if d is None:
+        return []
+    if not isinstance(d, dict):
+        return ["display must be a mapping"]
+    errs: List[str] = []
+    known = {r.get('name') for r in (t.get('registers') or []) if isinstance(r, dict)} \
+        | {c.get('name') for c in (t.get('calculated') or []) if isinstance(c, dict)}
+    for key in ('glance', 'hero'):
+        v = d.get(key)
+        if v is None:
+            continue
+        if not isinstance(v, list) or len(v) > 12 or not all(isinstance(x, str) for x in v):
+            errs.append(f"display.{key}: a list of at most 12 field names")
+            continue
+        for x in v:
+            if x not in known:
+                errs.append(f"display.{key}: {x!r} is not a register or calculated field of this template")
+    h = d.get('headline')
+    if h is not None:
+        if not isinstance(h, list) or len(h) > 6:
+            errs.append("display.headline: a list of at most 6 {field, label?, hint?}")
+        else:
+            for i, item in enumerate(h):
+                if not isinstance(item, dict) or not isinstance(item.get('field'), str) \
+                        or not item.get('field'):
+                    errs.append(f"display.headline[{i}]: needs a 'field' (a total's name)")
+    for key in ('unit_label', 'unit_label_plural', 'icon'):
+        if key in d and (not isinstance(d[key], str) or len(d[key]) > 64):
+            errs.append(f"display.{key}: a short string")
+    return errs
 
 
 def parse_template(data: Dict[str, Any], *, builtin: bool = False,
@@ -602,6 +651,7 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         canonical=bool(t.get('canonical', False)),
         pq_recorder=str(t.get('pq_recorder', '') or ''),
         commands=dict(t.get('commands') or {}),
+        display=dict(t.get('display') or {}) if isinstance(t.get('display'), dict) else {},
         registers=regs, calculated=calcs, builtin=builtin, path=path,
     )
 

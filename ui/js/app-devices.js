@@ -117,9 +117,16 @@ Object.assign(JanitzaMonitor.prototype, {
     _endpointGroupHtml(p, units, healthColor) {
         const open = this._endpointOpenState(p.id);
         const online = units.filter(u => u.connected).length;
-        const pw = (p.headline || {}).power_now ?? p.aggregates?.power_active_total;
-        const pwTxt = (typeof pw === 'number')
-            ? `${pw >= 10000 ? (pw / 1000).toFixed(1) + ' kW' : Math.round(pw) + ' W'} ${this.t('devices.now', 'now')} · ` : '';
+        // the template's first headline total (a bank's power) when declared,
+        // else the installation's power now — one scaling rule everywhere
+        const h0 = (p.headline_items || [])[0];
+        const pw = h0 ? h0.value : ((p.headline || {}).power_now ?? p.aggregates?.power_active_total);
+        const unit = h0 ? (h0.unit || '') : 'W';
+        let pwTxt = '';
+        if (typeof pw === 'number') {
+            const f = this.formatValueWithUnit(pw, unit);
+            pwTxt = `${h0 ? this._esc(h0.label) + ' ' : ''}${this._fmtNum(f.value, f.decimals)} ${this._esc(f.unit)}${h0 ? '' : ' ' + this.t('devices.now', 'now')} · `;
+        }
         const stats = p.enabled === false
             ? this.t('devices.disabled', 'disabled')
             : `${pwTxt}${online}/${units.length} ${this.t('endpoints.answeringShort', 'answering')}`;
@@ -146,8 +153,8 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="device-row-stats">${stats}</div>
             <div class="device-row-actions">
                 <button class="btn btn-ghost btn-sm" ${this._act('openEndpointDetail', [p.id])} title="${this.t('endpoints.open', 'Open the endpoint')}" aria-label="${this.t('endpoints.open', 'Open the endpoint')}"><i aria-hidden="true" class="bi bi-box-arrow-up-right"></i></button>
-                <button class="btn btn-ghost btn-sm" ${this._act('openEndpointModal', [p.id])} title="${this.t('common.edit', 'Edit')}" aria-label="${this.t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
-                <button class="btn btn-ghost btn-sm" ${this._act('deleteEndpointUi', [p.id])} title="${this.t('common.delete', 'Delete')}" aria-label="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
+                <button data-admin class="btn btn-ghost btn-sm" ${this._act('openEndpointModal', [p.id])} title="${this.t('common.edit', 'Edit')}" aria-label="${this.t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
+                <button data-admin class="btn btn-ghost btn-sm" ${this._act('deleteEndpointUi', [p.id])} title="${this.t('common.delete', 'Delete')}" aria-label="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
             </div>
         </div>
         <div data-endpoint-units="${this._esc(p.id)}" style="display:${open ? '' : 'none'};
@@ -180,9 +187,9 @@ Object.assign(JanitzaMonitor.prototype, {
                 `<button class="btn btn-ghost btn-sm" ${this._act('jumpToDeviceRegisters', [d.id])} title="${this.t('devices.registers', 'Measurements')}" aria-label="${this.t('devices.registers', 'Measurements')}"><i aria-hidden="true" class="bi bi-list-check"></i></button>`,
                 `<button class="btn btn-ghost btn-sm" ${this._act('testDevice', [d.id], {el: true})} title="${this.t('devices.test', 'Test read')}" aria-label="${this.t('devices.test', 'Test read')}"><i aria-hidden="true" class="bi bi-activity"></i></button>`,
             ];
-            actions.push(`<button class="btn btn-ghost btn-sm" ${this._act('openDeviceDetail', [d.id])} title="${this.t('common.edit', 'Edit')}" aria-label="${this.t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>`);
+            actions.push(`<button class="btn btn-ghost btn-sm" ${this._act('openDeviceDetail', [d.id])} title="${this.t('common.open', 'Open')}" aria-label="${this.t('common.open', 'Open')}"><i aria-hidden="true" class="bi bi-box-arrow-up-right"></i></button>`);
             if (!d.primary && !d.endpoint_id) {
-                actions.push(`<button class="btn btn-ghost btn-sm" ${this._act('deleteDevice', [d.id])} title="${this.t('common.delete', 'Delete')}" aria-label="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>`);
+                actions.push(`<button data-admin class="btn btn-ghost btn-sm" ${this._act('deleteDevice', [d.id])} title="${this.t('common.delete', 'Delete')}" aria-label="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>`);
             }
             // nested rows sit under their endpoint group — the chip would repeat it
             const endpointChip = (d.endpoint_id && !nested)
@@ -377,8 +384,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 <td style="padding:4px 12px 4px 0;font-variant-numeric:tabular-nums;"><b>${this._esc(r.host)}</b>:${r.port}</td>
                 <td style="padding:4px 12px 4px 0;">${badge}</td>
                 <td style="padding:4px 0;white-space:nowrap;">
-                    <button class="btn btn-ghost btn-sm" ${this._act('sweepModbusUnits', [r.host, r.port], {el: true})} title="${this.t('devices.findUnits', 'Find unit ids')}"><i aria-hidden="true" class="bi bi-diagram-3"></i></button>
-                    <button class="btn btn-ghost btn-sm" ${this._act('useDiscoveredModbus', [r.host, r.port, r.unit_id])}>${this.t('devices.add', 'Add Device')}</button>
+                    <button data-admin class="btn btn-ghost btn-sm" ${this._act('sweepModbusUnits', [r.host, r.port], {el: true})} title="${this.t('devices.findUnits', 'Find unit ids')}"><i aria-hidden="true" class="bi bi-diagram-3"></i></button>
+                    <button data-admin class="btn btn-ghost btn-sm" ${this._act('useDiscoveredModbus', [r.host, r.port, r.unit_id])}>${this.t('devices.add', 'Add Device')}</button>
                 </td></tr>
                 <tr><td colspan="3" style="padding:0;"><div class="disc-units" id="discUnits-${this._esc(r.host).replace(/\./g, '_')}"></div></td></tr>`;
         }).join('');
@@ -399,7 +406,7 @@ Object.assign(JanitzaMonitor.prototype, {
             if (!cell) return;
             cell.innerHTML = units.length
                 ? `<span class="field-hint">${this.t('devices.unitsFound', 'Unit ids:')}</span> ` + units.map(u =>
-                    `<button class="calc-chip" ${this._act('useDiscoveredModbus', [host, port, u])}>${u}</button>`).join(' ')
+                    `<button data-admin class="calc-chip" ${this._act('useDiscoveredModbus', [host, port, u])}>${u}</button>`).join(' ')
                 : `<span class="field-hint">${this.t('devices.noUnits', 'No unit ids answered (1–32).')}</span>`;
         } catch (e) { if (cell) cell.innerHTML = `<span class="field-hint">${this._esc(e.message)}</span>`; }
     },
@@ -424,7 +431,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <td style="padding:3px 12px 3px 0;"><b>${this._esc(m.model || 'meter')}</b></td>
             <td style="padding:3px 12px 3px 0;color:var(--text-secondary);">Solar-API id ${this._esc(m.solar_api_id)} · Modbus unit ${m.modbus_unit_hint}</td>
             <td style="padding:3px 12px 3px 0;font-variant-numeric:tabular-nums;">${m.power_w != null ? Math.round(m.power_w) + ' W' : '—'} · ${m.freq_hz != null ? m.freq_hz + ' Hz' : ''}</td>
-            <td style="padding:3px 0;"><button class="btn btn-ghost btn-sm" ${this._act('addDiscoveredMeter', [i])}>${this.t('devices.add', 'Add Device')}</button></td></tr>`).join('');
+            <td style="padding:3px 0;"><button data-admin class="btn btn-ghost btn-sm" ${this._act('addDiscoveredMeter', [i])}>${this.t('devices.add', 'Add Device')}</button></td></tr>`).join('');
         const invRows = (d.inverters || []).map(i =>
             `<tr><td style="padding:2px 12px 2px 0;">${this.t('lbl.inverter', 'Inverter')}</td><td style="padding:2px 12px 2px 0;color:var(--text-secondary);">id ${this._esc(i.solar_api_id)} · DT ${i.dt} · SN ${this._esc(i.serial || '')}</td></tr>`).join('');
         box.innerHTML = `<div class="settings-card" style="padding:14px;">
@@ -556,7 +563,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <span class="dev-chip">${this._esc(s.id)}</span>`}</h2>
             <div class="header-actions">
                 ${endpointId ? `<button class="btn btn-secondary btn-sm" ${this._act('openEndpointDetail', [endpointId])}><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.openInstallation', 'Open installation')}</button>` : ''}
-                ${(primary || endpointId) ? '' : `<button class="btn btn-ghost btn-sm" ${this._act('deleteDevice', [s.id])}><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>`}
+                ${(primary || endpointId) ? '' : `<button data-admin class="btn btn-ghost btn-sm" ${this._act('deleteDevice', [s.id])}><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>`}
             </div>
         </div>
 
@@ -567,7 +574,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <button class="config-main-tab active" data-dtab="overview"><i aria-hidden="true" class="bi bi-grid-1x2"></i> ${t('devices.tab.overview', 'Overview')}</button>
             ${endpointId
                 ? `<button class="config-main-tab" data-dtab="edit"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.tab.readVia', 'Read via')}</button>`
-                : `<button class="config-main-tab" data-dtab="edit"><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('devices.tab.edit', 'Edit')}</button>`}
+                : `<button class="config-main-tab" data-dtab="edit" data-admin><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('devices.tab.edit', 'Edit')}</button>`}
             <button class="config-main-tab" data-dtab="outputs"><i aria-hidden="true" class="bi bi-signpost-split"></i> ${t('devices.detail.outputs', 'Outputs')}</button>
             <button class="config-main-tab" data-dtab="measurements"><i aria-hidden="true" class="bi bi-list-check"></i> ${t('devices.registers', 'Measurements')} (${d.selected_registers})</button>
             <button class="config-main-tab" data-dtab="calculated"><i aria-hidden="true" class="bi bi-calculator"></i> ${t('calc.tab', 'Calculated')}</button>
@@ -690,14 +697,14 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div style="color:var(--text-secondary);font-size:12px;margin-bottom:6px;">${t('devices.pollGroups', 'Poll-group intervals (seconds)')}</div>
                     <div id="ddvPollGroups"><span class="field-hint">${t('common.loading', 'Loading…')}</span></div>
                     <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-                        <button class="btn btn-secondary btn-sm" ${this._act('saveDevicePollGroups', [s.id], {el: true})}><i aria-hidden="true" class="bi bi-clock"></i> ${t('devices.savePollGroups', 'Save intervals')}</button>
+                        <button data-admin class="btn btn-secondary btn-sm" ${this._act('saveDevicePollGroups', [s.id], {el: true})}><i aria-hidden="true" class="bi bi-clock"></i> ${t('devices.savePollGroups', 'Save intervals')}</button>
                         <span class="save-feedback" id="ddvPgFeedback"></span>
                     </div>
                 </div>
             </div>
             <div class="settings-card-footer">
                 <span class="save-feedback" id="ddvFeedback"></span>
-                <button class="btn btn-primary btn-sm" data-action="saveDeviceDetail" data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
+                <button data-admin class="btn btn-primary btn-sm" data-action="saveDeviceDetail" data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
             </div>
         </div>`}
         </div>
@@ -719,7 +726,7 @@ Object.assign(JanitzaMonitor.prototype, {
             ${endpointId ? '' : `
             <div class="settings-card"><div class="settings-card-footer">
                 <span class="save-feedback" id="ddvFeedback2"></span>
-                <button class="btn btn-primary btn-sm" data-action="saveDeviceDetail" data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
+                <button data-admin class="btn btn-primary btn-sm" data-action="saveDeviceDetail" data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
             </div></div>`}
         </div>`;
     },
@@ -736,7 +743,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     ${locked ? `<span class="sink-pill warn">${this.t('devices.writeLock.locked', 'locked')}</span>`
                              : `<span class="sink-pill ok">${this.t('devices.writeLock.unlocked', 'writes allowed')}</span>`}</h3>
                 <label class="switch-label">
-                    <input type="checkbox" id="ddvWriteLock" ${locked ? 'checked' : ''}
+                    <input data-admin type="checkbox" id="ddvWriteLock" ${locked ? 'checked' : ''}
                            ${this._act('toggleWriteLock', [this._devDetail.id], {el: true, on: "change"})}>
                     <span>${this.t('devices.writeLock.lock', 'Lock')}</span>
                 </label>
@@ -1178,7 +1185,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="form-row" style="align-items:flex-end;">
                     <div class="form-group flex-2"><label class="form-label" for="ddvName">${t('devices.wizard.name', 'Device name')}</label>
                         <input type="text" id="ddvName" class="input" value="${this._esc(d.name)}"></div>
-                    <div class="form-group"><button class="btn btn-primary btn-sm" ${this._act('saveUnitName', [s.id], { el: true })}><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('common.save', 'Save')}</button>
+                    <div class="form-group"><button data-admin class="btn btn-primary btn-sm" ${this._act('saveUnitName', [s.id], { el: true })}><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('common.save', 'Save')}</button>
                         <span class="save-feedback" id="ddvNameFeedback" role="status"></span></div>
                 </div>
                 <div class="field-hint">${t('devices.unit.nameHint', 'The only thing that is this unit’s own. Its id, topics and bucket stay as they are.')}</div>
@@ -1244,8 +1251,8 @@ Object.assign(JanitzaMonitor.prototype, {
             // a unit of an installation: what it shows now, how it is read,
             // where it publishes — no fallback connection, no template dash
             const live = entry.live || {}, meta = entry.fields || {};
-            const glance = Object.keys(live).map(n => `<div style="min-width:110px;">
-                <div style="color:var(--text-secondary);font-size:11.5px;">${this._esc(this._liveLabel ? this._liveLabel(n) : n)}</div>
+            const glance = (entry.glance || Object.keys(live)).filter(n => live[n] != null).map(n => `<div style="min-width:110px;">
+                <div style="color:var(--text-secondary);font-size:11.5px;">${this._esc((meta[n] || {}).label || (this._liveLabel ? this._liveLabel(n) : n))}</div>
                 <div style="font-weight:700;font-size:20px;letter-spacing:-.3px;font-variant-numeric:tabular-nums;">${this._endpointValue ? this._endpointValue(live[n], (meta[n] || {}).unit || '') : live[n]}</div></div>`).join('');
             return `
         <div class="settings-card">
@@ -1311,8 +1318,18 @@ Object.assign(JanitzaMonitor.prototype, {
         const box = document.getElementById('ddvSnapshot');
         if (!box || !id) return;
         try {
-            const d = await (await fetch('/api/values?device=' + encodeURIComponent(id))).json();
-            const vals = Object.values(d.values || {});
+            const [d, sel] = await Promise.all([
+                fetch('/api/values?device=' + encodeURIComponent(id)).then(r => r.json()),
+                fetch('/api/registers/selected?device=' + encodeURIComponent(id)).then(r => r.json()).catch(() => ({})),
+            ]);
+            // group the way the dashboard does: the template's category (with
+            // its label), else the canonical one — never the name's first word
+            const catBy = {};
+            (sel.registers || []).forEach(r => { catBy[r.name] = r; });
+            const vals = Object.values(d.values || {}).map(v => {
+                const r = catBy[v.name] || {};
+                return { ...v, category: v.category || r.category, category_label: r.category_label };
+            });
             if (!vals.length) { box.innerHTML = `<span class="field-hint">${this.t('devices.overview.noValues', 'No values yet — the device may not be polling.')}</span>`; return; }
             const fmt = (val) => (typeof val === 'number' && !Number.isInteger(val))
                 ? Number(val.toFixed(3)).toString()   // cap noise at 3 decimals, drop trailing zeros
@@ -1321,8 +1338,9 @@ Object.assign(JanitzaMonitor.prototype, {
             // source each value came from
             const manySources = ((this._devDetail?.entry || {}).read_via || []).length > 1;
             const catOf = v => {
-                const c = v.category || String(v.name || '').split('_')[0] || 'other';
-                return this.t(`cat.${c}`, c.charAt(0).toUpperCase() + c.slice(1).replace(/_/g, ' '));
+                if (v.category_label) return v.category_label;
+                const c = v.category || 'other';
+                return this.t(`sec.${c}`, c.charAt(0).toUpperCase() + c.slice(1).replace(/_/g, ' '));
             };
             const groups = new Map();
             vals.slice(0, 120).forEach(v => { const k = catOf(v); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(v); });
@@ -1457,7 +1475,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="settings-card-header">
                 <h3><i aria-hidden="true" class="bi bi-braces"></i> ${this.t('devices.sink.httpTitle', 'HTTP / JSON output')} ${this._sinkStatusPill(s, on, this._devDetail?.entry?.connected)}</h3>
                 <label class="switch-label">
-                    <input type="checkbox" id="ddvHttpEnabled" ${on ? 'checked' : ''} ${this._act('toggleHttpOutput', [id], {el: true, on: "change"})}>
+                    <input data-admin type="checkbox" id="ddvHttpEnabled" ${on ? 'checked' : ''} ${this._act('toggleHttpOutput', [id], {el: true, on: "change"})}>
                     <span>${this.t('devices.sink.enable', 'Enable')}</span>
                 </label>
             </div>
@@ -1524,7 +1542,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="rest-status" id="ddvRestStatus">${statusLine}</div>
                 <div class="calc-editor-actions" style="margin-top:12px">
                     <button class="btn btn-ghost btn-sm" ${this._act('testRestPush', [this._devDetail.id])}><i aria-hidden="true" class="bi bi-send"></i> ${this.t('rest.test', 'Test push')}</button>
-                    <button class="btn btn-primary btn-sm" ${this._act('saveRestPush', [this._devDetail.id])}><i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}</button>
+                    <button data-admin class="btn btn-primary btn-sm" ${this._act('saveRestPush', [this._devDetail.id])}><i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}</button>
                 </div>
                 ${this._endpointSinkNote()}
                 <p class="field-hint"><i aria-hidden="true" class="bi bi-info-circle"></i> ${this.t('rest.note', 'POSTs the live values of this device as JSON to the URL every interval. External URLs are allowed. Put a Bearer / API key in Headers (stored masked).')}</p>
@@ -1555,7 +1573,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <input type="checkbox" id="ddvPqArchive" ${pq.archive_waveforms !== false ? 'checked' : ''}> ${this.t('pq.archiveWf', 'Archive event waveforms (RMS traces of the implicated channels)')}</label>
                 <div class="rest-status" id="ddvPqStatus"></div>
                 <div class="calc-editor-actions" style="margin-top:12px">
-                    <button class="btn btn-primary btn-sm" ${this._act('savePqRecorder', [this._devDetail.id])}><i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}</button>
+                    <button data-admin class="btn btn-primary btn-sm" ${this._act('savePqRecorder', [this._devDetail.id])}><i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}</button>
                 </div>
                 <p class="field-hint"><i aria-hidden="true" class="bi bi-info-circle"></i> ${this.t('pq.sinkNote', 'Archives the on-device PQ event ring (dips, outages, rapid voltage changes) + waveforms into InfluxDB, publishes new events to MQTT and the alert channels. Browse them in the Power Quality tab.')}</p>
             </div>

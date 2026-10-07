@@ -95,11 +95,17 @@ Object.assign(JanitzaMonitor.prototype, {
     _endpointHeadlineHtml(p) {
         const h = p.headline || {};
         const t = (k, d) => this.t(k, d);
-        const big = (label, v, unit) => `<div style="min-width:120px;">
+        const big = (label, v, unit, hint) => `<div style="min-width:120px;">
             <div style="color:var(--text-secondary);font-size:11.5px;">${label}</div>
             <div style="font-weight:700;font-size:22px;letter-spacing:-.3px;font-variant-numeric:tabular-nums;">${
                 v == null ? '<span style="color:var(--text-tertiary,#8a94a0);font-weight:400;">—</span>' : this._endpointValue(v, unit)}</div>
+            ${hint ? `<div style="color:var(--text-tertiary,#8a94a0);font-size:11px;">${this._esc(hint)}</div>` : ''}
         </div>`;
+        // the template says what this installation's top line is (a battery
+        // bank: power with its sign, SOC, energy, status, alarms)
+        if ((p.headline_items || []).length) {
+            return p.headline_items.map(i => big(this._esc(i.label), i.value, i.unit || '', i.hint)).join('');
+        }
         const site = h.energy_today != null || h.autonomy != null || h.self_consumption != null;
         return big(t('endpoints.head.now', 'Producing now'), h.power_now, 'W')
             + (site ? big(t('endpoints.head.today', 'Today'), h.energy_today, 'Wh')
@@ -222,9 +228,13 @@ Object.assign(JanitzaMonitor.prototype, {
         return this.t(`endpoints.live.${name}`, d);
     },
     _groupLabel(g) {
+        if (g.unit_label_plural) return g.unit_label_plural;   // the template's own word
         const d = { inverter: 'Inverters', meter: 'Grid meter', site: 'Site totals',
                     battery: 'Battery', sensor: 'Sensors' }[g.role];
         return d ? this.t(`endpoints.role.${g.role}`, d) : g.id;
+    },
+    _groupIcon(g) {
+        return g.icon ? `bi-${g.icon}` : (this._ROLE_ICON[g.role] || 'bi-cpu');
     },
 
     _endpointGroupsHtml(p) {
@@ -240,29 +250,31 @@ Object.assign(JanitzaMonitor.prototype, {
             const off = g.enabled === false;
             const label = this._groupLabel(g);
             const nSrc = (g.sources || []).length;
-            const cols = this._ROLE_LIVE[g.role] || ['power_active_total'];
+            // the template's glance fields, else the role defaults
+            const cols = (g.glance || []).length ? g.glance : (this._ROLE_LIVE[g.role] || ['power_active_total']);
+            const colLabel = c => ((p.fields || {})[c] || {}).label || this._liveLabel(c);
             const hasTotal = g.aggregates && Object.keys(g.aggregates).some(k => !['units_online', 'units_total', 'status'].includes(k));
             const modbusHere = (g.sources || []).some(sx => sx.protocol !== 'http' && sx.protocol !== 'mqtt');
             return `
             <div class="settings-card" data-group="${this._esc(g.id)}" ${off ? 'style="opacity:.62;"' : ''}>
               <div class="settings-card-header">
-                <h3><i aria-hidden="true" class="bi ${this._ROLE_ICON[g.role] || 'bi-cpu'}"></i> ${this._esc(label)}
+                <h3><i aria-hidden="true" class="bi ${this._esc(this._groupIcon(g))}"></i> ${this._esc(label)}
                   ${label !== g.id ? `<span class="dev-chip">${this._esc(g.id)}</span>` : ''}
                   <span class="dev-chip">${g.online_units}/${g.total_units} ${t('endpoints.answeringShort', 'answering')}</span>
                   ${off ? `<span class="sink-pill warn">${t('devices.disabled', 'disabled')}</span>` : ''}
                 </h3>
                 <div class="header-actions">
-                  <label class="switch-label" title="${t('endpoints.groupToggleHint', 'Stop reading this group. Its units stay visible and editable.')}">
-                    <input type="checkbox" ${off ? '' : 'checked'}
+                  <label class="switch-label" data-admin title="${t('endpoints.groupToggleHint', 'Stop reading this group. Its units stay visible and editable.')}">
+                    <input data-admin type="checkbox" ${off ? '' : 'checked'}
                            ${this._act('toggleGroup', [p.id, g.id], {el: true, on: "change"})}>
                     <span>${t('endpoints.groupOn', 'Read')}</span></label>
-                  ${(g.commands || []).some(c => c.enabled) ? `<button class="btn btn-secondary btn-sm" ${this._act('openCommandModal', [p.id, g.id, '', ''])}
+                  ${(g.commands || []).some(c => c.enabled) ? `<button data-admin class="btn btn-secondary btn-sm" ${this._act('openCommandModal', [p.id, g.id, '', ''])}
                           title="${t('commands.groupHint', 'Tell the units of this group something — a power limit, a restore. Every command is verified and audited.')}"><i aria-hidden="true" class="bi bi-send"></i> ${t('commands.button', 'Commands…')}</button>` : ''}
-                  <button class="btn btn-ghost btn-sm" ${this._act('openSourceModal', [p.id, '', g.id])}
+                  <button class="btn btn-ghost btn-sm" data-admin ${this._act('openSourceModal', [p.id, '', g.id])}
                           title="${t('endpoints.srcAdd', 'Add source')}" aria-label="${t('endpoints.srcAdd', 'Add source')}"><i aria-hidden="true" class="bi bi-plus-lg"></i></button>
-                  <button class="btn btn-ghost btn-sm" ${this._act('openGroupModal', [p.id, g.id])}
+                  <button class="btn btn-ghost btn-sm" data-admin ${this._act('openGroupModal', [p.id, g.id])}
                           title="${t('common.edit', 'Edit')}" aria-label="${t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
-                  <button class="btn btn-ghost btn-sm" ${groups.length < 2 ? 'disabled' : ''}
+                  <button class="btn btn-ghost btn-sm" data-admin ${groups.length < 2 ? 'disabled' : ''}
                           ${this._act('deleteGroup', [p.id, g.id])}
                           title="${groups.length < 2 ? t('endpoints.groupLast', 'An installation needs at least one group') : t('common.delete', 'Delete')}"
                           aria-label="${t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
@@ -272,11 +284,11 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div style="overflow-x:auto;"><table class="data-table" style="width:100%;">
                   <thead><tr>
                     <th>${t('endpoints.unitId', 'Unit')}</th>
-                    <th>${t('devices.wizard.name', 'Name')}</th>
-                    ${cols.map(c => `<th style="text-align:right;">${this._esc(this._liveLabel(c))}</th>`).join('')}
-                    <th>${t('endpoints.health', 'Health')}</th>
-                    <th>${t('devices.overview.lastRead', 'Last read')}</th>
-                    <th>${t('endpoints.readVia', 'Read via')}</th>
+                    <th class="col-wide">${t('devices.wizard.name', 'Name')}</th>
+                    ${cols.map((c, i) => `<th style="text-align:right;" ${i > 1 ? 'class="col-wide"' : ''}>${this._esc(colLabel(c))}</th>`).join('')}
+                    <th class="col-health">${t('endpoints.health', 'Health')}</th>
+                    <th class="col-wide">${t('devices.overview.lastRead', 'Last read')}</th>
+                    <th class="col-wide">${t('endpoints.readVia', 'Read via')}</th>
                     <th></th>
                   </tr></thead>
                   <tbody data-group-units="${this._esc(g.id)}">${this._endpointUnitRowsHtml({ ...p, units: g.units }, cols)}</tbody>
@@ -284,7 +296,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 ${hasTotal ? `<div data-group-totals="${this._esc(g.id)}" style="margin-top:14px;">
                     <div style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;">
                       ${t('endpoints.groupTotal', 'Group total')} <span style="text-transform:none;letter-spacing:0;">→ <code style="font-size:11px;">${this._esc(g.topic || '')}/…</code></span></div>
-                    ${this._endpointAggGridHtml({ aggregates: g.aggregates, aggregate_fields: g.aggregate_fields })}
+                    ${this._endpointAggGridHtml({ aggregates: g.aggregates, aggregate_fields: g.aggregate_fields,
+                                                  aggregate_order: g.aggregate_order })}
                   </div>` : (g.total_units > 1 ? `<div data-group-totals="${this._esc(g.id)}" style="margin-top:14px;">
                     <div style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;">
                       ${t('endpoints.groupTotal', 'Group total')} <span style="text-transform:none;letter-spacing:0;">→ <code style="font-size:11px;">${this._esc(g.topic || '')}/…</code></span></div>
@@ -384,7 +397,7 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!srcs.length) {
             return `<span style="color:var(--text-secondary);">${t('endpoints.srcNone',
                 'No source declared yet.')}</span>
-                <button class="btn btn-ghost btn-sm" ${this._act('openSourceModal', [p.id, '', groupId || ''])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('endpoints.srcAdd', 'Add source')}</button>`;
+                <button data-admin class="btn btn-ghost btn-sm" ${this._act('openSourceModal', [p.id, '', groupId || ''])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('endpoints.srcAdd', 'Add source')}</button>`;
         }
         const rows = srcs.map((s, i) => {
             const ok = s.units_total ? s.units_ok === s.units_total : null;
@@ -413,18 +426,21 @@ Object.assign(JanitzaMonitor.prototype, {
               <td style="padding:8px 10px 8px 0;font-variant-numeric:tabular-nums;white-space:nowrap;">
                 ${s.units_ok}/${s.units_total} ${t('endpoints.answeringShort', 'answering')}${fails}
                 ${s.latency_ms != null ? ` · ${s.latency_ms} ms` : ''}
+                ${s.wire ? `<div style="font-size:11.5px;color:${(s.wire.crc_errors || s.wire.orphan_frames || s.wire.open_error) ? 'var(--warning-text)' : 'var(--text-secondary)'};"
+                    title="${t('endpoints.wireHint', 'The bus as the tap hears it: valid frames, CRC errors, frames with no partner, bytes skipped to realign. On a healthy bus CRC errors and orphans stay at 0.')}">
+                    ${s.wire.open_error ? this._esc(s.wire.open_error) : `${t('endpoints.wireFrames', 'frames')} ${s.wire.frames ?? '—'} · CRC ${s.wire.crc_errors ?? 0} · ${t('endpoints.wireOrphans', 'orphans')} ${s.wire.orphan_frames ?? 0} · resync ${s.wire.resync_dropped_bytes ?? 0} B`}</div>` : ''}
               </td>
               <td style="padding:8px 10px 8px 0;font-variant-numeric:tabular-nums;white-space:nowrap;"
                   title="${t('endpoints.srcOwnsHint', 'How many fields this source supplies right now. Zero means an earlier source already supplies everything it offers.')}">
                 ${s.fields_owned} ${t('endpoints.srcFields', 'fields')}</td>
               <td style="padding:8px 0;white-space:nowrap;text-align:right;">
-                <button class="btn btn-ghost btn-sm" ${i === 0 ? 'disabled' : ''}
+                <button data-admin class="btn btn-ghost btn-sm" ${i === 0 ? 'disabled' : ''}
                         ${this._act('moveSource', [p.id, s.id, -1, groupId || ''])}
                         title="${t('endpoints.srcUp', 'Raise precedence')}"><i aria-hidden="true" class="bi bi-arrow-up"></i></button>
-                <button class="btn btn-ghost btn-sm" ${i === srcs.length - 1 ? 'disabled' : ''}
+                <button data-admin class="btn btn-ghost btn-sm" ${i === srcs.length - 1 ? 'disabled' : ''}
                         ${this._act('moveSource', [p.id, s.id, 1, groupId || ''])}
                         title="${t('endpoints.srcDown', 'Lower precedence')}"><i aria-hidden="true" class="bi bi-arrow-down"></i></button>
-                <button class="btn btn-ghost btn-sm" ${this._act('openSourceModal', [p.id, s.id, groupId || ''])}><i aria-hidden="true" class="bi bi-pencil"></i></button>
+                <button data-admin class="btn btn-ghost btn-sm" ${this._act('openSourceModal', [p.id, s.id, groupId || ''])}><i aria-hidden="true" class="bi bi-pencil"></i></button>
                 <button class="btn btn-ghost btn-sm" ${srcs.length < 2 ? 'disabled' : ''}
                         ${this._act('deleteSource', [p.id, s.id, groupId || ''])}
                         title="${srcs.length < 2 ? t('endpoints.srcLast', 'A unit needs at least one source') : t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
@@ -441,7 +457,7 @@ Object.assign(JanitzaMonitor.prototype, {
               <td style="padding-right:10px;">${t('endpoints.srcStale', 'stale after')}</td>
               <td style="padding-right:10px;">${t('endpoints.srcLive', 'live')}</td>
               <td style="padding-right:10px;">${t('endpoints.srcOwns', 'provides')}</td>
-              <td style="text-align:right;"><button class="btn btn-ghost btn-sm"
+              <td style="text-align:right;"><button data-admin class="btn btn-ghost btn-sm"
                   ${this._act('openSourceModal', [p.id, '', groupId || ''])}
                   title="${t('endpoints.srcAdd', 'Add source')}"><i aria-hidden="true" class="bi bi-plus-lg"></i></button></td></tr>
             ${rows}</table></div>`;
@@ -994,20 +1010,29 @@ Object.assign(JanitzaMonitor.prototype, {
     _endpointAggGridHtml(p) {
         const meta = p.aggregate_fields || {};
         const skip = new Set(['units_online', 'units_total', 'status']);
-        const names = Object.keys(p.aggregates || {}).filter(n => !skip.has(n))
-            .sort((a, b) => ((meta[a] || {}).topic || a).localeCompare((meta[b] || {}).topic || b));
+        const present = Object.keys(p.aggregates || {}).filter(n => !skip.has(n));
+        // the order the template declares them (its headline totals first);
+        // anything else alphabetically after
+        const order = (p.aggregate_order || []).filter(n => present.includes(n));
+        const names = order.concat(present.filter(n => !order.includes(n))
+            .sort((a, b) => ((meta[a] || {}).topic || a).localeCompare((meta[b] || {}).topic || b)));
         if (!names.length) {
             return `<span class="field-hint">${this.t('endpoints.noAggregates',
                 'Nothing is fresh right now — the total publishes its census and status, and resumes when a unit reports.')}</span>`;
         }
-        return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 22px;">`
-            + names.map(n => {
-                const m = meta[n] || {};
-                return `<div>
-                    <div style="color:var(--text-secondary);font-size:11.5px;" title="${this._esc(m.topic || n)}">${this._esc(m.label || n)}</div>
-                    <div style="font-weight:600;font-size:14px;font-variant-numeric:tabular-nums;">${this._endpointValue(p.aggregates[n], m.unit || '')}</div>
-                </div>`;
-            }).join('') + `</div>`;
+        const tile = n => {
+            const m = meta[n] || {};
+            return `<div>
+                <div style="color:var(--text-secondary);font-size:11.5px;" title="${this._esc(n)}">${this._esc(m.label || n)}</div>
+                <div style="font-weight:600;font-size:14px;font-variant-numeric:tabular-nums;">${this._endpointValue(p.aggregates[n], m.unit || '')}</div>
+            </div>`;
+        };
+        const grid = list => `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 22px;">${list.map(tile).join('')}</div>`;
+        const FIRST = 12;
+        return grid(names.slice(0, FIRST)) + (names.length > FIRST ? `
+            <details style="margin-top:10px;"><summary style="cursor:pointer;font-size:12.5px;color:var(--text-secondary);">
+              ${this.t('endpoints.aggMore', 'All totals')} (${names.length})</summary>
+              <div style="margin-top:10px;">${grid(names.slice(FIRST))}</div></details>` : '');
     },
 
     _endpointUnitRowsHtml(p, cols = ['power_active_total']) {
@@ -1021,16 +1046,16 @@ Object.assign(JanitzaMonitor.prototype, {
             const via = Object.entries(u.sources || {}).map(([sid, st]) =>
                 `<span class="dev-chip" title="${this._esc(sid)}: ${this._esc(st)}"><span class="status-dot" style="--dot:${hc[st] || hc.idle};width:7px;height:7px;margin-right:4px;" aria-hidden="true"></span>${this._esc(sid)}&nbsp;<span style="color:var(--text-secondary);">${this._esc(st)}</span></span>`).join(' ');
             return `<tr data-unit="${this._esc(u.device_id)}">
-                <td style="white-space:nowrap;">${u.unit_id} <span class="dev-chip">${this._esc(u.device_id)}</span></td>
-                <td data-unit-name>${this._esc(u.name || '')}</td>
-                ${cols.map(c => `<td style="text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;">${
+                <td style="white-space:nowrap;">${u.unit_id} <span class="dev-chip col-wide">${this._esc(u.device_id)}</span></td>
+                <td data-unit-name class="col-wide">${this._esc(u.name || '')}</td>
+                ${cols.map((c, i) => `<td ${i > 1 ? 'class="col-wide"' : ''} style="text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;">${
                     live[c] == null ? '<span style="color:var(--text-tertiary,#8a94a0);">—</span>'
                                     : this._endpointValue(live[c], (meta[c] || {}).unit || '')}</td>`).join('')}
-                <td style="white-space:nowrap;"><span class="status-dot" style="--dot:${hc[u.health] || hc.idle}" aria-hidden="true"></span> ${this._esc(u.health || 'idle')}</td>
-                <td title="${this._esc(u.last_seen || '')}">${age}</td>
-                <td>${via || '—'}</td>
+                <td style="white-space:nowrap;" title="${this._esc(u.health || 'idle')}"><span class="status-dot" style="--dot:${hc[u.health] || hc.idle}" aria-hidden="true"></span> <span class="col-wide-text">${this._esc(u.health || 'idle')}</span></td>
+                <td class="col-wide" title="${this._esc(u.last_seen || '')}">${age}</td>
+                <td class="col-wide">${via || '—'}</td>
                 <td style="text-align:right;white-space:nowrap;">
-                    <button class="btn btn-ghost btn-sm" ${this._act('endpointRenameUnit', [u.device_id])}
+                    <button data-admin class="btn btn-ghost btn-sm col-wide" ${this._act('endpointRenameUnit', [u.device_id])}
                             title="${t('endpoints.renameUnit', 'Rename this unit')}" aria-label="${t('endpoints.renameUnit', 'Rename this unit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
                     <button class="btn btn-ghost btn-sm" ${this._act('openDeviceDetail', [u.device_id])}
                             title="${t('endpoints.openUnit', 'Open this unit')}" aria-label="${t('endpoints.openUnit', 'Open this unit')}"><i aria-hidden="true" class="bi bi-box-arrow-up-right"></i></button>
@@ -1066,10 +1091,12 @@ Object.assign(JanitzaMonitor.prototype, {
                 <i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(p.name || p.id)}
                 <span class="dev-chip">${this._esc(p.id)}</span></h2>
             <div class="header-actions">
-                <button class="btn btn-secondary btn-sm" ${this._act('testEndpointUi', [p.id], { el: true })}
+                <button data-admin class="btn btn-secondary btn-sm" ${this._act('testEndpointUi', [p.id], { el: true })}
                         title="${t('endpoints.testHint', 'Asks every unit over every way it is read — the Solar API by URL, Modbus by one read on its own connection. A Modbus probe opens one more client on the datalogger; they serve only a few at once.')}"><i aria-hidden="true" class="bi bi-activity"></i> ${t('endpoints.test', 'Test units')}</button>
-                <button class="btn btn-secondary btn-sm" ${this._act('openEndpointModal', [p.id])}><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('common.edit', 'Edit')}</button>
-                <button class="btn btn-ghost btn-sm" ${this._act('deleteEndpointUi', [p.id])}><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>
+                <button data-admin class="btn btn-secondary btn-sm" ${this._act('openEndpointModal', [p.id])}><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('common.edit', 'Edit')}</button>
+                <button data-admin class="btn btn-ghost btn-sm" ${this._act('refreshEndpointFromTemplate', [p.id], { el: true })}
+                        title="${t('endpoints.refreshTplHint', 'Bring the units\' labels, units, categories and totals up to date with their template. Your selection, dashboard choices, outputs and formulas stay as they are. The units restart (a few seconds).')}"><i aria-hidden="true" class="bi bi-arrow-repeat"></i> ${t('endpoints.refreshTpl', 'Update from template')}</button>
+                <button data-admin class="btn btn-ghost btn-sm" ${this._act('deleteEndpointUi', [p.id])}><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>
             </div>
         </div>
 
@@ -1095,7 +1122,7 @@ Object.assign(JanitzaMonitor.prototype, {
         <div class="section-header" style="margin-top:18px;">
             <h3 style="margin:0;"><i aria-hidden="true" class="bi bi-collection"></i> ${t('endpoints.holds', 'What it holds')}</h3>
             <div class="header-actions">
-                <button class="btn btn-secondary btn-sm" ${this._act('openGroupModal', [p.id, ''])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('endpoints.groupAdd', 'Add group')}</button>
+                <button data-admin class="btn btn-secondary btn-sm" ${this._act('openGroupModal', [p.id, ''])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('endpoints.groupAdd', 'Add group')}</button>
             </div>
         </div>
         <div id="plGroups">${this._endpointGroupsHtml(p)}</div>
@@ -1104,7 +1131,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="settings-card-header">
                 <h3><i aria-hidden="true" class="bi bi-signpost-split"></i> ${t('endpoints.whereItPublishes', 'Where it publishes')}</h3>
                 <label class="switch-label">
-                    <input type="checkbox" id="plAggEnabled" ${p.aggregates_enabled !== false ? 'checked' : ''}
+                    <input data-admin type="checkbox" id="plAggEnabled" ${p.aggregates_enabled !== false ? 'checked' : ''}
                            ${this._act('toggleEndpointAggregates', [p.id], {el: true, on: "change"})}>
                     <span>${t('endpoints.aggEnable', 'Publish group totals')}</span>
                 </label>
@@ -1151,23 +1178,25 @@ Object.assign(JanitzaMonitor.prototype, {
                 <td style="padding:4px 14px 4px 0;font-size:12px;">${(d.from || []).map(f => `<code style="font-size:11px;">${this._esc(f)}</code>`).join(' ')}</td>
                 <td style="padding:4px 14px 4px 0;"><span class="sink-pill ${mine ? 'ok' : ''}">${mine ? t('endpoints.totals.own', 'yours') : t('endpoints.totals.template', 'template')}</span></td>
                 <td style="padding:4px 0;white-space:nowrap;">
-                    <button class="btn btn-ghost btn-sm" ${this._act('openTotalModal', [p.id, n])} aria-label="${t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
-                    ${mine ? `<button class="btn btn-ghost btn-sm" ${this._act('removeEndpointTotal', [p.id, n])} aria-label="${t('endpoints.totals.reset', 'Back to the template')}" title="${t('endpoints.totals.reset', 'Back to the template')}"><i aria-hidden="true" class="bi bi-arrow-counterclockwise"></i></button>` : ''}
+                    <button data-admin class="btn btn-ghost btn-sm" ${this._act('openTotalModal', [p.id, n])} aria-label="${t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
+                    ${mine ? `<button data-admin class="btn btn-ghost btn-sm" ${this._act('removeEndpointTotal', [p.id, n])} aria-label="${t('endpoints.totals.reset', 'Back to the template')}" title="${t('endpoints.totals.reset', 'Back to the template')}"><i aria-hidden="true" class="bi bi-arrow-counterclockwise"></i></button>` : ''}
                 </td></tr>`;
         }).join('');
         return `<div class="settings-card">
             <div class="settings-card-header">
                 <h3><i aria-hidden="true" class="bi bi-calculator"></i> ${t('endpoints.totals.title', 'How the totals are made')}</h3>
-                <button class="btn btn-secondary btn-sm" ${this._act('openTotalModal', [p.id, ''])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('endpoints.totals.add', 'Add total')}</button>
+                <button data-admin class="btn btn-secondary btn-sm" ${this._act('openTotalModal', [p.id, ''])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('endpoints.totals.add', 'Add total')}</button>
             </div>
             <div class="settings-card-body">
-                ${rows ? `<div style="overflow-x:auto;"><table style="font-size:13px;">
+                ${rows ? `<details><summary style="cursor:pointer;font-size:12.5px;color:var(--text-secondary);">
+                  ${names.length} ${t('endpoints.totals.count', 'totals')} · ${Object.keys(own).length} ${t('endpoints.totals.ownCount', 'yours')}</summary>
+                  <div style="overflow-x:auto;margin-top:8px;"><table style="font-size:13px;">
                     <tr style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;">
                         <td style="padding-right:14px;">${t('endpoints.totals.name', 'Total')}</td>
                         <td style="padding-right:14px;">${t('endpoints.totals.op', 'How')}</td>
                         <td style="padding-right:14px;">${t('endpoints.totals.from', 'From the units’ fields')}</td>
                         <td style="padding-right:14px;">${t('endpoints.totals.origin', 'Defined by')}</td><td></td></tr>
-                    ${rows}</table></div>`
+                    ${rows}</table></div></details>`
                   : `<span class="field-hint">${t('endpoints.totals.none', 'No totals declared by the template — add your own.')}</span>`}
                 <p class="field-hint" style="margin-top:10px;">${t('endpoints.totals.hint', 'A total you define replaces the template’s total of the same name. It is computed over the fresh units and published with the other totals (MQTT and InfluxDB).')}</p>
             </div></div>`;
@@ -1184,8 +1213,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 <td style="padding:4px 14px 4px 0;"><code style="font-size:11px;">${this._esc(o.bucket || ix.bucket || p.id)}</code></td>
                 <td style="padding:4px 14px 4px 0;font-size:12px;">${(o.fields || []).length} ${t('endpoints.outputs.fields', 'fields')} · ${this._esc(o.mode || 'changed')}</td>
                 <td style="padding:4px 0;white-space:nowrap;">
-                    <button class="btn btn-ghost btn-sm" ${this._act('openInfluxOutputModal', [p.id, o.id])} aria-label="${t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
-                    <button class="btn btn-ghost btn-sm" ${this._act('removeInfluxOutput', [p.id, o.id])} aria-label="${t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
+                    <button data-admin class="btn btn-ghost btn-sm" ${this._act('openInfluxOutputModal', [p.id, o.id])} aria-label="${t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
+                    <button data-admin class="btn btn-ghost btn-sm" ${this._act('removeInfluxOutput', [p.id, o.id])} aria-label="${t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
                 </td></tr>`).join('');
         return `<div class="settings-card">
             <div class="settings-card-header">
@@ -1196,11 +1225,11 @@ Object.assign(JanitzaMonitor.prototype, {
                     <span style="color:var(--text-secondary);font-size:12px;">${t('endpoints.influx.tags', 'Tags on every unit’s points')}</span>
                     ${tags.length ? tags.map(([k, v]) => `<code style="font-size:11.5px;">${this._esc(k)}=${this._esc(v)}</code>`).join(' ')
                                   : `<span class="field-hint">${t('common.none', 'none')}</span>`}
-                    <button class="btn btn-ghost btn-sm" ${this._act('openInfluxTagsModal', [p.id])}><i aria-hidden="true" class="bi bi-pencil"></i> ${t('common.edit', 'Edit')}</button>
+                    <button data-admin class="btn btn-ghost btn-sm" ${this._act('openInfluxTagsModal', [p.id])}><i aria-hidden="true" class="bi bi-pencil"></i> ${t('common.edit', 'Edit')}</button>
                 </div>
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;">
                     <span style="color:var(--text-secondary);font-size:12px;">${t('endpoints.outputs.title', 'The totals are also written to')}</span>
-                    <button class="btn btn-secondary btn-sm" ${this._act('openInfluxOutputModal', [p.id, ''])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('endpoints.outputs.add', 'Add output')}</button>
+                    <button data-admin class="btn btn-secondary btn-sm" ${this._act('openInfluxOutputModal', [p.id, ''])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('endpoints.outputs.add', 'Add output')}</button>
                 </div>
                 ${outRows ? `<div style="overflow-x:auto;margin-top:6px;"><table style="font-size:13px;">
                     <tr style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;">
@@ -1275,7 +1304,10 @@ Object.assign(JanitzaMonitor.prototype, {
             const np = await r.json();
             this._endpointDetail = np;
             const a = document.getElementById('plTotals'), b = document.getElementById('plInfluxExtras');
+            // the operator was working in the totals list: keep it open
+            const wasOpen = !!(a && a.querySelector('details[open]'));
             if (a) a.innerHTML = this._endpointTotalsHtml(np);
+            if (wasOpen) a.querySelector('details')?.setAttribute('open', '');
             if (b) b.innerHTML = this._endpointInfluxExtrasHtml(np);
         }
         return true;
@@ -1309,7 +1341,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="form-group flex-2"><label class="form-label" for="totName">${t('endpoints.totals.name', 'Total')}</label>
                     <input id="totName" class="input" value="${this._esc(name)}" ${name ? 'disabled' : ''} placeholder="pack_max_temp"></div>
                 <div class="form-group"><label class="form-label" for="totOp">${t('endpoints.totals.op', 'How')}</label>
-                    <select id="totOp" class="input">${['sum', 'avg', 'min', 'max', 'spread'].map(o => `<option ${o === d.op ? 'selected' : ''}>${o}</option>`).join('')}</select></div>
+                    <select id="totOp" class="input">${['sum', 'avg', 'min', 'max', 'spread', 'mode'].map(o => `<option ${o === d.op ? 'selected' : ''}>${o}</option>`).join('')}</select></div>
             </div>
             <div class="form-group"><label class="form-label" for="totFilter">${t('endpoints.totals.from', 'From the units’ fields')}</label>
                 <input id="totFilter" class="input" placeholder="${this._esc(t('common.search', 'Search'))}" style="margin-bottom:6px;">
@@ -1408,6 +1440,25 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     // ── endpoint actions ───────────────────────────────────────────────────────
+
+    async refreshEndpointFromTemplate(id, btn) {
+        if (!confirm(this.t('endpoints.refreshTplConfirm', 'Update every unit\'s labels, units and totals from its template? The units restart for a few seconds.'))) return;
+        const orig = btn ? btn.innerHTML : '';
+        if (btn) { btn.disabled = true; btn.innerHTML = '<span class="btn-spinner"></span> …'; }
+        try {
+            const r = await fetch(`/api/endpoints/${encodeURIComponent(id)}/refresh-from-template`, { method: 'POST' });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error((d.detail?.errors || [d.detail || r.statusText]).join(' · '));
+            const regs = (d.units || []).reduce((a, u) => a + u.registers + u.calculated, 0);
+            this.showToast('success', this.t('endpoints.refreshTplDone', 'Updated from template'),
+                this.t('endpoints.refreshTplRows', '{n} rows updated across {u} units', { n: regs, u: (d.units || []).length }));
+            this._refreshEndpointDetail(id);
+        } catch (e) {
+            this.showToast('error', this.t('endpoints.saveFail', 'Save failed'), e.message);
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+        }
+    },
 
     async toggleEndpointAggregates(id, el) {
         const p = this._endpointDetail;

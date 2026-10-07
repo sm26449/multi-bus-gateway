@@ -1275,3 +1275,6 @@ input[type="time"].input {
 .snap-diff-file h4 { margin-bottom: 6px; font-size: 13px; }
 .snap-diff-old { color: var(--danger-text); text-decoration: line-through; text-decoration-thickness: 1px; }
 .snap-diff-new { color: var(--success-text, #2da44e); }
+
+/* a read-only session sees no control it cannot use */
+body.role-viewer [data-admin] { display: none !important; }

@@ -207,12 +207,23 @@ Object.assign(JanitzaMonitor.prototype, {
         const cards = [];
         (data.endpoints || []).forEach(p => {
             if (p.enabled === false) return;
-            const pw = this._powerText(p.power_active_total);
+            // the template's headline metric when the units declare one (a
+            // battery bank's power), else the installation's AC power
+            const c = p.card;
+            let pw = null;
+            if (c && typeof c.value === 'number') {
+                const fmt = this.formatValueWithUnit(c.value, c.unit || '');
+                pw = { v: this._fmtNum(fmt.value, fmt.decimals), u: fmt.unit };
+            } else if (c && c.value != null) {
+                pw = { v: this._esc(String(c.value)), u: '' };
+            } else {
+                pw = this._powerText(p.power_active_total);
+            }
             const ok = (p.units_total || 0) > 0 && p.units_online === p.units_total;
             cards.push(`
                 <button type="button" class="site-card" data-endpoint="${this._esc(p.id)}">
                     <div class="site-card-label"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(p.name)}</div>
-                    <div class="site-card-value">${pw ? `${pw.v}<span class="site-card-unit">${this._esc(pw.u)}</span>` : '--'}</div>
+                    <div class="site-card-value" ${c && c.hint ? `title="${this._esc(c.label)} · ${this._esc(c.hint)}"` : ''}>${pw ? `${pw.v}<span class="site-card-unit">${this._esc(pw.u)}</span>` : '--'}</div>
                     <div class="site-card-sub ${ok ? '' : 'site-card-warn'}">${p.units_online}/${p.units_total} ${this._esc(this.t('fleet.online', 'online'))}</div>
                 </button>`);
         });

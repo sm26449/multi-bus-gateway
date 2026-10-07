@@ -991,3 +991,19 @@ body.ws-stale .dashboard-table-container {
     outline-offset: 2px;
 }
 .dev-section tr[data-address] { cursor: pointer; }
+
+/* installation unit table on a phone: values and health stay, detail goes */
+@media (max-width: 600px) {
+    [data-group-units] td.col-wide, .data-table th.col-wide,
+    [data-group-units] .dev-chip.col-wide,
+    [data-group-units] .btn.col-wide { display: none !important; }
+    /* health: the dot says it (the word is in its tooltip) */
+    [data-group-units] .col-wide-text { display: none; }
+    [data-group] .data-table th.col-health { font-size: 0; }
+    [data-group] .data-table th, [data-group-units] td { padding-left: 6px; padding-right: 6px; }
+}
+
+/* which rhythm a card reads at, when it differs from the rest — information,
+   not a status: muted, no pill */
+.poll-hint { font-size: 10.5px; color: var(--text-tertiary, #8a94a0); font-weight: 400; white-space: nowrap; }
+.poll-hint .bi { font-size: 10px; }

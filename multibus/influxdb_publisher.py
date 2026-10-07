@@ -944,7 +944,8 @@ class InfluxDBPublisher:
                       every: str = "1m", fn: str = "mean",
                       measurement: Optional[str] = None,
                       bucket: Optional[str] = None,
-                      device_tag: Optional[str] = None) -> Dict:
+                      device_tag: Optional[str] = None,
+                      aggregate: bool = False) -> Dict:
         """Read aggregated history for a register (matched by its ``name`` tag)
         back from InfluxDB. Returns ``{name, every, fn, series:[{t,v}]}`` (UTC
         ISO timestamps), or ``{series_mean/min/max}`` when ``fn=='all'`` (for a
@@ -997,10 +998,16 @@ class InfluxDBPublisher:
             return {"error": f"influxdb client unavailable: {ex}"}
 
         def _run(f):
+            # an endpoint's totals are written as FIELDS named after the total
+            # (tags device=<endpoint>, aggregate=endpoint), not as a `name`
+            # tag over a `value` field — the per-register shape found nothing
+            sel = (f'  |> filter(fn: (r) => r["_field"] == "{safe_name}" and r["aggregate"] == "endpoint")\n'
+                   if aggregate else
+                   f'  |> filter(fn: (r) => r["name"] == "{safe_name}")\n'
+                   f'  |> filter(fn: (r) => r["_field"] == "value")\n')
             flux = (f'from(bucket: "{q_bucket}")\n'
                     f'  |> range(start: {s}, stop: {e})\n'
-                    f'  |> filter(fn: (r) => r["name"] == "{safe_name}")\n'
-                    f'  |> filter(fn: (r) => r["_field"] == "value")\n'
+                    f'{sel}'
                     f'{dev_filter}'
                     f'{meas_filter}'
                     f'  |> aggregateWindow(every: {every}, fn: {f}, createEmpty: false)\n'

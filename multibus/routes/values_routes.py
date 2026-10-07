@@ -125,17 +125,46 @@ def build(ctx) -> APIRouter:
         contribute (by the aggregator's own rules), the derived power factor,
         and the unit census. Derived from configuration, not from live values,
         so the picker is honest before the first reading of the day."""
-        from ..endpoint_aggregator import aggregation_rule
+        from ..endpoint_aggregator import aggregation_rule, endpoint_totals
         seen = {}
+        ops = {"sum": "total", "avg": "average", "min": "min", "max": "max",
+               "spread": "spread"}
+        own = endpoint_totals(config, pid)
         for d in config.endpoint_devices(pid):
-            regs, _g = config.load_device_registers(d)
+            # the union across the unit's sources (its root file is empty
+            # when it is read through per-source files)
+            regs = config.unit_registers(d)
             for x in regs:
-                if (not getattr(x, "influxdb_enabled", False)
+                decl = getattr(x, "aggregates", None) or {}
+                # the totals the template declares (or the operator's own),
+                # labelled after their source field — numeric ones only: a
+                # `mode` total is text and has no series
+                for out, op in decl.items():
+                    op = (own.get(out) or {}).get("op", op)
+                    if out in seen or op not in ops:
+                        continue
+                    seen[out] = {"name": out,
+                                 "label": f"{getattr(x, 'label', '') or x.name} ({ops[op]})",
+                                 "unit": getattr(x, "unit", "")}
+                if (decl or not getattr(x, "influxdb_enabled", False)
                         or x.name in seen or not aggregation_rule(x.name)):
                     continue
                 seen[x.name] = {"name": x.name,
                                 "label": getattr(x, "label", "") or x.name,
                                 "unit": getattr(x, "unit", "")}
+            # totals the template declares on a CALCULATED field (a pack's
+            # power is a formula) — they are written like any other
+            for c in config.load_calculated(d.id):
+                for out, op in (c.get("aggregates") or {}).items():
+                    op = (own.get(out) or {}).get("op", op)
+                    if out in seen or op not in ops:
+                        continue
+                    seen[out] = {"name": out,
+                                 "label": f"{c.get('label') or c.get('name')} ({ops[op]})",
+                                 "unit": c.get("unit") or ""}
+        for out, t in own.items():
+            if out not in seen and t.get("op") in ops:
+                seen[out] = {"name": out, "label": out, "unit": ""}
         if "power_active_total" in seen and "power_apparent_total" in seen:
             seen["power_factor_total"] = {"name": "power_factor_total",
                                           "label": "System power factor",
@@ -195,9 +224,10 @@ def build(ctx) -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e))
         # off the event loop: a slow/hung InfluxDB must not stall the whole API
+        is_endpoint = bool(device) and config.get_device(device) is None
         res = await asyncio.to_thread(influxdb_publisher.query_history,
                                       name, start, stop, every, fn, measurement,
-                                      bucket, device_tag)
+                                      bucket, device_tag, is_endpoint)
         if "error" in res:
             err = res["error"]
             code = 503 if ("disabled" in err or "unavailable" in err) else 400

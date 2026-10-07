@@ -77,7 +77,9 @@ Object.assign(JanitzaMonitor.prototype, {
             this.ws = null;
         }
         this.updateConnectionStatus && this.updateConnectionStatus(false);
-        this._showLogin(this.t('auth.sessionExpired', 'Session expired — sign in again'));
+        // "expired" only if there WAS a session — a first visit's early 401 is
+        // simply "not signed in yet"
+        this._showLogin(this._role ? this.t('auth.sessionExpired', 'Session expired — sign in again') : '');
     },
 
     async _checkAuth() {
@@ -86,6 +88,9 @@ Object.assign(JanitzaMonitor.prototype, {
             const s = await (await fetch('/api/auth/status')).json();
             this._authEnabled = !!s.enabled;
             this._role = s.role;
+            // a read-only session sees no control it could not use: every
+            // control marked data-admin is hidden by CSS (body.role-viewer)
+            document.body.classList.toggle('role-viewer', !!s.enabled && s.role === 'viewer');
             return !s.enabled || !!s.role;
         } catch (e) {
             return true;   // status endpoint is always open; if it fails, don't lock the UI

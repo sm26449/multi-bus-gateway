@@ -1231,6 +1231,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         if client is None:
             return None
         client.publish_callback = make_data_callback(dev_cfg)
+        # its derived fields (template-shipped or the operator's) — loaded at
+        # boot for every device, and here for one created, edited or restarted
+        # at runtime: until now those ran only after the next restart
+        try:
+            calc_engine.load(dev_cfg.id)
+        except Exception as e:  # noqa: BLE001 — a bad formula must not stop the device
+            logger.warning("device %s: calculated fields not loaded — %s", dev_cfg.id, e)
 
         def _bg():
             if client.connect():
@@ -1630,15 +1637,16 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         two seconds; this is the truth it shows instead."""
         if not dev_cfg.endpoint_id:
             return
-        from .canonical_fields import field_meta
         from .redact import redact_url
         ep = config.get_raw_endpoint(dev_cfg.endpoint_id) or {}
         role = getattr(dev_cfg, 'role', '') or ''
         entry['endpoint_name'] = ep.get('name') or dev_cfg.endpoint_id
         entry['group_id'] = getattr(dev_cfg, 'group_id', '') or 'units'
         entry['role'] = role
-        entry['live'] = _unit_live(dev_cfg, _ROLE_LIVE.get(role, ('power_active_total',)))
-        entry['fields'] = {n: m for n, m in ((n, field_meta(n)) for n in entry['live']) if m}
+        entry['glance'] = list(_glance_names(dev_cfg))
+        entry['live'] = _unit_live(dev_cfg, entry['glance'])
+        _sm = _store_meta([dev_cfg])
+        entry['fields'] = {n: m for n, m in ((n, _field_meta_any(n, _sm)) for n in entry['glance']) if m}
         by_id = {r.get('id'): r for r in (stats.get('sources') or [])}
         provides: Dict[str, int] = {}
         for _f, prov in (stats.get('provenance') or {}).items():
@@ -3255,6 +3263,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     **conn}]
         # roll the live picture up across the endpoint's units
         live: Dict[str, Dict] = {}
+        wire: Dict[str, Any] = {}     # a listen-only tap's shared-reader health
         for dev in config.endpoint_devices(pid):
             if group_id and (getattr(dev, 'group_id', '') or 'units') != group_id:
                 continue
@@ -3281,6 +3290,16 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 a = live.get(prov.get('source'))
                 if a is not None:
                     a['owns'] += 1
+            if not wire and isinstance(st.get('bus'), dict):
+                # one reader per port: any unit's view of it is THE view
+                ec = st.get('error_counts') or {}
+                wire = {'frames': st['bus'].get('frames'),
+                        'writes_seen': st['bus'].get('writes_seen'),
+                        'open_error': st['bus'].get('open_error') or '',
+                        'crc_errors': ec.get('crc_errors'),
+                        'orphan_frames': ec.get('orphan_frames'),
+                        'exception_responses': ec.get('exception_responses'),
+                        'resync_dropped_bytes': ec.get('resync_dropped_bytes')}
 
         out = []
         for rank, r in enumerate(raw):
@@ -3321,6 +3340,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 # how many fields this source is currently authoritative for —
                 # the number that tells an operator whether it earns its place
                 'fields_owned': agg.get('owns', 0),
+                # a tap's wire: frames heard, CRC errors, orphans — the health
+                # of a bus nobody here masters
+                'wire': (wire or None) if str(r.get('protocol', '')).lower() == 'rtu_tap' else None,
             })
         return out
 
@@ -3355,11 +3377,93 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             st['floor_s'] = None
         return st
 
+    # ── presentation, from the template's `display` block ─────────────────────
+    def _display_of(dev) -> Dict:
+        """The `display` block of the template a device is read with (its
+        own, else its first source's) — {} when it declares none."""
+        tid = getattr(dev, 'template', '') or next(
+            (getattr(sx, 'template', '') for sx in (getattr(dev, 'sources', None) or [])
+             if getattr(sx, 'template', '')), '')
+        tpl = template_registry.get(tid) if (tid and template_registry) else None
+        return dict(getattr(tpl, 'display', None) or {})
+
+    def _glance_names(dev) -> tuple:
+        names = _display_of(dev).get('glance')
+        if names:
+            return tuple(names)
+        return _ROLE_LIVE.get(getattr(dev, 'role', '') or '', ('power_active_total',))
+
+    def _store_meta(devs) -> Dict[str, Dict[str, str]]:
+        """label/unit per field name, as the units' registers carry them."""
+        meta: Dict[str, Dict[str, str]] = {}
+        for dev in devs:
+            for e in list((registry.store_for(dev.id) or {}).values()):
+                n = e.get('name')
+                if n and n not in meta:
+                    meta[n] = {'label': e.get('label') or n, 'unit': e.get('unit') or ''}
+        return meta
+
+    def _field_meta_any(name: str, smeta: Dict) -> Optional[Dict]:
+        from .canonical_fields import field_meta
+        return field_meta(name) or smeta.get(name)
+
+    _OP_WORD = {'sum': 'total', 'avg': 'average', 'min': 'min', 'max': 'max',
+                'spread': 'spread', 'mode': ''}
+
+    def _aggregate_meta(pid: str, devs, agg: Dict, display: Dict) -> tuple:
+        """label/unit for every total of a group — canonical names keep their
+        vocabulary; a template- or operator-declared total inherits its source
+        field's label and unit, with the operation spelled out; the template's
+        headline labels win. Also the declaration ORDER (template first)."""
+        from .canonical_fields import field_meta
+        from .endpoint_aggregator import endpoint_totals
+        smeta = _store_meta(devs)
+        meta: Dict[str, Dict[str, str]] = {}
+        order: List[str] = []
+
+        def put(out, src, op):
+            if out in meta:
+                return
+            sm = smeta.get(src) or {}
+            word = _OP_WORD.get(op, op)
+            base = sm.get('label') or src
+            meta[out] = {'label': f"{base} ({word})" if word else base,
+                         'unit': '' if op == 'mode' else (sm.get('unit') or '')}
+            order.append(out)
+        for out, t in endpoint_totals(config, pid).items():
+            put(out, (t.get('from') or [''])[0], t.get('op'))
+        for dev in devs:
+            for e in list((registry.store_for(dev.id) or {}).values()):
+                for out, op in (e.get('aggregates') or {}).items():
+                    put(str(out), e.get('name') or '', op)
+        for n in agg:
+            if n not in meta:
+                m = field_meta(n)
+                if m:
+                    meta[n] = m
+                order.append(n)
+        for h in (display.get('headline') or []):
+            f = h.get('field')
+            if f in meta and h.get('label'):
+                meta[f] = dict(meta[f], label=h['label'])
+        return meta, [n for n in order if n in agg]
+
+    def _headline_items(pid: str, devs, agg: Dict, display: Dict) -> List[Dict]:
+        meta, _o = _aggregate_meta(pid, devs, agg, display)
+        out = []
+        for h in (display.get('headline') or []):
+            f = h.get('field')
+            if f in agg:
+                m = meta.get(f) or {}
+                out.append({'field': f, 'label': h.get('label') or m.get('label') or f,
+                            'hint': h.get('hint', ''), 'unit': m.get('unit', ''),
+                            'value': agg[f]})
+        return out
+
     def _endpoint_group_entries(p: Dict, pid: str, units: List[Dict]) -> List[Dict]:
         """One entry per unit group, with its units, its sources and its own
         total. The FIRST group owns the endpoint's headline aggregate, which is
         what keeps every topic and series that predates groups unchanged."""
-        from .canonical_fields import field_meta
         from .endpoint_aggregator import (aggregate_topic,
                                           compute_endpoint_aggregates)
         out = []
@@ -3376,9 +3480,19 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             one = len(mine) < 2
             gm = dict(p.get('mqtt') or {}, **(g.get('mqtt') or {}))
             gx = dict(p.get('influxdb') or {}, **(g.get('influxdb') or {}))
+            gdevs = [d for d in config.endpoint_devices(pid)
+                     if (getattr(d, 'group_id', '') or 'units') == gid]
+            disp = _display_of(gdevs[0]) if gdevs else {}
+            ameta, aorder = _aggregate_meta(pid, gdevs, agg, disp) if not one else ({}, [])
             out.append({
                 'id': gid,
                 'role': g.get('role', '') or '',
+                # how the template presents its units (absent → role defaults)
+                'unit_label': disp.get('unit_label', ''),
+                'unit_label_plural': disp.get('unit_label_plural', ''),
+                'icon': disp.get('icon', ''),
+                'glance': list(_glance_names(gdevs[0])) if gdevs else [],
+                'headline_items': [] if one else _headline_items(pid, gdevs, agg, disp),
                 'enabled': bool(g.get('enabled', True)),
                 'template': g.get('template', '') or p.get('template', ''),
                 'units': mine,
@@ -3390,8 +3504,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'cmd_topic_prefix': _group_cmd_prefix(pid, gid, [d for d in config.endpoint_devices(pid)
                                                                  if (getattr(d, 'group_id', '') or 'units') == gid]),
                 'aggregates': {} if one else agg,
-                'aggregate_fields': {} if one else {
-                    k: m for k, m in ((k, field_meta(k)) for k in agg) if m},
+                'aggregate_fields': ameta,
+                'aggregate_order': aorder,
                 'online_units': sum(1 for u in mine if u['connected']),
                 'total_units': len(mine),
                 # the bare endpoint path belongs to the first group; the others
@@ -3426,7 +3540,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         by_name = {}
         for entry in list(store.values()):
             n, v, ts = entry.get('name'), entry.get('value'), entry.get('ts')
-            if not n or not isinstance(v, (int, float)) or isinstance(v, bool):
+            # numbers, and text a template asks to glance at (an enum's word:
+            # a pack's "Charge")
+            if not n or isinstance(v, bool) or not (
+                    isinstance(v, (int, float)) or (isinstance(v, str) and v.strip())):
                 continue
             interval = float(entry.get('interval') or 30)
             if ts is not None and (now - ts) <= max(4 * interval, 60.0):
@@ -3469,8 +3586,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             if not isinstance(d, dict):
                 errors.append(f"{w}: must be {{op, from}}")
                 continue
-            if d.get('op') not in ('sum', 'avg', 'min', 'max', 'spread'):
-                errors.append(f"{w}.op: sum, avg, min, max or spread")
+            if d.get('op') not in ('sum', 'avg', 'min', 'max', 'spread', 'mode'):
+                errors.append(f"{w}.op: sum, avg, min, max, spread or mode")
             src = d.get('from')
             if not isinstance(src, list) or not [x for x in src if str(x).strip()]:
                 errors.append(f"{w}.from: at least one unit field")
@@ -3493,7 +3610,6 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     src_verdicts = {}
             _seen = st.get('last_success_ts')
             _groups = st.get('poll_groups_detail') or []
-            role = getattr(dev, 'role', '') or ''
             units.append({
                 'unit_id': dev.connection.unit_id,
                 'device_id': dev.id,
@@ -3519,7 +3635,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'overruns': sum(int(g.get('overruns') or 0) for g in _groups),
                 # what the unit shows at a glance, and each source's verdict
                 # for it — "read fine over HTTP, Modbus side dead" in one row
-                'live': _unit_live(dev, _ROLE_LIVE.get(role, ('power_active_total',)), now),
+                'live': _unit_live(dev, _glance_names(dev), now),
                 'sources': src_verdicts,
             })
         from .canonical_fields import field_meta
@@ -3587,6 +3703,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                            'ok' if r['units_ok'] == r['units_total'] else 'degraded') \
                 if r['units_total'] else 'idle'
         live_names = {n for u in units for n in (u.get('live') or {})}
+        _ep_smeta = _store_meta(config.endpoint_devices(pid))
         online = sum(1 for u in units if u['connected'])
         return {'id': pid, 'name': p.get('name') or pid,
                 'template': p.get('template', ''),
@@ -3599,8 +3716,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 # canonical label/unit/topic per aggregate name, so a view can
                 # render "Total active power · W" without re-deriving the
                 # vocabulary client-side
-                'aggregate_fields': {k: m for k, m in
-                                     ((k, field_meta(k)) for k in agg) if m},
+                'aggregate_fields': (groups[0].get('aggregate_fields') or {}) if (groups and not grouped)
+                                    else {k: m for k, m in ((k, field_meta(k)) for k in agg) if m},
+                'aggregate_order': (groups[0].get('aggregate_order') or []) if (groups and not grouped) else [],
                 # how the totals are made, in the open: the operator's own
                 # (`totals`), what the units' templates declare, and every field
                 # the units carry — what a total can be built from
@@ -3622,7 +3740,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'read_via': list(read_via.values()),
                 # label/unit per live field name, so a row can say "DC voltage
                 # 636 V" without re-deriving the vocabulary client-side
-                'fields': {n: m for n, m in ((n, field_meta(n)) for n in live_names) if m},
+                'fields': {n: m for n, m in ((n, _field_meta_any(n, _ep_smeta))
+                                             for n in live_names) if m},
+                # the template's headline for the installation, from its totals
+                # (the first group that declares one) — beside the legacy
+                # power/energy/autonomy headline the page falls back to
+                'headline_items': next((g['headline_items'] for g in groups
+                                        if g.get('headline_items')), []),
                 'status': ('' if not units else 'online' if online == len(units)
                            else 'offline' if online == 0 else 'partial'),
                 'online_units': online,
@@ -4149,6 +4273,50 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     " — settings only, pollers kept running" if settings_only else "")
         return {"status": "updated", "endpoint": _endpoint_entry(raw),
                 "devices": devices_out}
+
+    @app.post("/api/endpoints/{endpoint_id}/refresh-from-template")
+    @_serialized_mutation
+    def refresh_endpoint_from_template(endpoint_id: str):
+        """Bring every unit's register metadata (labels, units, categories,
+        bank totals) up to date with its template — the selection, dashboard
+        flags, sinks and calculated expressions stay the operator's. The units
+        restart so the new metadata reaches the pipeline."""
+        from .template_refresh import refresh_device
+        if config.get_raw_endpoint(endpoint_id) is None:
+            raise HTTPException(status_code=404, detail="endpoint not found")
+        made = config.endpoint_devices(endpoint_id)
+        _stop_endpoint_devices(endpoint_id)
+        try:
+            results = [refresh_device(config, template_registry, d) for d in made]
+        finally:
+            _start_endpoint_devices(config.endpoint_devices(endpoint_id))
+        logger.info("endpoint %s: refreshed from template (%d register rows, "
+                    "%d calculated rows)", endpoint_id,
+                    sum(r['registers'] for r in results), sum(r['calculated'] for r in results))
+        return {"status": "refreshed", "units": results}
+
+    @app.post("/api/devices/{device_id}/refresh-from-template")
+    @_serialized_mutation
+    def refresh_device_from_template(device_id: str):
+        """The same for one device (an installation's unit refreshes through
+        its installation, so every unit stays alike)."""
+        from .template_refresh import refresh_device
+        _idx, dev_cfg, client = _find_device(device_id)
+        if dev_cfg is None:
+            raise HTTPException(status_code=404, detail="device not found")
+        if dev_cfg.endpoint_id:
+            raise HTTPException(status_code=422, detail={"errors": [
+                f"'{device_id}' belongs to installation '{dev_cfg.endpoint_id}' — "
+                "update it from the installation"]})
+        if dev_cfg.primary:
+            raise HTTPException(status_code=422, detail={"errors": [
+                "the primary device's map is edited in Measurements"]})
+        res = refresh_device(config, template_registry, dev_cfg)
+        if client:
+            client.disconnect()
+        new_client = _start_device_client(dev_cfg)
+        registry.replace(device_id, dev_cfg, client=new_client, add_if_missing=True)
+        return {"status": "refreshed", **res}
 
     @app.delete("/api/endpoints/{endpoint_id}")
     @_serialized_mutation

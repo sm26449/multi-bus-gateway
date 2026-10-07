@@ -112,6 +112,35 @@ def build(ctx) -> APIRouter:
             })
         return out
 
+    def _with_template_categories(rows: List[Dict], dev_cfg) -> List[Dict]:
+        """A canonical name keeps its canonical category; any other field takes
+        the category its TEMPLATE files it under (a Seplos pack's cells,
+        alarms, diagnostics), with the template's label and icon — the unit's
+        guess (V → voltage) is the last resort. Lets the dashboard and the
+        unit page group a vendor's fields the way its template means them."""
+        tid = getattr(dev_cfg, 'template', '') or next(
+            (getattr(sx, 'template', '') for sx in (getattr(dev_cfg, 'sources', None) or [])
+             if getattr(sx, 'template', '')), '')
+        tpl = template_registry.get(tid) if (tid and template_registry) else None
+        if tpl is None:
+            return rows
+        cats = getattr(tpl, 'categories', None) or {}
+        by_name = {r.name: getattr(r, 'category', '') for r in (tpl.registers or [])}
+        for row in rows:
+            if CANONICAL_FIELDS.get(str(row.get('name') or '').lower()):
+                continue
+            c = by_name.get(row.get('name'))
+            if not c and row.get('calculated'):
+                continue
+            if c:
+                row['category'] = c
+                meta = cats.get(c) or {}
+                if meta.get('label'):
+                    row['category_label'] = meta['label']
+                if meta.get('icon'):
+                    row['category_icon'] = meta['icon']
+        return rows
+
     def _has_source_files(dev_cfg) -> bool:
         """True when the device's registers live in per-source files (an
         endpoint unit, or a standalone multi-source device). Every plain
@@ -319,8 +348,9 @@ def build(ctx) -> APIRouter:
                     for gname, g in (getattr(s, 'poll_groups', None) or {}).items():
                         groups[gname] = g
                 return {
-                    "registers": [_selected_register_out(x) for x in regs]
-                                 + _calc_pseudo_registers(dev_cfg.id),
+                    "registers": _with_template_categories(
+                        [_selected_register_out(x) for x in regs]
+                        + _calc_pseudo_registers(dev_cfg.id), dev_cfg),
                     "poll_groups": {name: {"interval": g.interval,
                                            "description": g.description}
                                     for name, g in groups.items()},
@@ -330,9 +360,10 @@ def build(ctx) -> APIRouter:
             if not dev_cfg.primary or src is not None:
                 regs, groups = config.load_device_registers(dev_cfg, source=src)
                 return {
-                    "registers": [_selected_register_out(x) for x in regs]
-                                 + ([] if src is not None
-                                    else _calc_pseudo_registers(dev_cfg.id)),
+                    "registers": _with_template_categories(
+                        [_selected_register_out(x) for x in regs]
+                        + ([] if src is not None
+                           else _calc_pseudo_registers(dev_cfg.id)), dev_cfg),
                     "poll_groups": {name: {"interval": g.interval,
                                            "description": g.description}
                                     for name, g in groups.items()},
