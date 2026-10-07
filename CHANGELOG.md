@@ -1,5 +1,101 @@
 # Changelog
 
+## 3.88.0
+
+Nothing to do when upgrading.
+
+### 2026-10-08 — canonical names beyond the grid, and your own
+
+The canonical dictionary — the names that give a quantity the same MQTT
+topic, InfluxDB measurement and unit on every device — covered only grid
+and PV quantities: a battery, a water meter or a weather station had none.
+
+- **95 new built-in names** across six domains:
+  - **battery:** `soc`, `soh`, `cycles`, `pack_voltage`, `battery_current`
+    and `battery_power` (positive while charging), capacities, energy
+    stored/to full, charge limits, `cell_1`…`cell_32`, cell temperatures
+    and their min/max/avg;
+  - **environment:** temperature, humidity, irradiance, module
+    temperature, wind, pressure, CO₂;
+  - **water and gas:** volume and flow;
+  - **heat:** energy, power, flow, supply/return temperature;
+  - **EV charging:** power, session and lifetime energy, current limit,
+    state;
+  - **tank levels.**
+
+  Names BMS maps already used are kept, so the bundled Seplos map is
+  canonical as it is.
+- **Counters are declared, not guessed:** the battery's `energy_remaining`
+  and `energy_to_full` are not counters although they start with `energy_`;
+  a water or gas volume is one.
+- **Your own canonical fields** on Templates → **Canonical fields**: name,
+  category (InfluxDB measurement), unit, MQTT topic leaf, counter or not.
+  They are canonical everywhere a built-in one is (topic, measurement, unit
+  contract, editor guidance). Built-in names cannot be redefined; once a
+  device reads a field, its category and topic stay put. A template that
+  names them carries their definitions when exported and creates them on
+  the gateway it is uploaded to.
+- **InfluxDB:** a battery unit's `energy_remaining` / `energy_to_full`
+  are now written under the `battery` measurement instead of
+  `energy_active`, where the unit heuristic had filed them. Nothing else
+  moves: rows with an explicit measurement keep it, and MQTT topics of
+  existing devices do not change (a stored topic, or the flat name). New
+  devices get the hierarchical topics.
+
+### 2026-10-08 — a device template anyone can write, rules that travel
+
+Writing a template for a new device needed JSON for the things that matter
+most, and a few traps cost values silently. Now the whole path is in the UI
+and documented:
+
+- **Template editor — How the device is read:** the ways to reach it
+  (Modbus TCP/RTU, RTU listen-only, HTTP, MQTT), the **word order** of
+  32/64-bit values (ABCD / CDAB / BADC / DCBA, explained), the default unit
+  ID, the read size, and every poll group's interval. Rows take **FC1 coils
+  and FC2 discrete inputs**, any data type (`string:N`, sign-magnitude…),
+  and a **json_path** / **topic** column when HTTP or MQTT is ticked.
+- **A changed word order takes effect at once.** It used to be read only
+  when a device's client was made — a corrected template kept the device
+  reading garbage until the container restarted. Saving a template whose
+  `protocol` changed restarts the devices reading with it (and says which).
+- **Diagnostics → Probe** decodes a register all four ways side by side;
+  each column now has a button that **writes that order into the device's
+  template**.
+- **CSV / YAML import** take *Read over* and *Word order* (a YAML file may
+  declare `byte_order`/`transports` itself, and a re-imported template keeps
+  its whole `protocol` block — it used to be dropped); CSV takes FC1/FC2
+  aliases (`coil`, `DO`, `DI`…); an import whose addresses all look like the
+  1-based 40001/30001 notation **warns** instead of reading every value
+  from the wrong place.
+- **Rules export and import.** Rules → Export (all, or one from its card)
+  as YAML; Import checks each rule against this installation first —
+  *new*, *replaces*, *already here*, *cannot import* with the reason — then
+  saves the valid ones. Imported rules **always arrive in shadow**, and an
+  armed rule is never replaced by an import.
+- A viewer no longer sees the rule controls it cannot use (arm, clamp,
+  pause, edit, delete).
+- Found by walking the whole path as a new user (a new end-to-end test with
+  simulated Modbus TCP, RTU, HTTP and MQTT devices and a virtual meter):
+  - Add Device → Modbus RTU over the network: *Test connection* wrote its
+    result into a hidden field — nothing appeared.
+  - Diagnostics → Probe did not list RTU-over-network devices.
+  - Clicking the **Devices** tab with a device open stayed on that device;
+    it returns to the list now.
+  - The editor showed no interval for rows without a poll group (they read
+    on `normal`); an HTTP/MQTT map no longer carries Modbus settings.
+  - Refusing an HTTP device URL said "SSRF guard"; it now says why:
+    *127.0.0.1 is the gateway itself (inside Docker, the container)* or
+    *not on your local network*.
+  - Virtual Meters, first visit: it said "use Add instance" while that
+    button was disabled — it now says to make a template first, with a link.
+- **New guides:** [device-templates.md](docs/device-templates.md) — from a
+  manual's register table to live values: addresses, word order with a worked
+  float, scale, the editor, CSV/YAML/JSON, HTTP and MQTT examples, testing,
+  changing and sharing, troubleshooting, every field.
+  [rules.md](docs/rules.md) — the safe way to bring a rule in, five recipes
+  (over-voltage, over-frequency, battery full and exporting, grid lost, a
+  value from another system), import/export, what each card state means.
+
 ## 3.87.0
 
 **Upgrade notes**: the dashboard no longer colours a current or a power
