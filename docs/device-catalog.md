@@ -326,7 +326,7 @@ The URL carries no ${unit_id}: an installation is one thing, so this group holds
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
 | 1 / 0x0001 | `power_pv` | PV generation | float | 1 | W | realtime |
-| 2 / 0x0002 | `power_load` | House load | float | 1 | W | realtime |
+| 2 / 0x0002 | `power_load` | Load seen by Fronius (− consuming) | float | 1 | W | realtime |
 | 3 / 0x0003 | `power_grid` | Grid power | float | 1 | W | realtime |
 | 4 / 0x0004 | `power_battery` | Battery power | float | 1 | W | realtime |
 | 5 / 0x0005 | `autonomy` | Autonomy | float | 1 | % | realtime |
@@ -642,7 +642,7 @@ The URL carries no ${unit_id}: an installation is one thing, so this group holds
 
 ## Seplos BMS V3 pack (RTU tap, listen-only)
 
-**id** `seplos_bms_v3_rtu_tap` · **vendor** Seplos · **model** BMS V3 · **version** 1.8.1 · **registers** 84
+**id** `seplos_bms_v3_rtu_tap` · **vendor** Seplos · **model** BMS V3 · **version** 1.9.0 · **registers** 84
 
 - **Transport:** Modbus RTU **listen-only tap** (decodes another master's exchanges): FC01 (read coils), FC04 (read input registers) · byte order **big-endian, high word first (ABCD)**
 
@@ -743,6 +743,7 @@ The URL carries no ${unit_id}: an installation is one thing, so this group holds
 | `cell_delta` | `cell_delta` | `(max_cell_voltage - min_cell_voltage) * 1000` | — |
 | `balancing_count` | `balancing_count` | `popcount(balancing_bits)` | — |
 | `alarm_count` | `alarm_count` | `alarm_cell_high_v + alarm_cell_overvolt_prot + alarm_cell_low_v + alarm_cell_undervolt_prot + alarm_pack_high_v + alarm_pack_overvolt_prot + alarm_pack_low_v + alarm_pack_undervolt_prot + alarm_charge_high_temp + alarm_charge_overtemp_prot + alarm_charge_low_temp + alarm_charge_undertemp_prot + alarm_discharge_high_temp + alarm_discharge_overtemp_prot + alarm_discharge_low_temp + alarm_discharge_undertemp_prot + alarm_ambient_high_temp + alarm_ambient_overtemp_prot + alarm_mosfet_high_temp + alarm_mosfet_overtemp_prot + alarm_charge_current + alarm_charge_overcurrent_prot + alarm_discharge_current + alarm_discharge_overcurrent_prot + alarm_short_circuit_prot + alarm_soc_low + alarm_cell_diff` | — |
+| `warning_count` | `warning_count` | `alarm_cell_high_v + alarm_cell_low_v + alarm_pack_high_v + alarm_pack_low_v + alarm_charge_high_temp + alarm_charge_low_temp + alarm_discharge_high_temp + alarm_discharge_low_temp + alarm_ambient_high_temp + alarm_mosfet_high_temp + alarm_charge_current + alarm_discharge_current + alarm_soc_low + alarm_cell_diff` | — |
 | `protection_count` | `protection_count` | `alarm_cell_overvolt_prot + alarm_cell_undervolt_prot + alarm_pack_overvolt_prot + alarm_pack_undervolt_prot + alarm_charge_overtemp_prot + alarm_charge_undertemp_prot + alarm_discharge_overtemp_prot + alarm_discharge_undertemp_prot + alarm_ambient_overtemp_prot + alarm_mosfet_overtemp_prot + alarm_charge_overcurrent_prot + alarm_charge_overcurrent_2_prot + alarm_discharge_overcurrent_prot + alarm_discharge_overcurrent_2_prot + alarm_short_circuit_prot + alarm_soc_prot` | — |
 | `failure_count` | `failure_count` | `failure_ntc + failure_afe + failure_charge_mosfet + failure_discharge_mosfet + failure_cell_diff` | — |
 | `energy_remaining` | `energy_remaining` | `remaining_capacity * pack_voltage` | — |

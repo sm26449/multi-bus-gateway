@@ -92,7 +92,7 @@ conventional status codes (401 unauthenticated, 403 forbidden, 404 not found,
 | POST | `/api/devices/{id}/rest-push` | Configure the periodic REST push sink (`{enabled,url,interval_s≥5,headers,format:native\|flat,verify_tls,timeout}`); header values masked on read, preserved on save | admin |
 | POST | `/api/devices/{id}/rest-push/test` | Push once now and report the result | operator |
 | POST | `/api/devices/{id}/payload-sample` | Fetch one full payload from a saved MQTT/HTTP device (for the `json_path` picker) | operator |
-| POST | `/api/devices/{id}/refresh-from-template` | Update from template: carry the template's `label`/`unit`/`description`/`category`/`aggregates` (registers) and `label`/`unit` (template calculated fields) over to the rows the device already has, matched by name; selection, UI flags, sinks, thresholds and formulas are kept, no row is added; the device restarts so the pipeline sees the new metadata. Answers `{status, device, registers, calculated, files}` (rows changed). 422 for a unit of an installation (refresh the installation) and for the primary | admin |
+| POST | `/api/devices/{id}/refresh-from-template[?add_new=true]` | Update from template: carry the template's `label`/`unit`/`description`/`category`/`aggregates` (registers) and `label`/`unit` (template calculated fields) over to the rows the device already has, matched by name; selection, UI flags, sinks, thresholds and formulas are kept, no row is added unless `add_new=true`, which also adds the template's calculated fields the device lacks (counted in `added`); the device restarts so the pipeline sees the new metadata. Answers `{status, device, registers, calculated, files}` (rows changed). 422 for a unit of an installation (refresh the installation) and for the primary | admin |
 
 ### Endpoints (N units of one device behind one endpoint)
 
@@ -117,7 +117,7 @@ device create/edit/delete refuses their ids.
 | PUT | `/api/endpoints/{id}` | Update. An edit that changes what the units are built from re-materializes them; an edit that only changes endpoint-level settings (name, `aggregates`, unit display names, `totals`, `influxdb.outputs`) keeps every poller running. Routing identity (topic prefix / bucket / device tag) stays fixed, and what the form omits (`write_locked`, `aggregates`, `http_output`, `rest_push`, `totals`, `influxdb.tags`, `influxdb.outputs`, per-unit ids/names) is preserved; sending `totals: {}` / `outputs: []` / `tags: {}` clears them. Malformed `totals` / `tags` / `outputs` → 422 with the offending field named (`influxdb.outputs[0].fields[1].scale`) | admin |
 | DELETE | `/api/endpoints/{id}` | Delete the endpoint and stop its units (register files kept; blocked while a virtual meter sources a unit) | admin |
 | POST | `/api/endpoints/{id}/test` | Probe every unit on the shared endpoint, one answer each. Opens another Modbus client — dataloggers serve only a few at once | admin |
-| POST | `/api/endpoints/{id}/refresh-from-template` | The same for every unit of the installation (they stop, refresh, restart): `{status, units: [ … one result each ]}` | admin |
+| POST | `/api/endpoints/{id}/refresh-from-template[?add_new=true]` | The same for every unit of the installation (they stop, refresh, restart): `{status, units: [ … one result each ]}` | admin |
 
 The per-unit sinks (`/api/devices/{unit}/http-output`, `/rest-push`) and the
 write lock are declared once and apply to the whole endpoint: one endpoint, one
@@ -162,7 +162,7 @@ rather than silently reading the primary's bucket.
 | GET | `/api/meters` | Devices exposed as JSON feeds (http_output enabled) | viewer |
 | GET | `/api/meters/{id}` | Live values of one device as JSON, keyed by register name, with a `stale` flag | viewer |
 | GET | `/api/history/registers?device=` | Influx-enabled registers (+ calculated) for the history picker | viewer |
-| GET | `/api/history?measurement=&name=&start=&stop=&every=&fn=&device=` | Aggregated history read back from InfluxDB (`fn=all` → mean/min/max band) | viewer |
+| GET | `/api/history?measurement=&name=&start=&stop=&every=&fn=&device=&group=` | Aggregated history read back from InfluxDB (`fn=all` → mean/min/max band). For an installation's total, `group` names a later group (empty = the first) | viewer |
 | GET | `/api/energy/fields?device=` | Energy-tab counter selection + auto-detected candidates | viewer |
 | POST | `/api/energy/fields?device=` | Save which cumulative counters the Energy tab totals | admin |
 | GET | `/api/energy/monthly?year=&month=&device=` | Monthly totals (counter deltas) + per-day breakdown, in the configured timezone | viewer |

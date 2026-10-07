@@ -602,7 +602,7 @@ text decode) or (`scale` + `offset`) → `monotonic` filter → outputs.**
 | `mask` / `shift` | *(unset)* | extract a sub-field before `enum` decode: `(raw & mask) >> shift` |
 | `json_path` | `""` | HTTP/JSON + MQTT input: dot/bracket path into the payload |
 | `topic` | `""` | MQTT input: per-register source topic (else the device's base topic). A `~/leaf` form is RELATIVE to the device's base topic (`seplos/battery_3/#` + `~/soc` → `seplos/battery_3/soc`) — what lets one template serve many units (3.84.2) |
-| `thresholds` | *(unset)* | color-coding thresholds (dashboard; also feeds value alerts when enabled) |
+| `thresholds` | *(unset)* | color-coding thresholds (dashboard; also feeds value alerts when enabled): `{enabled, dangerLow, warningLow, warningHigh, dangerHigh}`, compared with the RAW value in the register's unit. Optional `onlyWhen: {field, above}` judges them only while another field of the same device is above a value — a current's THD means nothing at near-zero load (`{field: current_l1, above: 2}`); the field missing → not judged; an alarm it was in clears with an event. Same rule on the dashboard, the fleet's alarm count and value alerts |
 
 **Byte order** is set per *template*, not per register: `protocol.byte_order`
 in the template — `big`/`abcd` (default), `little`/`cdab`, `badc`, `dcba`.
@@ -686,7 +686,9 @@ when the operator changed the row's scale or offset),
 `description`, `category` and `aggregates` on registers, `label` and `unit`
 on template-shipped calculated fields, matched by name. It keeps what the
 operator decided — which rows are selected, dashboard/UI flags, MQTT/InfluxDB
-switches and topics, thresholds, and every formula — and adds no row. The
+switches and topics, thresholds, and every formula — and adds no row, unless
+asked (`?add_new=true`; the UI asks): then the template's calculated fields
+the unit does not have are added — one deleted on purpose comes back. The
 units restart so the pipeline sees the new metadata; an installation's unit
 is refreshed through its installation, so every unit stays alike.
 
