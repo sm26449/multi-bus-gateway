@@ -325,3 +325,31 @@ def test_seplos_pic_coils_decode_like_the_collector():
     r2._on_frame(resp_coils(1, payload), now=1.0)         # master, unpaired
     assert r2.inferred == 1
     assert got['status'] == 'Charge'
+
+
+def test_template_influx_parity_measurement_survives_the_seed(tmp_path):
+    """The collector-parity measurement (seplos_battery) declared in template
+    defaults must land on the seeded register, so enabling Influx at cutover
+    continues the collector's series without re-typing 38 mappings."""
+    from multibus.device_template import TemplateRegistry
+    from multibus import device_seed
+    from tests.test_devices import write_config
+    cfg = write_config(tmp_path, extra_yaml="""
+devices:
+  - id: tap1
+    template: seplos_bms_v3_rtu_tap
+    connection: { protocol: rtu_tap, serial_port: /dev/null, unit_id: 1 }
+""")
+    tr = TemplateRegistry(builtin_dir='multibus/device_templates',
+                          user_dir=str(tmp_path / 'none'))
+    dev = next(d for d in cfg.devices if d.id == 'tap1')
+    device_seed.autoselect_template_registers(cfg, tr, dev)
+    regs, _g = cfg.load_device_registers(dev)
+    by = {r.name: r for r in regs}
+    assert by['pack_voltage'].influxdb_measurement == 'seplos_battery'
+    assert by['cell_7'].influxdb_measurement == 'seplos_battery'
+    assert by['alarm_cell_undervolt'].influxdb_measurement == ''   # not a collector field
+    assert by['soc'].aggregates == {'pack_average_soc': 'avg', 'pack_min_soc': 'min',
+                                    'pack_max_soc': 'max', 'pack_soc_spread': 'spread'}
+    # influx stays OFF until provisioning enables it
+    assert by['pack_voltage'].influxdb_enabled is False
