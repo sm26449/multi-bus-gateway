@@ -1,15 +1,54 @@
 # Changelog
 
+## 3.86.1
+
+Fixes from the post-release audit of 3.86.0; nothing to do when upgrading.
+
+### 2026-10-07 — audit fixes
+
+- **Home Assistant**: *Update from template* withdrew an installation's HA
+  entities (stopping the units does) and never published them again until
+  the next broker reconnect. It republishes them now, and a device refresh
+  pushes its new labels to HA.
+- **Alarms** count the same everywhere: the fleet now ignores a value gone
+  stale, as the installation page did (a silent pack no longer alarms in
+  the fleet forever); a field the template declares as an alarm is not
+  counted a second time through a threshold on it; `"0.0"`, `NaN` and `—`
+  read as nothing active, on the server as in the browser.
+- **History of a grouped installation**: a total's chart mixed the points of
+  every group that has a total of that name. `/api/history` reads the first
+  group by default and takes `group=` for the others.
+- **Update from template** keeps a row's unit when the operator changed its
+  scale or offset (a W register read as kW stays kW).
+- **Cell grid**: an unused or unread slot (0 V) is no longer marked as the
+  weakest cell; the marking is also announced to screen readers. A bitmask
+  read from a signed register lists its real bits; masks up to 53 bits.
+- The dashboard rebuilds its sections when the template's labels, categories
+  or `display` block change (after an *Update from template*, or switching
+  between two devices whose registers share addresses).
+- A `tiles` pattern must be plain syntax both Python and the browser read —
+  `(?i)` or `(?P<…>)` are refused at load instead of failing silently.
+- Hardening: a template's category name and a total's unit are escaped
+  where they reach the page.
+- A viewer no longer sees *Test*, *Test push*, *Delete source* or a
+  command's *Run* / *Test* (the server already refused them).
+- The alarm pill says what it means to a screen reader on a phone; two
+  section names missing from the translations added; a validation error from
+  *Update from template* reads as text, not `[object Object]`.
+- `GET /api/endpoints` keeps `aggregate_fields` for a one-unit installation
+  (empty since 3.86.0).
+
 ## 3.86.0
 
 **Upgrade notes** (no config change needed): an installation total is no
 longer computed twice — a field whose template says how it combines is not
 also combined by the name rules. For a bank on the bundled
-`seplos_bms_v3_rtu_tap` map this drops two duplicate totals:
-`power_active_total` (same value as `pack_total_power`) and
-`energy_remaining` (same as `pack_energy_remaining`). Their last retained
-MQTT message stays on the broker until you clear it; read the `pack_*`
-names. The serial-bridge image now takes Debian security updates at build
+`seplos_bms_v3_rtu_tap` map, `energy_remaining` (same as
+`pack_energy_remaining`) stops at once; `power_active_total` (same as
+`pack_total_power`) stops after **Update from template** on the
+installation, since an existing unit keeps the totals its rows were seeded
+with. Their last retained MQTT message stays on the broker until you clear
+it; read the `pack_*` names. The serial-bridge image now takes Debian security updates at build
 time (the scan flagged perl-base and libpcre2).
 
 ### 2026-10-07 — the template decides how a unit is shown
@@ -39,8 +78,9 @@ so improving a template improves every unit at once:
 - **Bitmasks** (`bitmasks: {field: "Cell {n}"}`): a mask reads as what is
   set — *Cell 3, Cell 7*, `—` when clear.
 
-Everything in it is validated against the template's own fields and
-categories. Without a block, the role decides as before. Reference:
+It is validated at load: the fields it names against the template's own
+(`headline` names totals, so only its shape), section keys against the
+template's categories. Without a block, the role decides as before. Reference:
 config-reference `display:`, MANUAL §5.3.
 
 - **Totals speak**: each inherits its source field's label and unit
@@ -48,10 +88,11 @@ config-reference `display:`, MANUAL §5.3.
   itself; the grid lists the headline first, then the template's order,
   folds after 12, and reads percentages and temperatures to one decimal.
   New operation `mode` — the majority value, text included: a bank's
-  one-word status.
+  one-word status (text, so it has no history series).
 - **Template categories** reach the register list, so the dashboard and
   the unit page group a vendor's fields as its template files them.
-- **Update from template** (admin, device or installation): carries
+- **Update from template** (admin, on the installation page; a standalone
+  device through the API): carries
   improved labels, units, descriptions, categories and totals over to the
   rows a unit already has; the selection, flags, sinks, thresholds and
   formulas stay yours.
@@ -66,8 +107,10 @@ for the BMS current limits and the signs of power and current, and a bank
 Fixed along the way:
 - Formulas loaded at boot only: a device or installation created or edited
   at runtime ran no calculated field until the next restart.
-- An installation's history charts were always empty — the picker now
-  offers its totals.
+- An installation's history charts were always empty: its totals are
+  written as fields named after the total, and the history query looked for
+  a `name` tag. It now reads them as they are written, and the picker offers
+  them.
 - The login no longer says "Session expired" on a first visit; a unit page
   no longer shows "No values yet" over live values.
 
