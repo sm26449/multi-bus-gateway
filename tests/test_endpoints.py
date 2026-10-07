@@ -750,3 +750,63 @@ endpoints:
     assert raw["mqtt"]["topic_prefix"] == "seplos/battery_${unit_id}"
     assert raw["influxdb"]["bucket"] == "seplos"
     assert raw["name"] == "Bank renamed"
+
+
+TAGGED_BANK_YAML = """
+endpoints:
+  - id: bank
+    name: Bank
+    template: seplos_bms_v3_rtu_tap
+    connection: { protocol: rtu_tap, serial_port: /dev/ttyTAP, baudrate: 19200 }
+    units: [1, 2]
+    mqtt: { topic_prefix: "seplos/battery_${unit_id}" }
+    influxdb:
+      bucket: seplos
+      device_tag: "battery_${unit_id}"
+      tags: { battery_id: "${unit_id}", bank: "${endpoint_id}" }
+"""
+
+
+def test_endpoint_influx_tags_substitute_per_unit(tmp_path):
+    """`influxdb.tags` is a series identity per unit: the Seplos history is
+    keyed on battery_id=N, so the bank declares it once with ${unit_id}."""
+    cfg = write_config(tmp_path, extra_yaml=TAGGED_BANK_YAML)
+    u1, u2 = cfg.endpoint_devices("bank")
+    assert u1.influxdb_tags == {"battery_id": "1", "bank": "bank"}
+    assert u2.influxdb_tags == {"battery_id": "2", "bank": "bank"}
+    assert cfg.get_raw_endpoint("bank")["influxdb"]["tags"]["battery_id"] == "${unit_id}"
+
+
+def test_malformed_influx_tags_are_ignored_not_fatal(tmp_path):
+    cfg = write_config(tmp_path, extra_yaml=TAGGED_BANK_YAML.replace(
+        'tags: { battery_id: "${unit_id}", bank: "${endpoint_id}" }', 'tags: oops'))
+    assert [d.influxdb_tags for d in cfg.endpoint_devices("bank")] == [{}, {}]
+
+
+@needs_tc
+def test_endpoint_edit_keeps_its_influx_tags(tmp_path):
+    """Tags are pinned like bucket/device_tag: the settings dialog sends an
+    influxdb block without them, and a save must not split the series."""
+    from multibus.api import create_api
+    cfg = write_config(tmp_path, extra_yaml=TAGGED_BANK_YAML)
+    app, _ = create_api(cfg, None, None, None, devices=[(d, None) for d in cfg.devices])
+    client = TestClient(app, raise_server_exceptions=False)
+    r = client.put("/api/endpoints/bank", json={"name": "Bank", "enabled": True,
+                                                "influxdb": {"enabled": True}})
+    assert r.status_code == 200, r.text
+    assert cfg.get_raw_endpoint("bank")["influxdb"]["tags"] == {
+        "battery_id": "${unit_id}", "bank": "${endpoint_id}"}
+    assert cfg.get_device("bank-u2").influxdb_tags["battery_id"] == "2"
+
+
+def test_build_point_device_tags_never_displace_identity_or_register_tags():
+    from types import SimpleNamespace
+    from multibus.influxdb_publisher import build_point
+    reg = SimpleNamespace(address=4096, name="pack_voltage", influxdb_tags={"bank": "own"},
+                          influxdb_measurement="seplos_battery", measurement="seplos_battery",
+                          influxdb_field="", unit="V")
+    line = build_point(reg, 52.6, 1_700_000_000.0, poll_group="tap", device_tag="battery_3",
+                       extra_tags={"battery_id": "3", "bank": "x", "device": "evil",
+                                   "poll_group": "evil"}).to_line_protocol()
+    assert "battery_id=3" in line and "device=battery_3" in line
+    assert "bank=own" in line and "evil" not in line

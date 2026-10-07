@@ -565,10 +565,11 @@ def test_nonprimary_poll_routes_to_its_own_sinks(tmp_path):
 
     class _CapInflux:
         config = SimpleNamespace(enabled=True)
-        def __init__(self): self.routed = []
         def write_register_data(self, poll_group, data, bucket=None,
-                                device_tag=None, device_id=""):
+                                device_tag=None, device_id="", extra_tags=None):
             self.routed.append((bucket, device_tag, device_id))
+            self.tags.append(extra_tags)
+        def __init__(self): self.routed, self.tags = [], []
         def __getattr__(self, n): return lambda *a, **k: None
 
     cfg = write_config(tmp_path, extra_yaml="""
@@ -578,7 +579,7 @@ devices:
     enabled: true
     connection: { protocol: tcp, host: 192.0.2.9 }
     mqtt: { topic_prefix: "meters/em24" }
-    influxdb: { bucket: "warehouse", device_tag: "em24tag" }
+    influxdb: { bucket: "warehouse", device_tag: "em24tag", tags: { site: hala } }
 """)
     mq, ix = _CapMQTT(), _CapInflux()
     clients = {d.id: SimpleNamespace(publish_callback=None) for d in cfg.devices}
@@ -590,6 +591,7 @@ devices:
     clients["em24"].publish_callback("realtime", {19000: {"value": 230.0, "register": reg}})
     assert mq.routed == ["meters/em24"]                       # MQTT → device's own prefix
     assert ix.routed == [("warehouse", "em24tag", "em24")]    # Influx → device's bucket+tag+id
+    assert ix.tags == [{"site": "hala"}]                     # + its static tags
 
     # primary → legacy routing (None): publishers fall back to their own global
     # config, so device #1's topics/bucket/tag stay byte-identical to today
@@ -597,6 +599,7 @@ devices:
     clients["umg512"].publish_callback("realtime", {19000: {"value": 231.0, "register": reg}})
     assert mq.routed == [None]
     assert ix.routed == [(None, None, "")]
+    assert ix.tags[-1] is None                               # primary: none
 
 
 @needs_tc
@@ -1049,3 +1052,17 @@ def test_rtu_tap_device_crud_and_line_rules(tmp_path):
     assert adhoc["ok"] is None and "listen-only" in adhoc["message"]
     saved = client.post("/api/devices/pack-2/test").json()
     assert saved["ok"] is False and "not listening" in saved["message"]
+
+
+@needs_tc
+def test_device_edit_keeps_its_influx_tags(tmp_path):
+    """The edit form never sends influxdb.tags; like bucket/device_tag they
+    are series identity and survive the save."""
+    _cfg, client = make_app(tmp_path)
+    body = {"id": "em-t", "enabled": False,
+            "connection": {"protocol": "tcp", "host": "192.0.2.10"},
+            "influxdb": {"bucket": "b", "tags": {"site": "hala"}}}
+    assert client.post("/api/devices", json=body).status_code == 200
+    body["influxdb"] = {"enabled": True}
+    assert client.put("/api/devices/em-t", json=body).status_code == 200
+    assert Config(str(tmp_path / "config.yaml")).get_device("em-t").influxdb_tags == {"site": "hala"}

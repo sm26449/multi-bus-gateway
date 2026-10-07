@@ -105,7 +105,8 @@ def test_golden_primary_publisher_args_and_store(tmp_path):
     assert influx.write_register_data.call_count == 1
     (pg, d), kw = influx.write_register_data.call_args
     assert pg == "realtime" and d is data
-    assert kw == {"bucket": None, "device_tag": None, "device_id": ""}
+    assert kw == {"bucket": None, "device_tag": None, "device_id": "",
+                  "extra_tags": None}
 
     # store shape: exactly these keys, ISO timestamp. 'ts' (numeric freshness
     # clock, None when the driver gave no measurement time) was added in the
@@ -136,7 +137,8 @@ def test_golden_secondary_routes_to_its_own_sinks_and_store(tmp_path):
     (_pg, _d), kw = mqtt.publish_register_data.call_args
     assert kw == {"topic_prefix": "meters/em24"}
     (_pg, _d), kw = influx.write_register_data.call_args
-    assert kw == {"bucket": "warehouse", "device_tag": "em24tag", "device_id": "em24"}
+    assert kw == {"bucket": "warehouse", "device_tag": "em24tag", "device_id": "em24",
+                  "extra_tags": None}         # no influxdb.tags declared
 
     # store isolation: value in device_values['em24'], NOT in current_values
     assert app.state.device_values["em24"][100]["value"] == -5794.0
@@ -178,7 +180,8 @@ def test_golden_calc_injection_and_routing(tmp_path):
     assert calc_d[CALC_BASE]["register"].name == "CALC_2X"
     assert influx.write_register_data.call_count == 2
     _a, kw = influx.write_register_data.call_args
-    assert kw == {"bucket": None, "device_tag": None, "device_id": ""}
+    assert kw == {"bucket": None, "device_tag": None, "device_id": "",
+                  "extra_tags": None}
 
 
 @needs_tc

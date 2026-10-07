@@ -780,7 +780,8 @@ class InfluxDBPublisher:
     def write_register_data(self, poll_group: str, data: Dict[int, Dict],
                             bucket: Optional[str] = None,
                             device_tag: Optional[str] = None,
-                            device_id: str = ""):
+                            device_id: str = "",
+                            extra_tags: Optional[Dict[str, str]] = None):
         """Write register data from a poll group. Works whether or not InfluxDB
         is reachable — points produced during an outage go to the replay buffer.
         ``bucket``/``device_tag``/``device_id`` route one device's data
@@ -811,6 +812,7 @@ class InfluxDBPublisher:
                 ts = item.get('ts') or time.time()
                 point = self._build_point(register, safe_val, ts,
                                           poll_group=poll_group,
+                                          extra_tags=extra_tags,
                                           device_tag=device_tag)
                 self._deliver(point, ts, bucket=bucket)
                 self._confirm_write(address, value, device_id)
@@ -1186,11 +1188,15 @@ def build_point(register: SelectedRegister, safe_val: Any, ts: float,
     from influxdb_client import Point, WritePrecision
 
     point = Point(get_measurement(register))
-    for tag_key, tag_value in get_tags(register, device_tag).items():
+    tags = get_tags(register, device_tag)
+    for tag_key, tag_value in tags.items():
         point = point.tag(tag_key, tag_value)
     if extra_tags:
+        # device-wide tags never displace the identity tags (device/address/
+        # name) nor a tag the register itself declares — the specific wins
         for tag_key, tag_value in extra_tags.items():
-            point = point.tag(tag_key, tag_value)
+            if tag_key not in tags and tag_key != 'poll_group':
+                point = point.tag(tag_key, tag_value)
     if poll_group:
         point = point.tag('poll_group', poll_group)
 

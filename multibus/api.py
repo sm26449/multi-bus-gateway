@@ -644,6 +644,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         topic_prefix = None if primary else device_cfg.mqtt_topic_prefix
         bucket = None if primary else device_cfg.influxdb_bucket
         device_tag = None if primary else device_cfg.influxdb_device_tag
+        influx_tags = None if primary else (device_cfg.influxdb_tags or None)
         device_id = "" if primary else device_cfg.id
         values_store = (current_values if primary
                         else registry.ensure_store(device_cfg.id))
@@ -708,7 +709,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 try:
                     influxdb_publisher.write_register_data(
                         poll_group, data, bucket=bucket,
-                        device_tag=device_tag, device_id=device_id)
+                        device_tag=device_tag, device_id=device_id,
+                        extra_tags=influx_tags)
                 except Exception as e:  # noqa: BLE001
                     logger.warning(f"InfluxDB write failed for {device_id or 'primary'}: {e}")
 
@@ -717,7 +719,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             calc_batch = calc_engine.run(calc_key, poll_group, values_store,
                                          topic_prefix=topic_prefix, bucket=bucket,
                                          device_tag=device_tag, device_id=device_id,
-                                         mqtt_on=mqtt_on, influx_on=influx_on)
+                                         mqtt_on=mqtt_on, influx_on=influx_on,
+                                         influx_tags=influx_tags)
 
             # Broadcast via WebSocket (thread-safe async call). Phase B: every
             # device broadcasts, tagged with its id — the client filters on the
@@ -2522,6 +2525,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         raw.setdefault('mqtt', {})['topic_prefix'] = dev_cfg.mqtt_topic_prefix
         raw.setdefault('influxdb', {})['bucket'] = dev_cfg.influxdb_bucket
         raw['influxdb']['device_tag'] = dev_cfg.influxdb_device_tag
+        if dev_cfg.influxdb_tags:
+            raw['influxdb']['tags'] = dict(dev_cfg.influxdb_tags)
         # Preserve the HTTP-output opt-in across an edit (it is toggled from the
         # Outputs tab, not carried in the wizard payload — an omit must not wipe it).
         if dev_cfg.http_output_enabled:
@@ -3797,7 +3802,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             # (see update_device): changing it re-routes every unit's future
             # data and orphans their history + Home Assistant entities.
             for sect, keys in (('mqtt', ('topic_prefix', 'aggregate_prefix')),
-                               ('influxdb', ('bucket', 'device_tag'))):
+                               ('influxdb', ('bucket', 'device_tag', 'tags'))):
                 for k in keys:
                     old = (prev.get(sect) or {}).get(k)
                     if old is not None:

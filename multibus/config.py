@@ -221,6 +221,17 @@ def _serial_from_conn(c: Dict) -> Dict[str, Any]:
             ('serial_port', 'baudrate', 'parity', 'stopbits', 'bytesize') if k in c}
 
 
+def _influx_tags(raw: Any, did: str) -> Dict[str, str]:
+    """`influxdb.tags` as str->str; a malformed block is ignored, not fatal."""
+    if raw in (None, {}):
+        return {}
+    if not isinstance(raw, dict):
+        logger.warning(f"devices[{did}]: influxdb.tags must be a mapping — ignored")
+        return {}
+    return {str(k).strip(): str(v) for k, v in raw.items()
+            if str(k).strip() and v is not None and str(v) != ''}
+
+
 def _http_from_conn(c: Dict) -> Dict[str, Any]:
     return {k: c[k] for k in ('url', 'timeout', 'headers', 'verify_tls') if k in c}
 
@@ -310,6 +321,10 @@ class DeviceConfig:
     mqtt_topic_prefix: str = ""
     influxdb_bucket: str = ""
     influxdb_device_tag: str = ""
+    # static tags on every point this device writes (`influxdb.tags`); an
+    # endpoint's substitute ${unit_id} per unit — a series identity, like the
+    # device tag (battery_id=N is what the Seplos history is keyed on)
+    influxdb_tags: Dict[str, str] = field(default_factory=dict)
     ha_discovery_enabled: bool = True        # publish Home Assistant discovery for this device
     mqtt_enabled: bool = True                # route this device's values to MQTT
     influxdb_enabled: bool = True            # route this device's values to InfluxDB
@@ -833,6 +848,7 @@ class Config:
                 mqtt_topic_prefix=prefix,
                 influxdb_bucket=influx_cfg.get('bucket', self.influxdb.bucket),
                 influxdb_device_tag=influx_cfg.get('device_tag', did),
+                influxdb_tags=_influx_tags(influx_cfg.get('tags'), did),
                 ha_discovery_enabled=bool(mqtt_cfg.get('ha_discovery', True)),
                 mqtt_enabled=bool(mqtt_cfg.get('enabled', True)),
                 influxdb_enabled=bool(influx_cfg.get('enabled', True)),
@@ -969,6 +985,8 @@ class Config:
                       i['bucket'] = sub(i['bucket'])
                   if i.get('device_tag'):
                       i['device_tag'] = sub(i['device_tag'])
+                  if isinstance(i.get('tags'), dict):
+                      i['tags'] = {k: sub(v) for k, v in i['tags'].items()}
                   # ${unit_id} / ${endpoint_id} / ${device_id} substitute in the
                   # CONNECTION too, not only in the routing identity. An HTTP
                   # master addresses its units by URL rather than by a unit id in

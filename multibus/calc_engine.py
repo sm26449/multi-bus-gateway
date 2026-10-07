@@ -165,7 +165,7 @@ class CalcEngine:
         return resolve
 
     def run(self, calc_key, poll_group, values_store, *, topic_prefix,
-            bucket, device_tag, device_id, mqtt_on, influx_on):
+            bucket, device_tag, device_id, mqtt_on, influx_on, influx_tags=None):
         """Evaluate the device's calc registers assigned to ``poll_group`` from the
         current live values, inject them into the store, and route to its sinks."""
         entries = self.store.get(calc_key)
@@ -266,7 +266,8 @@ class CalcEngine:
         if influxdb_publisher and influx_on:
             try:
                 influxdb_publisher.write_register_data(poll_group, batch, bucket=bucket,
-                                                       device_tag=device_tag, device_id=device_id)
+                                                       device_tag=device_tag, device_id=device_id,
+                                                       extra_tags=influx_tags)
             except Exception as ex:  # noqa: BLE001
                 logger.warning(f"calc Influx write failed for {calc_key}: {ex}")
         return batch
