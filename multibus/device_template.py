@@ -280,6 +280,9 @@ class DeviceTemplate:
     #              [{field, label?, hint?}]
     # Absent → the role/canonical defaults the UI has always used.
     display: Dict[str, Any] = field(default_factory=dict)
+    # how a bus scan recognises this device: registers that must read given
+    # values, and/or the FC43 identification it answers (regexes)
+    identify: Dict[str, Any] = field(default_factory=dict)
     registers: List[TemplateRegister] = field(default_factory=list)
     # derived measurements the template ships with (seeded into each device's
     # `calculated` list) — see TemplateCalculated
@@ -304,6 +307,7 @@ class DeviceTemplate:
             **({'pq_recorder': self.pq_recorder} if self.pq_recorder else {}),
             **({'commands': self.commands} if self.commands else {}),
             **({'display': self.display} if self.display else {}),
+            **({'identify': self.identify} if self.identify else {}),
             'registers': [r.to_dict() for r in self.registers],
             **({'calculated': [c.to_dict() for c in self.calculated]}
                if self.calculated else {}),
@@ -537,7 +541,48 @@ def validate_template(data: Dict[str, Any]) -> List[str]:
             if not isinstance(pname, str) or not _ID_RE.match(pname):
                 errors.append(f"command {cname!r}: param {pname!r} invalid (a-z 0-9 - _, 2-64 chars)")
     errors.extend(_display_errors(t))
+    errors.extend(_identify_errors(t))
     return errors
+
+
+def _identify_errors(t: Dict[str, Any]) -> List[str]:
+    """``identify``: ``{registers: [{address, register_type?, data_type?,
+    equals | in | min/max}], fc43: {vendor?, product?}}`` — every register must
+    match; FC43 fields are regexes on the device's own identification."""
+    idf = t.get('identify')
+    if idf is None:
+        return []
+    errs: List[str] = []
+    if not isinstance(idf, dict):
+        return ["identify: a mapping with registers and/or fc43"]
+    regs = idf.get('registers') or []
+    if not isinstance(regs, list) or len(regs) > 8:
+        errs.append("identify.registers: a list of at most 8 checks")
+        regs = []
+    for i, r in enumerate(regs):
+        if not isinstance(r, dict) or not isinstance(r.get('address'), int) or not 0 <= r['address'] <= 65535:
+            errs.append(f"identify.registers[{i}]: needs an address 0-65535")
+            continue
+        if r.get('register_type', 'holding') not in ('holding', 'input'):
+            errs.append(f"identify.registers[{i}].register_type: holding or input")
+        if not any(k in r for k in ('equals', 'in', 'min', 'max')):
+            errs.append(f"identify.registers[{i}]: say what it must read — equals, in, or min/max")
+        if 'in' in r and not isinstance(r['in'], list):
+            errs.append(f"identify.registers[{i}].in: a list of values")
+    fc = idf.get('fc43')
+    if fc is not None:
+        if not isinstance(fc, dict) or not (fc.get('vendor') or fc.get('product')):
+            errs.append("identify.fc43: {vendor and/or product} regexes")
+        else:
+            for k in ('vendor', 'product'):
+                if fc.get(k):
+                    try:
+                        re.compile(str(fc[k]))
+                    except re.error:
+                        errs.append(f"identify.fc43.{k}: not a valid regular expression")
+    if not regs and fc is None:
+        errs.append("identify: give registers to check, an fc43 pattern, or both")
+    return errs
 
 
 def _display_errors(t: Dict[str, Any]) -> List[str]:
@@ -702,6 +747,7 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         pq_recorder=str(t.get('pq_recorder', '') or ''),
         commands=dict(t.get('commands') or {}),
         display=dict(t.get('display') or {}) if isinstance(t.get('display'), dict) else {},
+        identify=dict(t.get('identify') or {}) if isinstance(t.get('identify'), dict) else {},
         registers=regs, calculated=calcs, builtin=builtin, path=path,
     )
 

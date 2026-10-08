@@ -407,6 +407,18 @@
         "icon": "mdi:barcode-scan"
       }
     ],
-    "canonical": true
+    "canonical": true,
+    "identify": {
+      "registers": [
+        {
+          "address": 11,
+          "register_type": "holding",
+          "data_type": "uint16",
+          "in": [
+            731
+          ]
+        }
+      ]
+    }
   }
 }

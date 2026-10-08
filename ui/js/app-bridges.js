@@ -25,6 +25,9 @@ Object.assign(JanitzaMonitor.prototype, {
     _bridgesSectionHtml(bridges, healthColor) {
         if (!bridges.length) return '';
         const t = (k, d, p) => this.t(k, d, p);
+        const bar = `<div class="bridges-bar"><span class="field-hint"><i aria-hidden="true" class="bi bi-hdd-network"></i> ${t('bridges.title', 'Bridges')}</span>
+            <a class="btn btn-ghost btn-sm" href="/api/bridges/export" download><i aria-hidden="true" class="bi bi-download"></i> ${t('bridges.export', 'Export')}</a>
+            <button data-admin class="btn btn-ghost btn-sm" ${this._act('openBridgesImport', [])}><i aria-hidden="true" class="bi bi-upload"></i> ${t('bridges.import', 'Import')}</button></div>`;
         const dot = { online: 'var(--success,#22c55e)', degraded: 'var(--warning,#f59e0b)',
                       offline: 'var(--danger,#ef4444)', unknown: 'var(--text-secondary)', checking: 'var(--text-secondary)' };
         return bridges.map(b => {
@@ -38,7 +41,9 @@ Object.assign(JanitzaMonitor.prototype, {
                     ${p.label ? `<span>${this._esc(p.label)}</span>` : ''}
                     ${p.serial_text || p.serial ? `<span class="dev-chip">${this._esc(p.serial_text || p.serial)}</span>` : ''}
                     <span class="field-hint">${t('bridges.nDevices', '{n} device(s)', { n: (p.devices || []).length })}</span>
+                    ${p.busy ? `<span class="sink-pill ${p.busy.level === 'full' ? 'bad' : p.busy.level === 'high' ? 'warn' : 'ok'}" title="${this._esc(this._busyTitle(p))}">${t('bridges.busy', 'bus {pct}% busy', { pct: p.busy.pct })}</span>` : ''}
                     <span class="bridge-port-actions">
+                      <button data-admin class="btn btn-ghost btn-sm" ${this._act('busScan', [b.id, p.port])} title="${this._esc(t('bridges.scanBusHint', 'Ask every unit id on this bus who answers, and what it probably is'))}"><i aria-hidden="true" class="bi bi-search"></i> ${t('bridges.scanBus', 'Scan')}</button>
                       <button data-admin class="btn btn-ghost btn-sm" ${this._act('addDeviceOnBus', [b.id, p.port])} title="${this._esc(t('bridges.addDeviceHint', 'Add a device (a slave) on this bus'))}"><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('bridges.addDevice', 'Device')}</button>
                       <button data-admin class="btn btn-ghost btn-sm" ${this._act('bridgeProbe', [b.id, p.port])} title="${this._esc(t('bridges.probeHint', 'Ask a slave on this bus one register, as RTU and as Modbus TCP — tells whether the box is transparent or a gateway'))}"><i aria-hidden="true" class="bi bi-activity"></i> ${t('bridges.probe', 'Check mode')}</button>
                     </span>
@@ -49,6 +54,7 @@ Object.assign(JanitzaMonitor.prototype, {
                       <span class="dev-chip">unit ${this._esc(d.unit_id)}</span>
                       <span>${this._esc(d.name || d.id)}</span>
                       ${d.endpoint_id ? `<span class="field-hint">${t('bridges.inInstallation', 'in an installation')}</span>` : ''}
+                      ${!d.endpoint_id ? `<button data-admin class="btn btn-ghost btn-sm bridge-move" ${this._act('openDeviceWizard', [d.id])} title="${this._esc(t('bridges.moveHint', 'Edit — or move it to another bus or bridge; its topics and history stay'))}" aria-label="${this._esc(t('common.edit', 'Edit'))}"><i aria-hidden="true" class="bi bi-arrow-left-right"></i></button>` : ''}
                     </div>`).join('') || `<div class="field-hint bridge-dev">${t('bridges.noDevices', 'No device on this bus yet.')}</div>`}
                 </div>`).join('');
             return `
@@ -71,7 +77,98 @@ Object.assign(JanitzaMonitor.prototype, {
                     ? t('bridges.noPortsApi', 'No bus seen yet — start the bridge on its host (Set-up), plug an adapter in, then Buses.')
                     : t('bridges.noPorts', 'No bus declared.')}</div>`}
             </div>`;
-        }).join('');
+        }).join('').replace(/^/, bar);
+    },
+
+    _busyTitle(p) {
+        const t = (k, d, x) => this.t(k, d, x);
+        const lines = (p.devices || []).filter(d => d.bus_share != null)
+            .map(d => `${d.name || d.id}: ${Math.round(d.bus_share * 100)}%`);
+        const advice = p.busy.level === 'full'
+            ? t('bridges.busyFull', 'The bus cannot keep up: requests queue and readings age. Slow the poll groups that need no speed, raise the baud rate (every slave and the bus), or split the slaves over two buses.')
+            : p.busy.level === 'high' ? t('bridges.busyHigh', 'Close to full: another device or a faster poll group will make readings late.') : '';
+        return [t('bridges.busyLead', 'Measured share of the wire, per device:'), ...lines, advice].filter(Boolean).join('\n');
+    },
+
+    // ── scan a bus ──────────────────────────────────────────────────────────
+    async busScan(bridgeId, port) {
+        const t = (k, d, x) => this.t(k, d, x);
+        this._bridgeInfo(t('bridges.scanBusTitle', 'Scan bus :{port}', { port }), `
+          <p class="field-hint">${t('bridges.scanBusLead', 'Asks unit ids 1–247 one by one through the bus\'s own connection — the devices on it keep reading in between. About a minute and a quarter for the whole range.')}</p>
+          <div class="bus-scan-bar"><div id="busScanFill"></div></div>
+          <p class="field-hint" id="busScanState">${t('bridges.scanStarting', 'starting…')}</p>
+          <div id="busScanResult"></div>`);
+        const r = await fetch(`/api/bridges/${encodeURIComponent(bridgeId)}/ports/${port}/scan`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { document.getElementById('busScanState').textContent = (d.detail?.errors || [r.statusText]).join(' '); return; }
+        this._busScanJob = d.job;
+        const tick = async () => {
+            // the panel was closed or another scan started: stop this one on the
+            // server too — a scan left running keeps asking the bus
+            if (this._busScanJob !== d.job || !document.querySelector('#bridgeInfoModal.active #busScanFill')) {
+                fetch(`/api/bus-scan/${d.job}`, { method: 'DELETE' }).catch(() => {});
+                return;
+            }
+            const st = await (await fetch(`/api/bus-scan/${d.job}`)).json();
+            document.getElementById('busScanFill').style.width = `${Math.round(100 * st.done / st.total)}%`;
+            document.getElementById('busScanState').textContent = st.state === 'running'
+                ? t('bridges.scanProgress', '{done}/{total} asked · {n} answered', { done: st.done, total: st.total, n: st.found.length })
+                : st.state === 'failed' ? `${t('bridges.scanFailed', 'Scan failed')}: ${st.error}`
+                : t('bridges.scanDone', 'Done — {n} slave(s) answered.', { n: st.found.length });
+            document.getElementById('busScanResult').innerHTML = this._busScanTable(bridgeId, port, st.found);
+            if (st.state === 'running') setTimeout(tick, 1000);
+        };
+        tick();
+    },
+
+    _busScanTable(bridgeId, port, found) {
+        const t = (k, d, x) => this.t(k, d, x);
+        if (!found.length) return '';
+        return `<table class="tplu-table"><thead><tr><th>Unit</th><th>${t('bridges.scanWhat', 'What it is')}</th><th></th></tr></thead><tbody>
+          ${found.map(f => {
+              const what = f.matches.length ? f.matches.map(m => this._esc(m.name)).join(' / ')
+                  : f.fc43 && (f.fc43.vendor || f.fc43.product) ? this._esc(`${f.fc43.vendor || ''} ${f.fc43.product || ''}`.trim())
+                  : f.sunspec ? 'SunSpec' : `<span class="field-hint">${t('bridges.scanUnknown', 'not recognised — pick a template')}</span>`;
+              const act = f.device ? `<span class="field-hint">${t('bridges.scanKnown', 'already: {id}', { id: this._esc(f.device) })}</span>`
+                  : `<button data-admin class="btn btn-secondary btn-sm" ${this._act('addScannedDevice', [bridgeId, port, f.unit_id, f.suggested || ''])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('bridges.scanAdd', 'Add')}</button>`;
+              return `<tr><td><code>${f.unit_id}</code></td><td>${what}</td><td>${act}</td></tr>`;
+          }).join('')}</tbody></table>`;
+    },
+
+    addScannedDevice(bridgeId, port, unit, template) {
+        if (this._busScanJob) fetch(`/api/bus-scan/${this._busScanJob}`, { method: 'DELETE' }).catch(() => {});
+        this._busScanJob = null;
+        this.closeModal('bridgeInfoModal');
+        this.openDeviceWizard(null, { protocol: 'rtu-tcp', bridge: bridgeId, bridge_port: +port,
+                                      unit_id: +unit, ...(template ? { template } : {}) });
+    },
+
+    // ── import bridges ──────────────────────────────────────────────────────
+    openBridgesImport() {
+        const t = (k, d, x) => this.t(k, d, x);
+        this._bridgeInfo(t('bridges.importTitle', 'Import bridges'), `
+          <p class="field-hint">${t('bridges.importLead', 'A file exported from a gateway (Devices → Bridges → Export). Each bridge is checked first; tokens travel only in an admin\'s export.')}</p>
+          <textarea id="brImportText" class="input" rows="9" spellcheck="false" style="font-family:var(--font-mono,monospace);font-size:12px;"></textarea>
+          <label class="checkbox-label"><input type="checkbox" id="brImportReplace"> <span>${t('bridges.importReplace', 'Replace bridges that already exist here')}</span></label>
+          <div style="display:flex;gap:8px;margin-top:8px;">
+            <button class="btn btn-secondary btn-sm" ${this._act('bridgesImportRun', [false])}>${t('rules.import.check', 'Check')}</button>
+            <button data-admin class="btn btn-primary btn-sm" ${this._act('bridgesImportRun', [true])}>${t('rules.import', 'Import')}</button></div>
+          <div id="brImportResult" style="margin-top:10px;"></div>`);
+    },
+
+    async bridgesImportRun(apply) {
+        const t = (k, d, x) => this.t(k, d, x);
+        const r = await fetch('/api/bridges/import', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ yaml: document.getElementById('brImportText').value, apply,
+                                   replace: document.getElementById('brImportReplace').checked }) });
+        const d = await r.json().catch(() => ({}));
+        const box = document.getElementById('brImportResult');
+        if (!r.ok) { box.innerHTML = `<div class="field-error">${this._esc((d.detail?.errors || [r.statusText]).join(' '))}</div>`; return; }
+        box.innerHTML = `<table class="tplu-table"><tbody>${d.bridges.map(x => `<tr><td><code>${this._esc(x.id)}</code> ${this._esc(x.name || '')}</td>
+            <td><span class="sink-pill ${x.status === 'invalid' ? 'bad' : x.status === 'exists' ? 'warn' : 'ok'}">${this._esc(x.status)}</span></td>
+            <td class="field-hint">${(x.errors || []).map(e => this._esc(e)).join('<br>')}</td></tr>`).join('')}</tbody></table>`;
+        if (apply && d.ok) { this.showToast('success', t('bridges.imported', 'Bridges imported'), `${d.ok}/${d.total}`); this.renderDevicesList(); }
     },
 
     // ── add / edit ──────────────────────────────────────────────────────────

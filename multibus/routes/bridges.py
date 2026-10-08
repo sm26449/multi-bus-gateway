@@ -155,6 +155,21 @@ def build(ctx) -> APIRouter:
             return {"status": "online", "detail": "", "source": "devices"}
         return {"status": "offline", "detail": "none of its devices answers", "source": "devices"}
 
+    def _busy_share(dev_id: str) -> Optional[float]:
+        """How much of the bus this device takes: Σ over its poll groups of
+        (wire time of one sweep ÷ the group's interval), as MEASURED."""
+        for d, c in registry:
+            if d.id != dev_id or c is None or not d.enabled:
+                continue
+            try:
+                groups = (c.get_stats() or {}).get("poll_groups_detail") or []
+            except Exception:  # noqa: BLE001
+                return None
+            shares = [g["cycle_s"] / g["interval"] for g in groups
+                      if g.get("cycle_s") and g.get("interval")]
+            return round(sum(shares), 4) if shares else None
+        return None
+
     def _view(b: Dict, deep: bool = False) -> Dict:
         devs = config.bridge_devices(b["id"])
         t = TYPES.get(b.get("type"), {})
@@ -163,13 +178,21 @@ def build(ctx) -> APIRouter:
         for d in devs:
             on.setdefault(int(d.connection.port), []).append(
                 {"id": d.id, "name": d.name, "unit_id": d.connection.unit_id,
-                 "endpoint_id": d.endpoint_id, "health": _device_health(d.id)})
+                 "endpoint_id": d.endpoint_id, "health": _device_health(d.id),
+                 "bus_share": _busy_share(d.id)})
         for p in on:
             ports.setdefault(p, {"port": p})
         out = public_view(b)
         out["type_name"] = t.get("name", b.get("type"))
         out["protocol"] = FRAMING_PROTOCOL.get(t.get("framing"), "")
-        out["ports"] = [{**ports[p], "devices": sorted(on.get(p, []), key=lambda x: x["unit_id"])}
+        def busy(devlist):
+            shares = [x["bus_share"] for x in devlist if x.get("bus_share") is not None]
+            if not shares:
+                return None
+            pct = round(100 * sum(shares))
+            return {"pct": pct, "level": "full" if pct >= 100 else "high" if pct >= 70 else "ok"}
+        out["ports"] = [{**ports[p], "devices": sorted(on.get(p, []), key=lambda x: x["unit_id"]),
+                         "busy": busy(on.get(p, []))}
                         for p in sorted(ports)]
         out["devices"] = len(devs)
         out["state"] = _status(b, devs)
@@ -184,6 +207,72 @@ def build(ctx) -> APIRouter:
     @r.get("/api/bridges")
     def list_bridges():
         return {"bridges": [_view(b) for b in config.bridges]}
+
+    # ── moving bridges between gateways ──────────────────────────────────────
+    @r.get("/api/bridges/export")
+    def export_bridges(request: Request):
+        """Every bridge as YAML. Tokens ride along only for an admin (or a box
+        with no login and no API key) — anyone holding one drives that bridge."""
+        import yaml
+        from fastapi import Response
+        open_box = not (getattr(ctx.auth_state, "enabled", False) or ctx.api_key)
+        keep = open_box or secrets_visible(request, ctx.auth_state, ctx.api_key)
+        out = [{k: v for k, v in b.items() if keep or k != "token"} for b in config.bridges]
+        body = ("# Multi-Bus Gateway bridges — import with Devices → Import bridges\n"
+                + ("" if keep else "# tokens left out: re-enter them, or export as an admin\n")
+                + yaml.safe_dump({"bridges": out}, sort_keys=False, allow_unicode=True))
+        return Response(content=body, media_type="application/x-yaml",
+                        headers={"Content-Disposition": 'attachment; filename="bridges.yaml"'})
+
+    @r.post("/api/bridges/import")
+    def import_bridges(payload: Dict = Body(...)):
+        """``{yaml, apply, replace}``: every bridge checked first (new /
+        replace / exists / invalid, with the reason); valid ones saved on
+        apply. A bridge here that devices use keeps the buses they are on."""
+        import yaml
+        try:
+            doc = yaml.safe_load(str(payload.get("yaml") or ""))
+        except yaml.YAMLError as e:
+            raise HTTPException(status_code=422, detail={"errors": [f"invalid YAML: {e}"]})
+        items = doc.get("bridges") if isinstance(doc, dict) and "bridges" in doc else doc
+        if isinstance(items, dict):
+            items = [items]
+        if not isinstance(items, list) or not items:
+            raise HTTPException(status_code=422, detail={"errors": ["expected a `bridges:` list, or one bridge"]})
+        apply, replace = bool(payload.get("apply")), bool(payload.get("replace"))
+        out = []
+        for i, raw in enumerate(items):
+            if not isinstance(raw, dict):
+                out.append({"id": f"#{i + 1}", "status": "invalid", "errors": ["not a mapping"]})
+                continue
+            bid = str(raw.get("id") or f"#{i + 1}")
+            here = config.get_raw_bridge(bid)
+            entry = {"id": bid, "name": raw.get("name", ""), "type": raw.get("type", "")}
+            if here and not replace:
+                out.append({**entry, "status": "exists", "errors": ["already here — tick replace to overwrite it"]})
+                continue
+            errs = validate_bridge(raw)
+            if not errs and here:
+                used = {int(d.connection.port) for d in config.bridge_devices(bid)}
+                new_ports = {int(p["port"]) for p in (raw.get("ports") or []) if p.get("port")}
+                lost = sorted(used - new_ports) if TYPES.get(raw.get("type"), {}).get("discovery") == "manual" else []
+                if lost:
+                    errs = [f"devices here use bus :{', :'.join(map(str, lost))}, which the file drops"]
+            if errs:
+                out.append({**entry, "status": "invalid", "errors": errs})
+                continue
+            if apply:
+                try:
+                    _save(dict(raw), here)
+                except HTTPException as e:
+                    out.append({**entry, "status": "invalid",
+                                "errors": (e.detail or {}).get("errors", [str(e.detail)])})
+                    continue
+                out.append({**entry, "status": "replaced" if here else "created", "errors": []})
+            else:
+                out.append({**entry, "status": "replace" if here else "new", "errors": []})
+        ok = sum(1 for x in out if x["status"] in ("new", "replace", "created", "replaced"))
+        return {"applied": apply, "bridges": out, "ok": ok, "total": len(out)}
 
     @r.get("/api/bridges/{bridge_id}")
     def get_bridge(bridge_id: str):
@@ -298,6 +387,44 @@ def build(ctx) -> APIRouter:
                                 detail={"errors": [e.read().decode(errors="replace")[:300]]})
         except Exception as e:  # noqa: BLE001
             raise HTTPException(status_code=502, detail={"errors": [f"bridge unreachable: {e}"]})
+
+    # ── scan a bus: which slaves answer, and what they probably are ──────────
+    @r.post("/api/bridges/{bridge_id}/ports/{port}/scan")
+    def scan_bus(bridge_id: str, port: int, payload: Dict = Body(default={})):
+        """Start sweeping unit ids on one bus through its shared connection.
+        Poll GET /api/bus-scan/{job}. ``{from, to, timeout}`` (default 1-247,
+        0.3 s per unit — a full bus takes about a minute and a quarter)."""
+        from .. import bus_scan
+        from ..bridges import resolve_connection
+        b = _bridge(bridge_id)
+        try:
+            u0 = max(1, int(payload.get("from", 1)))
+            u1 = min(247, int(payload.get("to", 247)))
+            tmo = min(2.0, max(0.1, float(payload.get("timeout", 0.3))))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail={"errors": ["from/to/timeout must be numbers"]})
+        if u1 < u0:
+            raise HTTPException(status_code=422, detail={"errors": ["from must not exceed to"]})
+        conn = resolve_connection({"bridge": b["id"], "bridge_port": port}, config.bridges)
+        known = {int(d.connection.unit_id): d.id for d in config.bridge_devices(b["id"])
+                 if int(d.connection.port) == int(port)}
+        tr = getattr(ctx, "template_registry", None)
+        tpls = [t for t in (tr.list() if tr else []) if getattr(t, "identify", None)]
+        job = bus_scan.start(conn, u0, u1, tmo, tpls, known)
+        return {"job": job, "total": u1 - u0 + 1}
+
+    @r.get("/api/bus-scan/{job}")
+    def bus_scan_status(job: str):
+        from .. import bus_scan
+        s = bus_scan.get(job)
+        if s is None:
+            raise HTTPException(status_code=404, detail="no such scan")
+        return s
+
+    @r.delete("/api/bus-scan/{job}")
+    def bus_scan_cancel(job: str):
+        from .. import bus_scan
+        return {"cancelled": bus_scan.cancel(job)}
 
     @r.get("/api/bridges/{bridge_id}/setup")
     def bridge_setup(bridge_id: str, request: Request):
