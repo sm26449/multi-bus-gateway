@@ -17,7 +17,7 @@ the advanced extras at the end.
 - [6. Test it on the real device](#6-test-it-on-the-real-device)
 - [7. Changing a template later](#7-changing-a-template-later)
 - [8. Sharing a template](#8-sharing-a-template)
-- [9. Advanced: what only the JSON format carries](#9-advanced-what-only-the-json-format-carries)
+- [9. Advanced: calculated fields, commands, display, scan recognition](#9-advanced-calculated-fields-commands-display-scan-recognition)
 - [10. Troubleshooting](#10-troubleshooting)
 - [11. Reference: every field of a register row](#11-reference-every-field-of-a-register-row)
 
@@ -147,8 +147,15 @@ Built-in templates are read-only. **Duplicate** one to start from it.
    - A name outside the canonical dictionary (below) is flagged, with a
      *did you mean…?* hint; **Auto-canonicalize** suggests standard names
      from labels and units.
-4. **Save.** Errors come back per row. Example: *registers[12]: duplicate
-   address 40*.
+   - The **sliders** button opens the row's **details**: description,
+     "not available" marker, growing / day counter, a scale factor from
+     another register, totals of an installation, Home Assistant typing
+     ([templates-advanced.md — Row details](templates-advanced.md#row-details)).
+4. **Advanced** (the section under *How the device is read*): calculated
+   fields, commands, display, scan recognition, details and categories, and
+   the raw JSON (§9).
+5. **Save.** Errors come back per row. Example: *registers[12]: duplicate
+   address 40 in the holding table*.
 
 ### Names: use the canonical dictionary
 
@@ -326,24 +333,29 @@ imports it: it is validated row by row, and an existing id asks before
 overwriting. A template is a plain file, safe to share. It holds no
 addresses of your devices, no credentials, no values.
 
-## 9. Advanced: what only the JSON format carries
+## 9. Advanced: calculated fields, commands, display, scan recognition
 
-The full format, field by field, is in
-[config-reference.md](config-reference.md#template-only-extras). Beyond the
-register rows it can carry:
+Everything a template carries beyond its rows is edited in the editor's
+**Advanced** section and each row's **details** dialog. No external editor
+is needed. Each tab explains what the block is for, shows an example, and is
+checked as you type. The guide, with the logic and examples of each part, is
+**[templates-advanced.md](templates-advanced.md)**. The JSON format, field by
+field, is in [config-reference.md](config-reference.md#template-only-extras).
 
-| Block | What it does | Reference |
-|---|---|---|
-| `calculated` | formulas shipped with the map (a decoded status, power from V×I) — every unit gets them | [config-reference — calculated](config-reference.md#calculated--derived-measurements-a-template-ships), [MANUAL §7](MANUAL.md#7-calculated-registers) |
-| `aggregates` on a row | how an installation of many units totals that field (`sum`, `avg`, `min`, `max`, `spread`, `mode`) | [config-reference — endpoints](config-reference.md#endpoints--n-units-of-the-same-device-behind-one-endpoint) |
-| `display` | how a unit is shown: names, columns, alarms, cell grids, bitmasks | [config-reference — display](config-reference.md#display--how-a-unit-of-this-kind-is-shown) |
-| `commands` | named, guarded writes (a power limit) | [MANUAL §14b](MANUAL.md#14b-commands--named-writes-from-the-template) |
-| `identify` | how a bus scan recognises the device: `{registers: [{address, register_type?, data_type?, equals \| in \| min/max}], fc43: {vendor?, product?}}` — every register must match; FC43 fields are regexes | [rtu-over-network.md §5](rtu-over-network.md#5-finding-the-slaves-watching-the-bus-moving-things) |
-| `scale_from`, `nan`, `monotonic` | SunSpec scale factors, "not available" markers, counter hygiene | [config-reference — per-register options](config-reference.md#per-register-options) |
+| Block | What it does | Where in the editor | Guide |
+|---|---|---|---|
 
-The easiest way in: make the map in the editor, **Export** it, add the block
-in a text editor, **Upload** it back. Validation names the exact offending
-key.
+| `calculated` | formulas shipped with the map (a decoded status, total power) — every unit gets them | Advanced → Calculated | [Calculated fields](templates-advanced.md#calculated-fields) |
+| `aggregates` | how an installation of many units totals a field (sum, average, min, max, spread, most common) | a row's details; a calculated field's More | [Totals](templates-advanced.md#totals-of-an-installation) |
+| `commands` | named, guarded writes (a power limit) | Advanced → Commands | [Commands](templates-advanced.md#commands) |
+| `display` | how a unit is shown: words, columns, headline, alarms, cell grids, bitmasks | Advanced → Display | [Display](templates-advanced.md#display) |
+| `identify` | how a bus scan recognises the device | Advanced → Scan recognition | [Scan recognition](templates-advanced.md#scan-recognition-identify) |
+| `scale_from`, `nan`, `monotonic`, `daily`, HA typing | reading a row right | a row's details | [Row details](templates-advanced.md#row-details) |
+| version, author, source, categories | provenance and grouping | Advanced → Details & categories | [Details](templates-advanced.md#details-and-categories) |
+
+**Raw JSON** (Advanced → Raw JSON) shows the whole template as text, to
+check and apply in place. **Export** and **Upload** still move a template
+between gateways.
 
 A minimal complete template:
 
