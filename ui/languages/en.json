@@ -1815,5 +1815,19 @@
   "bridges.finding": "Searching… a /24 takes a few seconds.",
   "bridges.findNone": "Nothing found in {n} addresses. A converter may use another port: add it by hand with the port from its web page.",
   "bridges.findKnown": "added as {id}",
-  "bridges.findMaybe": "a converter?"
+  "bridges.findMaybe": "a converter?",
+  "vmeter.whyNoTpl": "An instance serves a template — create one first.",
+  "vmeter.whyAllUsed": "Every template already has an instance — each instance serves its own template; create another one.",
+  "vmeter.newTemplate": "Create a template",
+  "vmeter.srcInstance2": "The instance's own device — follows the device each instance binds (values previewed from {dev})",
+  "vmeter.primary": "the primary device",
+  "vmeter.srcFixed": "Always {dev}",
+  "templates.noneLead": "No device maps yet. A map (template) says which registers a device has and how to read them — every device uses one.",
+  "templates.createFirst": "Create a map",
+  "templates.uploadFirst": "Upload a map file",
+  "devices.wizard.protoModbusOnly": "A Modbus device can move between Modbus TCP, RTU, over the network or listen-only — its register map stays valid. HTTP and MQTT read by path, so they need a new device.",
+  "devices.wizard.gwWhere": "Reached",
+  "devices.wizard.gwDirect": "Directly — its own IP and port",
+  "devices.wizard.gwVia": "Through the gateway {name} · {host}:{port}",
+  "devices.wizard.gwHint": "An RS-485 slave behind a converter in “Modbus TCP to RTU” mode: pick the gateway, then the slave’s unit ID. The gateway’s address and connection limit come from the bridge."
 }

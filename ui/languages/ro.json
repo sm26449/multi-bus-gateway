@@ -1815,5 +1815,19 @@
   "bridges.finding": "Caut… un /24 durează câteva secunde.",
   "bridges.findNone": "Nimic găsit în {n} adrese. Un convertor poate folosi alt port: adaugă-l manual cu portul din pagina lui web.",
   "bridges.findKnown": "adăugat ca {id}",
-  "bridges.findMaybe": "un convertor?"
+  "bridges.findMaybe": "un convertor?",
+  "vmeter.whyNoTpl": "O instanță servește un template — creează unul întâi.",
+  "vmeter.whyAllUsed": "Fiecare template are deja o instanță — fiecare instanță servește template-ul ei; creează încă unul.",
+  "vmeter.newTemplate": "Creează un template",
+  "vmeter.srcInstance2": "Device-ul instanței — urmează device-ul legat de fiecare instanță (valori de previzualizare de la {dev})",
+  "vmeter.primary": "device-ul principal",
+  "vmeter.srcFixed": "Mereu {dev}",
+  "templates.noneLead": "Nicio hartă de registre încă. O hartă (template) spune ce registre are un device și cum se citesc — fiecare device folosește una.",
+  "templates.createFirst": "Creează o hartă",
+  "templates.uploadFirst": "Încarcă un fișier de hartă",
+  "devices.wizard.protoModbusOnly": "Un device Modbus poate trece între Modbus TCP, RTU, prin rețea sau doar ascultare — harta de registre rămâne valabilă. HTTP și MQTT citesc după cale, deci cer un device nou.",
+  "devices.wizard.gwWhere": "Accesat",
+  "devices.wizard.gwDirect": "Direct — IP-ul și portul lui",
+  "devices.wizard.gwVia": "Prin gateway-ul {name} · {host}:{port}",
+  "devices.wizard.gwHint": "Un slave RS-485 din spatele unui convertor în modul „Modbus TCP to RTU”: alegi gateway-ul, apoi unit ID-ul slave-ului. Adresa gateway-ului și limita de conexiuni vin de la bridge."
 }

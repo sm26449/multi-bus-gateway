@@ -64,7 +64,13 @@ Object.assign(JanitzaMonitor.prototype, {
                   </div>
                   <div style="display:flex;gap:8px;flex-wrap:wrap;">${actions}</div>
                 </div></div>`;
-        }).join('') : `<p style="color:var(--text-secondary);">${q ? t('templates.noMatch', 'No templates match your search.') : t('templates.none', 'No device maps yet.')}</p>`;
+        }).join('') : (q ? `<p style="color:var(--text-secondary);">${t('templates.noMatch', 'No templates match your search.')}</p>`
+            : `<div class="settings-card" style="padding:14px;"><p style="margin:0 0 8px;">${t('templates.noneLead', 'No device maps yet. A map (template) says which registers a device has and how to read them — every device uses one.')}</p>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                  <button class="btn btn-primary btn-sm" ${this._act('openTplEditor', [null])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('templates.createFirst', 'Create a map')}</button>
+                  <button class="btn btn-ghost btn-sm" ${this._act('tplUpload', [])}><i aria-hidden="true" class="bi bi-upload"></i> ${t('templates.uploadFirst', 'Upload a map file')}</button>
+                  <a class="btn btn-ghost btn-sm" href="https://github.com/sm26449/multi-bus-gateway/blob/main/docs/device-templates.md" target="_blank" rel="noopener"><i aria-hidden="true" class="bi bi-book"></i> ${t('devtpl.guide', 'Guide: writing a template')}</a>
+                </div></div>`);
 
         const errKeys = Object.keys(loadErrors);
         const errBanner = errKeys.length

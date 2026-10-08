@@ -21,7 +21,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 template: editing.template || '',
                 enabled: editing.enabled !== false,
                 // a device on a bridge edits as "over network, this bridge, this bus"
-                protocol: editing.bridge && editing.protocol !== 'rtu_tap' ? 'rtu-tcp' : (editing.protocol || 'tcp'),
+                protocol: editing.protocol || 'tcp',      // resolved: rtu-tcp, tcp (through a gateway), rtu_tap…
                 bridge: editing.bridge || '', bridge_port: editing.bridge_port || null,
                 host: editing.host || '', port: editing.port || 502,
                 unit_id: editing.unit_id ?? 1, timeout: editing.timeout ?? 3,
@@ -41,6 +41,14 @@ Object.assign(JanitzaMonitor.prototype, {
         };
         // Prefill a fresh wizard from a discovered device (protocol/url/template/name/id…).
         if (prefill && !editing) Object.assign(this._devWiz.data, prefill);
+        // a device on a bus of a Modbus TCP gateway is a Modbus TCP device
+        if (this._devWiz.data.bridge && this._bridgeType && this._bridgeType(
+                (this._bridges || []).find(b => b.id === this._devWiz.data.bridge)?.type).framing === 'modbus_tcp')
+            this._devWiz.data.protocol = 'tcp';
+        // what the protocol may become when editing: Modbus variants share a
+        // register map (by address); HTTP and MQTT maps read by path
+        const _cls = p => (p === 'http' || p === 'mqtt') ? p : 'modbus';
+        this._devWiz.lockClass = editing ? _cls(this._devWiz.data.protocol) : null;
         document.getElementById('devWizTitle').textContent =
             editId ? this.t('devices.wizard.titleEdit', 'Edit Device') : this.t('devices.wizard.titleAdd', 'Add Device');
         this._devWizRender();
@@ -96,17 +104,23 @@ Object.assign(JanitzaMonitor.prototype, {
         // Protocol is fixed after creation: the template's register map is
         // transport-specific (Modbus reads by address, HTTP by json_path), so
         // switching transport would orphan the map.
-        const locked = !!this._devWiz.editId;
-        const lk = locked ? 'disabled' : '';
+        // editing: only the variants that keep the register map valid
+        const lockClass = this._devWiz.lockClass;
+        const cls = p => (p === 'http' || p === 'mqtt') ? p : 'modbus';
+        const off = p => lockClass && cls(p) !== lockClass;
+        const locked = !!lockClass;
+        const lk = p => off(p) ? 'disabled' : '';
         return `
         <div class="wiz-eyebrow">${this.t('devices.wizard.protoQ', 'How is it connected?')}</div>
         <div class="seg" role="radiogroup" aria-label="${this.t('devices.wizard.protocol', 'Protocol')}">
-            <label class="seg-btn ${tcp ? 'on' : ''} ${locked && !tcp ? 'disabled' : ''}"><input type="radio" name="devWizProto" value="tcp" ${tcp ? 'checked' : ''} ${lk}><span class="s"></span> Modbus TCP</label>
-            <label class="seg-btn ${isRtu ? 'on' : ''} ${locked && !isRtu ? 'disabled' : ''}"><input type="radio" name="devWizProto" value="rtu" ${isRtu ? 'checked' : ''} ${lk}><span class="s"></span> Modbus RTU</label>
-            <label class="seg-btn ${http ? 'on' : ''} ${locked && !http ? 'disabled' : ''}"><input type="radio" name="devWizProto" value="http" ${http ? 'checked' : ''} ${lk}><span class="s"></span> HTTP / JSON</label>
-            <label class="seg-btn ${d.protocol === 'mqtt' ? 'on' : ''} ${locked && d.protocol !== 'mqtt' ? 'disabled' : ''}"><input type="radio" name="devWizProto" value="mqtt" ${d.protocol === 'mqtt' ? 'checked' : ''} ${lk}><span class="s"></span> MQTT</label>
+            <label class="seg-btn ${tcp ? 'on' : ''} ${off('tcp') ? 'disabled' : ''}"><input type="radio" name="devWizProto" value="tcp" ${tcp ? 'checked' : ''} ${lk('tcp')}><span class="s"></span> Modbus TCP</label>
+            <label class="seg-btn ${isRtu ? 'on' : ''} ${off('rtu') ? 'disabled' : ''}"><input type="radio" name="devWizProto" value="rtu" ${isRtu ? 'checked' : ''} ${lk('rtu')}><span class="s"></span> Modbus RTU</label>
+            <label class="seg-btn ${http ? 'on' : ''} ${off('http') ? 'disabled' : ''}"><input type="radio" name="devWizProto" value="http" ${http ? 'checked' : ''} ${lk('http')}><span class="s"></span> HTTP / JSON</label>
+            <label class="seg-btn ${d.protocol === 'mqtt' ? 'on' : ''} ${off('mqtt') ? 'disabled' : ''}"><input type="radio" name="devWizProto" value="mqtt" ${d.protocol === 'mqtt' ? 'checked' : ''} ${lk('mqtt')}><span class="s"></span> MQTT</label>
         </div>
-        ${locked ? `<div class="field-hint" style="margin:-8px 0 14px;"><i aria-hidden="true" class="bi bi-lock"></i> ${this.t('devices.wizard.protoLocked', 'Fixed after creation — the template map is transport-specific.')}</div>` : ''}
+        ${locked ? `<div class="field-hint" style="margin:-8px 0 14px;"><i aria-hidden="true" class="bi bi-lock"></i> ${lockClass === 'modbus'
+            ? this.t('devices.wizard.protoModbusOnly', 'A Modbus device can move between Modbus TCP, RTU, over the network or listen-only — its register map stays valid. HTTP and MQTT read by path, so they need a new device.')
+            : this.t('devices.wizard.protoLocked', 'Fixed after creation — the template map is transport-specific.')}</div>` : ''}
         <div id="devWizHttpFields" style="display:${http ? '' : 'none'}">
             <div class="form-group">
                 <label class="form-label" for="devWizUrl">${this.t('devices.wizard.httpUrl', 'JSON endpoint URL')}</label>
@@ -118,12 +132,13 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="wiz-test-result" id="devWizTestResult3" role="status"></div>
         </div>
         <div id="devWizTcpFields" style="display:${tcp ? '' : 'none'}">
+            ${this._devWizGatewayPickHtml(d)}
             <div class="form-row">
-                <div class="form-group flex-2">
+                <div class="form-group flex-2" ${tcp && d.bridge ? 'style="display:none"' : ''}>
                     <label class="form-label" for="devWizHost">${this.t('lbl.hostIp', "Host / IP")}</label>
                     <input type="text" id="devWizHost" class="input" value="${this._esc(d.host)}" placeholder="192.168.1.60">
                 </div>
-                <div class="form-group">
+                <div class="form-group" ${tcp && d.bridge ? 'style="display:none"' : ''}>
                     <label class="form-label" for="devWizPort">${this.t('lbl.port', "Port")}</label>
                     <input type="number" id="devWizPort" class="input" aria-label="Port" value="${d.port}" min="1" max="65535">
                     <div class="field-hint">1–65535 · ${this.t('common.default', 'default')} 502</div>
@@ -457,12 +472,14 @@ Object.assign(JanitzaMonitor.prototype, {
                     // RTU defaults to over-network (bridge) — the recommended mode;
                     // the sub-toggle lets the user switch to direct serial.
                     w.data.protocol = r.value === 'rtu' ? 'rtu-tcp' : r.value;
+                    this._devWizFitBridge();
                     this._devWizRender();
                 }));
             document.querySelectorAll('input[name="devWizRtuMode"]').forEach(r =>
                 r.addEventListener('change', () => {
                     this._devWizCollect();
                     w.data.protocol = r.value;          // 'rtu' | 'rtu-tcp' | 'rtu_tap'
+                    this._devWizFitBridge();
                     this._devWizRender();
                 }));
         } else if (w.step === 2) {
@@ -594,6 +611,13 @@ Object.assign(JanitzaMonitor.prototype, {
             if (d.protocol === 'http') {
                 d.url = g('devWizUrl')?.value.trim() ?? d.url;
             } else if (d.protocol === 'tcp') {
+                if (g('devWizGw')) {
+                    const [b, p] = (g('devWizGw').value || '').split('::');
+                    d.bridge = b || '';
+                    d.bridge_port = parseInt(p, 10) || null;
+                } else if (d.bridge && this._bridgeType(((this._bridges || []).find(x => x.id === d.bridge) || {}).type).framing !== 'modbus_tcp') {
+                    d.bridge = ''; d.bridge_port = null;     // came from an RTU bridge: TCP is direct
+                }
                 d.host = g('devWizHost')?.value.trim() ?? d.host;
                 d.port = parseInt(g('devWizPort')?.value, 10) || 502;
                 d.unit_id = parseInt(g('devWizUnit')?.value, 10) ?? 1;
@@ -655,7 +679,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
     _devWizValidate() {
         const w = this._devWiz, d = w.data;
-        if (w.step === 1 && d.protocol === 'tcp' && !d.host) return this._wizInvalid('devWizHost');
+        if (w.step === 1 && d.protocol === 'tcp' && !d.host && !d.bridge) return this._wizInvalid('devWizHost');
         if (w.step === 1 && (d.protocol === 'rtu' || (d.protocol === 'rtu_tap' && !d.bridge)) && !d.serial_port)
             return this._wizInvalid('devWizSerial');
         if (w.step === 1 && d.protocol === 'rtu-tcp' && !d.host && !d.bridge) return this._wizInvalid('devWizAdapter');
@@ -704,6 +728,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 ? { bridge: d.bridge, bridge_port: d.bridge_port, unit_id: d.unit_id, timeout: d.timeout }
                 : d.protocol === 'rtu-tcp'
                 ? { protocol: 'rtu-tcp', host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout }
+                : d.bridge
+                ? { bridge: d.bridge, bridge_port: d.bridge_port, unit_id: d.unit_id, timeout: d.timeout }
                 : { protocol: 'tcp', host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout };
             const r = await fetch('/api/devices/test', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -742,6 +768,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 : d.protocol === 'mqtt'
                 ? { protocol: 'mqtt', broker: d.broker, port: d.mqtt_port || 1883, topic: d.topic,
                     username: d.mqtt_username || '', password: d.mqtt_password || '', tls: !!d.mqtt_tls }
+                : d.protocol === 'tcp' && d.bridge
+                ? { bridge: d.bridge, bridge_port: d.bridge_port, unit_id: d.unit_id, timeout: d.timeout }
                 : d.protocol === 'tcp'
                 ? { protocol: 'tcp', host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout }
                 : d.protocol === 'rtu-tcp' && d.bridge
@@ -782,8 +810,47 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     // the bridge and bus a device on the network side of RS-485 is read through
+    // a bridge chosen in one mode that the new mode cannot use is dropped:
+    // TCP goes through a gateway, RTU over the network and listening need RTU
+    _devWizFitBridge() {
+        const d = this._devWiz.data;
+        if (!d.bridge) return;
+        const gw = this._bridgeType(((this._bridges || []).find(b => b.id === d.bridge) || {}).type).framing === 'modbus_tcp';
+        const ok = d.protocol === 'tcp' ? gw : (d.protocol === 'rtu-tcp' || d.protocol === 'rtu_tap') ? !gw : false;
+        if (!ok) { d.bridge = ''; d.bridge_port = null; }
+    },
+
+    // bridges that pass RTU frames (a Modbus TCP gateway is reached as TCP)
+    _rtuBridges() {
+        return (this._bridges || []).filter(b => this._bridgeType(b.type).framing !== 'modbus_tcp');
+    },
+
+    // Modbus TCP: directly, or through a Modbus TCP gateway's bus
+    _devWizGatewayPickHtml(d) {
+        const t = (k, def, p) => this.t(k, def, p);
+        const buses = [];
+        for (const b of this._bridges || []) {
+            if (this._bridgeType(b.type).framing !== 'modbus_tcp') continue;
+            for (const p of b.ports || []) buses.push({ b, p });
+        }
+        if (!buses.length) return '';
+        const cur = d.protocol === 'tcp' && d.bridge ? `${d.bridge}::${d.bridge_port || (buses.find(x => x.b.id === d.bridge)?.p.port ?? '')}` : '';
+        return `<div class="form-row"><div class="form-group flex-2">
+            <label class="form-label" for="devWizGw">${t('devices.wizard.gwWhere', 'Reached')}</label>
+            <select id="devWizGw" class="input" data-action="_devWizTapWhereChanged" data-on="change">
+              <option value="" ${cur ? '' : 'selected'}>${t('devices.wizard.gwDirect', 'Directly — its own IP and port')}</option>
+              ${buses.map(({ b, p }) => {
+                  const v = `${b.id}::${p.port}`;
+                  const n = (p.devices || []).filter(x => x.id !== d.id).length;
+                  return `<option value="${this._esc(v)}" ${v === cur ? 'selected' : ''}>${this._esc(t('devices.wizard.gwVia', 'Through the gateway {name} · {host}:{port}', { name: b.name || b.id, host: b.host, port: p.port }))}${n ? ' · ' + this._esc(t('bridges.nDevices', '{n} device(s)', { n })) : ''}</option>`;
+              }).join('')}
+            </select>
+            <div class="field-hint">${t('devices.wizard.gwHint', 'An RS-485 slave behind a converter in “Modbus TCP to RTU” mode: pick the gateway, then the slave’s unit ID. The gateway’s address and connection limit come from the bridge.')}</div>
+          </div></div>`;
+    },
+
     _devWizBridgePickHtml(d) {
-        const bridges = this._bridges || [];
+        const bridges = this._rtuBridges();
         const t = (k, def, p) => this.t(k, def, p);
         if (!bridges.length) {
             return `<div class="field-hint" style="margin-bottom:8px;">${t('devices.wizard.noBridge', 'No bridge yet. A bridge is the box the bus is reached through — our serial bridge on a Raspberry Pi or server, or an RS-485-to-Ethernet converter (Waveshare, USR, Elfin…).')}
@@ -809,7 +876,6 @@ Object.assign(JanitzaMonitor.prototype, {
           <div class="field-hint" id="devWizBridgeHint2" style="margin-bottom:8px;">${used.length
               ? this._esc(t('devices.wizard.busHas', 'Also on this bus: {list} — each slave needs its own unit id; they take turns on one connection.', { list: used.map(x => `${x.name || x.id} (unit ${x.unit_id})`).join(', ') }))
               : this._esc(t('devices.wizard.busEmpty', 'First device on this bus.'))}
-            ${this._esc(this._bridgeType(cur.type).framing === 'modbus_tcp' ? t('devices.wizard.viaGateway', 'Read as Modbus TCP through the gateway.') : '')}
             · <a href="#" ${this._act('_devWizShowLegacyScan', [])}>${t('devices.wizard.legacyScan', 'scan a bridge next to the gateway instead')}</a></div>`;
     },
 
@@ -847,7 +913,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const d = this._devWiz.data;
         const b = document.getElementById('devWizBridge')?.value;
         // the picker shows the first bridge until one is chosen
-        const shown = d.bridge || ((this._bridges || [])[0] || {}).id;
+        const shown = d.bridge || (this._rtuBridges()[0] || {}).id;
         if (b !== shown) { d.bridge = b; d.bridge_port = null; }
         else d.bridge_port = parseInt(document.getElementById('devWizBridgePort')?.value, 10) || null;
         d.unit_id = parseInt(document.getElementById('devWizUnitBr')?.value, 10) || d.unit_id;

@@ -459,6 +459,6 @@ Object.assign(JanitzaMonitor.prototype, {
         const used = ((this._bridges || []).find(b => b.id === bridgeId)?.ports || [])
             .find(p => +p.port === +port)?.devices?.map(d => +d.unit_id) || [];
         let unit = 1; while (used.includes(unit)) unit++;
-        this.openDeviceWizard(null, { protocol: 'rtu-tcp', bridge: bridgeId, bridge_port: +port, unit_id: unit });
+        this.openDeviceWizard(null, { protocol: 'rtu-tcp', bridge: bridgeId, bridge_port: +port, unit_id: unit });   // a gateway's bus opens as TCP
     },
 });

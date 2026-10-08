@@ -47,6 +47,12 @@ Object.assign(JanitzaMonitor.prototype, {
             .map(t => `<option value="${this._esc(t.id)}">${this._esc(t.name)}</option>`).join('');
         const noFree = pr.next_free == null;
         const canAdd = opts && !noFree;
+        // a disabled button says why — every template in use, or no port left
+        const whyNot = noFree
+            ? this.t('vmeter.noFreePort', 'No free port in range — widen VMETER_PORT_END.')
+            : !templates.length
+                ? this.t('vmeter.whyNoTpl', 'An instance serves a template — create one first.')
+                : this.t('vmeter.whyAllUsed', 'Every template already has an instance — each instance serves its own template; create another one.');
         const portHint = (pr.start != null)
             ? this.t('vmeter.portRange', 'published range {start}–{end}', { start: pr.start, end: pr.end })
               + (pr.used && pr.used.length ? ' · ' + this.t('vmeter.portUsed', 'used: {list}', { list: pr.used.join(', ') }) : '')
@@ -55,8 +61,11 @@ Object.assign(JanitzaMonitor.prototype, {
         this._vmAddCtx = { devices, primaryId, templates, configured, pr };
         const addBar = `
             <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
-              <button class="btn btn-primary btn-sm" id="vmAddInstanceBtn" ${canAdd ? '' : 'disabled'}>
+              <span style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <button class="btn btn-primary btn-sm" id="vmAddInstanceBtn" ${canAdd ? '' : 'disabled'} title="${this._esc(canAdd ? '' : whyNot)}">
                 <i aria-hidden="true" class="bi bi-plus-lg"></i> ${this.t('vmeter.addInstance', 'Add instance')}</button>
+              ${canAdd || !insts.length ? '' : `<span class="field-hint">${this._esc(whyNot)}${opts ? '' : ` <a href="#" ${this._act('vmShowTab', ['templates'])}>${this.t('vmeter.newTemplate', 'Create a template')}</a>`}</span>`}
+              </span>
               ${portHint ? `<span style="color:var(--text-secondary);font-size:12px;">${noFree ? `<span style="color:#e08e0b;">${this.t('vmeter.noFreePort', 'No free port in range — widen VMETER_PORT_END.')}</span> ` : ''}${portHint}</span>` : ''}
             </div>`;
         // say what to do FIRST: an instance needs a template, and the button
@@ -721,12 +730,15 @@ Object.assign(JanitzaMonitor.prototype, {
         // instance binds); named groups emit explicit `device.register` values.
         try {
             const devices = (this._vmAddCtx && this._vmAddCtx.devices) || this._devices || [];
-            const groups = [{ device: '', label: this.t('vmeter.srcInstance', "Instance's source device (bare name)"),
+            // the bare group FOLLOWS whichever device an instance binds; its
+            // values are only a preview, taken from the primary device
+            const prim = devices.find(d => d.id === this._primaryDeviceId?.());
+            const groups = [{ device: '', label: this.t('vmeter.srcInstance2', "The instance's own device — follows the device each instance binds (values previewed from {dev})", { dev: prim ? (prim.name || prim.id) : this.t('vmeter.primary', 'the primary device') }),
                               sources: this._vmSources }];
             const others = await Promise.all(devices.map(async d => {
                 try {
                     const s = await (await fetch(`/api/virtual-meters/sources?device=${encodeURIComponent(d.id)}`)).json();
-                    return { device: d.id, label: `${d.name || d.id} (${d.id})`, sources: s.sources || [] };
+                    return { device: d.id, label: this.t('vmeter.srcFixed', 'Always {dev}', { dev: `${d.name || d.id} (${d.id})` }), sources: s.sources || [] };
                 } catch (e) { return { device: d.id, label: d.id, sources: [] }; }
             }));
             this._vmSourceGroups = groups.concat(others.filter(g => g.sources.length));

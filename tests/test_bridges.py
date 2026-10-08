@@ -387,3 +387,25 @@ def test_lan_discovery_route_keeps_to_the_lan(tmp_path):
     cfg, client = make_app(tmp_path)
     r = client.post("/api/bridges/discover", json={"cidr": "8.8.8.0/30"})
     assert r.status_code == 422 and "LAN" in r.text
+
+
+@needs_tc
+def test_a_modbus_device_changes_transport_keeping_its_map(tmp_path):
+    """Editing may move a device between the Modbus variants (its map reads by
+    address either way); HTTP/MQTT stay refused by the template-class check."""
+    cfg, client = make_app(tmp_path)
+    assert client.post("/api/bridges", json={"id": "gw", "name": "GW", "type": "modbus_gateway",
+                                             "host": "192.0.2.61", "ports": [{"port": 502}]}).status_code == 200
+    base = {"id": "mv", "template": "fronius_smart_meter_65a", "enabled": False}
+    assert client.post("/api/devices", json={**base, "connection": {"protocol": "tcp", "host": "192.0.2.9",
+                                                                    "port": 502, "unit_id": 1}}).status_code == 200
+    r = client.put("/api/devices/mv", json={**base, "connection": {"protocol": "rtu", "serial_port": "/dev/ttyX",
+                                                                   "baudrate": 9600, "unit_id": 1}})
+    assert r.status_code == 200, r.text
+    assert next(d for d in cfg.devices if d.id == "mv").protocol == "rtu"
+    r = client.put("/api/devices/mv", json={**base, "connection": {"bridge": "gw", "bridge_port": 502, "unit_id": 4}})
+    assert r.status_code == 200, r.text
+    d = next(d for d in cfg.devices if d.id == "mv")
+    assert (d.protocol, d.connection.host, d.connection.unit_id) == ("tcp", "192.0.2.61", 4)
+    r = client.put("/api/devices/mv", json={**base, "connection": {"protocol": "http", "url": "http://192.168.1.5/x"}})
+    assert r.status_code == 422
