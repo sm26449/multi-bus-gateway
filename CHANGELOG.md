@@ -1,5 +1,46 @@
 # Changelog
 
+## 3.90.0
+
+**Upgrade notes:** nothing to do. The bridge kinds gained a `lan_discovery`
+block. If you keep your own kind in `bridge_types/`, add one so **Find on
+the LAN** looks for it.
+
+### 2026-10-08 — bridges: listening through a bridge, finding bridges, one bus's diagnostics
+
+- **Listen-only through a bridge.** A bus another master polls (a BMS
+  master pack, a datalogger) can now be heard through a transparent
+  converter or our serial bridge on another host, not only through a serial
+  port next to the gateway. In **Add Device → Modbus RTU → Listen only**,
+  *Where the bus is* offers the transparent bridges' buses. Several listening
+  devices share one connection to the bridge, and the gateway never writes
+  a byte to it.
+  - A Modbus TCP gateway is refused: it only answers questions.
+  - A bus is polled or tapped, never both, as on a serial port.
+  - A tapped bus shows *listening · N frames · M CRC errors*, or *link lost*
+    while the bridge is away. The gateway reconnects on its own.
+  - **Scan** and **Check mode** are refused there: they would transmit.
+- **Find bridges on the LAN.** **Add bridge → Find bridges on the LAN** (or
+  **Find on the LAN** above the bridges) looks through a range for the
+  ports each kind declares.
+  - Our bridge is named by its `/health`, with its version.
+  - A converter is told transparent or gateway by asking one register both
+    ways.
+  - **Add bridge** on a find fills in the kind, the IP and the port.
+  - Bridges already added are not knocked on.
+- **One bus's diagnostics.**
+  - **Monitor** on a bus opens *Diagnostics* with the bus monitor filtered
+    to that bus. A new *bus* filter there lists every bus by its bridge's
+    name.
+  - The **register probe** takes a **unit**: it asks any slave on a device's
+    bus, through that device's own connection, taking turns.
+- **Fixed:** on a bus several devices share, the bus monitor put every
+  transaction under the name of the device that happened to open the
+  connection. Each now carries the device that asked, and its bus.
+- **Guide:** [rtu-over-network.md](docs/rtu-over-network.md) §5 (Monitor,
+  probe), §5.1 (listening through a bridge), §5.2 (finding bridges), and new
+  troubleshooting rows.
+
 ## 3.89.0
 
 **Upgrade notes:** nothing to do for existing devices. To use the serial
