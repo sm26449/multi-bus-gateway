@@ -1,5 +1,72 @@
 # Changelog
 
+## 3.89.0
+
+**Upgrade notes:** nothing to do for existing devices. To use the serial
+bridge on another host, pull the new `multi-bus-gateway-serial-bridge` image
+there. A bridge started with `BRIDGE_TOKEN` answers its control API only
+with the token, so the bridge next to the gateway needs
+`SERIAL_BRIDGE_TOKEN` set to the same value if you give it one.
+
+### 2026-10-08 — bridges: RS-485 buses over the network, several slaves on a bus
+
+"Over network" meant one bridge container next to the gateway, one adapter
+per device, and nothing said how to run it. Now:
+
+- **Bridges on the Devices page.** A bridge is the box a bus is reached
+  through. Each one shows its state, its buses and the devices on each bus.
+  Three kinds, described by data (`bridge_types/*.json`), so a new kind is a
+  new file:
+  - **MBG serial bridge:** our container, on a Raspberry Pi or any Linux
+    host. It finds its own buses, and the gateway sets their baud and
+    parity.
+  - **Transparent converter:** Waveshare, USR, Elfin… passing raw RTU.
+  - **Modbus TCP gateway:** a converter in "Modbus TCP to RTU" mode,
+    reached with as many connections as it accepts.
+
+  A device names its bridge and bus; host, port and protocol come from the
+  bridge. Move a Pi to another IP and its devices follow.
+- **Several slaves on one bus.** Several devices with different unit IDs on
+  one bridge port, or one directly attached serial port, share ONE
+  connection and take turns. The old "one device per line" rule is gone; a
+  unit ID used twice on a bus is refused, with the device that has it.
+  **Test connection** on a busy bus asks through that shared connection
+  instead of refusing.
+- **Check mode** on a bus asks a slave one register as RTU and as Modbus
+  TCP, and says whether the box is transparent or a gateway, whether it
+  matches the bridge's type, or what is likely wrong (serial settings, unit
+  ID, 0x0B).
+- **Set-up** gives the exact `docker run` for our bridge on its host, token
+  included (shown only to an admin when login or an API key is on), and,
+  for every kind, what to set on the box.
+- **Add Device → Modbus RTU → Over network** picks a bridge and a bus,
+  proposes a free unit ID and lists the slaves already on that bus.
+- **Serial bridge image:**
+  - a control-API token (`BRIDGE_TOKEN`);
+  - per-bus serial settings (`POST /adapters/<key>/serial`, applied to that
+    port only);
+  - the host name and version it reports;
+  - `serial-bridge/docker-compose.bridge.yml` for a remote host, which
+    refuses to start without a token and publishes the data ports for the
+    LAN, with the firewall advice in it.
+- **Find the slaves:** **Scan** on a bus asks unit IDs 1–247 through the
+  bus's own connection, with the devices still reading in between. For each
+  slave that answers it shows what it probably is, and **Add** opens the
+  wizard on that bus and unit with the recognised template selected. The
+  recognition comes from a template's new `identify` block (registers that
+  must read given values, an FC43 pattern), from the device's FC43
+  identification, or from the SunSpec marker. The Fronius Smart Meter 65A
+  map identifies itself.
+- **How busy a bus is:** each bus shows the measured share of the wire its
+  devices use, per device on hover. Amber from 70%, red at 100%, with what
+  to do.
+- **Move a device** to another bus or bridge (⇄); its topics and history
+  stay. **Export / import bridges** as YAML, checked before written.
+- **Guide:** [rtu-over-network.md](docs/rtu-over-network.md) — which kind
+  of bridge when, a Pi step by step, Waveshare/USR/Elfin settings, several
+  slaves on a bus, security, troubleshooting. The bridge API is in
+  [serial-bridge-api.md](docs/serial-bridge-api.md).
+
 ## 3.88.0
 
 Nothing to do when upgrading.
