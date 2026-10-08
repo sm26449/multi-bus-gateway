@@ -166,7 +166,12 @@ class TapReader:
                 int(getattr(conn_cfg, 'bytesize', 8) or 8))
 
     def __init__(self, conn_cfg):
-        self.port = conn_cfg.serial_port
+        # a serial port on this host, or a bus behind a bridge: the bridge
+        # (our ser2net, a transparent converter) passes on every byte the bus
+        # carries — the framing is CRC-driven, so TCP's lost gaps do not matter
+        self.host = str(getattr(conn_cfg, 'host', '') or '') if not getattr(conn_cfg, 'serial_port', '') else ''
+        self.tcp_port = int(getattr(conn_cfg, 'port', 0) or 0)
+        self.port = conn_cfg.serial_port or f"{self.host}:{self.tcp_port}"
         self.line = self.line_of(conn_cfg)
         self.baudrate, self.parity, self.stopbits, self.bytesize = self.line
         self._clients: Dict[int, 'RtuTapClient'] = {}
@@ -210,6 +215,16 @@ class TapReader:
                 self._stop_locked()
 
     def _start_locked(self) -> bool:
+        if self.host:
+            # over the network: the wire loop connects (and reconnects) itself
+            self.open_error = ""
+            self._stop.clear()
+            self._serial = _TcpSource(self.host, self.tcp_port)
+            self._thread = threading.Thread(target=self._run, daemon=True,
+                                            name=f"rtu-tap:{self.port}")
+            self._thread.start()
+            logger.info("rtu_tap %s: listening through the bridge (read-only)", self.port)
+            return True
         try:
             import serial
             self._serial = serial.Serial(
@@ -250,8 +265,17 @@ class TapReader:
                 if self._stop.is_set():
                     break              # our own close() interrupted the read
                 self.open_error = str(e)
+                if isinstance(ser, _TcpSource):
+                    # a network hiccup: say so, wait, connect again
+                    logger.warning("rtu_tap %s: bridge connection lost — %s", self.port, e)
+                    ser.close()
+                    if self._stop.wait(3):
+                        break
+                    continue
                 logger.warning("rtu_tap %s: read failed — %s", self.port, e)
                 break
+            if isinstance(ser, _TcpSource) and data:
+                self.open_error = ""
             now = time.monotonic()
             for frame in framer.feed(data, now) + ([] if data else framer.flush(now)):
                 self._on_frame(frame, now)
@@ -396,8 +420,44 @@ class TapReader:
 
 
 # one reader per port, shared by every tap device on it
+class _TcpSource:
+    """The bytes of a bus behind a bridge, read like a serial port: ``read``
+    returns what arrived within 50 ms (b"" on a quiet bus), connecting first
+    when needed. The tap only ever reads — it never writes to the bus."""
+
+    def __init__(self, host: str, port: int):
+        self.host, self.port = host, port
+        self._sock = None
+
+    def read(self, n: int) -> bytes:
+        import socket
+        if self._sock is None:
+            self._sock = socket.create_connection((self.host, self.port), timeout=5)
+            self._sock.settimeout(0.05)
+        try:
+            data = self._sock.recv(n)
+        except socket.timeout:
+            return b""
+        if not data:
+            raise ConnectionError("the bridge closed the connection")
+        return data
+
+    def close(self) -> None:
+        if self._sock is not None:
+            try:
+                self._sock.close()
+            except OSError:
+                pass
+        self._sock = None
+
+
 _READERS: Dict[str, TapReader] = {}
 _READERS_LOCK = threading.Lock()
+
+
+def _reader_key(conn_cfg) -> str:
+    sp = getattr(conn_cfg, 'serial_port', '') or ''
+    return sp or f"tcp:{getattr(conn_cfg, 'host', '')}:{getattr(conn_cfg, 'port', 0)}"
 
 
 def reader_for(conn_cfg) -> TapReader:
@@ -406,10 +466,11 @@ def reader_for(conn_cfg) -> TapReader:
     gone, and an edited device may have changed its baud. Only on a MISMATCH:
     units are constructed before any of them connects, so "idle" alone would
     hand each its own reader, and the tty would be opened N times."""
+    key = _reader_key(conn_cfg)
     with _READERS_LOCK:
-        r = _READERS.get(conn_cfg.serial_port)
+        r = _READERS.get(key)
         if r is None or (not r._clients and r.line != TapReader.line_of(conn_cfg)):
-            r = _READERS[conn_cfg.serial_port] = TapReader(conn_cfg)
+            r = _READERS[key] = TapReader(conn_cfg)
         return r
 
 

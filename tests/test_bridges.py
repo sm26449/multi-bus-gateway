@@ -288,3 +288,102 @@ def test_a_device_moves_to_another_bus_keeping_its_identity_and_bridges_travel(t
     one_bus["bridges"][0]["ports"] = [{"port": 4196}]
     r = client.post("/api/bridges/import", json={"yaml": yaml.safe_dump(one_bus), "replace": True}).json()
     assert r["bridges"][0]["status"] == "invalid" and "4197" in r["bridges"][0]["errors"][0]
+
+
+@needs_tc
+def test_listening_through_a_bridge_a_bus_is_polled_or_tapped_never_both(tmp_path):
+    cfg, client = make_app(tmp_path)
+    for b in ({"id": "ws", "name": "Panel", "type": "rtu_transparent", "host": "192.0.2.60",
+               "ports": [{"port": 4196}, {"port": 4197}]},
+              {"id": "gw", "name": "GW", "type": "modbus_gateway", "host": "192.0.2.61",
+               "ports": [{"port": 502}]}):
+        assert client.post("/api/bridges", json=b).status_code == 200
+    tap = lambda did, unit, br="ws", port=4196: {  # noqa: E731
+        "id": did, "template": "fronius_smart_meter_65a", "enabled": False,
+        "connection": {"protocol": "rtu_tap", "bridge": br, "bridge_port": port, "unit_id": unit}}
+    r = client.post("/api/devices", json=tap("t1", 1))
+    assert r.status_code == 200, r.text
+    assert client.post("/api/devices", json=tap("t2", 2)).status_code == 200     # two taps, one bus
+    d = {x.id: x for x in cfg.devices}
+    assert (d["t1"].protocol, d["t1"].connection.host, d["t1"].connection.port) == ("rtu_tap", "192.0.2.60", 4196)
+    assert d["t1"].connection.bus == "192.0.2.60:4196"
+    # saved as the reference, listening kept
+    raw = next(x for x in cfg._raw_devices if x["id"] == "t1")["connection"]
+    assert raw == {"protocol": "rtu_tap", "bridge": "ws", "bridge_port": 4196, "unit_id": 1}
+    # the same unit twice, a polled device on a tapped bus, a gateway: refused
+    r = client.post("/api/devices", json=tap("t3", 1))
+    assert r.status_code == 422 and "already tapped" in r.text
+    r = client.post("/api/devices", json={"id": "p1", "template": "fronius_smart_meter_65a", "enabled": False,
+                                          "connection": {"bridge": "ws", "bridge_port": 4196, "unit_id": 9}})
+    assert r.status_code == 422 and "polled or tapped" in r.text
+    r = client.post("/api/devices", json=tap("t4", 1, br="gw", port=502))
+    assert r.status_code == 422 and "transparent bridge" in r.text
+    # …and the other way round: a polled bus takes no tap
+    assert client.post("/api/devices", json={"id": "p2", "template": "fronius_smart_meter_65a", "enabled": False,
+                                             "connection": {"bridge": "ws", "bridge_port": 4197,
+                                                            "unit_id": 1}}).status_code == 200
+    r = client.post("/api/devices", json=tap("t5", 3, port=4197))
+    assert r.status_code == 422 and "polled or tapped" in r.text
+    # the bridge says which bus is listened to, and nothing may transmit there
+    b = client.get("/api/bridges/ws").json()
+    by = {p["port"]: p for p in b["ports"]}
+    assert by[4196]["tapped"] is True and by[4197]["tapped"] is False
+    assert all(x["tap"] for x in by[4196]["devices"])
+    r = client.post("/api/bridges/ws/ports/4196/scan", json={})
+    assert r.status_code == 409 and "only listens" in r.text
+    r = client.post("/api/bridges/ws/probe", json={"port": 4196, "unit_id": 1})
+    assert r.status_code == 409
+
+
+def test_lan_discovery_names_our_bridge_and_tells_converters_apart():
+    """The kinds say where to look; our bridge answers /health, a converter is
+    told by asking one register both ways. A host already added is not touched."""
+    import http.server
+    from multibus.bridges import TYPES as _T
+    from multibus.bridges import discover
+
+    class Health(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            body = b'{"status": "ok", "adapters": 2, "version": "1.4.0"}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+    hs = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Health)
+    threading.Thread(target=hs.serve_forever, daemon=True).start()
+    tr, gw = _serve(_transparent), _serve(_gateway)
+    silent = socket.socket()
+    silent.bind(("127.0.0.1", 0))
+    silent.listen(4)
+    ports = {"h": hs.server_address[1], "t": tr.getsockname()[1], "g": gw.getsockname()[1],
+             "s": silent.getsockname()[1]}
+    conv = [ports["t"], ports["g"], ports["s"]]
+    types = {"mbg_serial_bridge": {**_T["mbg_serial_bridge"], "lan_discovery": {
+                 "ports": [ports["h"]], "http_path": "/health", "json_keys": ["adapters", "version"]}},
+             "rtu_transparent": {**_T["rtu_transparent"], "lan_discovery": {"ports": conv}},
+             "modbus_gateway": {**_T["modbus_gateway"], "lan_discovery": {"ports": conv}}}
+    try:
+        found = {x["port"]: x for x in discover(["127.0.0.1"], types=types, unit_id=3, timeout=0.3)}
+        assert found[ports["h"]]["type"] == "mbg_serial_bridge" and found[ports["h"]]["version"] == "1.4.0"
+        assert found[ports["t"]]["type"] == "rtu_transparent"
+        assert found[ports["g"]]["type"] == "modbus_gateway"
+        assert found[ports["s"]]["type"] == "" and set(found[ports["s"]]["candidates"]) == \
+            {"rtu_transparent", "modbus_gateway"}
+        again = discover(["127.0.0.1"], types=types, known={"127.0.0.1": "pi"}, timeout=0.3)
+        assert again == [{"host": "127.0.0.1", "port": None, "bridge": "pi", "type": "",
+                          "detail": "already added"}]
+    finally:
+        hs.shutdown()
+        for s in (tr, gw, silent):
+            s.close()
+
+
+@needs_tc
+def test_lan_discovery_route_keeps_to_the_lan(tmp_path):
+    cfg, client = make_app(tmp_path)
+    r = client.post("/api/bridges/discover", json={"cidr": "8.8.8.0/30"})
+    assert r.status_code == 422 and "LAN" in r.text

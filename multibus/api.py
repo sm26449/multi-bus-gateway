@@ -1370,6 +1370,39 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                         f"same line settings"]
         return []
 
+    def _network_bus_conflicts(protocol: str, conn: Dict, existing_id: str = None) -> List[str]:
+        """Who else is on the bus behind host:port. An rtu-tcp host:port IS one
+        RS-485 bus (and so is a Modbus TCP gateway's port reached through a
+        bridge). Several slaves on it are several devices: they share ONE socket
+        and take turns on it (the shared transport — a converter that accepts a
+        single client is never fought over). What must not repeat is the slave
+        address: two devices with one unit id on one bus would read the same
+        slave and answer for each other. And, as on a serial line, a bus is
+        either polled or tapped: a tap listens to another master, and the
+        bridge's one connection cannot be both ours to ask and ours to hear."""
+        _host = str(conn.get('host', '')).strip().lower()
+        try:
+            _port = int(conn.get('port', 502))
+            _unit = int(conn.get('unit_id', 1))
+        except (TypeError, ValueError):
+            return []
+        for d in config.devices:
+            dproto = getattr(d, 'protocol', '')
+            if (getattr(d, 'id', None) == existing_id
+                    or dproto not in ('tcp', 'rtu-tcp', 'rtu_tap')
+                    or str(getattr(d.connection, 'host', '')).strip().lower() != _host
+                    or int(getattr(d.connection, 'port', 0) or 0) != _port):
+                continue
+            if (dproto == 'rtu_tap') != (protocol == 'rtu_tap'):
+                return [f"connection.protocol: the bus at {_host}:{_port} is already "
+                        f"{'tapped' if dproto == 'rtu_tap' else 'polled'} by device '{d.id}' — "
+                        f"a bus is either polled or tapped, never both"]
+            if dproto == protocol and int(getattr(d.connection, 'unit_id', -1)) == _unit:
+                return [f"connection.unit_id: unit {_unit} on {_host}:{_port} is "
+                        f"already {'tapped' if protocol == 'rtu_tap' else 'read'} by device "
+                        f"'{d.id}' — each slave on a bus has its own address"]
+        return []
+
     def _test_on_shared_bus(conn: Dict, unit_id: int, address: int, timeout: float,
                             where: str, busy_id: str) -> Dict:
         """One read on a bus a running device already holds, through the same
@@ -1435,6 +1468,14 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 # what is SAVED is the reference; what is CHECKED is what it resolves to
                 _bridge_ref = {k: conn[k] for k in ('bridge', 'bridge_port', 'unit_id', 'timeout')
                                if conn.get(k) is not None}
+                if str(conn.get('protocol', '')).lower() == 'rtu_tap':
+                    # listening needs the bus's own bytes: a gateway turns them
+                    # into Modbus TCP and only answers questions asked of it
+                    if _bt.get('framing', 'rtu') != 'rtu':
+                        errors.append(f"connection.protocol: '{_br['id']}' is a Modbus TCP gateway — it only "
+                                      "answers questions, it does not pass the bus's traffic on; listening "
+                                      "needs a transparent bridge or the MBG serial bridge")
+                    _bridge_ref['protocol'] = 'rtu_tap'
                 conn = _resolve(conn, config.bridges)
                 _bridge_ref.setdefault('bridge_port', conn.get('port'))
         protocol = str(conn.get('protocol', 'tcp')).lower()
@@ -1477,6 +1518,14 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     raise ValueError
             except (TypeError, ValueError):
                 errors.append("connection.port: must be 1..65535")
+        elif protocol == 'rtu_tap' and _bridge_ref:
+            # a tap through a bridge: the bus is the bridge's port
+            errors.extend(_network_bus_conflicts(protocol, conn, existing_id))
+            try:
+                if not (0 <= int(conn.get('unit_id', 1)) <= 255):
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors.append("connection.unit_id: must be 0..255")
         elif protocol in ('rtu', 'rtu_tap'):
             sp = str(conn.get('serial_port', '')).strip()
             if not sp:
@@ -1505,30 +1554,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             except (TypeError, ValueError):
                 errors.append("connection.port: must be 1..65535")
             if protocol == 'rtu-tcp' or _bridge_ref:
-                # An rtu-tcp host:port IS one RS-485 bus (and so is a Modbus TCP
-                # gateway's port reached through a bridge). Several slaves on it
-                # are several devices: they share ONE socket to the bridge and
-                # take turns on it (the shared transport — a converter that
-                # accepts a single client is never fought over). What must not
-                # repeat is the slave address: two devices with one unit id on
-                # one bus would read the same slave and answer for each other.
-                _host = str(conn.get('host', '')).strip().lower()
-                try:
-                    _port = int(conn.get('port', 502))
-                    _unit = int(conn.get('unit_id', 1))
-                except (TypeError, ValueError):
-                    _port = _unit = None
-                for d in config.devices:
-                    if (getattr(d, 'id', None) != existing_id
-                            and getattr(d, 'protocol', '') == protocol
-                            and str(getattr(d.connection, 'host', '')).strip().lower() == _host
-                            and int(getattr(d.connection, 'port', 0) or 0) == _port
-                            and int(getattr(d.connection, 'unit_id', -1)) == _unit):
-                        errors.append(
-                            f"connection.unit_id: unit {_unit} on {_host}:{_port} is "
-                            f"already read by device '{d.id}' — each slave on a bus "
-                            f"has its own address")
-                        break
+                errors.extend(_network_bus_conflicts(protocol, conn, existing_id))
             try:
                 unit = int(conn.get('unit_id', 1))
                 if not (0 <= unit <= 255):
@@ -1730,7 +1756,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             elif proto == 'mqtt':
                 address = str((src.mqtt_in or {}).get('topic', ''))
             elif proto in ('rtu', 'rtu_tap'):
-                address = f"{src.connection.serial_port} · unit {src.connection.unit_id}"
+                address = f"{src.connection.bus} · unit {src.connection.unit_id}"
             else:
                 address = f"{src.connection.host}:{src.connection.port} · unit {src.connection.unit_id}"
             regs, groups = config.load_device_registers(dev_cfg, source=src)
@@ -4666,15 +4692,15 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         "the master never asks unit 7"."""
         c = dev_cfg.connection
         if client is None or not hasattr(client, 'get_stats'):
-            return {"ok": False, "message": f"not listening on {c.serial_port} "
+            return {"ok": False, "message": f"not listening on {c.bus} "
                                             "(device disabled or not started)"}
         st = client.get_stats()
         bus = st.get('bus') or {}
         if bus.get('open_error'):
-            return {"ok": False, "message": f"{c.serial_port}: {bus['open_error']}"}
+            return {"ok": False, "message": f"{c.bus}: {bus['open_error']}"}
         frames = int(bus.get('frames') or 0)
         if not frames:
-            return {"ok": False, "message": f"{c.serial_port} is open but silent — no "
+            return {"ok": False, "message": f"{c.bus} is open but silent — no "
                                             "valid frame yet (master off? A/B swapped? "
                                             f"line not {c.baudrate} {c.parity})"}
         wins, age = st.get('successful_reads') or 0, st.get('staleness_age_s')
@@ -4683,7 +4709,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                                             f"nothing for unit {c.unit_id} yet"}
         return {"ok": True, "message": f"hearing unit {c.unit_id} — {wins} windows, "
                                        f"last {age} s ago · {frames} frames on "
-                                       f"{c.serial_port}"}
+                                       f"{c.bus}"}
 
     @app.post("/api/devices/{device_id}/test")
     def test_device(device_id: str):

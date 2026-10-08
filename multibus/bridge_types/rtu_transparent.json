@@ -14,5 +14,12 @@
     "Set the serial side to the bus's baud / parity / stop bits — the gateway cannot set them on this kind of device.",
     "Packet interval / 'gap' at least 10 ms (or 'auto'): too short and the converter cuts a frame in two.",
     "Only the gateway connects to it: a second client would take the line away."
-  ]
+  ],
+  "lan_discovery": {
+    "ports": [
+      4196,
+      8899,
+      20108
+    ]
+  }
 }

@@ -243,3 +243,47 @@ def test_probe_api_on_fake_device(api_client):
     r = api_client.post("/api/diagnostics/probe",
                         json={"device": "umg512", "address": "abc"})
     assert r.status_code == 400
+
+
+def test_a_shared_client_labels_each_transaction_with_the_unit_that_asked():
+    """Several units on one bus ride ONE client: the label it was built with
+    is only the first unit's — each commit names the unit, and its bus."""
+    tr, c = BusTrace(), FakeClient()
+    tr.instrument(c, label="first", proto="rtu")
+    tr.configure(enabled=True)
+    c.send(rtu_adu(1, REQ_FC3)); tr.commit(c, "meter", "192.0.2.60:4196")
+    c.send(rtu_adu(2, REQ_FC3)); tr.commit(c, "inverter", "192.0.2.60:4196")
+    c.send(rtu_adu(1, REQ_FC3)); tr.commit(c, "bms", "/dev/ttyUSB0")
+    ents = tr.snapshot()["entries"]
+    assert [e["device"] for e in ents] == ["meter", "inverter", "bms"]
+    assert [e["device"] for e in tr.snapshot(bus="192.0.2.60:4196")["entries"]] == ["meter", "inverter"]
+
+
+@needs_tc
+def test_probe_asks_another_unit_through_the_devices_own_connection(tmp_path):
+    """The probe reads any unit on a device's bus — through that device's
+    shared connection, taking turns, never a second socket."""
+    from types import SimpleNamespace
+    from fastapi.testclient import TestClient
+    from multibus.api import create_api
+    from multibus.modbus_client import ModbusConfig, ModbusConnection, _TRANSPORTS
+    from tests.test_shared_transport import _Client
+    _TRANSPORTS.clear()
+    _Client.ok = True
+    own = ModbusConnection(ModbusConfig(host="192.0.2.90", port=502, unit_id=1, retry_attempts=1,
+                                        retry_delay=0), trace_label="umg512")
+    own._new_client = _Client
+    own.connect()
+    cfg = write_config(tmp_path)
+    fake = SimpleNamespace(publish_callback=None, connection=own)
+    app, _ = create_api(cfg, fake, None, None, devices=[(d, fake) for d in cfg.devices])
+    client = TestClient(app, raise_server_exceptions=False)
+    r = client.post("/api/diagnostics/probe", json={"device": "umg512", "address": 0, "unit_id": 7})
+    assert r.status_code == 200 and r.json()["ok"] is True and r.json()["unit_id"] == 7
+    r = client.post("/api/diagnostics/probe", json={"device": "umg512", "address": 0})
+    assert r.json()["ok"] is True and "unit_id" not in r.json()
+    assert own.client.asked == [7, 1]               # one socket, both questions
+    assert own.connected                             # the device's link survives the probe
+    assert client.post("/api/diagnostics/probe", json={"device": "umg512", "address": 0,
+                                                       "unit_id": 300}).status_code == 400
+    _TRANSPORTS.clear()

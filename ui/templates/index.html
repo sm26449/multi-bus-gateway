@@ -536,6 +536,9 @@
                     <select id="diagDeviceFilter" class="form-select diag-filter" aria-label="Filter by device">
                         <option value="" data-i18n="diag.allDevices">All devices</option>
                     </select>
+                    <select id="diagBusFilter" class="form-select diag-filter" aria-label="Filter by bus">
+                        <option value="" data-i18n="diag.allBuses">All buses</option>
+                    </select>
                 </div>
                 <div class="diag-table-wrap">
                     <table class="data-table diag-table">
@@ -559,6 +562,9 @@
                 <p class="field-hint" data-i18n="probe.subtitle">One-shot read on any Modbus device with every interpretation side by side — data type × word order (ABCD / CDAB / BADC / DCBA). Read-only. With the capture running, the probe's frames show up in the monitor above, exception replies included.</p>
                 <div class="diag-toolbar diag-probe-form">
                     <select id="probeDevice" class="form-select diag-filter" aria-label="Device"></select>
+                    <input id="probeUnit" class="form-input diag-probe-addr" type="number" min="0" max="255"
+                           placeholder="Unit (its own)" data-i18n-placeholder="probe.unit" aria-label="Unit id"
+                           title="Another slave on the same bus: asked through this device's connection, taking turns" data-i18n-title="probe.unitTip">
                     <input id="probeAddr" class="form-input diag-probe-addr" type="number" min="0" max="65535"
                            placeholder="Address" data-i18n-placeholder="probe.addr" aria-label="Register address">
                     <select id="probeType" class="form-select" aria-label="Register type">

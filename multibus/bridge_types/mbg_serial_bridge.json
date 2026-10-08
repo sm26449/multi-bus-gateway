@@ -14,5 +14,15 @@
     "Run the bridge on the host the adapters are plugged into — the gateway shows the exact command.",
     "Open the data ports (7001…) and the control port (7000) to the gateway's IP only: data ports carry raw Modbus, which has no authentication.",
     "The token protects the control port; the gateway keeps it."
-  ]
+  ],
+  "lan_discovery": {
+    "ports": [
+      7000
+    ],
+    "http_path": "/health",
+    "json_keys": [
+      "adapters",
+      "version"
+    ]
+  }
 }

@@ -10,6 +10,14 @@
 
 Object.assign(JanitzaMonitor.prototype, {
 
+    // the bus monitor (Diagnostics), showing only this bus's traffic
+    openBusMonitor(bus) {
+        this._diagBus = bus;
+        const sel = document.getElementById('diagBusFilter');
+        if (sel) sel.value = bus;
+        this.navigateTo('diagnostics');
+    },
+
     async _loadBridges() {
         try {
             const [b, t] = await Promise.all([fetch('/api/bridges'), fetch('/api/bridge-types')]);
@@ -27,7 +35,8 @@ Object.assign(JanitzaMonitor.prototype, {
         const t = (k, d, p) => this.t(k, d, p);
         const bar = `<div class="bridges-bar"><span class="field-hint"><i aria-hidden="true" class="bi bi-hdd-network"></i> ${t('bridges.title', 'Bridges')}</span>
             <a class="btn btn-ghost btn-sm" href="/api/bridges/export" download><i aria-hidden="true" class="bi bi-download"></i> ${t('bridges.export', 'Export')}</a>
-            <button data-admin class="btn btn-ghost btn-sm" ${this._act('openBridgesImport', [])}><i aria-hidden="true" class="bi bi-upload"></i> ${t('bridges.import', 'Import')}</button></div>`;
+            <button data-admin class="btn btn-ghost btn-sm" ${this._act('openBridgesImport', [])}><i aria-hidden="true" class="bi bi-upload"></i> ${t('bridges.import', 'Import')}</button>
+            <button data-admin class="btn btn-ghost btn-sm" ${this._act('openBridgesDiscover', [])}><i aria-hidden="true" class="bi bi-radar"></i> ${t('bridges.find', 'Find on the LAN')}</button></div>`;
         const dot = { online: 'var(--success,#22c55e)', degraded: 'var(--warning,#f59e0b)',
                       offline: 'var(--danger,#ef4444)', unknown: 'var(--text-secondary)', checking: 'var(--text-secondary)' };
         return bridges.map(b => {
@@ -42,16 +51,19 @@ Object.assign(JanitzaMonitor.prototype, {
                     ${p.serial_text || p.serial ? `<span class="dev-chip">${this._esc(p.serial_text || p.serial)}</span>` : ''}
                     <span class="field-hint">${t('bridges.nDevices', '{n} device(s)', { n: (p.devices || []).length })}</span>
                     ${p.busy ? `<span class="sink-pill ${p.busy.level === 'full' ? 'bad' : p.busy.level === 'high' ? 'warn' : 'ok'}" title="${this._esc(this._busyTitle(p))}">${t('bridges.busy', 'bus {pct}% busy', { pct: p.busy.pct })}</span>` : ''}
-                    <span class="bridge-port-actions">
+                    ${p.tapped ? `<span class="sink-pill ${p.wire?.error ? 'bad' : 'ok'}" title="${this._esc(p.wire?.error || t('bridges.tappedHint', 'Another master polls this bus; the gateway only listens. Scan, Check mode and polled devices are off here — they would transmit.'))}"><i aria-hidden="true" class="bi bi-ear"></i> ${p.wire?.error ? this._esc(t('bridges.tapLost', 'listening — link lost')) : this._esc(t('bridges.tapped', 'listening · {frames} frames · {crc} CRC errors', { frames: p.wire?.frames ?? 0, crc: p.wire?.crc_errors ?? 0 }))}</span>` : ''}
+                    ${p.tapped ? '' : `<span class="bridge-port-actions">
                       <button data-admin class="btn btn-ghost btn-sm" ${this._act('busScan', [b.id, p.port])} title="${this._esc(t('bridges.scanBusHint', 'Ask every unit id on this bus who answers, and what it probably is'))}"><i aria-hidden="true" class="bi bi-search"></i> ${t('bridges.scanBus', 'Scan')}</button>
                       <button data-admin class="btn btn-ghost btn-sm" ${this._act('addDeviceOnBus', [b.id, p.port])} title="${this._esc(t('bridges.addDeviceHint', 'Add a device (a slave) on this bus'))}"><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('bridges.addDevice', 'Device')}</button>
                       <button data-admin class="btn btn-ghost btn-sm" ${this._act('bridgeProbe', [b.id, p.port])} title="${this._esc(t('bridges.probeHint', 'Ask a slave on this bus one register, as RTU and as Modbus TCP — tells whether the box is transparent or a gateway'))}"><i aria-hidden="true" class="bi bi-activity"></i> ${t('bridges.probe', 'Check mode')}</button>
-                    </span>
+                      <button class="btn btn-ghost btn-sm" ${this._act('openBusMonitor', [`${b.host}:${p.port}`])} title="${this._esc(t('bridges.monitorHint', 'Diagnostics, this bus only: every question and answer on the wire, and the register probe for any unit on it'))}"><i aria-hidden="true" class="bi bi-reception-4"></i> ${t('bridges.monitor', 'Monitor')}</button>
+                    </span>`}
                   </div>
                   ${(p.devices || []).map(d => `
                     <div class="bridge-dev" role="button" tabindex="0" ${this._act(d.endpoint_id ? 'openEndpointDetail' : 'openDeviceDetail', [d.endpoint_id || d.id])}>
                       <span class="status-dot" style="--dot:${healthColor[d.health] || healthColor.idle}"></span>
                       <span class="dev-chip">unit ${this._esc(d.unit_id)}</span>
+                      ${d.tap ? `<span class="dev-chip" title="${this._esc(t('bridges.tapDevHint', 'listen-only'))}"><i aria-hidden="true" class="bi bi-ear"></i></span>` : ''}
                       <span>${this._esc(d.name || d.id)}</span>
                       ${d.endpoint_id ? `<span class="field-hint">${t('bridges.inInstallation', 'in an installation')}</span>` : ''}
                       ${!d.endpoint_id ? `<button data-admin class="btn btn-ghost btn-sm bridge-move" ${this._act('openDeviceWizard', [d.id])} title="${this._esc(t('bridges.moveHint', 'Edit — or move it to another bus or bridge; its topics and history stay'))}" aria-label="${this._esc(t('common.edit', 'Edit'))}"><i aria-hidden="true" class="bi bi-arrow-left-right"></i></button>` : ''}
@@ -144,6 +156,69 @@ Object.assign(JanitzaMonitor.prototype, {
                                       unit_id: +unit, ...(template ? { template } : {}) });
     },
 
+    // ── find bridges on the LAN ─────────────────────────────────────────────
+    openBridgesDiscover() {
+        const t = (k, d, x) => this.t(k, d, x);
+        this.closeModal?.('bridgeModal');
+        // a starting guess: the /24 of a bridge or a device we already know
+        const ip = [...(this._bridges || []).map(b => b.host), ...(this._devices || []).map(d => d.host || d.connection?.host)]
+            .find(h => /^\d+\.\d+\.\d+\.\d+$/.test(h || ''));
+        this._bridgeInfo(t('bridges.findTitle', 'Find bridges on the LAN'), `
+          <p class="field-hint">${t('bridges.findLead2', 'Looks at every address of the range for the ports each kind of bridge declares: our serial bridge answers its /health; a converter only has an open port, so one register is asked of a unit, as RTU and as Modbus TCP, to tell transparent from gateway. Bridges already added are not knocked on.')}</p>
+          <div class="form-row" style="align-items:end;">
+            <div class="form-group flex-2"><label class="form-label" for="brFindCidr">${t('bridges.findRange', 'Range')}</label>
+              <input class="input" id="brFindCidr" value="${this._esc(ip ? ip.split('.').slice(0, 3).join('.') + '.0/24' : '')}" placeholder="192.168.1.0/24"></div>
+            <div class="form-group"><label class="form-label" for="brFindUnit">${t('bridges.findUnit', 'Ask unit')}</label>
+              <input class="input" id="brFindUnit" type="number" min="1" max="247" value="1"></div>
+            <div class="form-group"><button class="btn btn-primary btn-sm" id="brFindBtn" ${this._act('bridgesDiscoverRun', [])}><i aria-hidden="true" class="bi bi-radar"></i> ${t('bridges.findGo', 'Search')}</button></div>
+          </div>
+          <div id="brFindResult" role="status"></div>`);
+    },
+
+    async bridgesDiscoverRun() {
+        const t = (k, d, x) => this.t(k, d, x);
+        const box = document.getElementById('brFindResult');
+        const btn = document.getElementById('brFindBtn');
+        btn.disabled = true;
+        box.innerHTML = `<div class="field-hint"><span class="btn-spinner"></span> ${t('bridges.finding', 'Searching… a /24 takes a few seconds.')}</div>`;
+        try {
+            const r = await fetch('/api/bridges/discover', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cidr: document.getElementById('brFindCidr').value.trim(),
+                                       unit_id: +document.getElementById('brFindUnit').value || 1 }) });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error((d.detail?.errors || [d.detail || r.statusText]).join(' '));
+            this._brFound = d.found || [];
+            if (!this._brFound.length) {
+                box.innerHTML = `<div class="field-hint">${t('bridges.findNone', 'Nothing found in {n} addresses. A converter may use another port: add it by hand with the port from its web page.', { n: d.scanned })}</div>`;
+                return;
+            }
+            box.innerHTML = `<table class="tplu-table"><tbody>${this._brFound.map((x, i) => `<tr>
+                <td><code>${this._esc(x.host)}${x.port ? ':' + this._esc(x.port) : ''}</code></td>
+                <td>${x.bridge ? `<span class="sink-pill ok">${this._esc(t('bridges.findKnown', 'added as {id}', { id: x.bridge }))}</span>`
+                    : x.type ? `<b>${this._esc(x.type_name || x.type)}</b>${x.version ? ' · ' + this._esc(x.version) : ''}`
+                    : `<span class="sink-pill warn">${this._esc(t('bridges.findMaybe', 'a converter?'))}</span>`}</td>
+                <td class="field-hint">${this._esc(x.detail || '')}</td>
+                <td>${x.bridge ? '' : `<button data-admin class="btn btn-ghost btn-sm" ${this._act('addFoundBridge', [i])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('bridges.add', 'Add bridge')}</button>`}</td>
+              </tr>`).join('')}</tbody></table>`;
+        } catch (e) {
+            box.innerHTML = `<div class="field-error">${this._esc(String(e.message || e))}</div>`;
+        } finally {
+            btn.disabled = false;
+        }
+    },
+
+    addFoundBridge(i) {
+        const x = (this._brFound || [])[i];
+        if (!x) return;
+        const type = x.type || (x.candidates || [])[0] || 'rtu_transparent';
+        const ty = this._bridgeType(type);
+        const preset = { type, host: x.host, name: x.host };
+        if (ty.discovery === 'api') preset.control_port = x.port;
+        else preset.ports = [{ port: x.port, label: '' }];
+        this.closeModal('bridgeInfoModal');
+        this.openBridgeModal(null, preset);
+    },
+
     // ── import bridges ──────────────────────────────────────────────────────
     openBridgesImport() {
         const t = (k, d, x) => this.t(k, d, x);
@@ -172,13 +247,13 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     // ── add / edit ──────────────────────────────────────────────────────────
-    async openBridgeModal(id = null) {
+    async openBridgeModal(id = null, preset = null) {
         await this._loadBridges();
         const t = (k, d, p) => this.t(k, d, p);
         const b = id ? (this._bridges || []).find(x => x.id === id) : null;
         this._bridgeEdit = { id, data: b ? JSON.parse(JSON.stringify(b)) : {
             id: '', name: '', type: (this._bridgeTypes[0] || {}).id || 'rtu_transparent', host: '',
-            ports: [], max_connections: 1 } };
+            ports: [], max_connections: 1, ...(preset || {}) } };
         document.getElementById('bridgeTitle').textContent = id
             ? t('bridges.editTitle', 'Edit bridge') : t('bridges.addTitle', 'Add a bridge');
         document.getElementById('bridgeFeedback').textContent = '';
@@ -201,6 +276,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <span>${this._esc(x.description || '')}</span>
               </label>`).join('')}
           </div>
+          ${e.id ? '' : `<div class="field-hint" style="margin:-4px 0 8px;"><a href="#" ${this._act('openBridgesDiscover', [])}><i aria-hidden="true" class="bi bi-radar"></i> ${t('bridges.findLead', 'Not sure of its IP or port? Find bridges on the LAN')}</a></div>`}
           <div class="form-row">
             <div class="form-group flex-2"><label class="form-label" for="brName">${t('bridges.name', 'Name')}</label>
               <input class="input" id="brName" value="${this._esc(d.name || '')}" placeholder="${this._esc(t('bridges.namePh', 'Pi in the garage'))}"></div>

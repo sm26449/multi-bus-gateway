@@ -38,8 +38,11 @@ from __future__ import annotations
 import json
 import logging
 import re
+import socket
+import struct
+import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +138,11 @@ def resolve_connection(conn: Dict[str, Any], bridges: List[Dict[str, Any]],
     out["host"] = b.get("host", "")
     out["port"] = int(port or 502)
     out["protocol"] = FRAMING_PROTOCOL.get(t.get("framing", "rtu"), "rtu-tcp")
+    if conn.get("protocol") == "rtu_tap" and t.get("framing", "rtu") == "rtu":
+        # listen-only through a bridge that passes the bus's bytes on: the tap
+        # reads the bridge's port and never writes to it
+        out["protocol"] = "rtu_tap"
+        out.pop("serial_port", None)
     out["max_connections"] = int(b.get("max_connections", t.get("max_connections", 1)) or 1)
     return out
 
@@ -143,4 +151,151 @@ def public_view(raw: Dict[str, Any]) -> Dict[str, Any]:
     """A bridge as the API shows it: the token never leaves the gateway."""
     out = {k: v for k, v in raw.items() if k != "token"}
     out["has_token"] = bool(raw.get("token"))
+    return out
+
+
+# ── speaking to a bus port: one register, as RTU or as Modbus TCP ─────────
+def _crc16(data: bytes) -> int:
+    crc = 0xFFFF
+    for b in data:
+        crc ^= b
+        for _ in range(8):
+            crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+    return crc
+
+
+def _rtu_read(unit: int, address: int) -> bytes:
+    body = struct.pack(">BBHH", unit, 3, address, 1)
+    return body + struct.pack("<H", _crc16(body))
+
+
+def _rtu_ok(resp: bytes, unit: int) -> bool:
+    """A whole RTU answer from that slave, CRC right (an exception counts:
+    it proves the slave and the framing)."""
+    if len(resp) < 5 or resp[0] != unit:
+        return False
+    n = 5 if resp[1] & 0x80 else 3 + resp[2] + 2 if len(resp) > 2 else 0
+    if len(resp) < n:
+        return False
+    frame = resp[:n]
+    return struct.unpack("<H", frame[-2:])[0] == _crc16(frame[:-2])
+
+
+def _mbap_read(unit: int, address: int, tid: int = 0x4D42) -> bytes:
+    return struct.pack(">HHHBBHH", tid, 0, 6, unit, 3, address, 1)
+
+
+def _mbap_ok(resp: bytes, tid: int = 0x4D42) -> Optional[int]:
+    """The function byte of a Modbus TCP answer to our transaction, or None."""
+    if len(resp) < 9:
+        return None
+    t, proto, _ln, _u, fn = struct.unpack(">HHHBB", resp[:8])
+    return fn if t == tid and proto == 0 else None
+
+
+def _exchange(host: str, port: int, frame: bytes, wait: float = 1.5) -> bytes:
+    with socket.create_connection((host, port), timeout=3) as s:
+        s.settimeout(wait)
+        s.sendall(frame)
+        buf, t0 = b"", time.monotonic()
+        while time.monotonic() - t0 < wait:
+            try:
+                chunk = s.recv(256)
+            except socket.timeout:
+                break
+            if not chunk:
+                break
+            buf += chunk
+            time.sleep(0.05)              # a converter may split one frame
+        return buf
+
+
+# ── finding bridges on the LAN ───────────────────────────────────────────
+def _http_json(host: str, port: int, path: str, timeout: float) -> Optional[Dict[str, Any]]:
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://{host}:{port}{path}", timeout=timeout) as r:  # noqa: S310 — LAN sweep
+            return json.loads(r.read(4096).decode() or "{}")
+    except Exception as e:  # noqa: BLE001 — a 500 from a degraded bridge still carries JSON
+        body = getattr(e, "read", None)
+        try:
+            return json.loads(body().decode()) if body else None
+        except Exception:  # noqa: BLE001
+            return None
+
+
+def _port_open(host: str, port: int, timeout: float) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def discover(hosts: List[str], types: Dict[str, Dict] = None, known: Dict[str, str] = None,
+             timeout: float = 0.4, unit_id: int = 1) -> List[Dict[str, Any]]:
+    """Which hosts on the LAN look like a bridge, and of which kind.
+
+    Each kind says in its ``lan_discovery`` block which TCP ports to look at
+    and how to recognise itself: an HTTP path whose JSON carries given keys
+    (our bridge's /health), or — for a converter, which has no API — just an
+    open port, then one register asked of ``unit_id`` as RTU and as Modbus TCP
+    to tell transparent from gateway (the same test as Check mode). ``known``
+    maps host → the bridge already added there."""
+    types = TYPES if types is None else types
+    known = known or {}
+    by_port: Dict[int, List[Dict]] = {}
+    for t in types.values():
+        for p in (t.get("lan_discovery") or {}).get("ports") or []:
+            by_port.setdefault(int(p), []).append(t)
+
+    def one(job):
+        host, port = job
+        if not _port_open(host, port, timeout):
+            return None
+        kinds = by_port[port]
+        hit: Dict[str, Any] = {"host": host, "port": port, "bridge": known.get(host, "")}
+        for t in kinds:
+            ld = t["lan_discovery"]
+            if ld.get("http_path"):
+                doc = _http_json(host, port, ld["http_path"], max(1.0, timeout * 3))
+                if isinstance(doc, dict) and all(k in doc for k in ld.get("json_keys") or []):
+                    hit.update(type=t["id"], type_name=t.get("name", t["id"]),
+                               version=str(doc.get("version", "")),
+                               detail=f"{doc.get('adapters', '?')} adapter(s)")
+                    return hit
+        framed = [t for t in kinds if not (t.get("lan_discovery") or {}).get("http_path")]
+        if not framed:
+            return None
+        try:
+            got = _exchange(host, port, _rtu_read(unit_id, 0), wait=max(0.6, timeout * 2))
+            speaks = "rtu" if _rtu_ok(got, unit_id) else ""
+            if not speaks:
+                got = _exchange(host, port, _mbap_read(unit_id, 0), wait=max(0.6, timeout * 2))
+                speaks = "modbus_tcp" if _mbap_ok(got) else ""
+        except OSError:
+            speaks = ""
+        match = [t for t in framed if t.get("framing") == speaks]
+        if match:
+            hit.update(type=match[0]["id"], type_name=match[0].get("name", match[0]["id"]),
+                       detail=f"unit {unit_id} answered as " + ("RTU" if speaks == "rtu" else "Modbus TCP"))
+        else:
+            # an open port and no answer from that unit: a converter, most
+            # likely — which mode, Check mode will tell once a slave is known
+            hit.update(type="", type_name="", candidates=[t["id"] for t in framed],
+                       detail=f"port open, unit {unit_id} did not answer — add it, then Check mode with a known unit")
+        return hit
+
+    from concurrent.futures import ThreadPoolExecutor
+    # a host already added is not knocked on: a converter that takes one
+    # client would drop the gateway's own connection for the moment
+    jobs = [(h, p) for h in hosts if h not in known for p in sorted(by_port)]
+    out: List[Dict[str, Any]] = [{"host": h, "port": None, "bridge": b, "type": "", "detail": "already added"}
+                                 for h, b in known.items() if h in hosts]
+    with ThreadPoolExecutor(max_workers=min(64, max(1, len(jobs)))) as ex:
+        for r in ex.map(one, jobs):
+            if r:
+                out.append(r)
+    import ipaddress
+    out.sort(key=lambda r: (ipaddress.ip_address(r["host"]), r["port"] or 0))
     return out

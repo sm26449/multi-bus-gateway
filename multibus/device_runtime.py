@@ -137,8 +137,7 @@ def build_device_client(config, template_registry, dev_cfg, allow_nonlan=False):
             parts.append((src, driver_for(config, template_registry, dev_cfg,
                                           src, regs, groups, allow_nonlan)))
             where = ((src.http or {}).get('url')
-                     or (src.connection.serial_port if src.protocol in ('rtu', 'rtu_tap')
-                         else f'{src.connection.host}:{src.connection.port}'))
+                     or src.connection.bus)
             logger.info("Device '%s' source '%s': %s, %d registers, %s",
                         dev_cfg.id, src.id, src.protocol, len(regs), where)
         except Exception as e:  # noqa: BLE001 — one bad source must not cost the

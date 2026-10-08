@@ -352,6 +352,9 @@ class ModbusConnection:
     def __init__(self, config: ModbusConfig, trace_label: str = ""):
         self.config = config
         self.trace_label = trace_label or _endpoint(config)
+        # the bus this unit's questions travel on — what the monitor filters by
+        self.bus = (getattr(config, 'serial_port', '') if str(getattr(config, 'protocol', '')).lower() == 'rtu'
+                    else f"{config.host}:{config.port}")
         # The socket lives on the ACCESS POINT, not on the unit: several units
         # behind one master share it (and the lock that serializes it), while
         # every counter below stays this unit's own.
@@ -651,7 +654,7 @@ class ModbusConnection:
                         try:
                             result = _read(address=address, count=count, device_id=self.config.unit_id)
                         finally:
-                            bus_trace.trace.commit(self.client)
+                            bus_trace.trace.commit(self.client, self.trace_label, self.bus)
 
                         if (not result.isError() and result.registers
                                 and len(result.registers) >= count):
@@ -763,7 +766,7 @@ class ModbusConnection:
                         try:
                             result = _read(address=address, count=count, device_id=self.config.unit_id)
                         finally:
-                            bus_trace.trace.commit(self.client)
+                            bus_trace.trace.commit(self.client, self.trace_label, self.bus)
                         if not result.isError():
                             self.successful_reads += 1
                             self.last_success_ts = time.time()
@@ -856,7 +859,7 @@ class ModbusConnection:
                     else:
                         return False, f"{register_type!r} is read-only (only holding/coil are writable)"
                 finally:
-                    bus_trace.trace.commit(self.client)
+                    bus_trace.trace.commit(self.client, self.trace_label, self.bus)
                 if hasattr(result, "isError") and result.isError():
                     self._count_error(result)
                     return False, str(result)

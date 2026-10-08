@@ -21,7 +21,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 template: editing.template || '',
                 enabled: editing.enabled !== false,
                 // a device on a bridge edits as "over network, this bridge, this bus"
-                protocol: editing.bridge ? 'rtu-tcp' : (editing.protocol || 'tcp'),
+                protocol: editing.bridge && editing.protocol !== 'rtu_tap' ? 'rtu-tcp' : (editing.protocol || 'tcp'),
                 bridge: editing.bridge || '', bridge_port: editing.bridge_port || null,
                 host: editing.host || '', port: editing.port || 502,
                 unit_id: editing.unit_id ?? 1, timeout: editing.timeout ?? 3,
@@ -92,6 +92,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const isRtu = d.protocol === 'rtu' || d.protocol === 'rtu-tcp' || d.protocol === 'rtu_tap';
         const rtuBridge = d.protocol === 'rtu-tcp';   // over-network (ser2net) vs direct serial
         const tap = d.protocol === 'rtu_tap';         // listen-only: another master owns the bus
+        const tapNet = tap && !!d.bridge;             // …heard through a transparent bridge
         // Protocol is fixed after creation: the template's register map is
         // transport-specific (Modbus reads by address, HTTP by json_path), so
         // switching transport would orphan the map.
@@ -174,18 +175,19 @@ Object.assign(JanitzaMonitor.prototype, {
                     <i aria-hidden="true" class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
             </div>
             <div id="devWizRtuDirect" style="display:${rtuBridge ? 'none' : ''}">
+                ${tap ? this._devWizTapWhereHtml(d) : ''}
                 <div class="form-row">
-                    <div class="form-group flex-2">
+                    <div class="form-group flex-2" ${tapNet ? 'style="display:none"' : ''}>
                         <label class="form-label" for="devWizSerial">${this.t('devices.wizard.serialPort', 'Serial port')}</label>
                         <input type="text" id="devWizSerial" class="input" value="${this._esc(d.serial_port)}" placeholder="/dev/ttyUSB0">
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" ${tapNet ? 'style="display:none"' : ''}>
                         <label class="form-label" for="devWizBaud">${this.t('lbl.baudrate', "Baudrate")}</label>
                         <select id="devWizBaud" class="input">
                             ${[9600, 19200, 38400, 57600, 115200].map(b => `<option ${b === +d.baudrate ? 'selected' : ''}>${b}</option>`).join('')}
                         </select>
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" ${tapNet ? 'style="display:none"' : ''}>
                         <label class="form-label" for="devWizParity">${this.t('lbl.parity', "Parity")}</label>
                         <select id="devWizParity" class="input">
                             ${['N', 'E', 'O'].map(x => `<option ${x === d.parity ? 'selected' : ''}>${x}</option>`).join('')}
@@ -196,7 +198,8 @@ Object.assign(JanitzaMonitor.prototype, {
                         <input type="number" id="devWizUnitR" class="input" aria-label="Unit ID" value="${d.unit_id}" min="0" max="255">
                     </div>
                 </div>
-                ${tap ? `<div class="field-hint" style="margin-top:6px;"><i aria-hidden="true" class="bi bi-ear"></i> ${this.t('devices.wizard.rtuTapNote', 'Listen-only: another master already polls this bus — the gateway never transmits, it decodes the answers that unit gives. Values arrive at the master’s rhythm; several taps can share one port (same baud/parity). The adapter must be mapped into the container (e.g. devices: /dev/ttyUSB1). After saving, Test on the device shows what the tap hears.')}</div>` : `
+                ${tapNet ? `<div class="field-hint" style="margin-top:6px;"><i aria-hidden="true" class="bi bi-ear"></i> ${this.t('devices.wizard.rtuTapNetNote', 'Listen-only through the bridge: another master already polls this bus — the gateway never transmits, it decodes the answers that unit gives, at the master’s rhythm. Several taps can listen to one bus, each with its own unit id; a bus is either polled or tapped. After saving, Test on the device shows what the tap hears.')}</div>`
+                : tap ? `<div class="field-hint" style="margin-top:6px;"><i aria-hidden="true" class="bi bi-ear"></i> ${this.t('devices.wizard.rtuTapNote', 'Listen-only: another master already polls this bus — the gateway never transmits, it decodes the answers that unit gives. Values arrive at the master’s rhythm; several taps can share one port (same baud/parity). The adapter must be mapped into the container (e.g. devices: /dev/ttyUSB1). After saving, Test on the device shows what the tap hears.')}</div>` : `
                 <button class="btn btn-secondary btn-sm" data-action="devWizardTest" data-with-el>
                     <i aria-hidden="true" class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
                 <div class="field-hint" style="margin-top:6px;">${this.t('devices.wizard.rtuNote', 'The serial device must be attached to the host and mapped into the container (e.g. devices: /dev/ttyUSB0). It starts polling right after saving.')}</div>`}
@@ -616,6 +619,13 @@ Object.assign(JanitzaMonitor.prototype, {
                         d.unit_id = parseInt(g('devWizUnitB')?.value, 10) ?? 1;
                     }
                 } else {
+                    if (d.protocol === 'rtu_tap' && g('devWizTapWhere')) {
+                        const [b, p] = (g('devWizTapWhere').value || '').split('::');
+                        d.bridge = b || '';
+                        d.bridge_port = parseInt(p, 10) || null;
+                    } else if (d.protocol === 'rtu') {
+                        d.bridge = ''; d.bridge_port = null;
+                    }
                     d.serial_port = g('devWizSerial')?.value.trim() ?? d.serial_port;
                     d.baudrate = parseInt(g('devWizBaud')?.value, 10) || 9600;
                     d.parity = g('devWizParity')?.value || 'N';
@@ -646,7 +656,7 @@ Object.assign(JanitzaMonitor.prototype, {
     _devWizValidate() {
         const w = this._devWiz, d = w.data;
         if (w.step === 1 && d.protocol === 'tcp' && !d.host) return this._wizInvalid('devWizHost');
-        if (w.step === 1 && (d.protocol === 'rtu' || d.protocol === 'rtu_tap') && !d.serial_port)
+        if (w.step === 1 && (d.protocol === 'rtu' || (d.protocol === 'rtu_tap' && !d.bridge)) && !d.serial_port)
             return this._wizInvalid('devWizSerial');
         if (w.step === 1 && d.protocol === 'rtu-tcp' && !d.host && !d.bridge) return this._wizInvalid('devWizAdapter');
         if (w.step === 1 && d.protocol === 'http' && !/^https?:\/\//.test(d.url || ''))
@@ -738,6 +748,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 ? { bridge: d.bridge, bridge_port: d.bridge_port, unit_id: d.unit_id, timeout: d.timeout }
                 : d.protocol === 'rtu-tcp'
                 ? { protocol: 'rtu-tcp', host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout }
+                : d.protocol === 'rtu_tap' && d.bridge
+                ? { protocol: 'rtu_tap', bridge: d.bridge, bridge_port: d.bridge_port, unit_id: d.unit_id }
                 : { protocol: d.protocol === 'rtu_tap' ? 'rtu_tap' : 'rtu', serial_port: d.serial_port,
                     baudrate: d.baudrate, parity: d.parity, stopbits: d.stopbits, unit_id: d.unit_id },
             mqtt: { topic_prefix: d.topic_prefix || `meters/${d.id}` },
@@ -799,6 +811,36 @@ Object.assign(JanitzaMonitor.prototype, {
               : this._esc(t('devices.wizard.busEmpty', 'First device on this bus.'))}
             ${this._esc(this._bridgeType(cur.type).framing === 'modbus_tcp' ? t('devices.wizard.viaGateway', 'Read as Modbus TCP through the gateway.') : '')}
             · <a href="#" ${this._act('_devWizShowLegacyScan', [])}>${t('devices.wizard.legacyScan', 'scan a bridge next to the gateway instead')}</a></div>`;
+    },
+
+    // listen-only: where the bus is heard — a serial port on this host, or the
+    // bus of a bridge that passes the bytes on (a gateway only answers questions)
+    _devWizTapWhereHtml(d) {
+        const t = (k, def, p) => this.t(k, def, p);
+        const buses = [];
+        for (const b of this._bridges || []) {
+            if (this._bridgeType(b.type).framing === 'modbus_tcp') continue;
+            for (const p of b.ports || []) buses.push({ b, p });
+        }
+        if (!buses.length && !d.bridge) return '';
+        const cur = d.bridge ? `${d.bridge}::${d.bridge_port || ''}` : '';
+        return `<div class="form-row"><div class="form-group flex-2">
+            <label class="form-label" for="devWizTapWhere">${t('devices.wizard.tapWhere', 'Where the bus is')}</label>
+            <select id="devWizTapWhere" class="input" data-action="_devWizTapWhereChanged" data-on="change">
+              <option value="" ${cur ? '' : 'selected'}>${t('devices.wizard.tapLocal', 'A serial port on this host')}</option>
+              ${buses.map(({ b, p }) => {
+                  const v = `${b.id}::${p.port}`;
+                  const sel = v === cur || (d.bridge === b.id && !d.bridge_port && p === b.ports[0]);
+                  return `<option value="${this._esc(v)}" ${sel ? 'selected' : ''}>${this._esc(b.name || b.id)} · ${this._esc(b.host)}:${this._esc(p.port)}${p.label ? ' · ' + this._esc(p.label) : ''}</option>`;
+              }).join('')}
+            </select>
+            <div class="field-hint">${t('devices.wizard.tapWhereHint', 'Through a bridge, the gateway reads the bridge\u2019s port and never writes to it. Only transparent bridges and the MBG serial bridge pass the bus\u2019s traffic on — a Modbus TCP gateway only answers questions. The line settings are the bus\u2019s, set on the bridge.')}</div>
+          </div></div>`;
+    },
+
+    _devWizTapWhereChanged() {
+        this._devWizCollect();
+        this._devWizRender();
     },
 
     _devWizBridgeChanged() {

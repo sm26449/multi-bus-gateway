@@ -73,9 +73,10 @@ def build(ctx) -> APIRouter:
     @r.get("/api/bus-trace")
     async def get_bus_trace(after: int = Query(0, ge=0),
                             limit: int = Query(200, ge=1, le=1000),
-                            device: str = Query("")):
-        """Captured transactions with seq > ``after`` (incremental polling)."""
-        return trace.snapshot(after=after, limit=limit, device=device or None)
+                            device: str = Query(""), bus: str = Query("")):
+        """Captured transactions with seq > ``after`` (incremental polling),
+        optionally only one device's or one bus's (a serial port, host:port)."""
+        return trace.snapshot(after=after, limit=limit, device=device or None, bus=bus or None)
 
     @r.post("/api/bus-trace/config")
     async def set_bus_trace(payload: Dict = Body(...)):
@@ -115,6 +116,31 @@ def build(ctx) -> APIRouter:
                                 detail="register probe works on Modbus devices only")
 
         base = {"device": dev_id, "address": addr, "register_type": rtype, "count": count}
+        # another unit on the same bus: ask it through the device's own shared
+        # connection (one socket or open tty, taking turns), never a second one
+        own = int(getattr(conn.config, "unit_id", 1))
+        try:
+            unit = int(payload.get("unit_id") if payload.get("unit_id") not in (None, "") else own)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="unit_id must be an integer")
+        if not 0 <= unit <= 255:
+            raise HTTPException(status_code=400, detail="unit_id out of range (0..255)")
+        temp = None
+        if unit != own:
+            import dataclasses
+            from ..modbus_client import ModbusConnection
+            temp = ModbusConnection(dataclasses.replace(conn.config, unit_id=unit, retry_attempts=1,
+                                                        retry_delay=0),
+                                    trace_label=f"{dev_id} → unit {unit}")
+            conn = temp
+            base["unit_id"] = unit
+        try:
+            return _probe_read(conn, base, addr, count, rtype)
+        finally:
+            if temp is not None:
+                temp.disconnect()          # releases the claim, keeps the shared socket
+
+    def _probe_read(conn, base: Dict, addr: int, count: int, rtype: str) -> Dict:
         if rtype in ("coil", "discrete"):
             bits = conn.read_bits(addr, count, rtype)
             if bits is None:

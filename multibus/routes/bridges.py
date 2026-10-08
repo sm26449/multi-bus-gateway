@@ -12,8 +12,6 @@ from __future__ import annotations
 import json
 import logging
 import secrets
-import socket
-import struct
 import threading
 import time
 import urllib.error
@@ -23,65 +21,11 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
-from ..bridges import FRAMING_PROTOCOL, TYPES, public_view, validate_bridge
+from ..bridges import (FRAMING_PROTOCOL, TYPES, _crc16, _exchange, _mbap_ok,  # noqa: F401 — _crc16 is used by tests
+                       _mbap_read, _rtu_ok, _rtu_read, public_view, validate_bridge)
 from ._shared import secrets_visible
 
 logger = logging.getLogger(__name__)
-
-
-def _crc16(data: bytes) -> int:
-    crc = 0xFFFF
-    for b in data:
-        crc ^= b
-        for _ in range(8):
-            crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
-    return crc
-
-
-def _rtu_read(unit: int, address: int) -> bytes:
-    body = struct.pack(">BBHH", unit, 3, address, 1)
-    return body + struct.pack("<H", _crc16(body))
-
-
-def _rtu_ok(resp: bytes, unit: int) -> bool:
-    """A whole RTU answer from that slave, CRC right (an exception counts:
-    it proves the slave and the framing)."""
-    if len(resp) < 5 or resp[0] != unit:
-        return False
-    n = 5 if resp[1] & 0x80 else 3 + resp[2] + 2 if len(resp) > 2 else 0
-    if len(resp) < n:
-        return False
-    frame = resp[:n]
-    return struct.unpack("<H", frame[-2:])[0] == _crc16(frame[:-2])
-
-
-def _mbap_read(unit: int, address: int, tid: int = 0x4D42) -> bytes:
-    return struct.pack(">HHHBBHH", tid, 0, 6, unit, 3, address, 1)
-
-
-def _mbap_ok(resp: bytes, tid: int = 0x4D42) -> Optional[int]:
-    """The function byte of a Modbus TCP answer to our transaction, or None."""
-    if len(resp) < 9:
-        return None
-    t, proto, _ln, _u, fn = struct.unpack(">HHHBB", resp[:8])
-    return fn if t == tid and proto == 0 else None
-
-
-def _exchange(host: str, port: int, frame: bytes, wait: float = 1.5) -> bytes:
-    with socket.create_connection((host, port), timeout=3) as s:
-        s.settimeout(wait)
-        s.sendall(frame)
-        buf, t0 = b"", time.monotonic()
-        while time.monotonic() - t0 < wait:
-            try:
-                chunk = s.recv(256)
-            except socket.timeout:
-                break
-            if not chunk:
-                break
-            buf += chunk
-            time.sleep(0.05)              # a converter may split one frame
-        return buf
 
 
 def build(ctx) -> APIRouter:
@@ -170,6 +114,33 @@ def build(ctx) -> APIRouter:
             return round(sum(shares), 4) if shares else None
         return None
 
+    def _tap_wire(dev_id: str) -> Optional[Dict]:
+        """What a tap hears on its bus: frames, CRC errors, the link."""
+        for d, c in registry:
+            if d.id == dev_id and c is not None and hasattr(c, "get_stats"):
+                try:
+                    st = c.get_stats() or {}
+                except Exception:  # noqa: BLE001
+                    return None
+                bus = st.get("bus") or {}
+                return {"frames": bus.get("frames", 0),
+                        "crc_errors": (st.get("error_counts") or {}).get("crc_errors", 0),
+                        "error": bus.get("open_error", "")}
+        return None
+
+    def _tapped(bridge_id: str, port: int) -> List[str]:
+        """The taps listening to this bus — nothing may be sent on it."""
+        return [d.id for d in config.bridge_devices(bridge_id)
+                if d.protocol == "rtu_tap" and int(d.connection.port) == int(port)]
+
+    def _refuse_if_tapped(bridge_id: str, port: int, what: str) -> None:
+        taps = _tapped(bridge_id, port)
+        if taps:
+            raise HTTPException(status_code=409, detail=(
+                f"{what} would transmit on a bus the gateway only listens to "
+                f"({', '.join(taps)}): another master owns it, and a question from "
+                f"here would collide with its traffic"))
+
     def _view(b: Dict, deep: bool = False) -> Dict:
         devs = config.bridge_devices(b["id"])
         t = TYPES.get(b.get("type"), {})
@@ -179,7 +150,8 @@ def build(ctx) -> APIRouter:
             on.setdefault(int(d.connection.port), []).append(
                 {"id": d.id, "name": d.name, "unit_id": d.connection.unit_id,
                  "endpoint_id": d.endpoint_id, "health": _device_health(d.id),
-                 "bus_share": _busy_share(d.id)})
+                 "tap": d.protocol == "rtu_tap",
+                 "bus_share": None if d.protocol == "rtu_tap" else _busy_share(d.id)})
         for p in on:
             ports.setdefault(p, {"port": p})
         out = public_view(b)
@@ -191,8 +163,14 @@ def build(ctx) -> APIRouter:
                 return None
             pct = round(100 * sum(shares))
             return {"pct": pct, "level": "full" if pct >= 100 else "high" if pct >= 70 else "ok"}
+        def wire(devlist):
+            # a tapped bus: the reader is shared, so any of its taps tells
+            taps = [x for x in devlist if x.get("tap")]
+            return _tap_wire(taps[0]["id"]) if taps else None
         out["ports"] = [{**ports[p], "devices": sorted(on.get(p, []), key=lambda x: x["unit_id"]),
-                         "busy": busy(on.get(p, []))}
+                         "busy": busy(on.get(p, [])),
+                         "tapped": any(x.get("tap") for x in on.get(p, [])),
+                         "wire": wire(on.get(p, []))}
                         for p in sorted(ports)]
         out["devices"] = len(devs)
         out["state"] = _status(b, devs)
@@ -273,6 +251,24 @@ def build(ctx) -> APIRouter:
                 out.append({**entry, "status": "replace" if here else "new", "errors": []})
         ok = sum(1 for x in out if x["status"] in ("new", "replace", "created", "replaced"))
         return {"applied": apply, "bridges": out, "ok": ok, "total": len(out)}
+
+    @r.post("/api/bridges/discover")
+    def discover_bridges(payload: Dict = Body(...)):
+        """Look for bridges on a LAN range: our bridge by its /health, a
+        converter by an open port of the kinds' ``lan_discovery`` lists, then
+        one register asked of a unit (default 1) as RTU and as Modbus TCP.
+        Hosts already added are listed, not knocked on."""
+        from .. import discovery
+        from ..bridges import discover
+        try:
+            hosts = discovery.hosts_from_cidr(str(payload.get("cidr", "") or ""),
+                                              allow_nonlan=config.security.allow_nonlan_http_devices)
+            unit = int(payload.get("unit_id", 1))
+        except (TypeError, ValueError) as e:
+            raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+        known = {str(b.get("host", "")): b["id"] for b in config.bridges}
+        found = discover(hosts, known=known, unit_id=unit)
+        return {"scanned": len(hosts), "found": found}
 
     @r.get("/api/bridges/{bridge_id}")
     def get_bridge(bridge_id: str):
@@ -405,6 +401,7 @@ def build(ctx) -> APIRouter:
             raise HTTPException(status_code=422, detail={"errors": ["from/to/timeout must be numbers"]})
         if u1 < u0:
             raise HTTPException(status_code=422, detail={"errors": ["from must not exceed to"]})
+        _refuse_if_tapped(b["id"], port, "A scan")
         conn = resolve_connection({"bridge": b["id"], "bridge_port": port}, config.bridges)
         known = {int(d.connection.unit_id): d.id for d in config.bridge_devices(b["id"])
                  if int(d.connection.port) == int(port)}
@@ -466,6 +463,7 @@ def build(ctx) -> APIRouter:
         port = int(payload.get("port") or ((b.get("ports") or [{}])[0].get("port") or t.get("default_port", 502)))
         unit = int(payload.get("unit_id", 1))
         addr = int(payload.get("address", 0))
+        _refuse_if_tapped(b["id"], port, "Check mode")
         res: Dict[str, Any] = {"port": port, "unit_id": unit, "configured_as": t.get("framing")}
         try:
             got = _exchange(b["host"], port, _rtu_read(unit, addr))

@@ -403,3 +403,57 @@ def test_reader_for_rebuilds_only_an_idle_reader_with_other_settings():
     b._clients[1] = object()
     assert rtu_tap.reader_for(conn(port=port)) is b
     rtu_tap._READERS.pop(port, None)
+
+
+def test_a_tap_hears_a_bus_through_a_bridge_and_never_writes():
+    """Over the network the bytes arrive in whatever pieces TCP likes; the
+    CRC-driven framer does not care. The tap only reads, and reconnects when
+    the bridge drops it."""
+    import socket
+    import threading
+    import time as _t
+    from multibus import rtu_tap
+    srv = socket.socket()
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(('127.0.0.1', 0))
+    srv.listen(2)
+    port = srv.getsockname()[1]
+    stream = req_read(1, 3, 100, 2) + resp_read(1, 3, [230, 50])
+    written, accepted = [], []
+
+    def serve():
+        for _ in range(2):                      # the second accept is the reconnect
+            s, _a = srv.accept()
+            accepted.append(1)
+            for i in range(0, len(stream), 3):  # torn into 3-byte pieces
+                s.sendall(stream[i:i + 3])
+                _t.sleep(0.005)
+            s.settimeout(0.3)
+            try:
+                written.append(s.recv(64))
+            except socket.timeout:
+                pass
+            s.close()
+    threading.Thread(target=serve, daemon=True).start()
+
+    c = SimpleNamespace(serial_port='', host='127.0.0.1', port=port, baudrate=9600,
+                        parity='N', stopbits=1, bytesize=8, unit_id=1, stale_after_s=30)
+    key = rtu_tap._reader_key(c)
+    assert key == f'tcp:127.0.0.1:{port}'
+    rtu_tap._READERS.pop(key, None)
+    reader = rtu_tap.reader_for(c)
+    assert reader.port == f'127.0.0.1:{port}'
+    client = RtuTapClient(conn_cfg=c, registers=[reg(100, 'v'), reg(101, 'f')], device_id='tap-net')
+    try:
+        client.connect()
+        deadline = _t.time() + 8
+        while _t.time() < deadline and (len(accepted) < 2 or reader.frames < 4):
+            _t.sleep(0.05)
+        assert len(accepted) == 2                 # dropped, and came back
+        assert reader.frames >= 4 and reader.crc_errors == 0
+        assert client.windows >= 1
+        assert written == [] or all(w == b'' for w in written)   # not one byte sent
+    finally:
+        client.disconnect()
+        rtu_tap._READERS.pop(key, None)
+        srv.close()

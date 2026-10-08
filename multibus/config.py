@@ -215,6 +215,11 @@ class ModbusConfig:
     stopbits: int = 1
     bytesize: int = 8
 
+    @property
+    def bus(self) -> str:
+        """Where the bus is: the serial port, or the bridge's host:port."""
+        return self.serial_port or f"{self.host}:{self.port}"
+
 
 def _serial_from_conn(c: Dict) -> Dict[str, Any]:
     return {k: c[k] for k in

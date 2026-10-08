@@ -201,13 +201,19 @@ class BusTrace:
         if tm is not None and hasattr(tm, "low_level_send"):
             tm.low_level_send = send
 
-    def commit(self, client) -> None:
+    def commit(self, client, label: Optional[str] = None, bus: str = "") -> None:
         """Close the in-flight transaction (call after each read/write attempt).
-        Safe on uninstrumented clients and with tracing off."""
+        Safe on uninstrumented clients and with tracing off. ``label`` names the
+        unit that asked: on a shared bus one client carries every unit's
+        questions, so the label it was built with is only the first unit's."""
         state = getattr(client, "_bus_trace_state", None)
         if state is None or state["cur"] is None:
             return
         with state["lock"]:
+            if label:
+                state["label"] = label
+            if bus:
+                state["bus"] = bus
             self._commit_locked_state(state)
 
     def _commit_locked_state(self, state: Dict[str, Any]) -> None:
@@ -216,6 +222,7 @@ class BusTrace:
             return
         meta = decode_transaction(state["proto"], cur["tx"], cur["rx"])
         entry = {"ts": round(cur["ts"], 3), "device": state["label"],
+                 "bus": state.get("bus", ""),
                  "proto": state["proto"],
                  "tx": cur["tx"].hex(), "rx": cur["rx"].hex(),
                  "latency_ms": round(cur["lat"], 1) if "lat" in cur else None,
@@ -229,10 +236,11 @@ class BusTrace:
     # ── read side ────────────────────────────────────────────────────────────
 
     def snapshot(self, *, after: int = 0, limit: int = 200,
-                 device: Optional[str] = None) -> Dict[str, Any]:
+                 device: Optional[str] = None, bus: Optional[str] = None) -> Dict[str, Any]:
         with self._lock:
             entries: List[Dict] = [e for e in self._buf if e["seq"] > after
-                                   and (device is None or e["device"] == device)]
+                                   and (device is None or e["device"] == device)
+                                   and (bus is None or e.get("bus") == bus)]
         if len(entries) > limit:
             entries = entries[-limit:]  # newest win; client paginates via `after`
         return {"enabled": self.enabled, "capacity": self.capacity,

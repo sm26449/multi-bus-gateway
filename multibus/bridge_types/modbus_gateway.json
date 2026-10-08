@@ -14,5 +14,12 @@
     "Set the serial side to the bus's baud / parity / stop bits.",
     "Set the converter's response timeout above the slowest slave (e.g. 500 ms); exception 0x0B means it got no answer in time.",
     "Max connections: as many as the converter accepts — the gateway opens that many."
-  ]
+  ],
+  "lan_discovery": {
+    "ports": [
+      4196,
+      8899,
+      20108
+    ]
+  }
 }

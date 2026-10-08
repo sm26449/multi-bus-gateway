@@ -40,6 +40,10 @@ Object.assign(JanitzaMonitor.prototype, {
             this._diagFilter = e.target.value;
             this._renderDiagTable();
         });
+        document.getElementById('diagBusFilter')?.addEventListener('change', (e) => {
+            this._diagBus = e.target.value;
+            this._renderDiagTable();
+        });
         // expand/collapse hex detail (delegated — rows are re-rendered)
         document.getElementById('diagTableBody')?.addEventListener('click', (e) => {
             const tr = e.target.closest('tr[data-seq]');
@@ -58,11 +62,32 @@ Object.assign(JanitzaMonitor.prototype, {
 
     async _loadDiagDevices() {
         try {
+            if (this._loadBridges && !this._bridges) await this._loadBridges();   // names for the buses
             const r = await fetch('/api/devices');
             const devs = ((await r.json()).devices || [])
                 .filter(d => ['tcp', 'rtu', 'rtu-tcp'].includes(d.protocol || 'tcp'));   // every polling Modbus client
             const opts = devs.map(d =>
                 `<option value="${this._esc(d.id)}">${this._esc(d.name || d.id)}</option>`).join('');
+            // the buses those devices ride on — the key the monitor stamps on
+            // each transaction: the serial port, or host:port (a bridge's bus)
+            const buses = new Map();
+            for (const d of devs) {
+                const key = d.protocol === 'rtu' ? (d.serial?.serial_port || '') : `${d.host}:${d.port}`;
+                if (!key || key === ':') continue;
+                const b = (this._bridges || []).find(x => x.id === d.bridge);
+                const label = b ? `${b.name || b.id} :${d.bridge_port || d.port}` : key;
+                const cur = buses.get(key) || { label, n: 0 };
+                cur.n++;
+                buses.set(key, cur);
+            }
+            const bsel = document.getElementById('diagBusFilter');
+            if (bsel) {
+                const want = this._diagBus || '';
+                bsel.innerHTML = `<option value="">${this._esc(this.t('diag.allBuses', 'All buses'))}</option>`
+                    + [...buses].map(([k, v]) => `<option value="${this._esc(k)}">${this._esc(v.label)} · ${this._esc(this.t('bridges.nDevices', '{n} device(s)', { n: v.n }))}</option>`).join('');
+                if (want && !buses.has(want)) bsel.insertAdjacentHTML('beforeend', `<option value="${this._esc(want)}">${this._esc(want)}</option>`);
+                bsel.value = want;
+            }
             const sel = document.getElementById('diagDeviceFilter');
             if (sel) {
                 const cur = sel.value;
@@ -102,6 +127,8 @@ Object.assign(JanitzaMonitor.prototype, {
             register_type: document.getElementById('probeType')?.value || 'holding',
             count: Number(document.getElementById('probeCount')?.value || 2),
         };
+        const unit = document.getElementById('probeUnit')?.value;
+        if (unit !== '' && unit != null) body.unit_id = Number(unit);
         btn.disabled = true;
         host.innerHTML = `<div class="field-hint">${this._esc(this.t('probe.reading', 'Reading… (a failed read retries a few times before giving up)'))}</div>`;
         try {
@@ -280,9 +307,9 @@ Object.assign(JanitzaMonitor.prototype, {
     _renderDiagTable() {
         const body = document.getElementById('diagTableBody');
         if (!body) return;
-        const rows = this._diagFilter
-            ? this._diagRows.filter(r => r.device === this._diagFilter)
-            : this._diagRows;
+        const rows = this._diagRows.filter(r =>
+            (!this._diagFilter || r.device === this._diagFilter)
+            && (!this._diagBus || r.bus === this._diagBus));
         if (!rows.length) {
             body.innerHTML = `<tr><td colspan="8" class="diag-empty"><span style="position:sticky;left:0;display:inline-block;max-width:calc(100vw - 80px);white-space:normal;">${this._esc(
                 this.t('diag.empty', 'No transactions captured. Start the capture and the polled traffic appears here — each retry as its own frame.'))}</span></td></tr>`;
