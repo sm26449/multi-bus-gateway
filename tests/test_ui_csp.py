@@ -100,7 +100,9 @@ def test_template_command_names_are_identifiers():
         d["device_template"]["commands"] = cmds
         return validate_template(d)
 
-    assert with_cmds({"power_limit": {"params": {"value": {"min": 0, "max": 100}}}}) == []
+    # a complete command (3.91 checks it against the map: it must write something)
+    assert with_cmds({"power_limit": {"params": {"value": {"min": 0, "max": 100}},
+                                      "writes": [{"register": "v", "value": "${value}"}]}}) == []
     errs = with_cmds({"x'); alert(1); //": {}})
     assert errs and "command" in errs[0] and "name invalid" in errs[0]
     errs = with_cmds({"ok": {"params": {"<img src=x onerror=alert(1)>": {}}}})

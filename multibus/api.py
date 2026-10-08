@@ -1049,6 +1049,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                       "/api/device-templates", "/api/virtual-meters",
                       "/api/calculated", "/api/energy/fields", "/api/poll-groups")
     _SNAP_EXCLUDE = ("/test", "/write", "/payload-sample", "/api/config/import",
+                     "/api/device-templates/check", "/identify-test",
                      "/api/config/reload-registers", "/api/config/snapshots")
 
     @app.middleware("http")
@@ -1078,6 +1079,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     _BODY_CAP_IMPORT = 25 * 1024 * 1024         # matches the import handler's own cap
     _BODY_CAP_LARGE_PATHS = ('/api/config/import',)
     _AUDIT_SKIP = ("/api/query", "/api/diagnostics/probe", "/api/discover",
+                   "/api/device-templates/check", "/identify-test",
                    "/api/auth/", "/api/alerts/test", "/api/devices/test",
                    "/api/bus-trace",
                    # node YAML CRUD self-audits (key names only); skip the

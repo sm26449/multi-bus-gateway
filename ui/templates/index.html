@@ -2395,6 +2395,20 @@
     </div>
 
     <!-- Device Template editor (Tier 2) -->
+    <!-- Template editor: one row's details (everything beyond address and type) -->
+    <div class="modal" id="tplRowModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i aria-hidden="true" class="bi bi-sliders"></i> <span id="tplRowTitle"></span></h3>
+                <button class="modal-close" aria-label="Close" data-action="tplRowDone">&times;</button>
+            </div>
+            <div class="modal-body" id="tplRowBody"></div>
+            <div class="modal-footer">
+                <button class="btn btn-primary btn-sm" data-action="tplRowDone"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="adv.done">Done</span></button>
+            </div>
+        </div>
+    </div>
+
     <div class="modal" id="devTplModal">
         <div class="modal-content modal-lg">
             <div class="modal-header">
@@ -2422,6 +2436,7 @@
     <script src="/static/js/app-status.js?v=0"></script>
     <script src="/static/js/app-registers.js?v=0"></script>
     <script src="/static/js/app-templates.js?v=0"></script>
+    <script src="/static/js/app-tpl-advanced.js?v=0"></script>
     <script src="/static/js/app-vmeters.js?v=0"></script>
     <script src="/static/js/app-rules.js?v=0"></script>
     <script src="/static/js/app-builder.js?v=0"></script>

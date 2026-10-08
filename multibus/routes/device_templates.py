@@ -101,6 +101,81 @@ def build(ctx) -> APIRouter:
         restart = getattr(ctx, "restart_devices_using_template", None)
         return restart(t.id) if restart else []
 
+    # ── checks for the editor: nothing is saved ───────────────────────────
+    @r.post("/api/device-templates/check")
+    def check_device_template(payload: Dict = Body(...)):
+        """Every problem a save would report, without saving — the Advanced
+        tabs and the raw JSON editor ask after each change."""
+        from ..device_template import validate_template
+        if not isinstance(payload.get("device_template"), dict):
+            payload = {"device_template": payload}
+        try:
+            errors = validate_template(payload)
+        except Exception as e:  # noqa: BLE001 — a malformed draft is an answer, not a 500
+            errors = [f"cannot read the template: {e}"]
+        return {"ok": not errors, "errors": errors}
+
+    @r.post("/api/device-templates/check-expression")
+    def check_template_expression(payload: Dict = Body(...)):
+        """A calculated field's formula against the map being edited: syntax,
+        and whether every name it reads is a register or another calculated
+        field of this template. No device, no live value needed."""
+        from .. import expressions
+        tpl = payload.get("template") or {}
+        tpl = tpl.get("device_template", tpl) if isinstance(tpl, dict) else {}
+        expr = str(payload.get("expr") or "")
+        me = str(payload.get("name") or "")
+        regs = [r.get("name") for r in tpl.get("registers") or [] if isinstance(r, dict) and r.get("name")]
+        calcs = [c.get("name") for c in tpl.get("calculated") or []
+                 if isinstance(c, dict) and c.get("name") and c.get("name") != me]
+        ok, err, refs = expressions.validate_expression(expr)
+        if not ok:
+            return {"ok": False, "error": err, "refs": []}
+        known = set(regs) | set(calcs)
+        base = lambda n: n.split("[", 1)[0]  # noqa: E731 — name[0] reads an array register
+        unknown = [n for n in refs if n not in known and base(n) not in known and "." not in n]
+        other_dev = [n for n in refs if "." in n]
+        if me and me in refs:
+            return {"ok": False, "error": f"'{me}' reads itself", "refs": refs}
+        if unknown:
+            return {"ok": False, "refs": refs, "unknown": unknown,
+                    "error": "not a register or calculated field of this template: " + ", ".join(unknown)}
+        return {"ok": True, "refs": refs,
+                **({"warning": "reads another device (" + ", ".join(other_dev) + ") — every device made from "
+                               "this template would read that same device"} if other_dev else {})}
+
+    @r.post("/api/device-templates/identify-test")
+    def identify_test(payload: Dict = Body(...)):
+        """Does this draft's ``identify`` block recognise a real device? Asked
+        through the device's own (shared) connection, in turn."""
+        from ..bus_scan import identify
+        from ..device_template import parse_template
+        tpl = payload.get("template") or {}
+        if not isinstance(tpl.get("device_template"), dict):
+            tpl = {"device_template": tpl}
+        dev_id = str(payload.get("device") or "")
+        client = next((c for d, c in registry if d.id == dev_id), None)
+        conn = getattr(client, "connection", None)
+        if conn is None or not hasattr(conn, "lock"):
+            raise HTTPException(status_code=400, detail="pick a Modbus device that is running")
+        try:
+            t = parse_template(tpl)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail={"errors": str(e).split("\n- ")[1:] or [str(e)]})
+        if not t.identify:
+            raise HTTPException(status_code=422, detail={"errors": ["identify is empty — add a register or an FC43 pattern"]})
+        uid = int(getattr(conn.config, "unit_id", 1) or 1)
+        with conn.lock:
+            if conn.client is None:
+                conn.connect()
+            info = identify(conn.client, uid, [t])
+        matched = bool(info.get("matches"))
+        return {"ok": matched, "device": dev_id, "unit_id": uid, "fc43": info.get("fc43"),
+                "sunspec": info.get("sunspec"),
+                "message": (f"'{dev_id}' (unit {uid}) is recognised as this template" if matched else
+                            f"'{dev_id}' (unit {uid}) does not match — check each register's value "
+                            f"and table, and the FC43 patterns against what it reports")}
+
     @r.post("/api/device-templates")
     def save_device_template(payload: Dict = Body(...)):
         """Create or update a USER template (built-in ids are shielded).

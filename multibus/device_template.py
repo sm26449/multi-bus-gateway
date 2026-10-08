@@ -196,6 +196,8 @@ class TemplateRegister:
             d['icon'] = self.icon
         if self.suggested_display_precision is not None:
             d['suggested_display_precision'] = self.suggested_display_precision
+        if self.aggregates:
+            d['aggregates'] = self.aggregates
         return d
 
 
@@ -349,10 +351,12 @@ def template_transport(tpl) -> str:
     return 'modbus'
 
 
-def validate_template(data: Dict[str, Any]) -> List[str]:
+def validate_template(data: Dict[str, Any], *, extras: bool = True) -> List[str]:
     """Validate a raw template dict. Returns a list of human-readable errors
     (empty = valid). Row-level issues carry the register address/name so the
-    UI can mark the exact row red."""
+    UI can mark the exact row red. ``extras=False`` leaves out the checks
+    added in 3.91 (row extras, categories, commands in depth): a file already
+    on disk keeps loading, they become load warnings (see ``extra_errors``)."""
     errors: List[str] = []
     t = data.get('device_template')
     if not isinstance(t, dict):
@@ -544,9 +548,208 @@ def validate_template(data: Dict[str, Any]) -> List[str]:
         for pname in (params or {}):
             if not isinstance(pname, str) or not _ID_RE.match(pname):
                 errors.append(f"command {cname!r}: param {pname!r} invalid (a-z 0-9 - _, 2-64 chars)")
+    if extras:
+        errors.extend(extra_errors(data))
     errors.extend(_display_errors(t))
     errors.extend(_identify_errors(t))
     return errors
+
+
+def extra_errors(data: Dict[str, Any]) -> List[str]:
+    """The checks a SAVE enforces beyond the original schema: what a row may
+    carry, categories, commands checked against the map."""
+    t = (data or {}).get('device_template') or {}
+    regs = t.get('registers') if isinstance(t.get('registers'), list) else []
+    calcs = t.get('calculated') if isinstance(t.get('calculated'), list) else []
+    return (_register_extra_errors(regs, calcs) + _category_errors(t) + _command_errors(t))
+
+
+AGGREGATE_OPS = ('sum', 'avg', 'min', 'max', 'spread', 'mode')
+_HA_STATE_CLASSES = ('', 'measurement', 'total', 'total_increasing', 'none')
+_HA_ENTITY_CATEGORIES = ('', 'diagnostic', 'config', 'none')
+
+
+def _aggregate_errors(where: str, agg: Any) -> List[str]:
+    if agg is None:
+        return []
+    if not isinstance(agg, dict) or not agg:
+        return [f"{where}: aggregates must be an object {{output_name: op}}"]
+    out = []
+    for name, op in agg.items():
+        if not isinstance(name, str) or not _CALC_NAME_RE.match(name):
+            out.append(f"{where}: aggregates output {name!r} must be letters, digits and _")
+        if op not in AGGREGATE_OPS:
+            out.append(f"{where}: aggregates op {op!r} for {name!r} is not one of {', '.join(AGGREGATE_OPS)}")
+    return out
+
+
+def _register_extra_errors(regs: List[Any], calcs: List[Any]) -> List[str]:
+    """What a register row may carry beyond its address and type — checked
+    on save, so a typo is named instead of silently doing nothing."""
+    errors: List[str] = []
+    num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)  # noqa: E731
+    for i, r in enumerate(regs):
+        if not isinstance(r, dict):
+            continue
+        where = f"register #{i} (name {r.get('name')!r})"
+        errors.extend(_aggregate_errors(where, r.get('aggregates')))
+        nan = r.get('nan')
+        if nan is not None and not (nan is True or num(nan)
+                                    or (isinstance(nan, list) and nan and all(num(x) for x in nan))):
+            errors.append(f"{where}: nan must be true (the type's standard 'not available'), a number or a list of numbers")
+        for flag in ('monotonic', 'daily', 'writable'):
+            if flag in r and not isinstance(r[flag], bool):
+                errors.append(f"{where}: {flag} must be true or false")
+        for k in ('enum', 'bits'):
+            m = r.get(k)
+            if m is None:
+                continue
+            if not isinstance(m, dict) or not m:
+                errors.append(f"{where}: {k} must be a non-empty object {{code: text}}")
+                continue
+            for code, label in m.items():
+                try:
+                    int(code)
+                except (TypeError, ValueError):
+                    errors.append(f"{where}: {k} key {code!r} is not an integer")
+                if not isinstance(label, str):
+                    errors.append(f"{where}: {k} text for {code!r} must be a string")
+        for k in ('mask', 'shift'):
+            v = r.get(k)
+            if v is not None and (not isinstance(v, int) or isinstance(v, bool) or v < 0):
+                errors.append(f"{where}: {k} must be a whole number ≥ 0")
+        if r.get('state_class', '') not in _HA_STATE_CLASSES:
+            errors.append(f"{where}: state_class must be one of {', '.join(x or '(empty)' for x in _HA_STATE_CLASSES)}")
+        if r.get('entity_category', '') not in _HA_ENTITY_CATEGORIES:
+            errors.append(f"{where}: entity_category must be one of {', '.join(x or '(empty)' for x in _HA_ENTITY_CATEGORIES)}")
+        ebd = r.get('enabled_by_default')
+        if ebd is not None and not isinstance(ebd, bool):
+            errors.append(f"{where}: enabled_by_default must be true or false")
+        sdp = r.get('suggested_display_precision')
+        if sdp is not None and (not isinstance(sdp, int) or isinstance(sdp, bool) or not 0 <= sdp <= 10):
+            errors.append(f"{where}: suggested_display_precision must be 0..10")
+        icon = r.get('icon', '')
+        if icon and (not isinstance(icon, str) or not icon.startswith('mdi:')):
+            errors.append(f"{where}: icon must look like 'mdi:flash'")
+        for k in ('label', 'unit', 'description', 'device_class', 'access'):
+            if k in r and r[k] is not None and not isinstance(r[k], str):
+                errors.append(f"{where}: {k} must be text")
+    for i, c in enumerate(calcs):
+        if not isinstance(c, dict):
+            continue
+        where = f"calculated #{i} (name {c.get('name')!r})"
+        errors.extend(_aggregate_errors(where, c.get('aggregates')))
+        ui = c.get('ui')
+        if ui is not None and not isinstance(ui, dict):
+            errors.append(f"{where}: ui must be an object {{show_on_dashboard, widget}}")
+        for flag in ('mqtt', 'influxdb'):
+            if flag in c and not isinstance(c[flag], bool):
+                errors.append(f"{where}: {flag} must be true or false")
+    return errors
+
+
+def _category_errors(t: Dict[str, Any]) -> List[str]:
+    cats = t.get('categories')
+    if cats is None:
+        return []
+    if not isinstance(cats, dict):
+        return ["categories must be an object {id: {label, order}}"]
+    out = []
+    for cid, c in cats.items():
+        if not isinstance(c, dict):
+            out.append(f"category {cid!r}: must be an object {{label, order}}")
+            continue
+        if 'label' in c and not isinstance(c['label'], str):
+            out.append(f"category {cid!r}: label must be text")
+        o = c.get('order')
+        if o is not None and (not isinstance(o, (int, float)) or isinstance(o, bool)):
+            out.append(f"category {cid!r}: order must be a number")
+    return out
+
+
+def _command_errors(t: Dict[str, Any]) -> List[str]:
+    """A command is checked against the map it lives in: the registers it
+    reads and writes exist, its expressions evaluate, its parameters have
+    coherent bounds — so a mistake shows on save, not at the first write."""
+    cmds = t.get('commands')
+    if not isinstance(cmds, dict):
+        return []
+    from .commands import ExprError, evaluate
+    names = {r.get('name') for r in t.get('registers') or [] if isinstance(r, dict)}
+    groups = set((t.get('poll_groups') or {}).keys())
+    num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)  # noqa: E731
+    out: List[str] = []
+    for cname, c in cmds.items():
+        if not isinstance(c, dict) or not isinstance(cname, str):
+            continue
+        w = f"command {cname!r}"
+        params = c.get('params') or {}
+        if not isinstance(params, dict):
+            continue
+        sample: Dict[str, Any] = {}
+        for pn, pd in params.items():
+            if not isinstance(pd, dict):
+                out.append(f"{w}: param {pn!r} must be an object")
+                continue
+            lo, hi, dflt = pd.get('min'), pd.get('max'), pd.get('default')
+            for k, v in (('min', lo), ('max', hi), ('default', dflt)):
+                if v is not None and not num(v):
+                    out.append(f"{w}: param {pn!r} {k} must be a number")
+            if num(lo) and num(hi) and lo > hi:
+                out.append(f"{w}: param {pn!r} min {lo} > max {hi}")
+            if num(dflt) and ((num(lo) and dflt < lo) or (num(hi) and dflt > hi)):
+                out.append(f"{w}: param {pn!r} default {dflt} is outside min/max")
+            al = pd.get('allowed')
+            if al is not None and (not isinstance(al, list) or not al or not all(num(x) for x in al)):
+                out.append(f"{w}: param {pn!r} allowed must be a non-empty list of numbers")
+            sample[pn] = dflt if num(dflt) else (lo if num(lo) else (hi if num(hi) else 0))
+        alias = c.get('alias')
+        if alias is not None:
+            if not isinstance(alias, dict) or alias.get('command') not in cmds:
+                out.append(f"{w}: alias.command must name another command of this template")
+            continue
+        if not c.get('writes'):
+            out.append(f"{w}: writes is empty — a command writes at least one register (or is an alias)")
+
+        def _check(kind: str, items: Any, key: str) -> None:
+            if items is None:
+                return
+            if not isinstance(items, list):
+                out.append(f"{w}: {kind} must be a list")
+                return
+            for j, it in enumerate(items):
+                if not isinstance(it, dict):
+                    out.append(f"{w}: {kind}[{j}] must be an object")
+                    continue
+                reg = it.get(key)
+                if reg not in names:
+                    out.append(f"{w}: {kind}[{j}] {key} {reg!r} is not a register of this template")
+                for vk in ('value', 'expect'):
+                    if vk in it:
+                        try:
+                            evaluate(it[vk], sample)
+                        except (ExprError, TypeError, ValueError, ZeroDivisionError) as e:
+                            out.append(f"{w}: {kind}[{j}] {vk}: {e}")
+        _check('writes', c.get('writes'), 'register')
+        _check('guard', c.get('guard'), 'read')
+        _check('verify', c.get('verify'), 'read')
+        st = c.get('settle_s')
+        if st is not None and (not num(st) or st < 0):
+            out.append(f"{w}: settle_s must be a number ≥ 0")
+        safe = c.get('safe')
+        if safe is not None:
+            if not isinstance(safe, dict):
+                out.append(f"{w}: safe must be an object {{param: value}}")
+            else:
+                for k in safe:
+                    if k not in params:
+                        out.append(f"{w}: safe names {k!r}, which is not a parameter")
+        rg = c.get('readback_group')
+        if rg and groups and rg not in groups:
+            out.append(f"{w}: readback_group {rg!r} is not a poll group of this template")
+        if 'confirm' in c and not isinstance(c['confirm'], bool):
+            out.append(f"{w}: confirm must be true or false")
+    return out
 
 
 def _identify_errors(t: Dict[str, Any]) -> List[str]:
@@ -678,9 +881,15 @@ def _display_errors(t: Dict[str, Any]) -> List[str]:
 
 
 def parse_template(data: Dict[str, Any], *, builtin: bool = False,
-                   path: str = "") -> DeviceTemplate:
-    """Dict → DeviceTemplate. Raises ValueError with all problems at once."""
-    errors = validate_template(data)
+                   path: str = "", strict: bool = True) -> DeviceTemplate:
+    """Dict → DeviceTemplate. Raises ValueError with all problems at once.
+    ``strict=False`` (a file loaded from disk) logs the newer checks as
+    warnings instead of refusing the file — an upgrade never drops a device."""
+    errors = validate_template(data, extras=strict)
+    if not strict:
+        for w in extra_errors(data):
+            logger.warning("device template %s: %s — fix it in the editor (saving checks it)",
+                           path or (data or {}).get('device_template', {}).get('id'), w)
     if errors:
         raise ValueError("invalid device template:\n- " + "\n- ".join(errors))
     t = data['device_template']
@@ -766,7 +975,7 @@ def load_template(path: str, *, builtin: bool = False) -> DeviceTemplate:
         data = yaml.safe_load(text)
     else:
         data = json.loads(text)
-    return parse_template(data, builtin=builtin, path=str(p))
+    return parse_template(data, builtin=builtin, path=str(p), strict=False)
 
 
 BUILTIN_DIR = Path(__file__).parent / 'device_templates'

@@ -556,6 +556,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <td><input class="input tpl-cell" data-f="write_safe" type="number" step="any" value="${r.write_safe ?? ''}" style="width:60px" placeholder="safe" aria-label="Write safe (auto-revert)"></td>
                 <td style="white-space:nowrap;">
                     <button class="btn btn-ghost btn-sm" ${this._act('tplEditStates', [i])} title="${this.t('devtpl.editStates', 'Decode states (enum / bitfield)')}" aria-label="Decode states" style="${(r.enum || r.bits) ? 'color:var(--accent,#3b82f6);' : ''}"><i aria-hidden="true" class="bi bi-list-ol"></i>${(r.enum || r.bits) ? ` <span style="font-size:10px;">${r.bits ? 'bits' : Object.keys(r.enum).length}</span>` : ''}</button>
+                    <button class="btn btn-ghost btn-sm" ${this._act('tplRowExtras', [i])} title="${this._esc(this.t('adv.row.title', 'Row details: description, not-available marker, counters, scale factor, totals, Home Assistant'))}" aria-label="Row details" style="${this._advRowHasExtras?.(r) ? 'color:var(--accent,#3b82f6);' : ''}"><i aria-hidden="true" class="bi bi-sliders"></i></button>
                     <button class="btn btn-ghost btn-sm" ${this._act('tplDelRow', [i])} title="${this.t('common.delete', 'Delete')}" aria-label="Delete row"><i aria-hidden="true" class="bi bi-trash"></i></button>
                 </td>
             </tr>`).join('');
@@ -581,6 +582,7 @@ Object.assign(JanitzaMonitor.prototype, {
             </div>
         </div>
         ${this._tplProtocolHtml(proto, d)}
+        ${this._tplAdvancedHtml ? this._tplAdvancedHtml(d) : ''}
         <datalist id="tplTypeList">${dataTypes.map(t => `<option value="${t}"></option>`).join('')}</datalist>
         <div style="display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap;">
             <input type="text" id="tplSearch" class="input" placeholder="${this.t('common.search', 'Search')}…"
@@ -655,6 +657,7 @@ Object.assign(JanitzaMonitor.prototype, {
             });
         });
         this._tplWireProtocol();
+        if (this._tplWireAdvanced) this._tplWireAdvanced();
         const search = document.getElementById('tplSearch');
         search.addEventListener('input', () => {
             this._tplCollectMeta();

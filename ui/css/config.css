@@ -787,3 +787,37 @@ body.role-viewer .tpl-update-viewer { display: inline; }
 .bus-scan-bar { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; margin: 6px 0; }
 #busScanFill { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
 .bridge-dev .bridge-move { margin-left: auto; padding: 0 6px; }
+
+/* ── template editor: Advanced (calculated, commands, display, identify, details, raw JSON) ── */
+.tpl-adv > summary .field-hint { font-weight: 400; }
+.tpl-adv-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 12px 8px; border-bottom: 1px solid var(--border); }
+.tpl-adv-tab { background: none; border: 1px solid transparent; border-radius: var(--radius-sm, 6px); padding: 5px 10px;
+    color: var(--text-secondary); cursor: pointer; font: inherit; font-size: 13px; }
+.tpl-adv-tab:hover { color: var(--text-primary); border-color: var(--border); }
+.tpl-adv-tab.on { color: var(--accent-text); border-color: var(--accent); background: var(--bg-secondary, transparent); font-weight: 600; }
+.tpl-adv-n { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: #fff;
+    font-size: 11px; text-align: center; }
+#tplAdvPanel { padding: 10px 12px 4px; }
+.tpl-adv-lead { color: var(--text-secondary); font-size: 13px; margin: 0 0 8px; }
+.tpl-adv-example { margin: 0 0 10px; font-size: 13px; }
+.tpl-adv-example > summary { cursor: pointer; color: var(--accent-text); }
+.tpl-adv-code { background: var(--bg-secondary, rgba(127,127,127,.08)); border-radius: 6px; padding: 8px 10px; font-size: 12px;
+    overflow-x: auto; white-space: pre; margin: 6px 0; }
+.tpl-adv-table { width: 100%; margin-bottom: 8px; font-size: 13px; }
+.tpl-adv-table td { vertical-align: middle; }
+.tpl-adv-expr code { word-break: break-all; }
+.tpl-adv-sel { background: var(--bg-secondary, rgba(127,127,127,.08)); }
+.tpl-adv-form { border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); padding: 10px 12px; margin: 8px 0; }
+.tpl-adv-line { align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap; }
+.tpl-adv-line .input { flex: 1 1 110px; min-width: 0; }
+.tpl-adv-more { margin: 8px 0; }
+.tpl-adv-more > summary { cursor: pointer; color: var(--text-secondary); font-size: 13px; }
+.tpl-adv-h { font-size: 13px; margin: 12px 0 4px; }
+.tpl-adv-json { width: 100%; font-family: var(--font-mono, monospace); font-size: 12px; }
+.tpl-adv-check { margin: 0 12px 10px; font-size: 12.5px; }
+.tpl-adv-check.ok { color: var(--accent-text); }
+.tpl-adv-check.bad { color: var(--warning-text, #d08); }
+.tpl-adv-check ul { margin: 4px 0 0 18px; padding: 0; }
+@media (max-width: 640px) {
+    .tpl-adv-line .input { flex-basis: 100%; }
+}
