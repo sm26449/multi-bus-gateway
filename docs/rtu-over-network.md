@@ -21,6 +21,8 @@ Bridges live on the **Devices** page, next to devices and installations:
 - [3. A hardware converter: Waveshare, USR, Elfin…](#3-a-hardware-converter-waveshare-usr-elfin)
 - [4. Several devices on one bus](#4-several-devices-on-one-bus)
 - [5. Finding the slaves, watching the bus, moving things](#5-finding-the-slaves-watching-the-bus-moving-things)
+  - [5.1 Listening to a bus through a bridge](#51-listening-to-a-bus-through-a-bridge)
+  - [5.2 Finding bridges on the LAN](#52-finding-bridges-on-the-lan)
 - [6. Security](#6-security)
 - [7. Troubleshooting](#7-troubleshooting)
 
@@ -172,10 +174,72 @@ row (or Edit). It keeps its id, so its MQTT topics and its history continue.
 Renumbering a bus in the bridge's form takes its devices along. Dropping a
 bus while devices use it is refused.
 
+**Watch one bus.** The **Monitor** button on a bus opens *Diagnostics* with
+the bus monitor filtered to that bus. Every question and answer on the wire
+is listed, under the name of the device that asked. Several devices sharing
+one connection each appear under their own name. On the same page, the
+**register probe** reads any unit on that bus: pick a device on the bus and
+type another **unit**. The question goes through that device's connection,
+in turn, so a single-client converter is not disturbed.
+
 **Export / import bridges.** The **Export** button at the top of the bridges
 gives a YAML file, with tokens included only in an admin's export. **Import**
 checks each bridge first: *new*, *replace*, *exists* or *invalid*, with the
 reason. It refuses a file that would drop a bus devices use here.
+
+### 5.1 Listening to a bus through a bridge
+
+Some buses already have a master: a BMS master pack polling its slave packs,
+a datalogger polling its meters. A second master on that bus would collide
+with it. The gateway can **listen** instead, and never send a byte
+([rtu-serial.md §7](rtu-serial.md#7-listen-only-tap-protocol-rtu_tap)). The
+listening adapter can sit on another host, behind a bridge:
+
+1. Put a bridge on the bus: our serial bridge with its own adapter, or a
+   **transparent** converter wired A/B in parallel like any node.
+2. **Add Device → Modbus RTU → Listen only (tap)**. In *Where the bus is*,
+   choose the bridge's bus, then the unit ID of the slave to follow.
+3. Add one listening device per slave you want, on the same bus. They share
+   one connection to the bridge.
+
+```yaml
+connection: { protocol: rtu_tap, bridge: pi-garage, bridge_port: 7001, unit_id: 2 }
+```
+
+Good to know:
+- **A Modbus TCP gateway cannot be listened through.** It turns the bus into
+  answers to *its* questions and passes nothing else on. The wizard offers
+  only transparent bridges, and the API refuses a gateway.
+- **A bus is polled or tapped, never both.** On a tapped bus the gateway does
+  not add a polled device and refuses **Scan** and **Check mode**: they would
+  transmit. The bus shows *listening · N frames · M CRC errors* instead of
+  how busy it is.
+- **The baud rate is the bus's.** Set it on the converter, or on the bus of
+  our bridge. A bridge passes bytes, not the gaps between them; the gateway
+  finds the frames by their CRC, so that does not matter.
+- **If the bridge drops** (restart, network), the bus shows *link lost* and
+  the gateway reconnects every few seconds on its own.
+
+### 5.2 Finding bridges on the LAN
+
+**Add bridge → Find bridges on the LAN** (or **Find on the LAN** above the
+bridges) looks through a range, at most a /24, for the ports each kind of
+bridge declares in its file (`lan_discovery` in `bridge_types/*.json`):
+
+- **Our serial bridge** answers on its control port (7000) with its version
+  and how many adapters it has.
+- **A converter** has no API, only an open port: Waveshare 4196, Elfin and
+  HF 8899, USR 20108. The gateway asks one register of a unit (1 by
+  default) as RTU and as Modbus TCP. The answer tells a *transparent*
+  converter from a *gateway*. When that unit does not answer, the find says
+  *a converter?*: add it, then use **Check mode** with a unit you know.
+- **Add bridge** on a find opens the form with the kind, the IP and the port
+  filled in.
+- Bridges already added are listed as such and **not knocked on**. A
+  converter that takes one client would drop the gateway's own connection.
+
+A converter set to another port is not found. Add it by hand, with the port
+from its web page, or add that port to its kind's `lan_discovery.ports`.
 
 ## 6. Security
 
@@ -210,3 +274,7 @@ the bus.
 | Exception 0x0B in gateway mode | the converter got no answer from the slave in time | unit ID, wiring, raise the converter's response timeout |
 | "unit N on host:port is already read by …" | two devices for one slave | each slave on a bus has its own unit ID |
 | Values right but slow, timeouts as more slaves are added | the bus is saturated | slower poll groups, higher baud, or split slaves across two buses |
+| A listening device: *listening · 0 frames* | the converter is not transparent, the bus is quiet (master off), or its baud differs | converter in transparent mode; match the bus's serial settings; check the master runs |
+| *listening — link lost* | the bridge restarted, or another client took a single-client converter | the gateway reconnects by itself; make sure nothing else connects to that port |
+| "a bus is either polled or tapped" | a polled device and a listening one on one bus | listen to that bus only, or poll it only (when you remove the other master) |
+| Find on the LAN finds nothing | the converter uses another port, or the range is wrong | add it by hand with its port; the range is the LAN the gateway sees |

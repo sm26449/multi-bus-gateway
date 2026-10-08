@@ -184,11 +184,16 @@ Notes:
   device's stats; the last ~200 decoded frames (direction, FC, address,
   window) are kept in memory as a debug trace.
 - Tap devices are read-only by nature: no write face, no commands.
+- **The bus can be elsewhere.** A tap can listen through a transparent
+  bridge or our serial bridge on another host:
+  `connection: {protocol: rtu_tap, bridge: pi-garage, bridge_port: 7001, unit_id: 2}`.
+  See [rtu-over-network.md §5.1](rtu-over-network.md#51-listening-to-a-bus-through-a-bridge).
 
 ### 7.1 From the UI
 
-**Devices → Add Device → Modbus RTU → Listen only (tap)**: serial port, baud,
-parity and the observed unit ID — there is no *Test connection* in the wizard
+**Devices → Add Device → Modbus RTU → Listen only (tap)**: *where the bus
+is* (a serial port on this host, or a bus of a transparent bridge), then the
+serial port, baud and parity (for a local port) and the observed unit ID — there is no *Test connection* in the wizard
 (a tap never transmits, so there is nothing to ask). Once saved, **Test** on
 the device page reports what the tap has *heard*, naming the layer that is
 silent: the port could not be opened (permissions, missing adapter) → the

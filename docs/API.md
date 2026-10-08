@@ -162,6 +162,7 @@ rather than silently reading the primary's bucket.
 | GET / DELETE | `/api/bus-scan/{job}` | Progress `{state: running\|done\|cancelled\|failed, done, total, found: [{unit_id, fc43, sunspec, matches, suggested, device}]}` / cancel | viewer / admin |
 | GET | `/api/bridges/export` | Every bridge as YAML (tokens only for an admin, or a box with no login and no API key) | viewer |
 | POST | `/api/bridges/import` | `{yaml, apply, replace}` — each bridge `new\|replace\|exists\|invalid` with the reason; a file that drops a bus devices use here is refused | admin |
+| POST | `/api/bridges/discover` | `{cidr, unit_id?}` (LAN only, at most a /24): the ports each kind's `lan_discovery` declares. Our bridge is named by its `/health`; a converter by one register asked of `unit_id` (default 1) as RTU and as Modbus TCP. `found: [{host, port, type, type_name, version?, detail, candidates?, bridge}]`; a host already added comes back as `bridge` + `already added`, not probed | admin |
 
 A device on a bridge: `connection: {bridge, bridge_port, unit_id}`; host,
 port, protocol (`rtu-tcp` or `tcp`) and connection limit come from the bridge.
@@ -169,6 +170,13 @@ port, protocol (`rtu-tcp` or `tcp`) and connection limit come from the bridge.
 a bus (one connection, taking turns); one unit id twice on a bus is refused.
 `POST /api/devices/test` on a bus a running device already reads goes through
 that shared connection (`shared_with`).
+
+**Listening through a bridge:** `connection: {protocol: rtu_tap, bridge,
+bridge_port, unit_id}` taps the bus behind a transparent bridge or our serial
+bridge (a Modbus TCP gateway is refused: it only answers questions). A bus is
+polled or tapped, never both; on a tapped bus `ports[].tapped` is true,
+`ports[].wire` is `{frames, crc_errors, error}`, devices carry `tap: true`,
+and Scan / Check mode answer 409.
 
 ## Registers & values
 
@@ -263,9 +271,9 @@ enabled; dashboard errors surface as 502 with the reason.
 
 | Method | Path | Description | Role |
 |---|---|---|---|
-| GET | `/api/bus-trace?after=&limit=&device=` | Captured Modbus transactions (incremental polling by sequence number) | viewer |
+| GET | `/api/bus-trace?after=&limit=&device=&bus=` | Captured Modbus transactions (incremental polling by sequence number). Each carries the `device` that asked (on a shared bus, each unit its own) and its `bus` (serial port or `host:port`) — filter by either | viewer |
 | POST | `/api/bus-trace/config` | Enable/disable/resize/clear the frame trace (RAM-only, boots disabled) | operator |
-| POST | `/api/diagnostics/probe` | One-shot read on any Modbus device (FC1–4 only), decoded as every data type × word order (ABCD/CDAB/BADC/DCBA) + hex + ASCII | operator |
+| POST | `/api/diagnostics/probe` | One-shot read on any Modbus device (FC1–4 only), decoded as every data type × word order (ABCD/CDAB/BADC/DCBA) + hex + ASCII. `unit_id` asks another slave on the device's bus, through the device's own shared connection | operator |
 
 ## Virtual meters
 
