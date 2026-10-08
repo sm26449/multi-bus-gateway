@@ -17,6 +17,12 @@ Stop one with `touch /tmp/br_sim_<port>.stop` (or /tmp/br_sims.stop for all).
                        unit 2: HR 0 = 3333, HR 1 = 4444
                      Writes /tmp/br_sim_<port>.json every 0.5 s:
                        {"accepts": n, "kicked": n, "frames": {unit: n}, "peer": ip}
+  master PORT        a transparent converter on a bus ANOTHER master polls:
+                     every 0.5 s it carries that master's questions and the
+                     slaves' answers (unit 1 HR 0-1 = 1111, 2222; unit 2 =
+                     3333, 4444), torn into 5-byte pieces, to every client.
+                     Whatever a client sends is counted, never answered:
+                       {"accepts": n, "written": bytes, "cycles": n}
   gateway PORT       a converter in "Modbus TCP to RTU" mode (pymodbus TCP
                      server), two unit ids:
                        unit 1: HR 0 = 5555, HR 1 = 6666
@@ -136,6 +142,71 @@ def transparent(port):
         threading.Thread(target=serve, args=(conn,), daemon=True).start()
 
 
+# ── master: a bus someone else polls, passed on byte for byte ─────────────
+def master(port):
+    stats = {'accepts': 0, 'written': 0, 'cycles': 0}
+    clients = []
+    lock = threading.Lock()
+
+    def traffic():
+        out = b''
+        for unit, regs in TRANSPARENT.items():
+            out += adu(bytes([unit, 3]) + struct.pack('>HH', 0, 2))
+            out += adu(bytes([unit, 3, 4]) + struct.pack('>HH', regs[0], regs[1]))
+        return out
+
+    def listen(conn):                         # a tap must never speak: count it if it does
+        conn.settimeout(0.5)
+        while not stopped(port):
+            try:
+                chunk = conn.recv(256)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            if not chunk:
+                break
+            stats['written'] += len(chunk)
+        with lock:
+            if conn in clients:
+                clients.remove(conn)
+
+    def broadcast():
+        while not stopped(port):
+            data = traffic()
+            with lock:
+                targets = list(clients)
+            for i in range(0, len(data), 5):
+                for c in targets:
+                    try:
+                        c.sendall(data[i:i + 5])
+                    except OSError:
+                        pass
+                time.sleep(0.003)
+            stats['cycles'] += 1
+            with open(f'/tmp/br_sim_{port}.json.tmp', 'w') as f:
+                json.dump(stats, f)
+            os.replace(f'/tmp/br_sim_{port}.json.tmp', f'/tmp/br_sim_{port}.json')
+            time.sleep(0.5)
+
+    threading.Thread(target=broadcast, daemon=True).start()
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(('0.0.0.0', port))
+    srv.listen(4)
+    srv.settimeout(0.5)
+    print('bus with a foreign master on', port, flush=True)
+    while not stopped(port):
+        try:
+            conn, _peer = srv.accept()
+        except socket.timeout:
+            continue
+        with lock:
+            stats['accepts'] += 1
+            clients.append(conn)
+        threading.Thread(target=listen, args=(conn,), daemon=True).start()
+
+
 # ── gateway: Modbus TCP, two unit ids (pymodbus) ─────────────────────────
 def gateway(port):
     from pymodbus.datastore import (ModbusDeviceContext, ModbusSequentialDataBlock,
@@ -160,6 +231,6 @@ if __name__ == '__main__':
     for p in (f'/tmp/br_sim_{port}.stop',):
         if os.path.exists(p):
             os.unlink(p)
-    {'transparent': transparent, 'gateway': gateway}[kind](port)
+    {'transparent': transparent, 'gateway': gateway, 'master': master}[kind](port)
     print('stopped', flush=True)
     os._exit(0)

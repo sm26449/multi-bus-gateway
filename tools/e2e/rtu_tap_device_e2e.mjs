@@ -92,8 +92,13 @@ try {
   let t = {};
   for (let i = 0; i < 10 && !t.ok; i++) { await sleep(1000); t = (await api(`/api/devices/${ID}/test`, { method: 'POST' })).body; }
   check('Test reports hearing unit 3', t.ok === true && /hearing unit 3/.test(t.message), t.message);
-  const vals = (await api(`/api/values?device=${ID}`)).body.values || {};
-  const byName = Object.fromEntries(Object.values(vals).map(v => [v.name, v.value]));
+  // "hearing" comes with the first window; the one carrying these may be next
+  let byName = {};
+  for (let i = 0; i < 20 && byName.pack_voltage == null; i++) {
+    const vals = (await api(`/api/values?device=${ID}`)).body.values || {};
+    byName = Object.fromEntries(Object.values(vals).map(v => [v.name, v.value]));
+    if (byName.pack_voltage == null) await sleep(500);
+  }
   // the feeder offsets each pack's voltage by its unit id: 5313 + 3
   check('pack_voltage decoded 53.16', byName.pack_voltage === 53.16, String(byName.pack_voltage));
   check('current decoded -2.7', byName.current === -2.7, String(byName.current));
