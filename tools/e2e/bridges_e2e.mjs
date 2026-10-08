@@ -236,7 +236,7 @@ try {
   check('…and hides the legacy adapter scan', !(await page.isVisible('#devWizLegacyScan')));
   // pick the OTHER bus on the preselected bridge: the choice must stick
   await page.selectOption('#devWizBridgePort', String(P.tSpare));
-  bug('wizard: choosing a bus on the preselected bridge keeps that bus',
+  check('wizard: choosing a bus on the preselected bridge keeps that bus',
     await page.inputValue('#devWizBridgePort') === String(P.tSpare),
     `picked :${P.tSpare}, the picker shows :${await page.inputValue('#devWizBridgePort')} (app-wizard.js _devWizBridgeChanged: d.bridge is '' on a fresh wizard, so the first change of the BUS is taken for a change of BRIDGE and resets bridge_port)`);
   await page.selectOption('#devWizBridgePort', String(P.t));
@@ -420,12 +420,18 @@ try {
   await card(BR.g).waitFor();
   check('gateway bridge appears on the Devices page', (await card(BR.g).innerText()).includes(`:${P.g}`));
   await busButton(BR.g, P.g, 'addDeviceOnBus');
-  await page.waitForSelector('#devWizUnitBr');
-  check('wizard on a gateway bus says it reads as Modbus TCP',
-    /Modbus TCP through the gateway/.test(await page.innerText('#devWizBridgeHint2')),
-    await page.innerText('#devWizBridgeHint2'));
-  await page.fill('#devWizUnitBr', '2');
-  const tg = await wizTest();
+  await page.waitForSelector('#devWizGw');
+  check('wizard on a gateway bus opens as Modbus TCP, reached through that gateway',
+    await page.isChecked('input[name="devWizProto"][value="tcp"]') && await page.inputValue('#devWizGw') === `${BR.g}::${P.g}`,
+    await page.inputValue('#devWizGw'));
+  await page.fill('#devWizUnit', '2');
+  const tg = await (async () => {
+    const out = page.locator('#devWizTestResult');
+    await out.evaluate(el => { el.textContent = ''; });
+    await page.click('#devWizTestBtn');
+    await page.waitForFunction(() => document.getElementById('devWizTestResult')?.textContent.trim(), null, { timeout: 20000 });
+    return (await out.textContent()).trim();
+  })();
   check('wizard Test (gateway, unit 2) succeeds', /^✓/.test(tg), tg);
   await wizFinish(DEV.g2, 'E2E behind gateway');
   await page.waitForSelector('#deviceWizardModal', { state: 'hidden' });
