@@ -187,7 +187,7 @@ services:
     # pinned (Dependabot bumps it): a bad upstream release must not land on
     # every `compose pull` — mosquitto/influxdb were already pinned, these two
     # floated (audit 2026-10-01)
-    image: ghcr.io/esphome/esphome:2026.5.3
+    image: ghcr.io/esphome/esphome:2026.9.1
     container_name: esphome
     logging: *default-logging
     restart: unless-stopped
