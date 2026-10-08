@@ -27,6 +27,8 @@ Stop one with `touch /tmp/br_sim_<port>.stop` (or /tmp/br_sims.stop for all).
                      server), two unit ids:
                        unit 1: HR 0 = 5555, HR 1 = 6666
                        unit 2: HR 0 = 7777, HR 1 = 8888
+                     and, for both, at the same addresses: input 0/1 =
+                     9001/9002, coil 0/1 = 1/0, discrete 0/1 = 0/1
 """
 import json
 import os
@@ -216,8 +218,12 @@ def gateway(port):
     for unit, words in GATEWAY.items():
         hr = words + [0] * 30
         # pymodbus 3.15: a block starting at 1 serves protocol address 0
+        # the four tables hold DIFFERENT things at the same address (per_fc_e2e):
+        # input 0/1 = 9001/9002, coil 0 = 1, coil 1 = 0, discrete 0 = 0, discrete 1 = 1
         devices[unit] = ModbusDeviceContext(hr=ModbusSequentialDataBlock(1, hr),
-                                            ir=ModbusSequentialDataBlock(1, [0] * 32))
+                                            ir=ModbusSequentialDataBlock(1, [9001, 9002] + [0] * 30),
+                                            co=ModbusSequentialDataBlock(1, [1, 0] + [0] * 30),
+                                            di=ModbusSequentialDataBlock(1, [0, 1] + [0] * 30))
     threading.Thread(target=lambda: StartTcpServer(
         context=ModbusServerContext(devices=devices, single=False),
         address=('0.0.0.0', port)), daemon=True).start()

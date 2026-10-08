@@ -195,12 +195,19 @@ try {
     && rt.ir_counter === 'input' && rt.voltage_l1_n === 'holding', JSON.stringify(rt));
   check('CSV import: word order from the form (ABCD)', t.protocol?.byte_order === 'big', JSON.stringify(t.protocol));
 
-  // 1b. one map cannot hold HR 0 and IR 0 — the preview says so before import
-  const clashYaml = 'registers:\n  - {address: 0, name: voltage_l1_n, data_type: float}\n'
+  // 1b. HR 0 and IR 0 are two registers (3.91): one map holds both; only a
+  //     repeat within ONE table is refused, before import
+  const bothYaml = 'registers:\n  - {address: 0, name: voltage_l1_n, data_type: float}\n'
     + '  - {address: 0, name: frequency, data_type: uint16, register_type: input}\n';
+  pv = await importMap({ fmt: 'yaml', id: 'e2e_nu_clash', name: 'clash', vendor: 'E2E', order: 'big', text: bothYaml });
+  check('YAML preview accepts HR 0 + IR 0 in one map (one row per address per table)',
+    !/duplicate address/.test(pv) && !(await page.isDisabled('#csvImportBtn')), pv.slice(0, 160));
+  await page.evaluate(() => window.app.closeModal('csvImportModal'));
+  const clashYaml = 'registers:\n  - {address: 0, name: voltage_l1_n, data_type: float}\n'
+    + '  - {address: 0, name: frequency, data_type: uint16}\n';
   pv = await importMap({ fmt: 'yaml', id: 'e2e_nu_clash', name: 'clash', vendor: 'E2E', order: 'big', text: clashYaml });
-  check('YAML preview refuses HR 0 + IR 0 in one map (one row per address)',
-    /duplicate address/.test(pv) && await page.isDisabled('#csvImportBtn'), pv.slice(0, 160));
+  check('YAML preview refuses two rows at HR 0',
+    /duplicate address 0 in the holding table/.test(pv) && await page.isDisabled('#csvImportBtn'), pv.slice(0, 160));
   await page.evaluate(() => window.app.closeModal('csvImportModal'));
 
   // 1c. RTU map from YAML (the file's own byte_order header)
