@@ -1,5 +1,93 @@
 # Changelog
 
+## 3.91.0
+
+**Upgrade notes:**
+- In `/api/values` and on the WebSocket, values of **input, coil and
+  discrete** registers are now keyed by their address in their table:
+  - input: +100000;
+  - coil: +200000;
+  - discrete: +300000.
+
+  Holding registers keep their bare address. Each entry carries its
+  `address` and `register_type`; register lists give each register's `key`.
+  MQTT topics, InfluxDB series, Home Assistant entities and virtual meters
+  are unchanged, since they go by name. A fleet-page pin on an input register
+  may need picking again.
+- Saving a template now checks more (row extras, Home Assistant fields,
+  totals, commands against the map). A template file already on disk still
+  loads; the log names what the next save will ask to fix.
+
+### 2026-10-08 — everything a template holds, from the UI; one address in each table; Modbus ASCII and UDP
+
+**Templates: nothing needs an external editor any more.**
+- The template editor gains an **Advanced** section. Each tab explains what
+  its block is for, shows an example, and links the new guide
+  [templates-advanced.md](docs/templates-advanced.md):
+  - **Calculated**: formulas built from chips of the template's own
+    registers, checked against the map as you type (a misspelt register is
+    named).
+  - **Commands**: parameters with bounds, a guard, ordered writes, verify,
+    settle time, re-read group, safe values, shortcuts.
+  - **Display**: unit words and icon, row and fleet fields, installation
+    headline, alarms, tile sections, bitmasks.
+  - **Scan recognition**: registers that must read given values and FC43
+    patterns, with **Test** against a running device.
+  - **Details & categories**: version, author, source document,
+    description; categories renamed on their rows.
+  - **Raw JSON**: check and apply in place.
+- Each row has a **details** dialog:
+  - description and access;
+  - scale factor from another register;
+  - "not available" marker;
+  - growing and day counters;
+  - allowed write values;
+  - totals of an installation;
+  - Home Assistant typing.
+- The whole template is checked a moment after each change. A save names the
+  mistakes that used to pass unchecked.
+- **Fixed:** saving a template dropped its rows' `aggregates`, so a
+  re-saved user template lost its installation totals.
+
+**One address in each table.** Coil 0, discrete input 0, holding register 0
+and input register 0 are four registers, and one template can now hold all
+four. The live store, the dashboard, the monitor, the measurements page and
+write rules keep them apart. The CSV example in the guide no longer has to
+move a coil to a fake address.
+- **Fixed:** listening to a bus decoded every row from any window. FC3 now
+  feeds holding rows, FC4 input rows, FC1 coils and FC2 discrete inputs.
+  When the master reads in the other table than the map says, **Test** on
+  the device says so.
+- **Fixed:** Home Assistant write limits were looked up by bare address. A
+  coil could pick up a holding register's limits.
+
+**Modbus ASCII and Modbus over UDP.**
+- **ASCII on a serial port:** Direct serial → **Framing: ASCII**.
+- **ASCII through a converter:** a bridge kind with `"framing": "ascii"`.
+- **UDP:** Modbus TCP → **Over UDP**.
+- All read through the same connection code as RTU and TCP, and are
+  validated like them: one framing per line, one unit per bus.
+- The bus monitor decodes ASCII frames and checks the LRC.
+- **Test connection** on a bus a running device already reads (a serial
+  port or a bridge's port) asks through that device's connection.
+
+**Smaller things that stopped a new user:**
+- A slave behind a **Modbus TCP gateway** is added under **Modbus TCP →
+  Reached: through the gateway**. "+ Device" on a gateway's bus opens there;
+  the RTU picker lists only bridges that carry RTU.
+- A Modbus device can **change its transport** when edited: TCP, UDP, RTU,
+  ASCII, over the network, listen-only. Its id, topics and history stay.
+- Virtual Meters: a disabled **Add instance** says why. The source picker
+  says which device a bare name follows.
+- An empty Templates page says what to do.
+
+**Fixed:**
+- The **Copy** button on a device page copied nothing: a method of the same
+  name in the bridges code overrode it. A test now refuses any method
+  defined twice across the UI files.
+- Changing a device's template from its measurements page rebuilt the
+  connection as plain TCP, losing a bridge, RTU-over-TCP or a tap.
+
 ## 3.90.0
 
 **Upgrade notes:** nothing to do. The bridge kinds gained a `lan_discovery`
