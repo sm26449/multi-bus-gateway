@@ -135,6 +135,25 @@ one connection to the bridge, and take turns on it. The unit ID must differ,
 and on a direct port the baud and parity must agree. Details and bus-time
 budget: [rtu-over-network.md §4](rtu-over-network.md#4-several-devices-on-one-bus).
 
+### 5.1 Modbus ASCII
+
+Some older PLCs and meters speak **Modbus ASCII** instead of RTU: each frame
+is readable hex between a `:` and a line end, checked by an LRC instead of a
+CRC. The manual says so explicitly ("Modbus ASCII", "7E1", "LRC").
+
+- **Direct serial:** Add Device → Modbus RTU → Direct serial → **Framing:
+  ASCII** (`protocol: ascii`). ASCII lines are often 7 data bits with even
+  parity: set them as the manual says.
+- **Through a bridge:** a kind of bridge whose file declares
+  `"framing": "ascii"` gives its devices `ascii-tcp`. Copy
+  `bridge_types/rtu_transparent.json`, change `id`, `name` and `framing`.
+  Devices on it then speak ASCII over the converter's TCP port.
+- All slaves on one line speak the **same** framing. An RTU device on a port
+  already read as ASCII, or the reverse, is refused.
+- The bus monitor shows ASCII frames as the text they are, and checks the
+  LRC.
+- Listening (`rtu_tap`) decodes RTU only.
+
 ## 6. Troubleshooting
 
 | Symptom | Likely cause / fix |

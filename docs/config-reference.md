@@ -300,8 +300,8 @@ devices:
     template: eastron_sdm630     # device-template id
     enabled: true
     connection:
-      protocol: tcp              # tcp | rtu | rtu-tcp | http | mqtt | rtu_tap
-      # tcp / rtu-tcp:
+      protocol: tcp              # tcp | udp | rtu | ascii | rtu-tcp | ascii-tcp | http | mqtt | rtu_tap
+      # tcp / udp / rtu-tcp / ascii-tcp:
       host: 192.168.1.60
       port: 502
       unit_id: 1
@@ -313,7 +313,7 @@ devices:
       startup_jitter_s: 0        # inherits modbus.startup_jitter_s when unset
       illegal_registers: []
       drop_all_zero: false
-      # rtu (direct serial):
+      # rtu / ascii (direct serial):
       # serial_port: /dev/ttyUSB0
       # baudrate: 9600
       # parity: N                # N | E | O
@@ -339,7 +339,10 @@ devices:
 ```
 
 `rtu-tcp` speaks RTU framing over a TCP socket (a ser2net-style serial bridge);
-`rtu` opens a local serial port directly; `rtu_tap` is a LISTEN-ONLY observer
+`rtu` opens a local serial port directly; `ascii` and `ascii-tcp` are the same
+two with Modbus ASCII framing (`:` … LRC CRLF, older PLCs and meters); `udp`
+sends Modbus TCP frames in UDP datagrams (devices whose manual says UDP);
+`rtu_tap` is a LISTEN-ONLY observer
 of a bus mastered by someone else (never transmits — decodes the existing
 master↔slave traffic) — see [rtu-serial.md](rtu-serial.md).
 
@@ -370,7 +373,7 @@ endpoints:
     template: fronius_sunspec_inverter
     enabled: true                # false = units stay listed but do not poll
     connection:                  # shared by every unit (no unit_id here)
-      protocol: tcp              # tcp | rtu-tcp | rtu_tap (serial_port + baudrate instead of host/port)
+      protocol: tcp              # tcp | udp | rtu-tcp | ascii-tcp | rtu_tap (serial_port + baudrate instead of host/port)
       host: 192.168.1.50
       port: 502
     units: [1, 2, 3, 4]          # bare ids, or {unit_id: 3, id: inv3, name: East roof}

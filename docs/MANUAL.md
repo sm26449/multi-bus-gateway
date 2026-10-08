@@ -228,7 +228,8 @@ Devices → *Discover devices*:
    - **Modbus TCP**: host, port, unit ID, timeout. A slave behind a
      converter in *Modbus TCP to RTU* (gateway) mode is reached here too:
      **Reached → Through the gateway …** picks the gateway's bus, and only
-     the unit ID is left to type.
+     the unit ID is left to type. **Over UDP** is for the few devices whose
+     manual says Modbus over UDP.
    - **Modbus RTU**, three modes ([rtu-serial.md](rtu-serial.md)):
      - **Over network (recommended)**: a bus behind a **bridge** (our
        serial bridge on a Raspberry Pi or server, or a transparent
@@ -236,7 +237,9 @@ Devices → *Discover devices*:
        bridges with **Add bridge** on the Devices page
        ([rtu-over-network.md](rtu-over-network.md)).
      - **Direct serial**: serial port (e.g. `/dev/ttyUSB0`), baud, parity,
-       stop bits, with the adapter mapped into the container.
+       stop bits, with the adapter mapped into the container. **Framing**:
+       RTU, or ASCII for the older devices that speak Modbus ASCII
+       ([rtu-serial.md §5.1](rtu-serial.md#51-modbus-ascii)).
      - **Listen only (tap)**: for a bus that already has a master (a BMS
        master pack, a vendor datalogger). The gateway never transmits; it
        decodes the answers the observed unit gives, at the master's rhythm.
@@ -248,7 +251,7 @@ Devices → *Discover devices*:
      they share one connection and take turns. A bus is either polled or
      tapped.
    - **Changing it later:** a Modbus device can move between Modbus TCP,
-     RTU, over the network and listen-only, because its register map reads
+     UDP, RTU, ASCII, over the network and listen-only, because its register map reads
      by address either way. Its id, topics and history stay. HTTP and MQTT
      maps read by path, so going to or from them needs a new device.
    - **HTTP/JSON**: a URL returning JSON; each register extracts its value

@@ -84,7 +84,7 @@ conventional status codes (401 unauthenticated, 403 forbidden, 404 not found,
 | GET | `/api/serial-ports` | Local `/dev` serial lines visible to the container (direct RTU mode; empty when MBG has no `/dev`) | viewer |
 | GET | `/api/bridge/adapters` | Live USB-adapter inventory from the serial bridge (RTU-over-network Scan); `available:false` with an `error` when the bridge is unreachable | viewer |
 | GET | `/api/devices/{id}/events` | This device's acquisition log, newest first: unreachable / recovered / forced reopen / bus busy / failed batch (with the address and register count) / poll-group overrun episodes. `?limit=1..500`, `?level=error,warn` to narrow to the problems. Returns the live per-group state (interval, last sweep, reads, overruns, age) and the read counters alongside, because "what happened" and "what it is doing now" are the same question when an endpoint is struggling. 404 when the device is not running | viewer |
-| POST | `/api/devices/test` | Ad-hoc connection probe for a not-yet-saved device (TCP/RTU/rtu-tcp/HTTP/MQTT). `rtu_tap` answers `ok: null` — a tap never transmits, there is nothing to ask | operator |
+| POST | `/api/devices/test` | Ad-hoc connection probe for a not-yet-saved device (tcp, udp, rtu, ascii, rtu-tcp, ascii-tcp, http, mqtt). A bus a running device already reads (a serial port, a bridge's port) is asked through that device's connection. `rtu_tap` answers `ok: null` — a tap never transmits, there is nothing to ask | operator |
 | POST | `/api/devices/{id}/test` | Probe a saved device (uses its first selected register address). For an `rtu_tap` device: what the tap has HEARD, naming the silent layer — port not open (`open_error`), port open but no valid frame, bus live but nothing for this unit, or `hearing unit N — W windows, last X s ago` | operator |
 | GET | `/api/devices/{id}/poll-groups` | Current poll-group intervals | viewer |
 | POST | `/api/devices/{id}/poll-groups` | Update intervals (0.05–86400 s) and live-restart that device's pollers | admin |
@@ -165,7 +165,7 @@ rather than silently reading the primary's bucket.
 | POST | `/api/bridges/discover` | `{cidr, unit_id?}` (LAN only, at most a /24): the ports each kind's `lan_discovery` declares. Our bridge is named by its `/health`; a converter by one register asked of `unit_id` (default 1) as RTU and as Modbus TCP. `found: [{host, port, type, type_name, version?, detail, candidates?, bridge}]`; a host already added comes back as `bridge` + `already added`, not probed | admin |
 
 A device on a bridge: `connection: {bridge, bridge_port, unit_id}`; host,
-port, protocol (`rtu-tcp` or `tcp`) and connection limit come from the bridge.
+port, protocol (`rtu-tcp`, `ascii-tcp` or `tcp`, from the kind's framing) and connection limit come from the bridge.
 `GET /api/devices` carries `bridge` / `bridge_port`. Several devices may share
 a bus (one connection, taking turns); one unit id twice on a bus is refused.
 `POST /api/devices/test` on a bus a running device already reads goes through
