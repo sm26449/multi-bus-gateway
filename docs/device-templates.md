@@ -56,7 +56,13 @@ the first digit:
 | `40001` | holding register, first one | address `0`, FC3 |
 | `40101` | holding register | address `100`, FC3 |
 | `30001` | input register, first one | address `0`, FC4 |
+| `00001` | coil, first one | address `0`, FC1 |
+| `10001` | discrete input, first one | address `0`, FC2 |
 | `0x0000`, `0` | already a protocol address | address `0` |
+
+Each function code reads its own table. **Coil 0, discrete input 0, holding
+register 0 and input register 0 are four different things**, and a template
+can hold all four, each with its own row and name.
 
 If **every** address of a CSV import lies between 40001 and 49999 (or 30001
 and 39999), the import warns you. If the manual numbers its registers from 1
@@ -185,16 +191,16 @@ address,name,label,unit,type,scale,fc,category,poll_group
 0x0034,power_active_total,Total active power,W,float,1,fc3,power,realtime
 0x0046,frequency,Frequency,Hz,float,1,fc3,frequency,normal
 0x0048,energy_active_import,Import active energy,Wh,float,0.001,fc3,energy,slow
-0x1000,relay_1,Relay 1 state,,uint16,1,coil,status,normal
+0x0000,relay_1,Relay 1 state,,uint16,1,coil,status,normal
 ```
 
 Notes on the rows:
 - **Energy:** the manual gives kWh; `scale 0.001` (÷0.001 = ×1000) delivers
   canonical Wh.
-- **The coil:** it got address `0x1000`, not `0x0000`. Within one template
-  each address is used once, whatever its function code. If a coil and a
-  register share a number, give the coil its own row address or put it in a
-  second template.
+- **The coil:** it keeps its own address, `0x0000`, next to the phase 1
+  voltage at `0x0000`. Coils, discrete inputs, holding and input registers
+  are four separate tables, so one address can appear once in each. Only a
+  repeat within one table is refused.
 
 In **Templates → Import CSV**: paste it, fill **Id** (`acme_em3`) and
 **Name**, choose **Read over: Modbus** and **Word order: CDAB · low word
@@ -381,7 +387,7 @@ A minimal complete template:
 | HTTP device: nothing reads | json_path does not match | Test connection shows how many paths resolved; check the sample |
 | MQTT device: nothing reads | topic mismatch | the device's subscribe topic must cover each row's topic; use `~/leaf` |
 | Value right, name flagged | non-canonical name | Auto-canonicalize, or pick from the list |
-| Save refused: *duplicate address* | two rows, one address | each address once per template, whatever the function code |
+| Save refused: *duplicate address N in the holding table* | two rows with one address in one table | each address once per table (the same address in another FC is fine) |
 | Change saved but a unit still shows the old label | units keep their copy | the page offers **Review and apply** (§7) |
 
 ## 11. Reference: every field of a register row

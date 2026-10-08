@@ -191,8 +191,8 @@ and Scan / Check mode answer 409.
 | GET | `/api/poll-groups` | Global poll-group definitions | viewer |
 | GET | `/api/canonical-fields` | The canonical field dictionary (name → measurement, unit, MQTT topic, description) that drives editor autocomplete and topic/measurement derivation | viewer |
 | POST | `/api/canonical-fields/guess` | Batch canonical-name inference for the editor's **Auto-canonicalize** button: `{registers: [{name, label, unit, description}]}` → `{guesses: [name\|null]}`, index-aligned (null where not confident) | admin |
-| GET | `/api/values?device=` | All current values of a device's live store | viewer |
-| GET | `/api/values/{address}` | One current value (primary) | viewer |
+| GET | `/api/values?device=` | All current values of a device's live store, keyed by **store key**: the address in its table — holding as is, input + 100000, coil + 200000, discrete + 300000 (calculated fields from 8000000). Each entry carries its `address` and `register_type`; the register lists (`/api/registers/selected`) give each register's `key` | viewer |
+| GET | `/api/values/{key}` | One current value (primary), by store key | viewer |
 | GET | `/api/meters` | Devices exposed as JSON feeds (http_output enabled) | viewer |
 | GET | `/api/meters/{id}` | Live values of one device as JSON, keyed by register name, with a `stale` flag | viewer |
 | GET | `/api/history/registers?device=` | Influx-enabled registers (+ calculated) for the history picker | viewer |
@@ -347,7 +347,7 @@ enabled; dashboard errors surface as 502 with the reason.
 |---|---|---|---|
 | GET | `/` | The single-page web UI (serves the login shell to an unauthenticated, allowlisted client; data needs a session) | — |
 | GET | `/static/*` | UI assets | — |
-| WS | `/ws` | Real-time value stream (init snapshot + updates; ping/pong). Enforces the IP allowlist, the session cookie and a same-origin check itself | viewer |
+| WS | `/ws` | Real-time value stream (init snapshot + updates; ping/pong), values keyed by store key like `/api/values` (a register outside the holding table also carries its `address` and `register_type`). Enforces the IP allowlist, the session cookie and a same-origin check itself | viewer |
 
 ---
 

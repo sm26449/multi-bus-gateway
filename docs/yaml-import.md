@@ -118,8 +118,9 @@ recommended — the `name` becomes the MQTT topic leaf and the InfluxDB field.
 - **Validation** — the resulting template goes through the same validator as an
   uploaded JSON template. Blocking problems must be fixed before Import is
   enabled: invalid template id (a-z 0-9 `-` `_`, 2–64 chars), missing name, no
-  registers, address outside 0–65535, **duplicate address** (each address must
-  be unique — runtime state, MQTT and InfluxDB are keyed by address),
+  registers, address outside 0–65535, **duplicate address within one table**
+  (coil 0, discrete 0, holding 0 and input 0 may all be present; two holding
+  rows at 0 may not),
   unsupported data type, `string` without a length (`string:7`), zero scale,
   and a `writable` register without both `write_min` and `write_max`.
 - **Save** — on Import the template lands in the user template library
