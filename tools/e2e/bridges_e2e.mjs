@@ -338,6 +338,49 @@ try {
   if (/on the bus '[^']+' already reads/.test(t3))
     note(`shared-bus Test message reads as if the bus were named after a device: "${t3.slice(0, 120)}"`);
 
+  // ═══ 3b. Phase 2: busy bus, scan, add from the scan, export / import ═════
+  await goDevices();
+  const busyTxt = await card(BR.t).locator('.bridge-port').first().innerText();
+  check('the bus says how busy it is (measured)', /\d+% busy/i.test(busyTxt), busyTxt.replace(/\s+/g, ' ').slice(0, 140));
+  // a quick sweep over 1-4 through the API (the UI sweeps 1-247 — about 75 s)
+  const sj = (await api(`/api/bridges/${BR.t}/ports/${P.t}/scan`, { method: 'POST',
+      body: JSON.stringify({ from: 1, to: 4, timeout: 0.3 }) })).body;
+  let sres = {};
+  for (let i = 0; i < 40; i++) {
+    sres = (await api(`/api/bus-scan/${sj.job}`)).body;
+    if (sres.state !== 'running') break;
+    await sleep(500);
+  }
+  const units = (sres.found || []).map(f => f.unit_id);
+  check('scanning the bus finds both slaves, and says which device already reads each',
+    units.join(',') === '1,2' && (sres.found || []).every(f => f.device), JSON.stringify(sres.found || []).slice(0, 200));
+  // the UI: Scan opens with progress; the add button prefills the wizard
+  await card(BR.t).locator('.bridge-port').first().locator('button', { hasText: 'Scan' }).click();
+  await page.waitForSelector('#bridgeInfoModal.active #busScanState');
+  await sleep(2500);
+  const prog = await page.textContent('#busScanState');
+  check('the Scan panel shows progress', /asked|Done/.test(prog), prog);
+  // closing the panel must stop the scan on the server
+  const uiJob = await page.evaluate(() => window.app._busScanJob);
+  await page.evaluate(() => window.app.closeModal('bridgeInfoModal'));
+  let jst = '';
+  for (let i = 0; i < 10; i++) {
+    jst = (await api(`/api/bus-scan/${uiJob}`)).body.state;
+    if (jst !== 'running' && jst !== 'cancelling') break;
+    await sleep(500);
+  }
+  check('closing the Scan panel stops the scan on the server', jst === 'cancelled', jst);
+  await page.evaluate(([b, p]) => window.app.addScannedDevice(b, p, 9, ''), [BR.t, P.t]);
+  await page.waitForSelector('#deviceWizardModal.active');
+  const pre = await page.evaluate(() => ({ b: window.app._devWiz.data.bridge, u: window.app._devWiz.data.unit_id }));
+  check('Add from a scan opens the wizard on that bus and unit', pre.b === BR.t && pre.u === 9, JSON.stringify(pre));
+  await page.evaluate(() => window.app.closeModal('deviceWizardModal'));
+  const exp = await (await fetch(BASE + '/api/bridges/export')).text();
+  check('bridges export as YAML', /bridges:/.test(exp) && exp.includes(BR.t));
+  const imp = (await api('/api/bridges/import', { method: 'POST', body: JSON.stringify({ yaml: exp }) })).body;
+  check('importing the export here says they exist (nothing written)', (imp.bridges || []).every(x => x.status === 'exists'),
+    JSON.stringify(imp.bridges || []).slice(0, 160));
+
   // ═══ 4. Check mode (probe) ══════════════════════════════════════════════
   promptAnswer = '1';
   await busButton(BR.t, P.t, 'bridgeProbe');
