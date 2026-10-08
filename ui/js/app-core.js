@@ -763,6 +763,27 @@ Object.assign(JanitzaMonitor.prototype, {
     // attribute-escaped in one place so call sites can't get the escaping wrong.
     // opts: el (append the element), value (append el.value), guard (selector
     // whose nested matches don't count), on ('change' | 'input' instead of click).
+    // Modbus transports on a serial port of this host (RTU or ASCII framing)
+    _isSerialProto(p) { return p === 'rtu' || p === 'ascii'; },
+
+    // A saved device's connection, as a PUT/test payload sends it back: a
+    // bridged device keeps only its bridge reference; serial, network and
+    // HTTP keep their own fields. null for MQTT (its password never reaches
+    // the browser) — the caller then must not resend the connection.
+    _connPayloadOf(dev) {
+        if (!dev) return null;
+        const c = dev.connection || {};
+        const p = c.protocol || dev.protocol || 'tcp';
+        if (dev.bridge) return { ...(p === 'rtu_tap' ? { protocol: 'rtu_tap' } : {}), bridge: dev.bridge,
+                                 bridge_port: dev.bridge_port, unit_id: c.unit_id ?? dev.unit_id, timeout: c.timeout ?? 3 };
+        if (p === 'http') return { protocol: 'http', url: c.url || dev.http_url || '' };
+        if (p === 'mqtt') return null;
+        if (this._isSerialProto(p) || p === 'rtu_tap')
+            return { protocol: p, serial_port: c.serial_port || dev.serial?.serial_port, baudrate: c.baudrate || dev.serial?.baudrate,
+                     parity: c.parity || dev.serial?.parity, stopbits: c.stopbits || dev.serial?.stopbits, unit_id: c.unit_id ?? dev.unit_id };
+        return { protocol: p, host: c.host || dev.host, port: c.port || dev.port, unit_id: c.unit_id ?? dev.unit_id, timeout: c.timeout ?? 3 };
+    },
+
     // A register's identity: its address IN ITS TABLE. coil 0, holding 0 and
     // input 0 are three registers; the server's store keys each by address +
     // the table's offset (the API sends it as `key`). The address itself is

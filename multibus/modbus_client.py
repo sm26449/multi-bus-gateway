@@ -25,10 +25,11 @@ from collections import deque
 from typing import Dict, List, Optional, Callable, Any
 
 from pymodbus import FramerType
-from pymodbus.client import ModbusTcpClient, ModbusSerialClient
+from pymodbus.client import ModbusSerialClient, ModbusTcpClient, ModbusUdpClient
 
 from . import bus_trace
-from .config import ModbusConfig, SelectedRegister, PollGroup, store_key
+from .config import (BUS_OVER_TCP_PROTOCOLS, SERIAL_PROTOCOLS, WIRE_FRAMING, ModbusConfig,
+                     PollGroup, SelectedRegister, store_key)
 from .counter_filter import DailyCounterFilter, MonotonicFilter
 from .register_parser import RegisterParser
 from .value_decode import apply_corrections
@@ -294,15 +295,19 @@ def _build_client(config: ModbusConfig):
       - rtu-tcp  → ModbusTcpClient with the RTU framer (RTU frames tunnelled over
                    a raw TCP socket — talks to a serial-over-TCP bridge like
                    ser2net; host/port point at the bridge endpoint)
+      - ascii    → ModbusSerialClient with the ASCII framer (':' … LRC CRLF)
+      - ascii-tcp → ModbusTcpClient with the ASCII framer (through a bridge)
+      - udp      → ModbusUdpClient (Modbus TCP frames in datagrams)
     One factory so connect() and the per-read reconnect stay in sync."""
     proto = getattr(config, 'protocol', 'tcp')
     # retries=0: pymodbus' own per-call retry (default 3) MULTIPLIES with the
     # application-level retry_attempts loop in read_registers — on a wedged
     # link that compounded to (1+3)×timeout per call, ~38s per batch, ~76s
     # per 0.25s realtime cycle (audit DP-20). MBG owns the retry policy.
-    if proto == 'rtu':
+    if proto in ('rtu', 'ascii'):
         return ModbusSerialClient(
             port=config.serial_port,
+            framer=FramerType.ASCII if proto == 'ascii' else FramerType.RTU,
             baudrate=int(config.baudrate),
             parity=config.parity,
             stopbits=int(config.stopbits),
@@ -310,10 +315,13 @@ def _build_client(config: ModbusConfig):
             timeout=config.timeout,
             retries=0,
         )
-    if proto == 'rtu-tcp':
+    if proto in ('rtu-tcp', 'ascii-tcp'):
         return ModbusTcpClient(host=config.host, port=config.port,
-                               framer=FramerType.RTU, timeout=config.timeout,
-                               retries=0)
+                               framer=FramerType.ASCII if proto == 'ascii-tcp' else FramerType.RTU,
+                               timeout=config.timeout, retries=0)
+    if proto == 'udp':
+        return ModbusUdpClient(host=config.host, port=config.port,
+                               timeout=config.timeout, retries=0)
     return ModbusTcpClient(host=config.host, port=config.port,
                            timeout=config.timeout, retries=0)
 
@@ -321,10 +329,10 @@ def _build_client(config: ModbusConfig):
 def _endpoint(config: ModbusConfig) -> str:
     """Human label for logs/UI."""
     proto = getattr(config, 'protocol', 'tcp')
-    if proto == 'rtu':
-        return f"{config.serial_port}@{config.baudrate} unit {config.unit_id}"
-    if proto == 'rtu-tcp':
-        return f"rtu-tcp {config.host}:{config.port} unit {config.unit_id}"
+    if proto in SERIAL_PROTOCOLS:
+        return f"{config.serial_port}@{config.baudrate}{' ascii' if proto == 'ascii' else ''} unit {config.unit_id}"
+    if proto in BUS_OVER_TCP_PROTOCOLS or proto == 'udp':
+        return f"{proto} {config.host}:{config.port} unit {config.unit_id}"
     return f"{config.host}:{config.port}"
 
 
@@ -353,7 +361,8 @@ class ModbusConnection:
         self.config = config
         self.trace_label = trace_label or _endpoint(config)
         # the bus this unit's questions travel on — what the monitor filters by
-        self.bus = (getattr(config, 'serial_port', '') if str(getattr(config, 'protocol', '')).lower() == 'rtu'
+        _proto = str(getattr(config, 'protocol', 'tcp')).lower()
+        self.bus = (getattr(config, 'serial_port', '') if _proto in SERIAL_PROTOCOLS
                     else f"{config.host}:{config.port}")
         # The socket lives on the ACCESS POINT, not on the unit: several units
         # behind one master share it (and the lock that serializes it), while
@@ -361,7 +370,7 @@ class ModbusConnection:
         # A directly attached serial line is shared the same way, keyed by its
         # port: several slaves on one RS-485 bus = several devices, ONE open
         # tty, one transaction at a time.
-        _serial = str(getattr(config, 'protocol', 'tcp')).lower() == 'rtu'
+        _serial = _proto in SERIAL_PROTOCOLS
         _shared = bool(getattr(config, 'share_transport', True))
         # Which socket this unit rides on. Sticky by unit id, so a unit always
         # uses the same lane (its reconnects never disturb a sibling on another)
@@ -372,7 +381,9 @@ class ModbusConnection:
             self._tp = transport_for(f"serial:{getattr(config, 'serial_port', '') or ''}", 0,
                                      _shared and bool(getattr(config, 'serial_port', '')), 0)
         else:
-            self._tp = transport_for(config.host, config.port, _shared, self.lane)
+            # datagrams to host:port are not the stream to host:port
+            self._tp = transport_for(f"udp:{config.host}" if _proto == 'udp' else config.host,
+                                     config.port, _shared, self.lane)
         self.lock = self._tp.lock
         self.successful_reads = 0
         self.failed_reads = 0
@@ -550,9 +561,9 @@ class ModbusConnection:
         """Build a fresh pymodbus client, wired into the bus-trace monitor."""
         client = _build_client(self.config)
         # bus-trace decodes by WIRE framing, not transport: rtu-tcp puts RTU
-        # frames (CRC, no MBAP) on the socket, so trace it as 'rtu'.
-        _proto = getattr(self.config, 'protocol', 'tcp')
-        _wire = 'rtu' if _proto in ('rtu', 'rtu-tcp') else 'tcp'
+        # frames (CRC, no MBAP) on the socket, so trace it as 'rtu'; ASCII
+        # (serial or tunnelled) as 'ascii'; UDP carries MBAP like TCP.
+        _wire = WIRE_FRAMING.get(getattr(self.config, 'protocol', 'tcp'), 'tcp')
         bus_trace.trace.instrument(client, label=self.trace_label, proto=_wire)
         return client
 

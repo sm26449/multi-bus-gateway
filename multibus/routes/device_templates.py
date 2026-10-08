@@ -288,7 +288,8 @@ def build(ctx) -> APIRouter:
                 "restarted": _apply_protocol_change(t, old_proto), "fields": adopted}
 
     BYTE_ORDERS = ("big", "little", "badc", "dcba")
-    TRANSPORTS = ("tcp", "rtu", "rtu-tcp", "rtu_tap", "http", "mqtt")
+    from ..config import MODBUS_PROTOCOLS
+    TRANSPORTS = MODBUS_PROTOCOLS + ("http", "mqtt")
 
     def _protocol_from(payload: Dict, meta: Dict) -> Dict:
         """The map's protocol block from the import form (or the YAML's own

@@ -1532,11 +1532,9 @@ Object.assign(JanitzaMonitor.prototype, {
             const payload = {
                 id: deviceId, name: dev?.name || deviceId, template: tplId,
                 enabled: dev?.enabled !== false,
-                connection: (dev?.protocol === 'rtu')
-                    ? { protocol: 'rtu', serial_port: c.serial_port, baudrate: c.baudrate,
-                        parity: c.parity, stopbits: c.stopbits, unit_id: c.unit_id }
-                    : { protocol: 'tcp', host: c.host || dev?.host, port: c.port || dev?.port,
-                        unit_id: c.unit_id ?? dev?.unit_id, timeout: c.timeout ?? 3 },
+                // the device's own connection as it is (a bridge, a tap, RTU,
+                // ASCII, UDP…) — only the template changes
+                connection: this._connPayloadOf(dev) || {},
                 mqtt: { topic_prefix: dev?.mqtt_topic_prefix },
                 influxdb: { bucket: dev?.influxdb_bucket, device_tag: dev?.influxdb_device_tag },
                 ha_discovery_enabled: dev?.ha_discovery_enabled !== false,

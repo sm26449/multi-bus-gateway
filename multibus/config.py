@@ -545,6 +545,20 @@ _COIL_ALIASES = {'coil', 'coils', 'fc1', 'fc5', '1'}
 _DISCRETE_ALIASES = {'discrete', 'discreteinput', 'discreteinputs', 'di', 'fc2', '2'}
 
 
+# Modbus transports, in one place — every check and builder reads these:
+#   tcp        Modbus TCP (MBAP)                udp        Modbus TCP frames over UDP
+#   rtu        RTU on a serial port here        ascii      ASCII on a serial port here
+#   rtu-tcp    RTU frames through a TCP socket  ascii-tcp  ASCII frames through a TCP socket
+#   rtu_tap    listen-only (rtu_tap.py)
+SERIAL_PROTOCOLS = ('rtu', 'ascii')                 # a serial port on this host
+BUS_OVER_TCP_PROTOCOLS = ('rtu-tcp', 'ascii-tcp')   # a serial bus reached through a socket
+NETWORK_PROTOCOLS = ('tcp', 'udp') + BUS_OVER_TCP_PROTOCOLS
+MODBUS_PROTOCOLS = NETWORK_PROTOCOLS + SERIAL_PROTOCOLS + ('rtu_tap',)
+# how the frames look on the wire (the bus monitor decodes by this)
+WIRE_FRAMING = {'tcp': 'tcp', 'udp': 'tcp', 'rtu': 'rtu', 'rtu-tcp': 'rtu', 'rtu_tap': 'rtu',
+                'ascii': 'ascii', 'ascii-tcp': 'ascii'}
+
+
 # The live store keys a value by its address — and a Modbus device may hold
 # the SAME address in several tables (coil 0, holding 0, input 0 are three
 # different things). The key adds a per-table offset: holding keeps its bare

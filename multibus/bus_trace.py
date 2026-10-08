@@ -67,8 +67,24 @@ def _crc16(data: bytes) -> int:
     return crc
 
 
+def _lrc(data: bytes) -> int:
+    """Modbus ASCII LRC: the two's complement of the byte sum."""
+    return (-sum(data)) & 0xFF
+
+
 def _split_adu(proto: str, adu: bytes):
-    """→ (tid, unit, pdu, crc_ok) — tid/crc_ok are None where not applicable."""
+    """→ (tid, unit, pdu, crc_ok) — tid/crc_ok are None where not applicable.
+    crc_ok is the CRC for RTU and the LRC for ASCII."""
+    if proto == "ascii":
+        # ':' + hex(unit, PDU, LRC) + CRLF
+        body = adu.strip().lstrip(b":")
+        try:
+            raw = bytes.fromhex(body.decode("ascii"))
+        except (UnicodeDecodeError, ValueError):
+            return None, None, b"", None
+        if len(raw) < 3:
+            return None, None, b"", None
+        return None, raw[0], raw[1:-1], _lrc(raw[:-1]) == raw[-1]
     if proto == "rtu":
         if len(adu) < 4:
             return None, None, b"", None
@@ -118,7 +134,7 @@ def decode_transaction(proto: str, tx: bytes, rx: bytes) -> Dict[str, Any]:
         out["result"] = "exception"
         out["exc"] = rpdu[1] if len(rpdu) > 1 else None
         out["exc_name"] = _EXC_NAMES.get(out["exc"], f"exception {out['exc']}")
-    elif rfc == fc and (proto == "rtu" or rtid == tid):
+    elif rfc == fc and (proto in ("rtu", "ascii") or rtid == tid):
         out["result"] = "ok"
     else:
         out["result"] = "mismatch"  # wrong FC echo or a stale/foreign TID

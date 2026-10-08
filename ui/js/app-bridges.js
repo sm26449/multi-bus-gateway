@@ -392,13 +392,14 @@ Object.assign(JanitzaMonitor.prototype, {
           <h4 class="tplu-h">${t('bridges.runOnHost', 'On the host the adapters are plugged into')}</h4>
           <p class="field-hint">${t('bridges.runHint', 'Any Linux with Docker — a Raspberry Pi, a server. Copy, run, and the bridge shows online here within a few seconds.')}</p>
           <pre class="code-block" id="brRun">${this._esc(s.docker_run)}</pre>
-          <button class="btn btn-secondary btn-sm" ${this._act('copyText', ['brRun'])}><i aria-hidden="true" class="bi bi-clipboard"></i> ${t('common.copy', 'Copy')}</button>
+          <button class="btn btn-secondary btn-sm" ${this._act('copyElText', ['brRun'])}><i aria-hidden="true" class="bi bi-clipboard"></i> ${t('common.copy', 'Copy')}</button>
           <p class="field-hint" style="margin-top:8px;">${t('bridges.composeHint', 'Prefer compose: serial-bridge/docker-compose.bridge.yml, with BRIDGE_TOKEN set to the token in the command.')}
             <a href="https://github.com/sm26449/multi-bus-gateway/blob/main/docs/rtu-over-network.md" target="_blank" rel="noopener">${t('bridges.guide', 'Guide')}</a></p>` : '';
         this._bridgeInfo(t('bridges.setupTitle', 'Set-up'), run + `<h4 class="tplu-h">${t('bridges.onTheBox', 'What to set on the box')}</h4>` + steps);
     },
 
-    copyText(elId) {
+    // copy an element's text (copyText in app-devices copies a given string)
+    copyElText(elId) {
         const txt = document.getElementById(elId)?.textContent || '';
         navigator.clipboard?.writeText(txt).then(() => this.showToast('success', this.t('common.copied', 'Copied'), ''));
     },

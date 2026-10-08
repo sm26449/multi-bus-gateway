@@ -21,7 +21,11 @@ Object.assign(JanitzaMonitor.prototype, {
                 template: editing.template || '',
                 enabled: editing.enabled !== false,
                 // a device on a bridge edits as "over network, this bridge, this bus"
-                protocol: editing.protocol || 'tcp',      // resolved: rtu-tcp, tcp (through a gateway), rtu_tap…
+                // resolved: rtu-tcp, tcp (through a gateway), rtu_tap…; the
+                // UDP and ASCII variants show as TCP / RTU with their option set
+                protocol: ({ udp: 'tcp', ascii: 'rtu', 'ascii-tcp': 'rtu-tcp' })[editing.protocol] || editing.protocol || 'tcp',
+                udp: editing.protocol === 'udp',
+                framing: (editing.protocol === 'ascii' || editing.protocol === 'ascii-tcp') ? 'ascii' : 'rtu',
                 bridge: editing.bridge || '', bridge_port: editing.bridge_port || null,
                 host: editing.host || '', port: editing.port || 502,
                 unit_id: editing.unit_id ?? 1, timeout: editing.timeout ?? 3,
@@ -154,6 +158,8 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div class="field-hint">1–30 · ${this.t('common.default', 'default')} 3</div>
                 </div>
             </div>
+            <label class="checkbox-label" style="margin:-4px 0 10px;${tcp && d.bridge ? 'display:none;' : ''}" title="${this._esc(this.t('devices.wizard.udpHint', 'Some devices and gateways answer Modbus TCP frames in UDP datagrams (usually port 502) instead of a TCP connection. Use it only when the manual says UDP.'))}">
+                <input type="checkbox" id="devWizUdp" ${d.udp ? 'checked' : ''}> <span>${this.t('devices.wizard.udp', 'Over UDP (datagrams instead of a connection)')}</span></label>
             <button class="btn btn-secondary btn-sm" id="devWizTestBtn" data-action="devWizardTest" data-with-el>
                 <i aria-hidden="true" class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
             <div class="wiz-test-result" id="devWizTestResult" role="status"></div>
@@ -206,6 +212,13 @@ Object.assign(JanitzaMonitor.prototype, {
                         <label class="form-label" for="devWizParity">${this.t('lbl.parity', "Parity")}</label>
                         <select id="devWizParity" class="input">
                             ${['N', 'E', 'O'].map(x => `<option ${x === d.parity ? 'selected' : ''}>${x}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group" ${tap ? 'style="display:none"' : ''}>
+                        <label class="form-label" for="devWizFraming">${this.t('devices.wizard.framing', 'Framing')}</label>
+                        <select id="devWizFraming" class="input" title="${this._esc(this.t('devices.wizard.framingHint', 'RTU (binary, CRC) is what almost every device speaks. ASCII (“:” … LRC, readable hex) is found on older PLCs and meters — use it only when the manual says Modbus ASCII. All slaves on one line speak the same one.'))}">
+                            <option value="rtu" ${d.framing !== 'ascii' ? 'selected' : ''}>RTU</option>
+                            <option value="ascii" ${d.framing === 'ascii' ? 'selected' : ''}>ASCII</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -619,6 +632,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     d.bridge = ''; d.bridge_port = null;     // came from an RTU bridge: TCP is direct
                 }
                 d.host = g('devWizHost')?.value.trim() ?? d.host;
+                d.udp = !!g('devWizUdp')?.checked;
                 d.port = parseInt(g('devWizPort')?.value, 10) || 502;
                 d.unit_id = parseInt(g('devWizUnit')?.value, 10) ?? 1;
                 d.timeout = parseFloat(g('devWizTimeout')?.value) || 3;
@@ -651,6 +665,7 @@ Object.assign(JanitzaMonitor.prototype, {
                         d.bridge = ''; d.bridge_port = null;
                     }
                     d.serial_port = g('devWizSerial')?.value.trim() ?? d.serial_port;
+                    if (d.protocol === 'rtu') d.framing = g('devWizFraming')?.value || 'rtu';
                     d.baudrate = parseInt(g('devWizBaud')?.value, 10) || 9600;
                     d.parity = g('devWizParity')?.value || 'N';
                     d.unit_id = parseInt(g('devWizUnitR')?.value, 10) ?? 1;
@@ -722,7 +737,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 ? { protocol: 'mqtt', broker: d.broker, port: d.mqtt_port || 1883, topic: d.topic,
                     username: d.mqtt_username || '', password: d.mqtt_password || '', tls: !!d.mqtt_tls }
                 : d.protocol === 'rtu'
-                ? { protocol: 'rtu', serial_port: d.serial_port, baudrate: d.baudrate,
+                ? { protocol: this._devWizWireProto(d), serial_port: d.serial_port, baudrate: d.baudrate,
                     parity: d.parity, stopbits: d.stopbits, unit_id: d.unit_id, timeout: d.timeout }
                 : d.protocol === 'rtu-tcp' && d.bridge
                 ? { bridge: d.bridge, bridge_port: d.bridge_port, unit_id: d.unit_id, timeout: d.timeout }
@@ -730,7 +745,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 ? { protocol: 'rtu-tcp', host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout }
                 : d.bridge
                 ? { bridge: d.bridge, bridge_port: d.bridge_port, unit_id: d.unit_id, timeout: d.timeout }
-                : { protocol: 'tcp', host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout };
+                : { protocol: this._devWizWireProto(d), host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout };
             const r = await fetch('/api/devices/test', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 // include the chosen template so an HTTP test resolves its json_paths
@@ -771,14 +786,14 @@ Object.assign(JanitzaMonitor.prototype, {
                 : d.protocol === 'tcp' && d.bridge
                 ? { bridge: d.bridge, bridge_port: d.bridge_port, unit_id: d.unit_id, timeout: d.timeout }
                 : d.protocol === 'tcp'
-                ? { protocol: 'tcp', host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout }
+                ? { protocol: this._devWizWireProto(d), host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout }
                 : d.protocol === 'rtu-tcp' && d.bridge
                 ? { bridge: d.bridge, bridge_port: d.bridge_port, unit_id: d.unit_id, timeout: d.timeout }
                 : d.protocol === 'rtu-tcp'
                 ? { protocol: 'rtu-tcp', host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout }
                 : d.protocol === 'rtu_tap' && d.bridge
                 ? { protocol: 'rtu_tap', bridge: d.bridge, bridge_port: d.bridge_port, unit_id: d.unit_id }
-                : { protocol: d.protocol === 'rtu_tap' ? 'rtu_tap' : 'rtu', serial_port: d.serial_port,
+                : { protocol: d.protocol === 'rtu_tap' ? 'rtu_tap' : this._devWizWireProto(d), serial_port: d.serial_port,
                     baudrate: d.baudrate, parity: d.parity, stopbits: d.stopbits, unit_id: d.unit_id },
             mqtt: { topic_prefix: d.topic_prefix || `meters/${d.id}` },
             influxdb: { bucket: d.bucket || undefined, device_tag: d.device_tag || undefined },
@@ -818,6 +833,13 @@ Object.assign(JanitzaMonitor.prototype, {
         const gw = this._bridgeType(((this._bridges || []).find(b => b.id === d.bridge) || {}).type).framing === 'modbus_tcp';
         const ok = d.protocol === 'tcp' ? gw : (d.protocol === 'rtu-tcp' || d.protocol === 'rtu_tap') ? !gw : false;
         if (!ok) { d.bridge = ''; d.bridge_port = null; }
+    },
+
+    // what goes on the wire: the UI mode plus its option (UDP, ASCII framing)
+    _devWizWireProto(d) {
+        if (d.protocol === 'tcp') return d.udp ? 'udp' : 'tcp';
+        if (d.protocol === 'rtu') return d.framing === 'ascii' ? 'ascii' : 'rtu';
+        return d.protocol;
     },
 
     // bridges that pass RTU frames (a Modbus TCP gateway is reached as TCP)

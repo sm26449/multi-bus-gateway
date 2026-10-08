@@ -1977,5 +1977,9 @@
   "common.no": "nu",
   "adv.row.icon": "Iconiță",
   "adv.row.precision": "Zecimale în HA",
-  "adv.row.title": "Detaliile rândului: descriere, marker de indisponibil, contoare, factor de scală, totaluri, Home Assistant"
+  "adv.row.title": "Detaliile rândului: descriere, marker de indisponibil, contoare, factor de scală, totaluri, Home Assistant",
+  "devices.wizard.udp": "Prin UDP (datagrame în loc de conexiune)",
+  "devices.wizard.udpHint": "Unele device-uri și gateway-uri răspund la cadre Modbus TCP în datagrame UDP (de obicei portul 502) în loc de o conexiune TCP. Folosește-l doar când manualul spune UDP.",
+  "devices.wizard.framing": "Framing",
+  "devices.wizard.framingHint": "RTU (binar, CRC) e ce vorbesc aproape toate device-urile. ASCII („:” … LRC, hex lizibil) apare la PLC-uri și contoare mai vechi — folosește-l doar când manualul spune Modbus ASCII. Toți sclavii de pe o linie vorbesc la fel."
 }

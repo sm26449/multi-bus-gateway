@@ -338,7 +338,8 @@ def template_transport(tpl) -> str:
     transports = [str(x).lower() for x in ((getattr(tpl, 'protocol', {}) or {}).get('transports') or [])]
     if 'mqtt' in transports:
         return 'mqtt'
-    if any(x in ('tcp', 'rtu') for x in transports):
+    from .config import MODBUS_PROTOCOLS
+    if any(x in MODBUS_PROTOCOLS for x in transports):
         return 'modbus'
     if 'http' in transports:
         return 'http'

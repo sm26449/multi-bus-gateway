@@ -47,7 +47,9 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 TYPES_DIR = Path(__file__).parent / "bridge_types"
-FRAMING_PROTOCOL = {"rtu": "rtu-tcp", "modbus_tcp": "tcp"}
+# how a kind of bridge frames the bus on its TCP port → the device protocol
+# (a kind's file names its framing; ascii lets a Modbus ASCII bus through)
+FRAMING_PROTOCOL = {"rtu": "rtu-tcp", "ascii": "ascii-tcp", "modbus_tcp": "tcp"}
 _ID_RX = re.compile(r"[a-z][a-z0-9_-]{1,47}")
 _HOST_RX = re.compile(r"[A-Za-z0-9][A-Za-z0-9.\-:]{0,252}")
 

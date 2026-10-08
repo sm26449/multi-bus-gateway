@@ -20,9 +20,11 @@ from __future__ import annotations
 import logging
 from typing import Any, List, Tuple
 
+from .config import MODBUS_PROTOCOLS
+
 logger = logging.getLogger(__name__)
 
-DRIVER_PROTOCOLS = ('tcp', 'rtu', 'rtu-tcp', 'http', 'mqtt', 'rtu_tap')
+DRIVER_PROTOCOLS = MODBUS_PROTOCOLS + ('http', 'mqtt')
 
 
 def driver_for(config, template_registry, dev_cfg, src, regs, groups, allow_nonlan):

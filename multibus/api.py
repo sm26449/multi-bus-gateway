@@ -38,7 +38,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import __version__
 from .mqtt_publisher import MQTTPublisher
 from .influxdb_publisher import InfluxDBPublisher
-from .config import store_key
+from .config import (BUS_OVER_TCP_PROTOCOLS, MODBUS_PROTOCOLS, NETWORK_PROTOCOLS,
+                     SERIAL_PROTOCOLS, store_key)
+_POLLED_MODBUS = NETWORK_PROTOCOLS + SERIAL_PROTOCOLS      # every Modbus way but listening
+_PROTO_WORDS = {'tcp': 'Modbus TCP', 'udp': 'Modbus UDP', 'rtu-tcp': 'Modbus RTU over TCP',
+                'ascii-tcp': 'Modbus ASCII over TCP'}
 
 logger = logging.getLogger(__name__)
 
@@ -1223,7 +1227,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         those templates are consulted too."""
         tids = [dev_cfg.template] if dev_cfg.template else []
         tids += [s.template for s in (dev_cfg.sources or [])
-                 if s.template and str(s.protocol or 'tcp').lower() in ('tcp', 'rtu-tcp', 'rtu')]
+                 if s.template and str(s.protocol or 'tcp').lower() in _POLLED_MODBUS]
         for tid in tids:
             tpl = template_registry.get(tid)
             if tpl is None:
@@ -1356,10 +1360,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         a second tap must agree on them or it would silently decode garbage."""
         for d in config.devices:
             dproto = getattr(d, 'protocol', '')
-            if (getattr(d, 'id', None) == existing_id or dproto not in ('rtu', 'rtu_tap')
+            if (getattr(d, 'id', None) == existing_id or dproto not in SERIAL_PROTOCOLS + ('rtu_tap',)
                     or str(getattr(d.connection, 'serial_port', '')).strip() != sp):
                 continue
-            if protocol == 'rtu' and dproto == 'rtu':
+            if protocol in SERIAL_PROTOCOLS and dproto in SERIAL_PROTOCOLS and protocol != dproto:
+                return [f"connection.protocol: '{sp}' is read as {dproto.upper()} by device '{d.id}' — "
+                        f"the slaves on one line all speak one framing (RTU or ASCII)"]
+            if protocol == dproto and protocol in SERIAL_PROTOCOLS:
                 # several slaves on one bus: they share the open line and take
                 # turns; the slave address must differ, the line settings agree
                 if int(conn.get('unit_id', 1)) == int(getattr(d.connection, 'unit_id', -1)):
@@ -1399,10 +1406,14 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         for d in config.devices:
             dproto = getattr(d, 'protocol', '')
             if (getattr(d, 'id', None) == existing_id
-                    or dproto not in ('tcp', 'rtu-tcp', 'rtu_tap')
+                    or dproto not in NETWORK_PROTOCOLS + ('rtu_tap',)
                     or str(getattr(d.connection, 'host', '')).strip().lower() != _host
-                    or int(getattr(d.connection, 'port', 0) or 0) != _port):
+                    or int(getattr(d.connection, 'port', 0) or 0) != _port
+                    or (dproto == 'udp') != (protocol == 'udp')):     # a UDP port is not the TCP one
                 continue
+            if (dproto != protocol and 'rtu_tap' not in (dproto, protocol)):
+                return [f"connection.protocol: {_host}:{_port} is read as {dproto} by device "
+                        f"'{d.id}' — one port speaks one framing"]
             if (dproto == 'rtu_tap') != (protocol == 'rtu_tap'):
                 return [f"connection.protocol: the bus at {_host}:{_port} is already "
                         f"{'tapped' if dproto == 'rtu_tap' else 'polled'} by device '{d.id}' — "
@@ -1422,7 +1433,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         mc = ModbusConnection(ModbusConfig(
             host=str(conn.get('host', '')), port=int(conn.get('port', 502) or 502),
             unit_id=unit_id, timeout=timeout, retry_attempts=1, retry_delay=0,
-            protocol=str(conn.get('protocol', 'rtu-tcp'))), trace_label=f"test:{where}")
+            protocol=str(conn.get('protocol', 'rtu-tcp')),
+            serial_port=str(conn.get('serial_port', '') or ''),
+            baudrate=int(conn.get('baudrate', 9600) or 9600), parity=str(conn.get('parity', 'N') or 'N'),
+            stopbits=int(conn.get('stopbits', 1) or 1)), trace_label=f"test:{where}")
         t0 = time.perf_counter()
         try:
             words = mc.read_registers(address, 2, "holding")
@@ -1481,17 +1495,19 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 if str(conn.get('protocol', '')).lower() == 'rtu_tap':
                     # listening needs the bus's own bytes: a gateway turns them
                     # into Modbus TCP and only answers questions asked of it
-                    if _bt.get('framing', 'rtu') != 'rtu':
+                    if _bt.get('framing', 'rtu') == 'modbus_tcp':
                         errors.append(f"connection.protocol: '{_br['id']}' is a Modbus TCP gateway — it only "
                                       "answers questions, it does not pass the bus's traffic on; listening "
                                       "needs a transparent bridge or the MBG serial bridge")
+                    elif _bt.get('framing', 'rtu') != 'rtu':
+                        errors.append(f"connection.protocol: '{_br['id']}' carries {_bt.get('framing')} frames — "
+                                      "listening decodes Modbus RTU")
                     _bridge_ref['protocol'] = 'rtu_tap'
                 conn = _resolve(conn, config.bridges)
                 _bridge_ref.setdefault('bridge_port', conn.get('port'))
         protocol = str(conn.get('protocol', 'tcp')).lower()
-        if protocol not in ('tcp', 'rtu', 'rtu-tcp', 'rtu_tap', 'http', 'mqtt'):
-            errors.append("connection.protocol: must be 'tcp', 'rtu', 'rtu-tcp', "
-                          "'rtu_tap', 'http' or 'mqtt'")
+        if protocol not in MODBUS_PROTOCOLS + ('http', 'mqtt'):
+            errors.append("connection.protocol: must be one of " + ", ".join(MODBUS_PROTOCOLS + ('http', 'mqtt')))
         # A template's register map is transport-specific (Modbus reads by address,
         # HTTP/MQTT by json_path), so the device protocol MUST match the template's
         # transport class — otherwise every read silently resolves to nothing.
@@ -1499,7 +1515,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         _classmap = {'http': 'http', 'mqtt': 'mqtt'}
         if template_id and _tpl is None:
             errors.append(f"template: '{template_id}' not found")
-        elif _tpl is not None and protocol in ('tcp', 'rtu', 'rtu-tcp', 'rtu_tap', 'http', 'mqtt'):
+        elif _tpl is not None and protocol in MODBUS_PROTOCOLS + ('http', 'mqtt'):
             from .device_template import template_transport
             dev_class = _classmap.get(protocol, 'modbus')
             tpl_class = template_transport(_tpl)
@@ -1536,10 +1552,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     raise ValueError
             except (TypeError, ValueError):
                 errors.append("connection.unit_id: must be 0..255")
-        elif protocol in ('rtu', 'rtu_tap'):
+        elif protocol in SERIAL_PROTOCOLS + ('rtu_tap',):
             sp = str(conn.get('serial_port', '')).strip()
             if not sp:
-                errors.append("connection.serial_port: required for Modbus RTU")
+                errors.append(f"connection.serial_port: required for Modbus {'ASCII' if protocol == 'ascii' else 'RTU'}")
             else:
                 errors.extend(_serial_line_conflicts(protocol, sp, conn, existing_id))
             for fld, lo, hi in (("baudrate", 300, 4_000_000), ("stopbits", 1, 2),
@@ -1555,15 +1571,15 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             if str(conn.get('parity', 'N')).upper() not in ('N', 'E', 'O'):
                 errors.append("connection.parity: must be N, E or O")
         else:
-            if protocol in ('tcp', 'rtu-tcp') and not str(conn.get('host', '')).strip():
-                errors.append(f"connection.host: required for Modbus {'RTU-over-TCP' if protocol == 'rtu-tcp' else 'TCP'}")
+            if protocol in NETWORK_PROTOCOLS and not str(conn.get('host', '')).strip():
+                errors.append(f"connection.host: required for {_PROTO_WORDS.get(protocol, protocol)}")
             try:
                 port = int(conn.get('port', 502))
                 if not (1 <= port <= 65535):
                     raise ValueError
             except (TypeError, ValueError):
                 errors.append("connection.port: must be 1..65535")
-            if protocol == 'rtu-tcp' or _bridge_ref:
+            if protocol in BUS_OVER_TCP_PROTOCOLS or _bridge_ref:
                 errors.extend(_network_bus_conflicts(protocol, conn, existing_id))
             try:
                 unit = int(conn.get('unit_id', 1))
@@ -1643,7 +1659,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'tls': bool(m.get('tls', False)),
                 'password': '******' if m.get('password') else '',   # never echo the secret
             })
-        if dev_cfg.protocol in ('rtu', 'rtu_tap'):
+        if dev_cfg.protocol in SERIAL_PROTOCOLS + ('rtu_tap',):
             entry['serial'] = dev_cfg.serial
         if dev_cfg.protocol == 'http':
             # Never echo header VALUES back — they can carry Authorization / API
@@ -1765,7 +1781,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 address = redact_url(url) if redact else url
             elif proto == 'mqtt':
                 address = str((src.mqtt_in or {}).get('topic', ''))
-            elif proto in ('rtu', 'rtu_tap'):
+            elif proto in SERIAL_PROTOCOLS + ('rtu_tap',):
                 address = f"{src.connection.bus} · unit {src.connection.unit_id}"
             else:
                 address = f"{src.connection.host}:{src.connection.port} · unit {src.connection.unit_id}"
@@ -2103,7 +2119,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         if hasattr(client, 'connection') and hasattr(client.connection, 'read_registers'):
             return client
         for src, drv in getattr(client, 'parts', []) or []:
-            if str(getattr(src, 'protocol', 'tcp')).lower() in ('tcp', 'rtu-tcp', 'rtu') \
+            if str(getattr(src, 'protocol', 'tcp')).lower() in _POLLED_MODBUS \
                     and hasattr(drv, 'connection'):
                 return drv
         return None
@@ -2112,7 +2128,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         """The template whose registers a command writes: the Modbus source's,
         else the device's own."""
         for s in (dev_cfg.sources or []):
-            if str(s.protocol or 'tcp').lower() in ('tcp', 'rtu-tcp', 'rtu') and s.template:
+            if str(s.protocol or 'tcp').lower() in _POLLED_MODBUS and s.template:
                 return template_registry.get(s.template)
         return template_registry.get(dev_cfg.template) if dev_cfg.template else None
 
@@ -3426,7 +3442,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'template': (r.get('template', '') or h.get('template', '')
                              or p.get('template', '')),
                 'address': (r.get('url')
-                            or (r.get('serial_port') if r.get('protocol') in ('rtu', 'rtu_tap')
+                            or (r.get('serial_port') if r.get('protocol') in SERIAL_PROTOCOLS + ('rtu_tap',)
                                 else f"{r.get('host', '')}:{r.get('port', 502)}")),
                 'poll_groups': pg,
                 # the fastest rhythm this source reads at — what "every N s"
@@ -3993,15 +4009,15 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 errors.append(f"{w}.id: '{sid}' is declared twice")
             seen.add(sid)
             proto = str(r.get('protocol', 'tcp')).lower()
-            if proto not in ('tcp', 'rtu', 'rtu-tcp', 'http', 'mqtt'):
-                errors.append(f"{w}.protocol: must be tcp, rtu, rtu-tcp, http or mqtt")
+            if proto not in _POLLED_MODBUS + ('http', 'mqtt'):
+                errors.append(f"{w}.protocol: must be one of {', '.join(_POLLED_MODBUS + ('http', 'mqtt'))}")
             if proto == 'http':
                 if not str(r.get('url', '')).strip():
                     errors.append(f"{w}.url: required for an http source")
             elif proto == 'mqtt':
                 if not str(r.get('topic', '')).strip():
                     errors.append(f"{w}.topic: required for an mqtt source")
-            elif proto != 'rtu' and not str(r.get('host', '')).strip():
+            elif proto not in SERIAL_PROTOCOLS and not str(r.get('host', '')).strip():
                 errors.append(f"{w}.host: required")
             tid = str(r.get('template', '') or inherit_template).strip()
             if not tid:
@@ -4081,13 +4097,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         _grouped = bool(payload.get('groups'))
         if not _grouped:
             protocol = str(conn.get('protocol', 'tcp')).lower()
-            if protocol not in ('tcp', 'rtu-tcp', 'rtu_tap'):
-                # plain RTU shares one serial line across masters — the same
-                # one-master-per-line rule the device CRUD enforces; multi-drop
-                # RTU endpoints need the shared-bus arbiter (Tier 3) first.
-                # rtu_tap is the exception: listen-only, it masters nothing,
-                # and a multi-drop bus is exactly what it is for.
-                errors.append("connection.protocol: must be 'tcp', 'rtu-tcp' or 'rtu_tap'")
+            if protocol not in NETWORK_PROTOCOLS + ('rtu_tap',):
+                # a serial line here is read by one device per slave (Devices);
+                # an installation reaches its units through a network master
+                # or listens (rtu_tap: it masters nothing, and a multi-drop
+                # bus is exactly what it is for)
+                errors.append("connection.protocol: must be one of " + ", ".join(NETWORK_PROTOCOLS + ('rtu_tap',)))
             if protocol == 'rtu_tap':
                 if not str(conn.get('serial_port', '')).strip():
                     errors.append("connection.serial_port: required for rtu_tap")
@@ -4288,13 +4303,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             res.setdefault('latency_ms', round((time.perf_counter() - t0) * 1000, 1))
             res['where'] = redact_url(hc.url)
             return res
-        if proto in ('tcp', 'rtu-tcp', 'rtu'):
+        if proto in _POLLED_MODBUS:
             conn = dataclasses.asdict(src.connection)
             conn['protocol'] = proto
             timeout = float(conn.get('timeout', 3) or 3)
             res = _modbus_probe(conn, dev.connection.unit_id, timeout,
                                 address_of(src))
-            res['where'] = (conn.get('serial_port') if proto == 'rtu'
+            res['where'] = (conn.get('serial_port') if proto in SERIAL_PROTOCOLS
                             else f"{conn.get('host', '')}:{conn.get('port', 502)}")
             return res
         return {'ok': None, 'message': 'not probed — this source is pushed to '
@@ -4535,11 +4550,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         """One ad-hoc Modbus probe (TCP or RTU): connect + FC3 read. ANY
         protocol-level answer (even a Modbus exception) proves a live device;
         only silence/timeouts fail. Used by the wizard's Test connection button."""
-        from pymodbus import FramerType
-        from pymodbus.client import ModbusTcpClient, ModbusSerialClient
         from pymodbus.pdu import ExceptionResponse
+        from .config import ModbusConfig
+        from .modbus_client import _build_client
         proto = str(conn.get('protocol', 'tcp')).lower()
-        rtu = proto == 'rtu'
+        rtu = proto in SERIAL_PROTOCOLS              # a serial port here (RTU or ASCII)
         if not rtu:
             # same LAN-egress policy as every /api/discover/* route — without
             # it the probe doubles as an internal TCP port scanner (audit L1)
@@ -4549,41 +4564,35 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             if _e:
                 return {"ok": False, "message": f"blocked: {_e}"}
         t0 = time.perf_counter()
-        if rtu:
-            where = f"{conn.get('serial_port','')}@{conn.get('baudrate',9600)}"
-            c = ModbusSerialClient(port=conn.get('serial_port', ''),
-                                   baudrate=int(conn.get('baudrate', 9600)),
-                                   parity=str(conn.get('parity', 'N')),
-                                   stopbits=int(conn.get('stopbits', 1)),
-                                   bytesize=int(conn.get('bytesize', 8)),
-                                   timeout=timeout)
-        else:
-            where = f"{conn.get('host','')}:{conn.get('port',502)}"
-            # rtu-tcp: RTU frames over a raw TCP socket (serial-over-TCP bridge)
-            _framer = {'framer': FramerType.RTU} if proto == 'rtu-tcp' else {}
-            if proto == 'rtu-tcp':
-                # A bus already read by a running device: ask THROUGH its
-                # connection (the shared transport), in turn with the slaves on
-                # it — a private socket would make a single-client bridge drop
-                # the live one (audit DP-19). Only the unit id is the test's own.
-                _th = str(conn.get('host', '')).strip().lower()
-                _tp = int(conn.get('port', 502) or 502)
-                _busy = next((_d for _d in config.devices
-                              if getattr(_d, 'enabled', False)
-                              and getattr(_d, 'protocol', '') == 'rtu-tcp'
-                              and str(getattr(_d.connection, 'host', '')).strip().lower() == _th
-                              and int(getattr(_d.connection, 'port', 0) or 0) == _tp), None)
-                if _busy is not None:
-                    return _test_on_shared_bus(conn, unit_id, address, timeout, where, _busy.id)
-            c = ModbusTcpClient(host=conn.get('host', ''),
-                                port=int(conn.get('port', 502)), timeout=timeout,
-                                **_framer)
+        sp = str(conn.get('serial_port', '') or '')
+        where = (f"{sp}@{conn.get('baudrate', 9600)}" if rtu
+                 else f"{conn.get('host', '')}:{conn.get('port', 502)}")
+        if proto in BUS_OVER_TCP_PROTOCOLS + SERIAL_PROTOCOLS:
+            # A bus already read by a running device: ask THROUGH its
+            # connection (the shared transport), in turn with the slaves on
+            # it — a private socket would make a single-client bridge drop
+            # the live one (audit DP-19), and a tty opens once. Only the unit
+            # id is the test's own.
+            _th = str(conn.get('host', '')).strip().lower()
+            _tp = int(conn.get('port', 502) or 502)
+            _busy = next((_d for _d in config.devices
+                          if getattr(_d, 'enabled', False) and getattr(_d, 'protocol', '') == proto
+                          and ((rtu and str(getattr(_d.connection, 'serial_port', '')).strip() == sp.strip())
+                               or (not rtu and str(getattr(_d.connection, 'host', '')).strip().lower() == _th
+                                   and int(getattr(_d.connection, 'port', 0) or 0) == _tp))), None)
+            if _busy is not None:
+                return _test_on_shared_bus(conn, unit_id, address, timeout, where, _busy.id)
+        c = _build_client(ModbusConfig(
+            host=str(conn.get('host', '') or ''), port=int(conn.get('port', 502) or 502),
+            unit_id=unit_id, timeout=timeout, protocol=proto, serial_port=sp,
+            baudrate=int(conn.get('baudrate', 9600) or 9600), parity=str(conn.get('parity', 'N') or 'N'),
+            stopbits=int(conn.get('stopbits', 1) or 1), bytesize=int(conn.get('bytesize', 8) or 8)))
         try:
             if not c.connect():
                 return {"ok": False,
                         "message": (f"Serial open of {where} failed — check the port/permissions"
                                     if rtu else
-                                    f"TCP connect to {where} failed — check IP/port/firewall")}
+                                    f"{_PROTO_WORDS.get(proto, 'TCP')} connect to {where} failed — check IP/port/firewall")}
             rr = c.read_holding_registers(address=address, count=2, device_id=unit_id)
             lat = round((time.perf_counter() - t0) * 1000, 1)
             if not rr.isError():
@@ -4690,9 +4699,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             # held by a running tap — the saved device's test reports what it hears
             return {"ok": None, "message": "listen-only — nothing to probe; save "
                                            "the device, then Test shows what the tap hears"}
-        if protocol == 'rtu' and not str(conn.get('serial_port', '')).strip():
+        if protocol in SERIAL_PROTOCOLS and not str(conn.get('serial_port', '')).strip():
             raise HTTPException(status_code=422, detail={"errors": ["connection.serial_port required"]})
-        if protocol in ('tcp', 'rtu-tcp') and not str(conn.get('host', '')).strip():
+        if protocol in NETWORK_PROTOCOLS and not str(conn.get('host', '')).strip():
             raise HTTPException(status_code=422, detail={"errors": ["connection.host required"]})
         return _modbus_probe(conn, int(conn.get('unit_id', 1)),
                              float(conn.get('timeout', 3)),

@@ -1977,5 +1977,9 @@
   "common.no": "no",
   "adv.row.icon": "Icon",
   "adv.row.precision": "Decimals in HA",
-  "adv.row.title": "Row details: description, not-available marker, counters, scale factor, totals, Home Assistant"
+  "adv.row.title": "Row details: description, not-available marker, counters, scale factor, totals, Home Assistant",
+  "devices.wizard.udp": "Over UDP (datagrams instead of a connection)",
+  "devices.wizard.udpHint": "Some devices and gateways answer Modbus TCP frames in UDP datagrams (usually port 502) instead of a TCP connection. Use it only when the manual says UDP.",
+  "devices.wizard.framing": "Framing",
+  "devices.wizard.framingHint": "RTU (binary, CRC) is what almost every device speaks. ASCII (“:” … LRC, readable hex) is found on older PLCs and meters — use it only when the manual says Modbus ASCII. All slaves on one line speak the same one."
 }

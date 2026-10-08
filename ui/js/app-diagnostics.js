@@ -65,14 +65,14 @@ Object.assign(JanitzaMonitor.prototype, {
             if (this._loadBridges && !this._bridges) await this._loadBridges();   // names for the buses
             const r = await fetch('/api/devices');
             const devs = ((await r.json()).devices || [])
-                .filter(d => ['tcp', 'rtu', 'rtu-tcp'].includes(d.protocol || 'tcp'));   // every polling Modbus client
+                .filter(d => ['tcp', 'udp', 'rtu', 'ascii', 'rtu-tcp', 'ascii-tcp'].includes(d.protocol || 'tcp'));   // every polling Modbus client
             const opts = devs.map(d =>
                 `<option value="${this._esc(d.id)}">${this._esc(d.name || d.id)}</option>`).join('');
             // the buses those devices ride on — the key the monitor stamps on
             // each transaction: the serial port, or host:port (a bridge's bus)
             const buses = new Map();
             for (const d of devs) {
-                const key = d.protocol === 'rtu' ? (d.serial?.serial_port || '') : `${d.host}:${d.port}`;
+                const key = this._isSerialProto(d.protocol) ? (d.serial?.serial_port || '') : `${d.host}:${d.port}`;
                 if (!key || key === ':') continue;
                 const b = (this._bridges || []).find(x => x.id === d.bridge);
                 const label = b ? `${b.name || b.id} :${d.bridge_port || d.port}` : key;
@@ -339,6 +339,11 @@ Object.assign(JanitzaMonitor.prototype, {
         const bytes = hex.toUpperCase().match(/../g) || [];
         const seg = (arr, cls, tip) =>
             arr.length ? `<span class="diag-seg ${cls}" title="${this._esc(tip)}">${arr.join(' ')}</span>` : '';
+        if (proto === 'ascii') {
+            // ':' + hex characters + CR LF — shown as the text it is
+            const txt = (hex.match(/../g) || []).map(h => String.fromCharCode(parseInt(h, 16))).join('').replace(/\r?\n$/, '');
+            return `<span class="diag-seg diag-seg-pdu" title="Modbus ASCII: ':' unit · PDU · LRC">${this._esc(txt)}</span>`;
+        }
         if (proto === 'rtu') {
             return seg(bytes.slice(0, 1), 'diag-seg-unit', 'Unit ID')
                  + seg(bytes.slice(1, -2), 'diag-seg-pdu', 'PDU')

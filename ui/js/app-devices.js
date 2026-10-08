@@ -171,11 +171,11 @@ Object.assign(JanitzaMonitor.prototype, {
 
     _deviceRowHtml(d, healthColor, nested = false) {
         {
-            const PROTO = { http: 'HTTP', tcp: 'Modbus TCP', 'rtu-tcp': 'Modbus RTU/TCP', rtu: 'Modbus RTU', rtu_tap: 'RTU tap', mqtt: 'MQTT' };
+            const PROTO = this._PROTO_LABEL;
             const proto = (d.read_via || []).length
                 ? d.read_via.map(r => `${this._esc(r.id)} ${PROTO[r.protocol] || this._esc(r.protocol)}${r.interval_s != null ? ` ${r.interval_s} s` : ''}`).join(' · ')
-                : (d.protocol === 'rtu' || d.protocol === 'rtu_tap')
-                ? `${d.protocol === 'rtu_tap' ? 'RTU tap' : 'RTU'} · ${this._esc(d.serial?.serial_port || '—')}`
+                : (this._isSerialProto(d.protocol) || d.protocol === 'rtu_tap')
+                ? `${({ rtu_tap: 'RTU tap', ascii: 'ASCII' })[d.protocol] || 'RTU'} · ${this._esc(d.serial?.serial_port || '—')}`
                 : d.protocol === 'http'
                 ? `HTTP · ${this._esc((d.connection?.url || d.http_url || '').replace(/^https?:\/\//, '').split('/')[0] || '—')}`
                 : d.protocol === 'mqtt'
@@ -1159,7 +1159,8 @@ Object.assign(JanitzaMonitor.prototype, {
         if (this._stopMonitorPoll) this._stopMonitorPoll();   // stop the monitor poll when leaving
     },
 
-    _PROTO_LABEL: { http: 'HTTP', tcp: 'Modbus TCP', 'rtu-tcp': 'Modbus RTU/TCP', rtu: 'Modbus RTU', rtu_tap: 'Modbus RTU tap', mqtt: 'MQTT' },
+    _PROTO_LABEL: { http: 'HTTP', tcp: 'Modbus TCP', udp: 'Modbus UDP', 'rtu-tcp': 'Modbus RTU/TCP', 'ascii-tcp': 'Modbus ASCII/TCP',
+                    rtu: 'Modbus RTU', ascii: 'Modbus ASCII', rtu_tap: 'Modbus RTU tap', mqtt: 'MQTT' },
 
     // Every way this unit is read, one line each: protocol, address, rhythm,
     // cost and verdict — the same shape the installation page uses.
@@ -1311,7 +1312,7 @@ Object.assign(JanitzaMonitor.prototype, {
         </div>`;
         }
         const src = d.protocol === 'http' ? this._esc(d.url || '—')
-                  : (d.protocol === 'rtu' || d.protocol === 'rtu_tap') ? `${this._esc(d.serial_port || '—')} · ${d.baudrate}${d.parity} · unit ${d.unit_id}`
+                  : (this._isSerialProto(d.protocol) || d.protocol === 'rtu_tap') ? `${this._esc(d.serial_port || '—')} · ${d.baudrate}${d.parity} · unit ${d.unit_id}`
                   : `${this._esc(d.host || '—')}:${d.port} · unit ${d.unit_id}`;
         const proto = this._PROTO_LABEL[d.protocol] || d.protocol;
         const fact = (label, val) => `<div><div style="color:var(--text-secondary);font-size:11.5px;">${label}</div><div style="font-weight:600;font-size:13.5px;">${val}</div></div>`;
@@ -1479,9 +1480,9 @@ Object.assign(JanitzaMonitor.prototype, {
                 : d.protocol === 'mqtt'
                 ? { protocol: 'mqtt', broker: d.broker, port: d.mqtt_port || 1883, topic: d.topic,
                     username: d.mqtt_username || '', password: d.mqtt_password || '', tls: !!d.mqtt_tls }
-                : d.protocol === 'rtu'
-                ? { protocol: 'rtu', serial_port: d.serial_port, baudrate: d.baudrate, parity: d.parity, stopbits: d.stopbits, unit_id: d.unit_id, timeout: d.timeout }
-                : { protocol: d.protocol === 'rtu-tcp' ? 'rtu-tcp' : 'tcp', host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout };
+                : this._isSerialProto(d.protocol)
+                ? { protocol: d.protocol, serial_port: d.serial_port, baudrate: d.baudrate, parity: d.parity, stopbits: d.stopbits, unit_id: d.unit_id, timeout: d.timeout }
+                : { protocol: d.protocol || 'tcp', host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout };
             // a tap never transmits — the saved device reports what it has heard
             const r = d.protocol === 'rtu_tap'
                 ? await fetch(`/api/devices/${encodeURIComponent(this._devDetail.id)}/test`, { method: 'POST' })
