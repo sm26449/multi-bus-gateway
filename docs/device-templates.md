@@ -332,6 +332,7 @@ register rows it can carry:
 | `aggregates` on a row | how an installation of many units totals that field (`sum`, `avg`, `min`, `max`, `spread`, `mode`) | [config-reference — endpoints](config-reference.md#endpoints--n-units-of-the-same-device-behind-one-endpoint) |
 | `display` | how a unit is shown: names, columns, alarms, cell grids, bitmasks | [config-reference — display](config-reference.md#display--how-a-unit-of-this-kind-is-shown) |
 | `commands` | named, guarded writes (a power limit) | [MANUAL §14b](MANUAL.md#14b-commands--named-writes-from-the-template) |
+| `identify` | how a bus scan recognises the device: `{registers: [{address, register_type?, data_type?, equals \| in \| min/max}], fc43: {vendor?, product?}}` — every register must match; FC43 fields are regexes | [rtu-over-network.md §5](rtu-over-network.md#5-finding-the-slaves-watching-the-bus-moving-things) |
 | `scale_from`, `nan`, `monotonic` | SunSpec scale factors, "not available" markers, counter hygiene | [config-reference — per-register options](config-reference.md#per-register-options) |
 
 The easiest way in: make the map in the editor, **Export** it, add the block

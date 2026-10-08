@@ -20,8 +20,9 @@ Bridges live on the **Devices** page, next to devices and installations:
 - [2. Our serial bridge on a Raspberry Pi or any Linux host](#2-our-serial-bridge-on-a-raspberry-pi-or-any-linux-host)
 - [3. A hardware converter: Waveshare, USR, Elfin…](#3-a-hardware-converter-waveshare-usr-elfin)
 - [4. Several devices on one bus](#4-several-devices-on-one-bus)
-- [5. Security](#5-security)
-- [6. Troubleshooting](#6-troubleshooting)
+- [5. Finding the slaves, watching the bus, moving things](#5-finding-the-slaves-watching-the-bus-moving-things)
+- [6. Security](#6-security)
+- [7. Troubleshooting](#7-troubleshooting)
 
 ## 1. Which kind of bridge
 
@@ -139,7 +140,44 @@ added to the same bus:
 The same holds for a bus attached **directly** to the gateway's host
 (`/dev/ttyUSB…`, [rtu-serial.md §1](rtu-serial.md#1-direct-serial)).
 
-## 5. Security
+## 5. Finding the slaves, watching the bus, moving things
+
+**Scan a bus.** The **Scan** button on a bus asks unit IDs 1–247 one by one,
+through the bus's own connection. The devices already on it keep reading
+between the questions, and a single-client converter is never fought over.
+The whole range takes about a minute and a quarter. Closing the panel stops
+the scan. For every slave that answers it shows:
+- **what it probably is:**
+  - a template whose fingerprint matches;
+  - else the device's own Modbus identification (FC43: vendor and product);
+  - else *SunSpec*, if it carries the SunSpec marker;
+  - else *not recognised*;
+- **which device already reads it**, or an **Add** button that opens the
+  wizard on that bus and unit, with the recognised template selected.
+
+A template recognises its device through an `identify` block: registers
+that must read given values, and/or an FC43 pattern. See
+[device-templates.md §9](device-templates.md#9-advanced-what-only-the-json-format-carries).
+Add one to your own templates and the scan names them.
+
+**How busy a bus is.** Every bus shows *bus N% busy*: the measured share of
+the wire its devices use. For each device it adds up the time one sweep of a
+poll group takes, divided by that group's interval. Hover the pill to see
+each device's share. Above 70% the pill turns amber: another device or a
+faster group will make readings late. At 100% it turns red: requests queue.
+The pill suggests what to do then.
+
+**Move a device** to another bus or another bridge with the ⇄ button on its
+row (or Edit). It keeps its id, so its MQTT topics and its history continue.
+Renumbering a bus in the bridge's form takes its devices along. Dropping a
+bus while devices use it is refused.
+
+**Export / import bridges.** The **Export** button at the top of the bridges
+gives a YAML file, with tokens included only in an admin's export. **Import**
+checks each bridge first: *new*, *replace*, *exists* or *invalid*, with the
+reason. It refuses a file that would drop a bus devices use here.
+
+## 6. Security
 
 Modbus RTU has **no authentication**. Whoever can reach a bus port controls
 the bus.
@@ -159,7 +197,7 @@ the bus.
   login or an API key is on.
 - Converters have their own web pages and default passwords. Change them.
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
 | On the Devices page | Likely cause | What to do |
 |---|---|---|

@@ -151,13 +151,17 @@ rather than silently reading the primary's bucket.
 | Method | Path | Description | Role |
 |---|---|---|---|
 | GET | `/api/bridge-types` | The kinds of bridge (`multibus/bridge_types/*.json`): framing `rtu`/`modbus_tcp`, discovery `api`/`manual`, serial config, health, default ports, set-up steps | viewer |
-| GET | `/api/bridges` | Every bridge (token never included; `has_token`) with `state` (`online`/`offline`/`degraded`/`unknown`, `detail`, `source`: the box's own `/health`, or what its devices see), `protocol`, and `ports[]` with the `devices` on each (`id, name, unit_id, endpoint_id, health`) | viewer |
+| GET | `/api/bridges` | Every bridge (token never included; `has_token`) with `state` (`online`/`offline`/`degraded`/`checking`/`unknown`, `detail`, `source`: the box's own `/health` asked in the background, or what its devices see), `protocol`, and `ports[]` with the `devices` on each (`id, name, unit_id, endpoint_id, health, bus_share`) and `busy` (`{pct, level: ok\|high\|full}` — measured share of the wire) | viewer |
 | GET | `/api/bridges/{id}` | One bridge, same shape | viewer |
 | POST / PUT / DELETE | `/api/bridges`, `/api/bridges/{id}` | `{id, name, type, host, ports: [{port, label?, serial?}], max_connections?, control_port?}`. Our bridge type gets a generated token. Devices on it follow a changed host/port at once (`restarted`). Delete refused (409) while a device uses it | admin |
 | GET | `/api/bridges/{id}/scan` | Buses: asked of our bridge (`port, key, label, dev, serial_params, serial_text, available, excluded`), declared for a converter | viewer |
 | POST | `/api/bridges/{id}/ports/{key}/serial` | `{baud, parity, databits, stopbits}` for one bus of our bridge | admin |
 | GET | `/api/bridges/{id}/setup` | What to set on the box; for our bridge the `docker run` command with its token (the token only to an admin when login or an API key is on) | viewer |
 | POST | `/api/bridges/{id}/probe` | `{port, unit_id, address?}` — one register asked as RTU then as Modbus TCP: `rtu`, `modbus_tcp`, `speaks`, `verdict` (right type, wrong type, serial settings, no answer). Opens its own connection | admin |
+| POST | `/api/bridges/{id}/ports/{port}/scan` | `{from?, to?, timeout?}` (1-247, 0.3 s): sweep unit ids on one bus through its shared connection, in the background. Returns `{job, total}` | admin |
+| GET / DELETE | `/api/bus-scan/{job}` | Progress `{state: running\|done\|cancelled\|failed, done, total, found: [{unit_id, fc43, sunspec, matches, suggested, device}]}` / cancel | viewer / admin |
+| GET | `/api/bridges/export` | Every bridge as YAML (tokens only for an admin, or a box with no login and no API key) | viewer |
+| POST | `/api/bridges/import` | `{yaml, apply, replace}` — each bridge `new\|replace\|exists\|invalid` with the reason; a file that drops a bus devices use here is refused | admin |
 
 A device on a bridge: `connection: {bridge, bridge_port, unit_id}`; host,
 port, protocol (`rtu-tcp` or `tcp`) and connection limit come from the bridge.
