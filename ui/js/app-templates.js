@@ -1026,11 +1026,15 @@ Object.assign(JanitzaMonitor.prototype, {
         try { fields = (await (await fetch('/api/canonical-fields')).json()).fields || {}; } catch (e) {}
         this._canonFieldsAll = fields;
         const q = (this._tfSearch || '').toLowerCase();
+        const cat = this._tfCat || '';                 // '' all · '__mine' yours · else a category
         const rows = Object.entries(fields)
             .filter(([n, f]) => !q || `${n} ${f.measurement} ${f.description} ${f.unit}`.toLowerCase().includes(q))
+            .filter(([, f]) => !cat || (cat === '__mine' ? f.user : f.measurement === cat))
             .sort((a, b) => (b[1].user - a[1].user) || a[1].measurement.localeCompare(b[1].measurement) || a[0].localeCompare(b[0], undefined, { numeric: true }));
         const cats = [...new Set(Object.values(fields).map(f => f.measurement))].sort();
         const own = Object.values(fields).filter(f => f.user).length;
+        const perCat = {};
+        Object.values(fields).forEach(f => { perCat[f.measurement] = (perCat[f.measurement] || 0) + 1; });
         box.innerHTML = `
             <p class="field-hint" style="max-width:820px;">${t('fields.intro', 'A register\'s name becomes its MQTT topic and its InfluxDB field. Canonical names make the same quantity look the same on every device, so dashboards, Node-RED and virtual meters can rely on them; each also promises a unit. The gateway ships a dictionary; add your own for quantities it does not cover — they become canonical everywhere, and travel with a template you export.')}
                <a href="https://github.com/sm26449/multi-bus-gateway/blob/main/docs/canonical-fields.md" target="_blank" rel="noopener">${t('fields.guide', 'How names are built')}</a></p>
@@ -1063,10 +1067,15 @@ Object.assign(JanitzaMonitor.prototype, {
               </div>
             </details>
             <div style="display:flex;gap:10px;align-items:center;margin:10px 0;flex-wrap:wrap;">
-              <input type="text" id="tfSearch" class="input" style="max-width:260px;" placeholder="${t('common.search', 'Search')}…" value="${this._esc(this._tfSearch || '')}">
-              <span class="field-hint">${t('fields.count', '{n} fields · {own} yours', { n: Object.keys(fields).length, own })}</span>
+              <input type="text" id="tfSearch" class="input" style="max-width:260px;" placeholder="${t('common.search', 'Search')}" value="${this._esc(this._tfSearch || '')}">
+              <select id="tfCatFilter" class="input" style="max-width:240px;" aria-label="${this._esc(t('fields.categoryShort', 'Category'))}" ${this._act('_tfSetCat', [], { value: true, on: 'change' })}>
+                <option value="" ${cat ? '' : 'selected'}>${t('fields.allCats', 'All categories')} (${Object.keys(fields).length})</option>
+                ${own ? `<option value="__mine" ${cat === '__mine' ? 'selected' : ''}>${t('fields.mineOnly', 'Only yours')} (${own})</option>` : ''}
+                ${cats.map(c => `<option value="${this._esc(c)}" ${c === cat ? 'selected' : ''}>${this._esc(c)} (${perCat[c]})</option>`).join('')}
+              </select>
+              <span class="field-hint">${t('fields.shown', '{shown} shown', { shown: rows.length })} · ${t('fields.count', '{n} fields · {own} yours', { n: Object.keys(fields).length, own })}</span>
             </div>
-            <div class="table-container" style="max-height:520px;overflow:auto;">
+            <div class="table-container tf-list">
               <table class="data-table"><thead><tr>
                 <th>${t('fields.name', 'Name')}</th><th>${t('fields.unit', 'Unit')}</th><th>${t('fields.categoryShort', 'Category')}</th>
                 <th>MQTT</th><th>${t('fields.description', 'Description')}</th><th></th></tr></thead><tbody>
@@ -1083,6 +1092,11 @@ Object.assign(JanitzaMonitor.prototype, {
             clearTimeout(this._tfT);
             this._tfT = setTimeout(async () => { await this.renderFieldsPanel(); const x = document.getElementById('tfSearch'); x?.focus(); x?.setSelectionRange(x.value.length, x.value.length); }, 200);
         });
+    },
+
+    _tfSetCat(value) {
+        this._tfCat = value;
+        this.renderFieldsPanel();
     },
 
     editUserField(name) {

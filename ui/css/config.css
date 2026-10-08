@@ -821,3 +821,7 @@ body.role-viewer .tpl-update-viewer { display: inline; }
 @media (max-width: 640px) {
     .tpl-adv-line .input { flex-basis: 100%; }
 }
+
+/* Templates → Canonical fields: the list takes the page's height, its header stays in view */
+.tf-list { max-height: calc(100vh - 230px); min-height: 320px; overflow: auto; }
+.tf-list thead th { position: sticky; top: 0; z-index: 1; background: var(--bg-secondary); }
