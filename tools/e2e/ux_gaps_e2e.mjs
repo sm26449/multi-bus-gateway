@@ -13,7 +13,7 @@ import { chromium } from 'playwright';
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const TPL = 'e2e_ux_tpl';
 const BR = { gw: 'e2e-ux-gw', rt: 'e2e-ux-rt' };
-const DEV = { gw: 'e2e-ux-gwdev', tcp: 'e2e-ux-tcp' };
+const DEV = { gw: 'e2e-ux-gwdev', tcp: 'e2e-ux-tcp', udp: 'e2e-ux-udp', asc: 'e2e-ux-ascii' };
 
 const results = [];
 const check = (name, cond, extra = '') => {
@@ -137,6 +137,40 @@ try {
   d = await devOf(DEV.tcp);
   check('…the device is now Modbus RTU on that port, same id and map',
     d.protocol === 'rtu' && d.serial?.serial_port === '/dev/ttyE2EUX' && d.template === TPL, JSON.stringify(d).slice(0, 220));
+
+  // ═══ 2b. the wire variants: Modbus over UDP, Modbus ASCII ═══════════════
+  await goDevices();
+  await page.locator('button[data-action="openDeviceWizard"]:visible').first().click();
+  await page.waitForSelector('#deviceWizardModal.active');
+  await page.selectOption('#devWizGw', '');
+  await page.fill('#devWizHost', '192.0.2.44');
+  await page.check('#devWizUdp');
+  await finish(DEV.udp);
+  d = await devOf(DEV.udp);
+  check('"Over UDP" saves a Modbus UDP device', d.protocol === 'udp' && d.host === '192.0.2.44', JSON.stringify(d).slice(0, 160));
+  await page.locator('button[data-action="openDeviceWizard"]:visible').first().click();
+  await page.waitForSelector('#deviceWizardModal.active');
+  await page.click('#deviceWizardModal label:has(input[name="devWizProto"][value="rtu"])');
+  await page.click('#deviceWizardModal label:has(input[name="devWizRtuMode"][value="rtu"])');
+  await page.fill('#devWizSerial', '/dev/ttyE2EASC');
+  await page.selectOption('#devWizFraming', 'ascii');
+  await page.fill('#devWizUnitR', '5');
+  await finish(DEV.asc);
+  d = await devOf(DEV.asc);
+  check('Framing ASCII on a serial port saves a Modbus ASCII device', d.protocol === 'ascii' && d.serial?.serial_port === '/dev/ttyE2EASC',
+    JSON.stringify(d).slice(0, 200));
+  await goDevices();
+  check('the device list names it Modbus ASCII', /ASCII/.test(await page.innerText('#devicesListView')));
+  await page.evaluate(id => window.app.openDeviceWizard(id), DEV.asc);
+  await page.waitForSelector('#deviceWizardModal.active');
+  check('editing it shows Direct serial with ASCII framing',
+    await page.isChecked('input[name="devWizRtuMode"][value="rtu"]') && await page.inputValue('#devWizFraming') === 'ascii');
+  await page.click('#deviceWizardModal [data-action="closeModal"]');
+  await page.evaluate(id => window.app.openDeviceWizard(id), DEV.udp);
+  await page.waitForSelector('#deviceWizardModal.active');
+  check('editing the UDP device shows Modbus TCP with "Over UDP" ticked',
+    await page.isChecked('input[name="devWizProto"][value="tcp"]') && await page.isChecked('#devWizUdp'));
+  await page.click('#deviceWizardModal [data-action="closeModal"]');
 
   // ═══ 3. Virtual Meters: a disabled "Add instance" says why ══════════════
   await page.click('[data-page="vmeters"]');
