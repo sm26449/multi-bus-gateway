@@ -225,27 +225,32 @@ Devices → *Discover devices*:
 ### 5.2 Add a device (wizard)
 
 1. **Connection** — pick the protocol:
-   - **Modbus TCP**: host, port, unit ID, timeout.
-   - **Modbus RTU**: two modes (see [rtu-serial.md](rtu-serial.md)). A bus
-     reached through a **bridge** (our serial bridge on a Raspberry Pi or
-     server, or an RS-485-to-Ethernet converter) is picked by bridge and bus:
-     add bridges with **Add bridge** on the Devices page —
-     [rtu-over-network.md](rtu-over-network.md). Several slaves on one bus are
-     several devices with different unit IDs.
-     **Over network (recommended)** — press **Scan** and pick a USB adapter
-     from the serial bridge (plug in → appears; unplug → gone), MBG stays
-     unprivileged. **One master per bridged line** is enforced: a second
-     device on the same bridge endpoint is rejected at validation (two
-     masters would evict each other forever), and Test-connection refuses
-     an endpoint a running device is polling. **Direct serial** — serial
-     port (e.g. `/dev/ttyUSB0`), baud, parity, stop bits, with the adapter
-     mapped into the container. **Listen only (tap)** — for a bus that
-     already has a master (a BMS master pack, a vendor datalogger): the
-     gateway never transmits and decodes the answers the observed unit
-     gives, at the master's rhythm. No *Test connection* here; after saving,
-     *Test* on the device says what the tap has heard. A port is either
-     polled or tapped, and taps sharing a port share its baud/parity
-     ([rtu-serial.md §7](rtu-serial.md)).
+   - **Modbus TCP**: host, port, unit ID, timeout. A slave behind a
+     converter in *Modbus TCP to RTU* (gateway) mode is reached here too:
+     **Reached → Through the gateway …** picks the gateway's bus, and only
+     the unit ID is left to type.
+   - **Modbus RTU**, three modes ([rtu-serial.md](rtu-serial.md)):
+     - **Over network (recommended)**: a bus behind a **bridge** (our
+       serial bridge on a Raspberry Pi or server, or a transparent
+       RS-485-to-Ethernet converter), picked by bridge and bus. Add
+       bridges with **Add bridge** on the Devices page
+       ([rtu-over-network.md](rtu-over-network.md)).
+     - **Direct serial**: serial port (e.g. `/dev/ttyUSB0`), baud, parity,
+       stop bits, with the adapter mapped into the container.
+     - **Listen only (tap)**: for a bus that already has a master (a BMS
+       master pack, a vendor datalogger). The gateway never transmits; it
+       decodes the answers the observed unit gives, at the master's rhythm.
+       The bus can be a local serial port or a transparent bridge's bus.
+       There is no *Test connection*; after saving, *Test* on the device
+       says what the tap has heard ([rtu-serial.md §7](rtu-serial.md)).
+
+     Several slaves on one bus are several devices with different unit IDs:
+     they share one connection and take turns. A bus is either polled or
+     tapped.
+   - **Changing it later:** a Modbus device can move between Modbus TCP,
+     RTU, over the network and listen-only, because its register map reads
+     by address either way. Its id, topics and history stay. HTTP and MQTT
+     maps read by path, so going to or from them needs a new device.
    - **HTTP/JSON**: a URL returning JSON; each register extracts its value
      with a `json_path` (e.g. `Body.Data.PowerReal_P_Sum`). URLs must point
      at a private LAN host unless `security.allow_nonlan_http_devices` is

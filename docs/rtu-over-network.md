@@ -110,7 +110,11 @@ The control API is described in [serial-bridge-api.md](serial-bridge-api.md).
    - *It speaks the way this bridge is set up* means you are good.
    - *TRANSPARENT mode* / *GATEWAY mode* means the box is set the other way.
      Change the bridge type, or change the box.
-4. **+ Device** on the bus.
+4. **+ Device** on the bus. On a gateway's bus the wizard opens as
+   **Modbus TCP**, *reached through* that gateway: only the unit ID is left.
+   From **Add Device**, the same is **Modbus TCP → Reached → Through the
+   gateway …**. **Modbus RTU → Over network** lists only the bridges that
+   carry RTU.
 
 > A transparent converter usually serves **one** client. That client is the
 > gateway: its devices on that bus share one connection (§4). Any other
