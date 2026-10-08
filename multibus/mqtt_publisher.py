@@ -26,7 +26,7 @@ from typing import Any, Callable, Dict, List, Optional
 import paho.mqtt.client as mqtt
 
 from . import __version__
-from .config import MQTTConfig, SelectedRegister
+from .config import MQTTConfig, SelectedRegister, store_key
 
 import logging
 logger = logging.getLogger(__name__)
@@ -700,7 +700,8 @@ class MQTTPublisher:
                 "device": device_info,
             }
             component = "sensor"
-            rule = write_rules.get(register.address)
+            rule = write_rules.get(store_key(register.address,
+                                             getattr(register, 'register_type', 'holding') or 'holding'))
             if rule is not None:
                 component = self._write_entity_config(config, register, rule,
                                                       f"{topic}/set", device_id)

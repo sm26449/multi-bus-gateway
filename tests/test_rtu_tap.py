@@ -115,13 +115,13 @@ def test_request_response_pairing_dispatches_decoded_values():
 def test_int32_spans_two_words_and_partial_windows_are_skipped():
     got = {}
     r, c = make_pair('/p2', unit=1, registers=[
-        reg(200, 'energy', 'uint32'),
-        reg(202, 'outside', 'uint16'),          # not in this window
+        reg(200, 'energy', 'uint32', register_type='input'),   # FC4 below: the input table
+        reg(202, 'outside', 'uint16', register_type='input'),  # not in this window
     ])
     c.publish_callback = lambda g, data: got.update(data)
     r._on_frame(req_read(1, 4, 200, 2), now=0.0)
     r._on_frame(resp_read(1, 4, [0x0001, 0x86A0]), now=0.01)   # 100000
-    assert got[200]['value'] == 100000
+    assert got[100_000 + 200]['value'] == 100000      # store key: input table offset
     assert 202 not in got
 
 
@@ -218,7 +218,7 @@ def test_seplos_v3_template_decodes_pia_like_the_collector():
     tpl = json.load(open('multibus/device_templates/seplos_bms_v3_rtu_tap.json'))
     regs = [reg(x['address'], x['name'], x.get('data_type', 'uint16'),
                 scale=x.get('scale', 1.0), offset=x.get('offset', 0.0),
-                unit=x.get('unit', ''))
+                unit=x.get('unit', ''), register_type=x.get('register_type', 'holding'))
             for x in tpl['device_template']['registers']]
     r, c = make_pair('/seplos', unit=1, registers=regs)
     got = {}
@@ -250,14 +250,14 @@ def test_unpaired_response_dispatches_via_learned_shape():
     exchanges and dispatches the master's unpaired responses through it;
     a shape seen at two addresses becomes ambiguous and never infers."""
     got = {}
-    r, c = make_pair('/p8', unit=1, registers=[reg(0x1000, 'v', 'uint16')])
+    r, c = make_pair('/p8', unit=1, registers=[reg(0x1000, 'v', 'uint16', register_type='input')])
     c.publish_callback = lambda g, data: got.update(data)
     # unit 2's paired exchange teaches: (fc4, 2 bytes) -> 0x1000
     r._on_frame(req_read(2, 4, 0x1000, 1), now=0.0)
     r._on_frame(resp_read(2, 4, [111]), now=0.05)
     # unit 1 (our device, the master) emits the same shape with NO request
     r._on_frame(resp_read(1, 4, [222]), now=1.0)
-    assert got[0x1000]['value'] == 222
+    assert got[100_000 + 0x1000]['value'] == 222
     assert r.inferred == 1 and r.orphans == 0
     # a conflicting mapping poisons the shape: no more inference
     r._on_frame(req_read(2, 4, 0x2000, 1), now=2.0)
@@ -457,3 +457,26 @@ def test_a_tap_hears_a_bus_through_a_bridge_and_never_writes():
         client.disconnect()
         rtu_tap._READERS.pop(key, None)
         srv.close()
+
+
+def test_a_window_feeds_only_the_rows_of_its_table():
+    """coil 0, holding 0 and input 0 are three registers: FC3 feeds holding,
+    FC4 input, FC1 coils — each under its own store key. A master reading in
+    the other table than the map says is recorded, for Test to name it."""
+    got = {}
+    r, c = make_pair('/tables', unit=1, registers=[
+        reg(0, 'h0', 'uint16'), reg(0, 'i0', 'uint16', register_type='input'),
+        reg(0, 'c0', 'uint16', register_type='coil', mask=1)])
+    c.publish_callback = lambda g, data: got.update({k: v['register'].name for k, v in data.items()})
+    r._on_frame(req_read(1, 3, 0, 1), now=0.0)
+    r._on_frame(resp_read(1, 3, [11]), now=0.01)
+    r._on_frame(req_read(1, 4, 0, 1), now=0.1)
+    r._on_frame(resp_read(1, 4, [22]), now=0.11)
+    assert got == {0: 'h0', 100_000: 'i0'}
+    assert c.table_mismatch is None
+    # a map that says holding for what the master reads with FC4
+    r2, c2 = make_pair('/tables2', unit=1, registers=[reg(10, 'v', 'uint16')])
+    r2._on_frame(req_read(1, 4, 10, 1), now=0.0)
+    r2._on_frame(resp_read(1, 4, [5]), now=0.01)
+    assert c2.table_mismatch == {'heard': 'input', 'map': 'holding', 'address': 10}
+    assert c2.get_stats()['table_mismatch']['heard'] == 'input'

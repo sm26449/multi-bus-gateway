@@ -38,6 +38,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import __version__
 from .mqtt_publisher import MQTTPublisher
 from .influxdb_publisher import InfluxDBPublisher
+from .config import store_key
 
 logger = logging.getLogger(__name__)
 
@@ -691,6 +692,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     # endpoint fan-out rules the template declared for this
                     # field — the aggregator reads them straight off the store
                     'aggregates': getattr(item.get('register'), 'aggregates', None),
+                    # the store key is address + its table's offset; the
+                    # register's own address and table, for display
+                    'address': getattr(item.get('register'), 'address', address),
+                    'register_type': getattr(item.get('register'), 'register_type', 'holding'),
                 }
 
             last_update['timestamp'] = datetime.now().isoformat()
@@ -732,6 +737,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     str(addr): {
                         'value': item.get('value'),
                         'name': item.get('register').name if item.get('register') else '',
+                        **({'address': item['register'].address, 'register_type': item['register'].register_type}
+                           if getattr(item.get('register'), 'register_type', 'holding') not in ('holding', '', None)
+                           else {}),
                     }
                     for addr, item in data.items()
                 }
@@ -903,10 +911,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                         _by_name = {e.get('name'): e.get('value') for e in list(store.values())}
                         for reg in getattr(client, 'registers', None) or []:
                             th = getattr(reg, 'thresholds', None)
-                            entry = store.get(reg.address) if th else None
+                            entry = store.get(reg.key) if th else None
                             if not entry:
                                 continue
-                            key = f'thr:{did}:{reg.address}'
+                            key = f'thr:{did}:{reg.key}'
                             thr_seen.add(key)
                             # suppress on stale data: don't alarm on a value the
                             # device stopped refreshing (down/frozen) — the band
@@ -1842,7 +1850,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                             for c in _cmds)
                         if (getattr(rule, 'scale_from', None) or _fronted) and not _ha_cmd:
                             continue
-                        wrules[r.address] = rule
+                        wrules[store_key(r.address, 'holding')] = rule   # keyed by table: a coil at
+                        # the same address must never pick up this holding row's rule
                 mqtt_publisher.publish_device_discovery(
                     d.id, d.name, d.mqtt_topic_prefix, regs, model=d.template,
                     write_rules=wrules)
@@ -1926,13 +1935,14 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             t.start()
 
 
-    def _push_readback_to_store(device_id, address, value):
+    def _push_readback_to_store(device_id, address, value, register_type='holding'):
         """Write-then-refresh: push a just-written register's read-back value into
         the live store so the vmeters / UI reflect the new value AT ONCE instead
         of at the next poll (a slow-group setpoint could otherwise lag 60 s)."""
         if value is None:
             return
         store = registry.store_for(device_id)
+        address = store_key(address, register_type)        # the key of THAT table's entry
         if store is not None and address in store:
             # whole-dict swap, like the poller (audit DP-35): field-by-field
             # mutation was the one non-atomic store write — a concurrent
@@ -2254,7 +2264,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             for n, v in (res.get('after') or {}).items():
                 r = regs.get(n)
                 if r is not None and v is not None:
-                    _push_readback_to_store(dev_cfg.id, int(r.address), v)
+                    _push_readback_to_store(dev_cfg.id, int(r.address), v,
+                                            getattr(r, 'register_type', 'holding') or 'holding')
             try:
                 if cmd.readback_group and hasattr(drv, 'poll_now'):
                     drv.poll_now(cmd.readback_group)
@@ -3139,7 +3150,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     read_back = float(raw_back) / (scale or 1.0) + _w_offset
                     verified = abs(read_back - float(want)) <= max(1e-6, abs(float(want)) * 1e-4)
                 # write-then-refresh: reflect the new value in the live store now
-                _push_readback_to_store(device_id, address, read_back)
+                _push_readback_to_store(device_id, address, read_back, rtype)
         except Exception:  # noqa: BLE001
             pass
         return {"ok": True, "device": device_id, "address": address, "register_type": rtype,
@@ -4704,6 +4715,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                                             "valid frame yet (master off? A/B swapped? "
                                             f"line not {c.baudrate} {c.parity})"}
         wins, age = st.get('successful_reads') or 0, st.get('staleness_age_s')
+        mm = st.get('table_mismatch')
+        if mm and not st.get('updates'):
+            fc = {'holding': 'FC3', 'input': 'FC4'}
+            return {"ok": False, "message": f"the master reads unit {c.unit_id} @{mm['address']} as "
+                                            f"{mm['heard']} registers ({fc.get(mm['heard'], '')}) but the "
+                                            f"map declares them {mm['map']} — set those rows' register "
+                                            f"type to {mm['heard']} in the template"}
         if not wins:
             return {"ok": False, "message": f"the bus is live ({frames} frames) but "
                                             f"nothing for unit {c.unit_id} yet"}

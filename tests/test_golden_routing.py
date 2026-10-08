@@ -113,10 +113,13 @@ def test_golden_primary_publisher_args_and_store(tmp_path):
     # 2026-08 freshness-laundering fix; 'interval' (the producing poll group's
     # cadence, None for push sources) in 3.4.0 so the vmeter derives per-row
     # freshness bounds; 'aggregates' (template-declared endpoint fan-out,
-    # None when undeclared) in 3.85 — all intentional additive changes.
+    # None when undeclared) in 3.85; 'address' + 'register_type' (the store
+    # key is address + its table's offset, these say which register) in
+    # 3.91 — all intentional additive changes.
     item = app.state.current_values[19000]
     assert set(item) == {"value", "name", "label", "unit", "poll_group",
-                         "timestamp", "ts", "mono", "interval", "aggregates"}
+                         "timestamp", "ts", "mono", "interval", "aggregates",
+                         "address", "register_type"}
     assert item["aggregates"] is None     # no fan-out declared on a plain register
     assert item["value"] == 231.5 and item["name"] == "_ULN1"
     assert item["poll_group"] == "realtime" and ISO_TS.match(item["timestamp"])

@@ -98,7 +98,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
     // template-derived rows are unticked, never deleted; custom ones may go
     _regInCatalog(reg) {
-        return this.flattenRegisters().some(r => r.address === reg.address
+        return this.flattenRegisters().some(r => this._rk(r) === this._rk(reg)
             && (!reg.json_path || r.json_path === reg.json_path));
     },
 
@@ -146,14 +146,14 @@ Object.assign(JanitzaMonitor.prototype, {
                 gh.innerHTML = `<td colspan="6">${this._esc(this._regCatLabel(reg.category))}</td>`;
                 tbody.appendChild(gh);
             }
-            const configuredReg = this.selectedRegisters.find(s => s.address === reg.address);
+            const configuredReg = this.selectedRegisters.find(s => this._rk(s) === this._rk(reg));
             const isConfigured = !!configuredReg;
             const tr = document.createElement('tr');
-            tr.dataset.address = reg.address;
+            tr.dataset.address = this._rk(reg);
             if (isConfigured) tr.classList.add('configured');
             const label = reg.description || reg.name;
             const queryBtnHtml = (http || mqttIn) ? '' :
-                `<button class="btn-action query" data-address="${reg.address}" title="${this.t('registers.queryNow', 'Query now')}" aria-label="${this.t('registers.queryNow', 'Query now')}">&#128269;</button>`;
+                `<button class="btn-action query" data-address="${this._rk(reg)}" title="${this.t('registers.queryNow', 'Query now')}" aria-label="${this.t('registers.queryNow', 'Query now')}">&#128269;</button>`;
             tr.innerHTML = `
                 <td class="reg-tick"><input type="checkbox" ${isConfigured ? 'checked' : ''}
                         aria-label="${this.t('registers.readCol', 'Read')}: ${this._esc(label)}"></td>
@@ -165,12 +165,12 @@ Object.assign(JanitzaMonitor.prototype, {
                 <td class="value num" data-reg-name="${this._esc(reg.name)}">${this._regValueHtml(reg.name)}</td>
                 <td class="reg-interval">${isConfigured ? this._regIntervalText(configuredReg) : `<span style="color:var(--text-tertiary,#8a94a0);">${this.t('registers.notRead', 'not read')}</span>`}</td>
                 <td class="actions-cell">${queryBtnHtml}
-                    <button class="btn-action edit" data-address="${reg.address}" title="${isConfigured ? this.t('registers.editConfig', 'Edit how it is published') : this.t('registers.configureAdd', 'Configure & read')}"
+                    <button class="btn-action edit" data-address="${this._rk(reg)}" title="${isConfigured ? this.t('registers.editConfig', 'Edit how it is published') : this.t('registers.configureAdd', 'Configure & read')}"
                             aria-label="${isConfigured ? this.t('registers.editConfig', 'Edit how it is published') : this.t('registers.configureAdd', 'Configure & read')}">&#9998;</button>
                 </td>`;
             tr.querySelector('input[type=checkbox]').addEventListener('change', (ev) => {
                 if (ev.target.checked) this.quickAddRegister(reg);
-                else this.removeRegisterFromTable(reg.address);
+                else this.removeRegisterFromTable(this._rk(reg));
             });
             const qb = tr.querySelector('.query');
             if (qb) qb.addEventListener('click', () => this.queryRegisterNow(reg));
@@ -395,7 +395,7 @@ Object.assign(JanitzaMonitor.prototype, {
             this.showToast('info', reg.name, `${displayValue} ${reg.unit || ''}`);
 
             // Update value in table
-            const tr = document.querySelector(`#registersTableBody tr[data-address="${reg.address}"]`);
+            const tr = document.querySelector(`#registersTableBody tr[data-address="${this._rk(reg)}"]`);
             if (tr) {
                 const valueCell = tr.querySelector('.value');
                 if (valueCell) {
@@ -479,7 +479,7 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!reg.description) {
             // Try to find description from allRegisters
             const allRegs = this.flattenRegisters();
-            const fullReg = allRegs.find(r => r.address === reg.address);
+            const fullReg = allRegs.find(r => this._rk(r) === this._rk(reg));
             if (fullReg && fullReg.description) {
                 reg.description = fullReg.description;
             }
@@ -524,10 +524,10 @@ Object.assign(JanitzaMonitor.prototype, {
         this.renderSelectedRegistersList();
     },
 
-    removeRegisterFromTable(address) {
-        const reg = this.selectedRegisters.find(r => r.address === address);
+    removeRegisterFromTable(key) {                 // key: address in its table (_rk)
+        const reg = this.selectedRegisters.find(r => this._rk(r) === key);
         if (reg) {
-            this.selectedRegisters = this.selectedRegisters.filter(r => r.address !== address);
+            this.selectedRegisters = this.selectedRegisters.filter(r => this._rk(r) !== key);
             this.saveSelectedRegistersQuiet();
             this.showToast('info', this.t('toast.removed', 'Removed'), `${reg.name} ${this.t('toast.fromConfig', 'removed from configuration')}`);
             this._afterSelectionChange();
@@ -756,7 +756,7 @@ Object.assign(JanitzaMonitor.prototype, {
         // Ensure we have description from allRegisters
         if (!reg.description) {
             const allRegs = this.flattenRegisters();
-            const fullReg = allRegs.find(r => r.address === reg.address);
+            const fullReg = allRegs.find(r => this._rk(r) === this._rk(reg));
             if (fullReg && fullReg.description) {
                 reg.description = fullReg.description;
             }
@@ -888,9 +888,12 @@ Object.assign(JanitzaMonitor.prototype, {
         }
 
         const address = parseInt(document.getElementById('addAddress').value);
+        const _rtype = modal.dataset.mode === 'custom'
+            ? (document.getElementById('addRegType')?.value || 'holding')
+            : (modal.dataset.regType || 'holding');
 
-        // Check if already monitored
-        if (this.selectedRegisters.some(r => r.address === address)) {
+        // Check if already monitored — the same address in ANOTHER table is another register
+        if (this.selectedRegisters.some(r => this._rk(r) === this._rk({ address, register_type: _rtype }))) {
             this.showToast('warning', this.t('toast.alreadyMonitored', 'Already Monitored'), this.t('toast.alreadyMonitoredMsg', 'This measurement is already being monitored'));
             return;
         }
@@ -1137,7 +1140,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 tbody.appendChild(gh);
             }
             const tr = document.createElement('tr');
-            tr.dataset.address = reg.address;
+            tr.dataset.address = this._rk(reg);
             const mqttTooltip = reg.mqtt_enabled && reg.mqtt_topic ? `Topic: ${reg.mqtt_topic}` : (reg.mqtt_enabled ? 'Enabled' : 'Disabled');
             let influxTooltip = 'Disabled';
             if (reg.influxdb_enabled) {
@@ -1164,24 +1167,24 @@ Object.assign(JanitzaMonitor.prototype, {
                         ? `<button class="btn-action remove" title="${t('common.delete', 'Delete')}" aria-label="${t('common.delete', 'Delete')}">&#10006;</button>`
                         : `<span class="reg-lock" title="${t('registers.fromTemplate', 'From the template — untick it instead of deleting')}" aria-label="${t('registers.fromTemplate', 'From the template — untick it instead of deleting')}"><i aria-hidden="true" class="bi bi-lock"></i></span>`}
                 </td>`;
-            tr.querySelector('input[type=checkbox]').addEventListener('change', () => this.removeRegisterFromTable(reg.address));
+            tr.querySelector('input[type=checkbox]').addEventListener('change', () => this.removeRegisterFromTable(this._rk(reg)));
             tr.querySelector('.edit').addEventListener('click', () => this.editRegister(reg));
-            tr.querySelector('.remove')?.addEventListener('click', () => this.removeRegisterFromTable(reg.address));
+            tr.querySelector('.remove')?.addEventListener('click', () => this.removeRegisterFromTable(this._rk(reg)));
             tbody.appendChild(tr);
         });
         this._startRegLive();
     },
 
-    editRegisterByAddress(address) {
+    editRegisterByAddress(key) {                  // key: address in its table (_rk)
         // dashboard context: the widget list is the DASH device's own — the
         // shared modal must read/save that list, not the Measurements page's.
-        const reg = this._dashRegs().find(r => r.address === address);
+        const reg = this._dashRegs().find(r => this._rk(r) === Number(key));
         this._editFromDash = true;
         if (reg) this.editRegister(reg);
     },
 
     editRegister(reg) {
-        document.getElementById('editAddress').value = reg.address;
+        document.getElementById('editAddress').value = this._rk(reg);    // identity, not the shown address
         document.getElementById('editLabel').value = reg.label;
         document.getElementById('editPollGroup').value = reg.poll_group;
         document.getElementById('editWidget').value = reg.ui_widget;
@@ -1216,11 +1219,11 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     saveRegisterEdit() {
-        const address = parseInt(document.getElementById('editAddress').value);
+        const key = parseInt(document.getElementById('editAddress').value);
         const fromDash = !!this._editFromDash;
         this._editFromDash = false;
         const reg = (fromDash ? this._dashRegs() : this.selectedRegisters)
-            .find(r => r.address === address);
+            .find(r => this._rk(r) === key);
 
         if (reg) {
             reg.label = document.getElementById('editLabel').value;

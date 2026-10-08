@@ -388,13 +388,17 @@ def validate_template(data: Dict[str, Any]) -> List[str]:
         name = r.get('name')
         if not name or not isinstance(name, str):
             errors.append(f"{where}: name is required")
-        # Reject duplicate ADDRESSES, not just (address, name): runtime parse/poll
-        # state, MQTT and Influx are all keyed by address alone, so a second row
-        # at the same address would silently overwrite the first.
-        if addr in seen:
-            errors.append(f"{where}: duplicate address {addr!r} "
-                          f"(each register address must be unique)")
-        seen.add(addr)
+        # One row per address IN ITS TABLE: coil 0, holding 0 and input 0 are
+        # three registers (the live store keys each by address + table). A
+        # second row at the same address of the same table would overwrite
+        # the first.
+        from .config import normalize_register_type
+        _tbl = normalize_register_type(r.get('register_type') or r.get('fc') or 'holding')
+        if (_tbl, addr) in seen:
+            errors.append(f"{where}: duplicate address {addr!r} in the {_tbl} table "
+                          f"(each address is unique within its table — coil, "
+                          f"holding, input and discrete are separate)")
+        seen.add((_tbl, addr))
         dt = str(r.get('data_type', 'float')).lower()
         # a string carries its length: 'string:7'. Validate the base + the length.
         _dt_base = dt.split(':', 1)[0] if dt.startswith('string') else dt

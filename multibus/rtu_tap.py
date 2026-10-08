@@ -324,7 +324,7 @@ class TapReader:
                     self._shape[key] = addr
                 bits = [(body[3 + i // 8] >> (i % 8)) & 1 for i in range(count)]
                 self._note(now, unit, fc, kind='response', detail=f"@{addr} x{count} bits")
-                self._dispatch_bits(unit, addr, bits, now)
+                self._dispatch_bits(unit, addr, bits, now, fc)
                 return
             if len(frame) == 5 + nbytes and nbytes > 0:
                 addr = self._shape.get((fc, nbytes))
@@ -332,7 +332,7 @@ class TapReader:
                     bits = [(body[3 + i // 8] >> (i % 8)) & 1 for i in range(nbytes * 8)]
                     self.inferred += 1
                     self._note(now, unit, fc, kind='inferred', detail=f"@{addr} x{len(bits)} bits")
-                    self._dispatch_bits(unit, addr, bits, now)
+                    self._dispatch_bits(unit, addr, bits, now, fc)
                     return
             self.orphans += 1
             self._note(now, unit, fc, kind='orphan')
@@ -358,7 +358,7 @@ class TapReader:
                     self._shape[key] = addr
                 words = [(body[3 + 2 * i] << 8) | body[4 + 2 * i] for i in range(count)]
                 self._note(now, unit, fc, kind='response', detail=f"@{addr} x{count}")
-                self._dispatch(unit, addr, words, now)
+                self._dispatch(unit, addr, words, now, fc)
                 return
             # unpaired response — the emitting unit may BE the bus master
             # (nobody asks it anything): infer the window from the shape the
@@ -370,7 +370,7 @@ class TapReader:
                     words = [(body[3 + 2 * i] << 8) | body[4 + 2 * i] for i in range(count)]
                     self.inferred += 1
                     self._note(now, unit, fc, kind='inferred', detail=f"@{addr} x{count}")
-                    self._dispatch(unit, addr, words, now)
+                    self._dispatch(unit, addr, words, now, fc)
                     return
             self.orphans += 1
             self._note(now, unit, fc, kind='orphan')
@@ -385,7 +385,7 @@ class TapReader:
             self._last_w, self._last_w_t = key, now
             self.writes_seen += 1
             self._note(now, unit, fc, kind='write', detail=f"@{addr} = {value}")
-            self._dispatch(unit, addr, [value], now)
+            self._dispatch(unit, addr, [value], now, fc)
             return
         if fc == 16 and len(body) >= 7 and len(frame) == 9 + body[6]:  # write-multi request
             addr = (body[2] << 8) | body[3]
@@ -394,7 +394,7 @@ class TapReader:
                 words = [(body[7 + 2 * i] << 8) | body[8 + 2 * i] for i in range(count)]
                 self.writes_seen += 1
                 self._note(now, unit, fc, kind='write', detail=f"@{addr} x{count}")
-                self._dispatch(unit, addr, words, now)
+                self._dispatch(unit, addr, words, now, fc)
             return
         self._note(now, unit, fc, kind='other')
 
@@ -402,21 +402,37 @@ class TapReader:
         self.recent.append({'t': time.time(), 'unit': unit, 'fc': fc,
                             'kind': kind, 'detail': detail})
 
-    def _dispatch(self, unit: int, addr: int, words: List[int], now: float) -> None:
+    def _dispatch(self, unit: int, addr: int, words: List[int], now: float, fc: int = 3) -> None:
         client = self._clients.get(unit)
         if client:
             try:
-                client._ingest_window(addr, words, now)
+                client._ingest_window(addr, words, now, _FC_TABLE.get(fc, 'holding'))
             except Exception as e:  # noqa: BLE001 — a decode bug must not kill the reader
                 logger.error("rtu_tap %s unit %d: ingest failed — %s", self.port, unit, e)
 
-    def _dispatch_bits(self, unit: int, addr: int, bits: List[int], now: float) -> None:
+    def _dispatch_bits(self, unit: int, addr: int, bits: List[int], now: float, fc: int = 1) -> None:
         client = self._clients.get(unit)
         if client:
             try:
-                client._ingest_coils(addr, bits, now)
+                client._ingest_coils(addr, bits, now, _FC_TABLE.get(fc, 'coil'))
             except Exception as e:  # noqa: BLE001 — a decode bug must not kill the reader
                 logger.error("rtu_tap %s unit %d: coil ingest failed — %s", self.port, unit, e)
+
+
+# which table a function code reads or writes: a window decodes only the
+# rows of ITS table (coil 0, holding 0 and input 0 are three different things)
+_FC_TABLE = {1: 'coil', 5: 'coil', 15: 'coil', 2: 'discrete',
+             3: 'holding', 6: 'holding', 16: 'holding', 4: 'input'}
+
+
+def _table_of(r) -> str:
+    from .config import normalize_register_type
+    return normalize_register_type(getattr(r, 'register_type', '') or 'holding')
+
+
+def _key(r) -> int:
+    from .config import store_key
+    return store_key(r.address, getattr(r, 'register_type', '') or 'holding')
 
 
 # one reader per port, shared by every tap device on it
@@ -494,6 +510,7 @@ class RtuTapClient:
         self.publish_callback: Optional[Callable] = None
         self.connected = False
         self.windows = 0                      # paired windows dispatched to us
+        self.table_mismatch: Optional[Dict] = None   # heard FC4, map says holding (or the reverse)
         self.updates = 0                      # register values stored
         self.last_rx_mono: Optional[float] = None
         self._reader = reader_for(conn_cfg)
@@ -525,7 +542,7 @@ class RtuTapClient:
         """No pollers to bounce — update_registers already took effect."""
 
     # ── data path ──────────────────────────────────────────────────────────
-    def _ingest_window(self, addr: int, words: List[int], now: float) -> None:
+    def _ingest_window(self, addr: int, words: List[int], now: float, table: str = 'holding') -> None:
         self.windows += 1
         self.last_rx_mono = now
         if self.windows == 1:
@@ -533,8 +550,15 @@ class RtuTapClient:
                         "(callback %s)", self.device_id, self.unit_id, addr,
                         len(words), 'set' if self.publish_callback else 'MISSING')
         with self._lock:
-            regs = list(self.registers)
+            regs = [r for r in self.registers if _table_of(r) == table]
+            other = [r for r in self.registers if _table_of(r) in ('holding', 'input') and _table_of(r) != table]
         end = addr + len(words)
+        hit = lambda r: addr <= r.address < end   # noqa: E731
+        if not any(hit(r) for r in regs) and any(hit(r) for r in other):
+            # the master reads these addresses in the OTHER table than the map
+            # says — the commonest tap mistake; Test names it
+            self.table_mismatch = {'heard': table, 'map': _table_of(next(r for r in other if hit(r))),
+                                   'address': addr}
         # raw sibling values first, so a scale factor read in the SAME window
         # resolves for the registers that reference it
         in_window = []
@@ -554,15 +578,15 @@ class RtuTapClient:
                 continue
             cf = None
             if getattr(r, 'monotonic', False):
-                cf = self._counter_filters.get(r.address)
+                cf = self._counter_filters.get(_key(r))
                 if cf is None:
                     from .counter_filter import CounterFilter
-                    cf = self._counter_filters[r.address] = CounterFilter()
+                    cf = self._counter_filters[_key(r)] = CounterFilter()
             val = apply_corrections(val, r, counter_filter=cf,
                                     siblings=self._sibling_raw)
             if val is None:
                 continue
-            data[r.address] = {'value': val, 'register': r, 'ts': ts, 'mono': now}
+            data[_key(r)] = {'value': val, 'register': r, 'ts': ts, 'mono': now}
         if data and self.publish_callback:
             if self.updates == 0:
                 logger.info("rtu_tap %s: first %d values decoded from window @%d",
@@ -573,7 +597,7 @@ class RtuTapClient:
             except Exception as e:  # noqa: BLE001 — see mqtt_input: never kill the reader thread
                 logger.error("rtu_tap fan-out failed for %s: %s", self.device_id, e)
 
-    def _ingest_coils(self, addr: int, bits: List[int], now: float) -> None:
+    def _ingest_coils(self, addr: int, bits: List[int], now: float, table: str = 'coil') -> None:
         """A window of coils/discretes, in BIT-address space. A register with
         ``register_type: coil`` reads one bit (data_type bit/bool) or packs 16
         consecutive bits LSB-first into a word (data_type uint16) — the layout
@@ -583,8 +607,7 @@ class RtuTapClient:
         self.windows += 1
         self.last_rx_mono = now
         with self._lock:
-            regs = [r for r in self.registers
-                    if str(getattr(r, 'register_type', '') or '').lower() == 'coil']
+            regs = [r for r in self.registers if _table_of(r) == table]
         end = addr + len(bits)
         data = {}
         ts = time.time()
@@ -602,7 +625,7 @@ class RtuTapClient:
             val = apply_corrections(raw, r, siblings=self._sibling_raw)
             if val is None:
                 continue
-            data[r.address] = {'value': val, 'register': r, 'ts': ts, 'mono': now}
+            data[_key(r)] = {'value': val, 'register': r, 'ts': ts, 'mono': now}
         if data and self.publish_callback:
             if self.updates == 0:
                 logger.info("rtu_tap %s: first %d coil values from window @%d",
@@ -634,6 +657,7 @@ class RtuTapClient:
                 'resync_dropped_bytes': self._reader._framer.dropped_bytes,
             },
             'inferred_windows': self._reader.inferred,
+            'table_mismatch': self.table_mismatch,
             'bus': {
                 'port': self._reader.port,
                 'frames': self._reader.frames,

@@ -33,6 +33,7 @@ from fastapi.responses import JSONResponse, Response
 from ._models import RegisterBatchQuery, RegisterQuery, SelectedRegisterUpdate
 from ..canonical_fields import CANONICAL_FIELDS
 from ..value_decode import apply_corrections
+from ..config import store_key
 
 # What a measurement IS, from its canonical name. One classification for the
 # whole UI — the picker, the Selected list, the Overview and the Monitor used to
@@ -88,6 +89,7 @@ def build(ctx) -> APIRouter:
             ui = e.get('ui') if isinstance(e.get('ui'), dict) else {}
             out.append({
                 'address': CALC_ADDR_BASE + i,
+                'key': CALC_ADDR_BASE + i,
                 'name': name,
                 'label': str(e.get('label') or name),
                 'unit': unit, 'data_type': 'float',
@@ -160,6 +162,9 @@ def build(ctx) -> APIRouter:
         and per-device endpoints)."""
         return {
             "address": x.address,
+            # where its value lives in /api/values and on the WebSocket: the
+            # address in its own table (coil 0 and holding 0 are two registers)
+            "key": x.key,
             "name": x.name,
             "description": x.description,
             "label": x.label,
@@ -235,6 +240,7 @@ def build(ctx) -> APIRouter:
             cats.setdefault(cat, {"name": _CATEGORY_LABEL.get(cat, cat), "entries": []})
             cats[cat]["entries"].append({
                 "address": x.address, "name": x.name, "unit": x.unit,
+                "key": store_key(x.address, getattr(x, 'register_type', 'holding') or 'holding'),
                 "description": x.description or x.label,
                 "data_type": x.data_type, "access": x.access,
                 "json_path": x.json_path, "topic": getattr(x, "topic", ""), "scale": x.scale,
@@ -651,19 +657,28 @@ def build(ctx) -> APIRouter:
         registers = [{"address": x.address, "data_type": x.data_type,
                       "register_type": ('input' if str(x.register_type).lower() in ('input', 'ir', 'fc4', '4') else 'holding')}
                      for x in query.registers]
-        results = client.read_registers_batch(registers)
-        scale_by_addr = {x.address: x.scale for x in query.registers}
-        rt_by_addr = {r["address"]: r["register_type"] for r in registers}
+        from ..config import store_key
+        results = client.read_registers_batch(registers)   # keyed by store key
+        # answer by address, as always; the same address asked in both tables
+        # gives the second one as "<table>:<address>"
+        named: Dict[int, tuple] = {}
+        used: set = set()
+        for x, r in zip(query.registers, registers):
+            k = store_key(r["address"], r["register_type"])
+            label = str(r["address"]) if str(r["address"]) not in used else f"{r['register_type']}:{r['address']}"
+            used.add(label)
+            named[k] = (label, r["address"], r["register_type"], x.scale)
 
         corrected = {}
-        for addr, value in results.items():
-            c = _corrected_value(client, addr, rt_by_addr.get(addr, 'holding'), value)
+        for k, value in results.items():
+            label, addr, rt, _sc = named[k]
+            c = _corrected_value(client, addr, rt, value)
             if c is not ...:
-                corrected[str(addr)] = c
+                corrected[label] = c
         out = {
             "values": {
-                str(addr): _apply_scale(value, scale_by_addr.get(addr))
-                for addr, value in results.items()
+                named[k][0]: _apply_scale(value, named[k][3])
+                for k, value in results.items()
             },
             "device_id": query.device_id,
             "timestamp": datetime.now().isoformat(),

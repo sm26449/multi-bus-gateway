@@ -151,13 +151,13 @@ Object.assign(JanitzaMonitor.prototype, {
                     </div>
                     <div class="monitor-category-items">
                         ${filteredItems.map(item => {
-                            const onGraph = this.monitorData[item.address] ? 'on-graph' : '';
+                            const onGraph = this.monitorData[this._rk(item)] ? 'on-graph' : '';
                             return `
                                 <div class="monitor-item ${onGraph}"
                                      draggable="true"
                                      role="button"
                                      tabindex="0"
-                                     data-address="${item.address}"
+                                     data-address="${this._rk(item)}"
                                      data-name="${this._esc(item.name)}"
                                      data-description="${this._esc(item.label || item.description || item.name)}"
                                      data-unit="${this._esc(item.unit || '')}"

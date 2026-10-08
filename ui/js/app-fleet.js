@@ -133,7 +133,7 @@ Object.assign(JanitzaMonitor.prototype, {
             }
         });
         (dev.hero || []).forEach(m => {
-            const item = msg.values[String(m.address)];
+            const item = msg.values[String(m.key ?? m.address)];      // the store key (address in its table)
             if (item && item.value !== m.value) { m.value = item.value; touched = true; }
         });
         if (!touched) return;
@@ -295,9 +295,11 @@ Object.assign(JanitzaMonitor.prototype, {
         this._siteCardEditId = id;
         const sel = document.getElementById('siteCardMetric');
         if (sel) {
-            const defAddr = pin.address != null ? pin.address : (dev?.hero || [])[0]?.address;
+            // pin.address holds the register's store key (address in its table)
+            const h0 = (dev?.hero || [])[0];
+            const defAddr = pin.address != null ? pin.address : (h0 ? (h0.key ?? h0.address) : null);
             sel.innerHTML = regs.map(r => `
-                <option value="${r.address}" ${String(r.address) === String(defAddr) ? 'selected' : ''}>
+                <option value="${this._rk(r)}" ${String(this._rk(r)) === String(defAddr) ? 'selected' : ''}>
                     ${this._esc(r.label || r.name)}${r.unit ? ` (${this._esc(r.unit)})` : ''}
                 </option>`).join('');
         }
@@ -318,11 +320,11 @@ Object.assign(JanitzaMonitor.prototype, {
             const idx = pins.findIndex(p => p.id === this._siteCardEditId);
             if (idx < 0) return this.closeSiteCardModal();
             const sel = document.getElementById('siteCardMetric');
-            const reg = (this._siteCardRegs || []).find(r => String(r.address) === String(sel?.value));
+            const reg = (this._siteCardRegs || []).find(r => String(this._rk(r)) === String(sel?.value));
             const titleTxt = (document.getElementById('siteCardLabel')?.value || '').trim();
             const pin = { id: this._siteCardEditId };
             if (reg) {
-                pin.address = reg.address;
+                pin.address = this._rk(reg);
                 pin.name = reg.name;
                 pin.label = reg.label || reg.name;
                 pin.unit = reg.unit || '';

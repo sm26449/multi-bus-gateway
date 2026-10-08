@@ -209,7 +209,8 @@ def purge_deselected(store: dict, registers) -> int:
     their own purge in CalcEngine.load() and are left alone here. Returns the
     number of entries dropped."""
     from .calc_engine import CALC_ADDR_BASE
-    keep = {r.address for r in (registers or [])}
+    from .config import store_key
+    keep = {store_key(r.address, getattr(r, 'register_type', '') or 'holding') for r in (registers or [])}
     stale = [a for a in list(store)
              if isinstance(a, int) and a < CALC_ADDR_BASE and a not in keep]
     for a in stale:

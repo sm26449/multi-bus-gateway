@@ -130,6 +130,32 @@ def test_validate_rejects_duplicate_address():
     assert any("duplicate address" in e for e in errs)
 
 
+def test_one_address_in_several_tables_is_several_registers():
+    """coil 0, holding 0, input 0 and discrete 0 are four registers; only a
+    repeat within one table is refused."""
+    errs = validate_template(_tpl([
+        {"address": 0, "name": "h", "data_type": "uint16"},
+        {"address": 0, "name": "i", "data_type": "uint16", "register_type": "input"},
+        {"address": 0, "name": "c", "data_type": "uint16", "register_type": "coil"},
+        {"address": 0, "name": "d", "data_type": "uint16", "register_type": "discrete"},
+    ]))
+    assert not any("duplicate" in e for e in errs), errs
+    errs = validate_template(_tpl([
+        {"address": 0, "name": "c1", "data_type": "uint16", "register_type": "coil"},
+        {"address": 0, "name": "c2", "data_type": "uint16", "register_type": "coil"},
+    ]))
+    assert any("duplicate address 0 in the coil table" in e for e in errs), errs
+
+
+def test_store_keys_and_write_rules_follow_the_table():
+    from multibus.config import store_key
+    assert store_key(5) == 5 and store_key(5, 'input') == 100_005
+    assert store_key(5, 'fc1') == 200_005 and store_key(5, 'discrete') == 300_005
+    # every key stays below the calculated fields
+    from multibus.calc_engine import CALC_ADDR_BASE
+    assert store_key(65535, 'discrete') < CALC_ADDR_BASE
+
+
 def test_validate_string_type_needs_length():
     # 'string' now has a real length-aware decoder — but a BARE 'string' (no
     # register count) is still rejected; it must carry its length as 'string:N'.

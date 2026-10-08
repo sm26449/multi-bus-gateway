@@ -87,10 +87,12 @@ def apply_template_hygiene(regs, template):
     if not tregs:
         return regs, []
     by_name = {t.name: t for t in tregs if getattr(t, 'name', None)}
-    by_addr = {t.address: t for t in tregs if getattr(t, 'address', None) is not None}
+    from .config import store_key
+    by_addr = {store_key(t.address, getattr(t, 'register_type', '') or 'holding'): t
+               for t in tregs if getattr(t, 'address', None) is not None}
     changed = []
     for reg in regs:
-        t = by_name.get(reg.name) or by_addr.get(reg.address)
+        t = by_name.get(reg.name) or by_addr.get(store_key(reg.address, getattr(reg, 'register_type', '') or 'holding'))
         if t is None:
             continue
         for flag in ('monotonic', 'daily'):

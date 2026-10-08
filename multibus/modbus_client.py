@@ -28,7 +28,7 @@ from pymodbus import FramerType
 from pymodbus.client import ModbusTcpClient, ModbusSerialClient
 
 from . import bus_trace
-from .config import ModbusConfig, SelectedRegister, PollGroup
+from .config import ModbusConfig, SelectedRegister, PollGroup, store_key
 from .counter_filter import DailyCounterFilter, MonotonicFilter
 from .register_parser import RegisterParser
 from .value_decode import apply_corrections
@@ -1092,7 +1092,7 @@ class RegisterPoller(threading.Thread):
                 for reg in group['registers']:
                     off = reg.address - group['start']
                     if 0 <= off < len(bits):
-                        results[reg.address] = {'value': 1 if bits[off] else 0,
+                        results[reg.key] = {'value': 1 if bits[off] else 0,
                                                 'register': reg, 'ts': read_ts,
                                                 'mono': read_mono,
                                                 'interval': self.interval}
@@ -1139,14 +1139,14 @@ class RegisterPoller(threading.Thread):
                     if value is not None:
                         f = None
                         if getattr(reg, 'monotonic', False):
-                            f = self._counter_filters.get(reg.address)
+                            f = self._counter_filters.get(reg.key)
                             if f is None:
-                                f = self._counter_filters[reg.address] = MonotonicFilter()
+                                f = self._counter_filters[reg.key] = MonotonicFilter()
                         df = None
                         if getattr(reg, 'daily', False):
-                            df = self._daily_filters.get(reg.address)
+                            df = self._daily_filters.get(reg.key)
                             if df is None:
-                                df = self._daily_filters[reg.address] = DailyCounterFilter()
+                                df = self._daily_filters[reg.key] = DailyCounterFilter()
                         _info: Dict[str, str] = {}
                         value = apply_corrections(value, reg, counter_filter=f,
                                                   info=_info,
@@ -1157,8 +1157,8 @@ class RegisterPoller(threading.Thread):
                             if _stage == 'decode_failed':
                                 # corrupt enum/bits config (audit DP-6): hold
                                 # last-good and warn once per register
-                                if reg.address not in self._decode_failed:
-                                    self._decode_failed.add(reg.address)
+                                if reg.key not in self._decode_failed:
+                                    self._decode_failed.add(reg.key)
                                     logger.warning(
                                         "%s%s@%s: enum/bits decode failed — "
                                         "holding last-good (check mask/shift)",
@@ -1172,7 +1172,7 @@ class RegisterPoller(threading.Thread):
                                              f"('{reg.scale_from}') yet — held")
                             continue          # sentinel/decode/filter → missing
                         if getattr(reg, 'enum', None) or getattr(reg, 'bits', None):
-                            self._decode_failed.discard(reg.address)
+                            self._decode_failed.discard(reg.key)
                         if f is not None and f.just_reset:
                             # the one transition that used to leave no trace
                             # (audit DP-10) — a wrongly-adopted baseline
@@ -1182,7 +1182,7 @@ class RegisterPoller(threading.Thread):
                                 f"counter RESET adopted (new baseline "
                                 f"{value}) after {f.reset_confirm} "
                                 f"coherent low reads")
-                        results[reg.address] = {
+                        results[reg.key] = {
                             'value': value,
                             'register': reg,
                             'ts': read_ts,
@@ -1524,13 +1524,13 @@ class ModbusClient:
             registers: List of dicts with 'address' and 'data_type'
 
         Returns:
-            Dict mapping address -> parsed value
+            Dict mapping store key (address + its table's offset) -> parsed value
         """
         if not registers:
             return {}
 
-        # Sort by address
-        sorted_regs = sorted(registers, key=lambda r: r['address'])
+        # by table, then address: a batch never spans two tables
+        sorted_regs = sorted(registers, key=lambda r: (str(r.get('register_type', 'holding')), r['address']))
 
         results = {}
         current_batch_start = None
@@ -1555,7 +1555,7 @@ class ModbusClient:
                         value = self.parser.parse_value(reg_values, reg.get('data_type', 'float'),
                                                         nan=reg.get('nan'))
                         if value is not None:
-                            results[reg['address']] = value
+                            results[store_key(reg['address'], reg.get('register_type', 'holding'))] = value
 
             current_batch_start = None
             current_batch_end = None

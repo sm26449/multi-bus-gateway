@@ -301,7 +301,7 @@ Object.assign(JanitzaMonitor.prototype, {
         // the dashboard device's own list first — selectedRegisters belongs to
         // the Measurements page and misses non-primary devices entirely
         const reg = [...(this.dashRegisters || []), ...(this.selectedRegisters || [])]
-            .find(r => String(r.address) === String(address));
+            .find(r => String(this._rk(r)) === String(address));
         if (!reg || !reg.name) return;
         this._vhReg = reg;
         this._vhRange = this._vhRange || '-1h';
@@ -437,7 +437,7 @@ Object.assign(JanitzaMonitor.prototype, {
         });
 
         // Track which addresses should exist
-        const targetAddresses = new Set(heroRegs.map(r => r.address));
+        const targetAddresses = new Set(heroRegs.map(r => this._rk(r)));
 
         // Remove widgets that shouldn't exist anymore
         existingWidgets.forEach((el, addr) => {
@@ -457,9 +457,9 @@ Object.assign(JanitzaMonitor.prototype, {
 
         // Update or create widgets in correct order
         heroRegs.forEach((reg, index) => {
-            const value = this._dashStore()[reg.address];
+            const value = this._dashStore()[this._rk(reg)];
             const numValue = value?.value;
-            const existingCard = existingWidgets.get(reg.address);
+            const existingCard = existingWidgets.get(this._rk(reg));
 
             if (existingCard) {
                 // Check if widget type changed - if so, recreate it
@@ -545,7 +545,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const card = document.createElement('div');
         card.className = `widget-card widget-${reg.ui_widget || 'value'}`;
         if (reg.ui_config?.wide) card.classList.add('widget-wide');
-        card.dataset.address = reg.address;
+        card.dataset.address = this._rk(reg);
         card.tabIndex = 0;
         card.setAttribute('role', 'button');
         card.setAttribute('aria-label', `${reg.label || reg.name} — ${this.t('valhist.open', 'show history')}`);
@@ -689,11 +689,11 @@ Object.assign(JanitzaMonitor.prototype, {
         const box = document.getElementById('deviceSections');
         if (!box) return;
         const dev = this._dashDeviceId();
-        const heroSet = new Set(heroRegs.map(r => r.address));
-        const rest = allRegs.filter(r => !heroSet.has(r.address));
+        const heroSet = new Set(heroRegs.map(r => this._rk(r)));
+        const rest = allRegs.filter(r => !heroSet.has(this._rk(r)));
         // what the sections are built from: the rows (with the labels and
         // categories an Update from template may change) and the display block
-        const key = dev + '|' + rest.map(r => `${r.address}:${r.label || ''}:${r.category || ''}`).join(',')
+        const key = dev + '|' + rest.map(r => `${this._rk(r)}:${r.label || ''}:${r.category || ''}`).join(',')
             + '|' + JSON.stringify(this.dashDisplay || {});
 
         if (this._sectionsKey !== key) {
@@ -722,7 +722,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     const secCfg = ((this.dashDisplay || {}).sections || {})[id] || {};
                     const widget = secCfg.widget || '';
                     const rowHtml = r => `
-                        <tr data-address="${r.address}" tabindex="0">
+                        <tr data-address="${this._rk(r)}" tabindex="0">
                             <td class="ds-label" title="${this._esc(r.name)}">${this._esc(r.label || r.name)}</td>
                             <td class="ds-value"><span class="table-value value-normal">--</span></td>
                             <td class="ds-unit"></td>
@@ -744,9 +744,9 @@ Object.assign(JanitzaMonitor.prototype, {
                         // a summary in the tiles' unit (the pack's average,
                         // max, min cell) reads as finely as the tiles do
                         const tileUnits = new Set(tiles.map(r => r.unit || '').filter(Boolean));
-                        others.forEach(r => { if (tileUnits.has(r.unit || '')) fine.add(String(r.address)); });
+                        others.forEach(r => { if (tileUnits.has(r.unit || '')) fine.add(String(this._rk(r))); });
                         body = `<div class="cell-grid">${tiles.map(r => `
-                            <div class="cell-tile" data-address="${r.address}" data-grid="${this._esc(id)}" data-fine="1" tabindex="0" role="button" title="${this._esc(r.name)}">
+                            <div class="cell-tile" data-address="${this._rk(r)}" data-grid="${this._esc(id)}" data-fine="1" tabindex="0" role="button" title="${this._esc(r.name)}">
                                 <div class="ct-label">${this._esc(r.label || r.name)}</div>
                                 <div class="ct-val"><span class="table-value value-normal">--</span> <span class="ds-unit"></span></div>
                             </div>`).join('')}</div>`
@@ -786,9 +786,9 @@ Object.assign(JanitzaMonitor.prototype, {
         const gridVals = new Map();         // grid section → [[tile, value]]
         const active = new Map();           // active-only section → active rows
         rest.forEach(r => {
-            const cell = this._sectionCells[String(r.address)];
+            const cell = this._sectionCells[String(this._rk(r))];
             if (!cell || !cell.val) return;
-            const numValue = store[r.address]?.value;
+            const numValue = store[this._rk(r)]?.value;
             let disp = this._displayValue(numValue, r);
             if (bitmasks[r.name] && typeof numValue === 'number') {
                 disp = { text: this._bitList(numValue, bitmasks[r.name]), unit: '' };
@@ -929,7 +929,7 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     updateChartWidget(card, reg) {
-        const history = this.valueHistory[String(reg.address)] || [];
+        const history = this.valueHistory[String(this._rk(reg))] || [];
 
         // Check if we need to replace placeholder with actual chart
         const placeholder = card.querySelector('.chart-placeholder');
@@ -1064,8 +1064,8 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     renderChartWidget(reg) {
-        const history = this.valueHistory[String(reg.address)] || [];
-        const canvasId = `chart-${reg.address}`;
+        const history = this.valueHistory[String(this._rk(reg))] || [];
+        const canvasId = `chart-${this._rk(reg)}`;
 
         if (history.length < 2) {
             return `
@@ -1272,20 +1272,20 @@ Object.assign(JanitzaMonitor.prototype, {
             const isWide = reg.ui_config?.wide ? 'active' : '';
 
             html += `
-                <div class="customize-item" data-address="${reg.address}" draggable="true">
+                <div class="customize-item" data-address="${this._rk(reg)}" draggable="true">
                     <i aria-hidden="true" class="bi bi-grip-vertical customize-drag-handle"></i>
-                    <input type="checkbox" data-address="${reg.address}" ${checked} aria-label="${this._esc(reg.label || reg.name)}">
+                    <input type="checkbox" data-address="${this._rk(reg)}" ${checked} aria-label="${this._esc(reg.label || reg.name)}">
                     <div class="customize-item-info">
                         <div class="customize-item-label">${this._esc(reg.label || reg.name)}</div>
                         <div class="customize-item-details">${this._esc(reg.name)} · ${this._esc(reg.unit || 'N/A')}</div>
                     </div>
                     <div class="customize-item-controls">
-                        <select class="customize-select" data-address="${reg.address}" data-field="widget" aria-label="${this._esc(this.t('dash.widgetType', 'Widget type'))} — ${this._esc(reg.label || reg.name)}">
+                        <select class="customize-select" data-address="${this._rk(reg)}" data-field="widget" aria-label="${this._esc(this.t('dash.widgetType', 'Widget type'))} — ${this._esc(reg.label || reg.name)}">
                             <option value="value" ${widgetType === 'value' ? 'selected' : ''}>${this.t('lbl.value', "Value")}</option>
                             <option value="gauge" ${widgetType === 'gauge' ? 'selected' : ''}>${this.t('lbl.gauge', "Gauge")}</option>
                             <option value="chart" ${widgetType === 'chart' ? 'selected' : ''}>${this.t('lbl.chart', "Chart")}</option>
                         </select>
-                        <button class="customize-size-toggle ${isWide}" data-address="${reg.address}" title="Wide widget" aria-pressed="${isWide ? 'true' : 'false'}">
+                        <button class="customize-size-toggle ${isWide}" data-address="${this._rk(reg)}" title="Wide widget" aria-pressed="${isWide ? 'true' : 'false'}">
                             <i aria-hidden="true" class="bi bi-arrows-expand"></i> Wide
                         </button>
                         <button class="btn-action customize-move" data-dir="-1" title="${this._esc(this.t('dash.moveUp', 'Move up'))}" aria-label="${this._esc(this.t('dash.moveUp', 'Move up'))} — ${this._esc(reg.label || reg.name)}"><i aria-hidden="true" class="bi bi-chevron-up"></i></button>
@@ -1383,8 +1383,8 @@ Object.assign(JanitzaMonitor.prototype, {
 
         // Update selectedRegisters based on order, visibility, widget type, and size
         items.forEach((item, index) => {
-            const address = parseInt(item.dataset.address);
-            const reg = this._dashRegs().find(r => r.address === address);
+            const address = parseInt(item.dataset.address);       // the register's key (_rk)
+            const reg = this._dashRegs().find(r => this._rk(r) === address);
             if (reg) {
                 // Visibility
                 const checkbox = item.querySelector('input[type="checkbox"]');

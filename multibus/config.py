@@ -545,6 +545,20 @@ _COIL_ALIASES = {'coil', 'coils', 'fc1', 'fc5', '1'}
 _DISCRETE_ALIASES = {'discrete', 'discreteinput', 'discreteinputs', 'di', 'fc2', '2'}
 
 
+# The live store keys a value by its address — and a Modbus device may hold
+# the SAME address in several tables (coil 0, holding 0, input 0 are three
+# different things). The key adds a per-table offset: holding keeps its bare
+# address (every existing store, URL and dashboard key stays as it was), the
+# others move above the 16-bit address space and stay below the calculated
+# fields (calc_engine.CALC_ADDR_BASE).
+REGISTER_TYPE_KEY_OFFSET = {'holding': 0, 'input': 100_000, 'coil': 200_000, 'discrete': 300_000}
+
+
+def store_key(address: int, register_type: str = 'holding') -> int:
+    """The live-store key of a register: its address in its own table."""
+    return int(address) + REGISTER_TYPE_KEY_OFFSET[normalize_register_type(register_type)]
+
+
 def normalize_register_type(v) -> str:
     """Normalize a register-type to one of holding (FC3) / input (FC4) /
     coil (FC1/FC5) / discrete (FC2). Unknown/empty -> 'holding' (the Modbus
@@ -620,6 +634,11 @@ class SelectedRegister:
     # endpoint fan-out: {output_name: sum|avg|min|max|spread} — how this field
     # combines across the units of an endpoint (declared by the template)
     aggregates: Optional[Dict[str, str]] = None
+
+    @property
+    def key(self) -> int:
+        """Where its value lives in the store (address + its table's offset)."""
+        return store_key(self.address, self.register_type)
 
 
 class Config:

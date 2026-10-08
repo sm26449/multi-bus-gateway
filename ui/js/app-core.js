@@ -763,6 +763,17 @@ Object.assign(JanitzaMonitor.prototype, {
     // attribute-escaped in one place so call sites can't get the escaping wrong.
     // opts: el (append the element), value (append el.value), guard (selector
     // whose nested matches don't count), on ('change' | 'input' instead of click).
+    // A register's identity: its address IN ITS TABLE. coil 0, holding 0 and
+    // input 0 are three registers; the server's store keys each by address +
+    // the table's offset (the API sends it as `key`). The address itself is
+    // only for display.
+    _rk(reg) {
+        if (!reg) return null;
+        if (reg.key != null) return Number(reg.key);
+        const off = { input: 100000, coil: 200000, discrete: 300000 }[String(reg.register_type || 'holding').toLowerCase()] || 0;
+        return Number(reg.address) + off;
+    },
+
     _act(method, args = [], opts = {}) {
         let s = `data-action="${method}"`;
         if (args.length) s += ` data-args="${this._esc(JSON.stringify(args))}"`;

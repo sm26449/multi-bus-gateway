@@ -194,7 +194,7 @@ def build(ctx) -> APIRouter:
             _declared_alarms = alarm_fields(_disp)
             _vals = {e.get("name"): e.get("value") for e in list(store.values())}
             for x in regs:
-                item = store.get(x.address)
+                item = store.get(x.key)
                 # a field the template declares as an alarm is counted below,
                 # once — not again by a threshold on it
                 if item is None or getattr(x, "name", None) in _declared_alarms:
@@ -217,7 +217,7 @@ def build(ctx) -> APIRouter:
                 by_name = {e.get("name"): (addr, e) for addr, e in list(store.items())}
                 for n in declared[:3]:
                     addr, e = by_name.get(n, (None, {}))
-                    hero.append({"address": addr, "name": n,
+                    hero.append({"address": e.get("address", addr), "key": addr, "name": n,
                                  "label": e.get("label") or n, "unit": e.get("unit") or "",
                                  "value": e.get("value")})
             else:
@@ -225,9 +225,9 @@ def build(ctx) -> APIRouter:
                     (x for x in regs if x.ui_show_on_dashboard),
                     key=lambda x: (x.ui_config or {}).get("dashboard_order", 999))
                 for x in dash[:3]:
-                    item = store.get(x.address) or {}
+                    item = store.get(x.key) or {}
                     hero.append({
-                        "address": x.address, "name": x.name,
+                        "address": x.address, "key": x.key, "name": x.name,
                         "label": getattr(x, "label", "") or x.name,
                         "unit": getattr(x, "unit", "") or "",
                         "value": item.get("value"),
