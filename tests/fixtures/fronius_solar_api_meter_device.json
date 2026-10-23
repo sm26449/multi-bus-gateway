@@ -1,0 +1,61 @@
+{
+  "Body": {
+    "Data": {
+      "Current_AC_Phase_1": 6.306,
+      "Current_AC_Phase_2": 6.523,
+      "Current_AC_Phase_3": 6.383,
+      "Current_AC_Sum": 19.212,
+      "Details": {
+        "Manufacturer": "Fronius",
+        "Model": "Smart Meter TS 5kA-3",
+        "Serial": "0"
+      },
+      "Enable": 1,
+      "EnergyReactive_VArAC_Sum_Consumed": 192982,
+      "EnergyReactive_VArAC_Sum_Produced": 3838337,
+      "EnergyReal_WAC_Minus_Absolute": 67796704,
+      "EnergyReal_WAC_Plus_Absolute": 285154,
+      "EnergyReal_WAC_Sum_Consumed": 285154,
+      "EnergyReal_WAC_Sum_Produced": 67796704,
+      "Frequency_Phase_Average": 50,
+      "Meter_Location_Current": 0,
+      "PowerApparent_S_Phase_1": 1480.6,
+      "PowerApparent_S_Phase_2": 1527.7,
+      "PowerApparent_S_Phase_3": 1493,
+      "PowerApparent_S_Sum": 4501.2,
+      "PowerFactor_Phase_1": -0.896,
+      "PowerFactor_Phase_2": -0.387,
+      "PowerFactor_Phase_3": -0.716,
+      "PowerFactor_Sum": -0.017,
+      "PowerReactive_Q_Phase_1": 65.4,
+      "PowerReactive_Q_Phase_2": 151,
+      "PowerReactive_Q_Phase_3": 40.8,
+      "PowerReactive_Q_Sum": 257.2,
+      "PowerReal_P_Phase_1": 34.5,
+      "PowerReal_P_Phase_2": 13.5,
+      "PowerReal_P_Phase_3": 28,
+      "PowerReal_P_Sum": 76,
+      "TimeStamp": 1700000000,
+      "Visible": 1,
+      "Voltage_AC_PhaseToPhase_12": 406.5,
+      "Voltage_AC_PhaseToPhase_23": 404.7,
+      "Voltage_AC_PhaseToPhase_31": 406.2,
+      "Voltage_AC_Phase_1": 234.8,
+      "Voltage_AC_Phase_2": 234.2,
+      "Voltage_AC_Phase_3": 233.9
+    }
+  },
+  "Head": {
+    "RequestArguments": {
+      "DeviceClass": "Meter",
+      "DeviceId": "1",
+      "Scope": "Device"
+    },
+    "Status": {
+      "Code": 0,
+      "Reason": "",
+      "UserMessage": ""
+    },
+    "Timestamp": "2023-11-14T22:13:21+00:00"
+  }
+}

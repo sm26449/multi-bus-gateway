@@ -13,6 +13,7 @@
  * (solar_api over HTTP, sunspec over Modbus) on units 1 and 2.
  */
 import { chromium } from 'playwright';
+import { openDeviceTab } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://localhost:18088';
 const DEV = process.env.DEVICE || 'pv-u1';
@@ -52,7 +53,7 @@ try {
   await page.waitForTimeout(1500);
   await page.locator(`[data-group-units] tr[data-unit="${DEV}"] button[data-action="openDeviceDetail"]`).first().click();
   await page.waitForTimeout(1500);
-  await page.locator('#deviceWsTabs .config-main-tab[data-dtab="measurements"]').click();
+  await openDeviceTab(page, 'measurements');
   await page.waitForTimeout(2500);
 
   const bar = page.locator('#regSourceBar');

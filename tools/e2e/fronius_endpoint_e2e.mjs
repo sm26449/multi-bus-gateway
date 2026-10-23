@@ -8,6 +8,7 @@
  *     node fronius_endpoint_e2e.mjs
  */
 import { chromium } from 'playwright';
+import { openDeviceTab } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://localhost:8093';
 const SHOT = (n) => `${process.env.SHOTS_DIR || './shots'}/${n}.png`;
@@ -72,39 +73,39 @@ try {
   await row240.click();
   await page.waitForSelector('#deviceDetailView [data-dpanel="overview"]');
   await page.screenshot({ path: SHOT('f1-02-overview') });
-  await page.click('#deviceWsTabs [data-dtab="edit"]');
-  const editPanel = page.locator('[data-dpanel="edit"]');
-  // UNIFIED workspace: same layout as any device, endpoint-owned fields locked
-  check('edit tab shows the endpoint-owned banner with Edit endpoint',
-        await editPanel.locator('button:has-text("Edit endpoint")').count() >= 1);
-  check('edit tab shows the STANDARD connection form',
-        await editPanel.locator('#ddvHost').count() === 1);
-  check('connection fields are locked (endpoint-owned)',
-        await editPanel.locator('#ddvHost').isDisabled()
-        && await editPanel.locator('#ddvUnit').isDisabled());
-  check('unit id shows 240', await editPanel.locator('#ddvUnit').inputValue() === '240');
-  check('template select locked with the meter template selected',
-        await editPanel.locator('#ddvTemplate').isDisabled()
-        && (await editPanel.locator('#ddvTemplate option:checked').textContent()).includes('via datalogger'));
-  check('edit tab has NO Save & Apply (endpoint owns the definition)',
-        await editPanel.locator('button:has-text("Save & Apply")').count() === 0);
-  check('edit tab keeps per-unit poll intervals',
-        await editPanel.locator('#ddvPollGroups .ddv-pg').count() >= 1);
+  await openDeviceTab(page, 'connection');
+  const editPanel = page.locator('[data-dpanel="connection"]');
+  // a unit's tab is "Read via": how it is read, set on its installation —
+  // no connection form of its own (its address, unit and template are the
+  // installation's), only its name
+  check('the unit tab says it is read through its installation, with a way there',
+        await editPanel.locator('button:has-text("Open installation")').count() >= 1);
+  check('a unit has no connection form of its own',
+        await editPanel.locator('#ddvHost, #ddvUnit, #ddvConn').count() === 0);
+  check('its sources are listed (address, template, interval)',
+        await editPanel.locator('[data-src-row]').count() >= 1);
+  check('the source names the meter template it reads with',
+        (await editPanel.locator('[data-src-row]').first().textContent()).includes('fronius'));
+  check('its name is the one thing it saves',
+        await editPanel.locator('#ddvName').count() === 1
+        && await editPanel.locator('button:has-text("Save & Apply")').count() === 0);
   await page.screenshot({ path: SHOT('f1-03-edit-endpoint-managed') });
 
-  // ---- 5. outputs tab: SAME sink cards, endpoint-level toggles locked ---------
-  await page.click('#deviceWsTabs [data-dtab="outputs"]');
+  // ---- 5. outputs tab: the same outputs, endpoint-level switches locked ------
+  await openDeviceTab(page, 'outputs');
   const outPanel = page.locator('[data-dpanel="outputs"]');
+  await page.click('#outTab-mqtt'); await page.waitForTimeout(300);
+  const mqttLocked = await outPanel.locator('#outEnabled').isDisabled();
   check('outputs shows the unit topic prefix',
         (await outPanel.locator('#ddvTopic').inputValue()).includes('fronius-meter-240')
         || (await outPanel.locator('#ddvTopic').inputValue()).includes('meter/240'));
+  await page.click('#outTab-influxdb'); await page.waitForTimeout(300);
   check('outputs shows the shadow bucket',
         (await outPanel.locator('#ddvBucket').inputValue()) === 'fronius_shadow');
   check('sink toggles present but endpoint-locked',
-        await outPanel.locator('#ddvMqttEnabled').isDisabled()
-        && await outPanel.locator('#ddvInfluxEnabled').isDisabled());
-  check('write-protection card present on the unit',
-        await outPanel.locator('#ddvWriteLock').count() === 1);
+        mqttLocked && await outPanel.locator('#outEnabled').isDisabled());
+  check('write-protection card present on the unit (with its commands or settings)',
+        await page.locator('#deviceDetailView #ddvWriteLock').count() === 1);
   check('outputs has NO Save & Apply for endpoint units',
         await outPanel.locator('button:has-text("Save & Apply")').count() === 0);
   await page.screenshot({ path: SHOT('f1-04-outputs-endpoint') });
@@ -117,7 +118,7 @@ try {
   // ---- 7. Edit Endpoint dialog from the unit ----------------------------------
   await editPanel.locator('button:has-text("Edit endpoint"), button:has-text("Editează")')
       .first().waitFor({ state: 'attached' }).catch(() => {});
-  await page.click('#deviceWsTabs [data-dtab="edit"]');
+  await openDeviceTab(page, 'connection');
   await editPanel.locator('button', { hasText: /Edit endpoint|Editează/ }).first().click();
   await page.waitForSelector('#endpointModal.active, #endpointModal[style*="display"]',
                              { state: 'attached' });

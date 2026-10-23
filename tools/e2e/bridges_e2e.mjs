@@ -24,6 +24,7 @@
  * not fail the run unless STRICT=1 (it prints FIXED once the product is right).
  */
 import { chromium } from 'playwright';
+import { watchDialogs } from './lib/dialogs.mjs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -144,8 +145,7 @@ const browser = await chromium.launch(
   process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 const page = await browser.newPage({ viewport: { width: 1440, height: 950 } });
 page.setDefaultTimeout(15000);
-let promptAnswer = '1';
-page.on('dialog', d => d.accept(d.type() === 'prompt' ? promptAnswer : undefined));
+const dlg = await watchDialogs(page);
 const errs = [];
 page.on('console', m => { if (m.type() === 'error' && !/status of (4\d\d|502)/.test(m.text())) errs.push(m.text()); });
 page.on('pageerror', e => errs.push(String(e)));
@@ -181,10 +181,10 @@ async function addBridge({ type, name, id, host, ports = [] }) {
   await page.waitForSelector('#bridgeModal', { state: 'hidden', timeout: 20000 });
 }
 async function wizTest() {
-  const out = page.locator('#devWizTestResult2');
+  const out = page.locator('#devWizTestResult');
   await out.evaluate(el => { el.textContent = ''; });
   await page.locator('#deviceWizardModal [data-action="devWizardTest"]:visible').first().click();
-  await page.waitForFunction(() => document.getElementById('devWizTestResult2')?.textContent.trim(), null, { timeout: 20000 });
+  await page.waitForFunction(() => document.getElementById('devWizTestResult')?.textContent.trim(), null, { timeout: 20000 });
   return (await out.textContent()).trim();
 }
 /** steps 2 and 3 of the wizard after the bus is chosen on step 1 */
@@ -308,16 +308,18 @@ try {
   await page.waitForSelector('#devWizUnitBr');
   check('"+ Device" now proposes unit 3', await page.inputValue('#devWizUnitBr') === '3');
   await page.fill('#devWizUnitBr', '1');
-  await wizFinish(DEV.u3, 'E2E duplicate');
-  await page.waitForFunction(() => document.getElementById('devWizFeedback')?.textContent.trim());
-  const dupMsg = await page.textContent('#devWizFeedback');
-  check('a 3rd device with unit 1 on that bus is refused, saying which device has it',
-    /unit 1/.test(dupMsg) && new RegExp(DEV.u1).test(dupMsg) && /own address/.test(dupMsg), dupMsg);
+  // the gateway is asked on step 1: the clash is said there, at the unit
+  await page.click('#devWizNext');
+  await page.waitForFunction(() => document.querySelector('#devWizBody .field-error[data-placed]')?.textContent.trim());
+  const dupMsg = await page.textContent('#devWizBody .field-error[data-placed]');
+  check('a 3rd device with unit 1 on that bus is refused on step 1, at the unit, saying which device has it',
+    /unit 1/.test(dupMsg) && new RegExp(DEV.u1).test(dupMsg) && /own address/.test(dupMsg)
+    && await page.evaluate(() => window.app._devWiz.step) === 1
+    && (await page.getAttribute('#devWizUnitBr', 'aria-invalid')) === 'true', dupMsg);
   check('…and nothing was created', !(await api('/api/devices')).body.devices.some(d => d.id === DEV.u3));
 
   // ═══ 3. Test connection while they poll ═════════════════════════════════
-  // still in the wizard: back to step 1, unit 2 (a slave a running device reads)
-  await page.click('#devWizBack'); await page.click('#devWizBack');
+  // still in the wizard on step 1: unit 2 (a slave a running device reads)
   await page.fill('#devWizUnitBr', '2');
   s0 = await freshStats(P.t);
   const since = Date.now() / 1000;
@@ -341,7 +343,7 @@ try {
   // ═══ 3b. Phase 2: busy bus, scan, add from the scan, export / import ═════
   await goDevices();
   const busyTxt = await card(BR.t).locator('.bridge-port').first().innerText();
-  check('the bus says how busy it is (measured)', /\d+% busy/i.test(busyTxt), busyTxt.replace(/\s+/g, ' ').slice(0, 140));
+  check('the bus says how busy it is (measured)', /busy \d+ %|over capacity/i.test(busyTxt), busyTxt.replace(/\s+/g, ' ').slice(0, 140));
   // a quick sweep over 1-4 through the API (the UI sweeps 1-247 — about 75 s)
   const sj = (await api(`/api/bridges/${BR.t}/ports/${P.t}/scan`, { method: 'POST',
       body: JSON.stringify({ from: 1, to: 4, timeout: 0.3 }) })).body;
@@ -372,7 +374,7 @@ try {
   check('closing the Scan panel stops the scan on the server', jst === 'cancelled', jst);
   await page.evaluate(([b, p]) => window.app.addScannedDevice(b, p, 9, ''), [BR.t, P.t]);
   await page.waitForSelector('#deviceWizardModal.active');
-  const pre = await page.evaluate(() => ({ b: window.app._devWiz.data.bridge, u: window.app._devWiz.data.unit_id }));
+  const pre = await page.evaluate(() => ({ b: window.app._devWiz.cf.bridge, u: window.app._devWiz.cf.unit_id }));
   check('Add from a scan opens the wizard on that bus and unit', pre.b === BR.t && pre.u === 9, JSON.stringify(pre));
   await page.evaluate(() => window.app.closeModal('deviceWizardModal'));
   const exp = await (await fetch(BASE + '/api/bridges/export')).text();
@@ -382,7 +384,7 @@ try {
     JSON.stringify(imp.bridges || []).slice(0, 160));
 
   // ═══ 4. Check mode (probe) ══════════════════════════════════════════════
-  promptAnswer = '1';
+  dlg.answers.push(1);
   await busButton(BR.t, P.t, 'bridgeProbe');
   await page.waitForSelector('#bridgeInfoModal.active');
   await page.waitForFunction(() => /RTU/.test(document.getElementById('bridgeInfoBody')?.innerText || '')

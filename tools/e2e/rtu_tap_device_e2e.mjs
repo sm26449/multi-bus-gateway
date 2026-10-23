@@ -12,6 +12,7 @@
  *   cd tools/e2e && MBG_URL=http://127.0.0.1:8099 TAP_PORT=/tmp/ttyTAPE2E node rtu_tap_device_e2e.mjs
  */
 import { chromium } from 'playwright';
+import { openDeviceTab } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const PORT = process.env.TAP_PORT || '/tmp/ttyTAPE2E';
@@ -106,11 +107,10 @@ try {
 
   // ---- 3. device workspace: Edit tab knows the tap --------------------------
   await page.evaluate(id => window.app.openDeviceDetail(id), ID);
-  await page.waitForSelector('[data-dtab="edit"]');
-  await page.click('[data-dtab="edit"]');
-  check('edit radio is the tap', await page.isChecked('input[name="ddvProto"][value="rtu_tap"]'));
-  check('serial block visible', await page.isVisible('#ddvRtu'));
-  check('tcp block hidden', !(await page.isVisible('#ddvTcp')));
+  await openDeviceTab(page, 'connection');
+  check('edit shows the tap', await page.isChecked('input[name="ddvRtuMode"][value="rtu_tap"]'));
+  check('serial block visible', await page.isVisible('#ddvRtuFields'));
+  check('tcp block hidden', !(await page.isVisible('#ddvTcpFields')));
   check('serial prefilled', await page.inputValue('#ddvSerial') === PORT);
   await page.click('[data-action="deviceDetailTest"]');
   await page.waitForFunction(() => document.getElementById('ddvTestResult')?.textContent.trim());
@@ -131,12 +131,17 @@ try {
   await page.waitForTimeout(500);
   await wizardToTap({ serial: PORT, baud: 19200, unit: 4 });
   await page.click('#devWizNext');
-  await page.click('.tpl-pick[data-tpl="seplos_bms_v3_rtu_tap"]');
-  await page.click('#devWizNext');
-  await page.fill('#devWizId', 'tap-e2e-bad');
-  await page.click('#devWizNext');
-  await page.waitForFunction(() => document.getElementById('devWizFeedback')?.textContent.trim());
-  const fb = await page.textContent('#devWizFeedback');
+  // step 1 asks the gateway first; a clash it cannot judge there is said on Create
+  await page.waitForFunction(() => window.app._devWiz.step === 2
+    || document.querySelector('#devWizBody .field-error[data-placed]') || document.getElementById('devWizFeedback')?.textContent.trim());
+  if (await page.evaluate(() => window.app._devWiz.step) === 2) {
+    await page.click('.tpl-pick[data-tpl="seplos_bms_v3_rtu_tap"]');
+    await page.click('#devWizNext');
+    await page.fill('#devWizId', 'tap-e2e-bad');
+    await page.click('#devWizNext');
+    await page.waitForFunction(() => document.getElementById('devWizFeedback')?.textContent.trim());
+  }
+  const fb = await page.innerText('#devWizBody');
   check('other baud on a tapped line refused, in the wizard', /same line settings/.test(fb), fb);
   check('refused device not created', !(await device('tap-e2e-bad')));
   await page.evaluate(() => window.app.closeModal('deviceWizardModal'));
@@ -146,9 +151,8 @@ try {
     id: 'rtutcp-e2e', enabled: false,
     connection: { protocol: 'rtu-tcp', host: '127.0.0.1', port: 9, unit_id: 1 } }) });
   await page.evaluate(id => window.app.openDeviceDetail(id), 'rtutcp-e2e');
-  await page.waitForSelector('[data-dtab="edit"]');
-  await page.click('[data-dtab="edit"]');
-  await page.fill('#ddvHost', '127.0.0.2');
+  await openDeviceTab(page, 'connection');
+  await page.fill('#ddvRtuHost', '127.0.0.2');      // RTU over the network, its typed address
   await page.locator('[data-action="saveDeviceDetail"]:visible').first().click();
   await page.waitForTimeout(1200);
   const rt = await device('rtutcp-e2e');

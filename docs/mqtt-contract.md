@@ -67,6 +67,15 @@ Cache semantics: on every broker (re)connect the change-detection cache is
 cleared, so every value is republished once (a restarted broker lost its
 retained state).
 
+**Removed values are cleared.** The gateway publishes an empty retained
+payload, which deletes the message from the broker, when:
+- a row is unticked from Measurements, or its MQTT output is switched off,
+  or its topic changes (the old topic);
+- a device is deleted, or an installation with its units.
+
+A subscriber therefore never reads a value nobody measures any more as if
+it were live. An edit that only restarts a device does not clear anything.
+
 ## Device liveness — `<dev>/availability`, `<dev>/runtime/*`
 
 | Topic | Payload | Notes |
@@ -88,7 +97,7 @@ Code: `multibus/mqtt_publisher.py` — `publish_device_availability`,
 | | |
 |---|---|
 | Pattern | `mbg/endpoints/<endpoint_id>/<canonical topic>` for the endpoint's first group; `mbg/endpoints/<endpoint_id>/<group_id>/<canonical topic>` for later groups. Override the root with `endpoints[].mqtt.aggregate_prefix` (`${endpoint_id}`, `${group_id}` substituted) |
-| Census leaves | `…/units_online` (`3`), `…/units_total` (`4`), `…/status` (`online` / `partial` / `offline`) |
+| Census leaves | `…/units_online` (`3`), `…/units_total` (`4`), `…/status` (`online` / `partial` / `offline` / `asleep`); `…/units_asleep` for an inverter group whose installation has a location: inverters that are silent while the sun is below 5° count as asleep (0 W), not missing ([attributes.md](attributes.md)) |
 | Direction | gateway publishes |
 | Retained / QoS | `mqtt.retain` / `mqtt.qos` |
 | When | every **10 s**, through the same change detection as device values (so census leaves republish only on change, plus heartbeat); nothing is published for a group with fewer than 2 enabled units |
@@ -97,6 +106,19 @@ Code: `multibus/mqtt_publisher.py` — `publish_device_availability`,
 
 Sum/average/counter rules and the withheld-counter behaviour are described in
 [config-reference.md](config-reference.md#endpoints--n-units-of-the-same-device-behind-one-endpoint).
+
+## Asset attributes — `<dev>/meta`, `<installation root>/meta`, `<gw>/site/meta`
+
+| | |
+|---|---|
+| Payload | JSON: `{"schema": 1, "rev": "…", "level": "device", "id": "pv-u1", "kind": "inverter", "attributes": {…}, "location": {"value": {…}, "from": "site"}}` |
+| Coordinates | as `settings.location_publish` says: coarse (2 decimals, the default), exact, or left out (`off`) |
+| Direction | gateway publishes |
+| Retained | yes; cleared when the device or the installation is deleted |
+| Topics | `<dev>/meta`; `<installation totals root>/meta` (`mbg/endpoints/<id>/meta` by default, `aggregate_prefix` overrides); `<gw>/site/meta` |
+| When | when a place's content changes; all after a (re)connect, a restore or an import, and when the gateway becomes active; **only the active gateway publishes**; a topic no longer published (prefix renamed, device MQTT off) is cleared |
+| Reserved | a register may not be named `meta` |
+| Code | `multibus/attributes.py` (`meta`), `api.py` (`_publish_attribute_meta`); [attributes.md](attributes.md) |
 
 ## Virtual meters — `<gw>/vmeter/<id>/state`, `<gw>/data_health`
 
@@ -165,9 +187,9 @@ and cleared. Code: `multibus/api.py` — `_mqtt_write_command`;
 
 | Topic | Direction | Retained / QoS | Payload / when |
 |---|---|---|---|
-| `mbg/rules/<id>/state` | gateway publishes | yes / **1** | `{"id": "ov_limit", "label": "Overvoltage limit", "mode": "armed", "enabled": true, "state": "step1", "signal": 253.4, "units": {"fronius-u1": {"state": "step1", "want": {"value": 60}, "clamp": null, "paused_until": null, "last_action": "run", "ignored": false, "guarded": false}}, "decision": "run", "reason": "voltage_ln_avg 253.4 > 252.0", "ts": 1758630132.418}` — on change of anything but `ts`; `{}` when the rule is deleted |
+| `mbg/rules/<id>/state` | gateway publishes | yes / **1** | `{"id": "ov_limit", "label": "Overvoltage limit", "mode": "armed", "enabled": true, "state": "step1", "signal": 253.4, "units": {"fronius-u1": {"state": "step1", "want": {"value": 60}, "clamp": null, "paused_until": null, "last_action": "run", "ignored": false, "guarded": false}}, "decision": "run", "reason": "voltage_ln_avg 253.4 > 252.0", "ts": 1758630132.418}` — on change of anything but `ts`; `{}` when the rule is deleted. A rule that is not evaluated says so: `"state": "disabled"` (or `"error"`, with an `"error"` field saying why), `"signal": null`, and each unit `state` the same with `"want": null` — never the last state it had while it ran |
 | `mbg/rules/<id>/event` | gateway publishes | no / **1** | `{"rule": "ov_limit", "device": "fronius-u1", "state": "step1", "signal": 253.4, "want": {"value": 60}, "actual": 100, "action": "run", "reason": "…", "ts": 1758630132.418}` — on every per-unit state change |
-| `mbg/rules/<id>/set` | gateway **subscribes** | — | `{"enabled": false}`, `{"clamp": {"max": 50, "expires_s": 3600}}`, `{"clamp": null}`, `{"override_s": 900}`, optional `"source"`. Arming (`mode`) is API/UI only |
+| `mbg/rules/<id>/set` | gateway **subscribes** | — | `{"enabled": false}` (a controller taking over: an armed rule returns its target to the safe values, in the background), `{"clamp": {"max": 50, "expires_s": 3600}}`, `{"clamp": null}`, `{"override_s": 900}`, optional `"source"`. Arming (`mode`) is API/UI only |
 
 Code: `multibus/rules_runtime.py` — `MQTT_ROOT`, `_publish_state`, `_event`,
 `_sync_mqtt`, `_mqtt_set`, `delete`. The InfluxDB side of the same decisions
@@ -226,7 +248,8 @@ Code: `multibus/mqtt_publisher.py` — `publish_ha_discovery`,
 | `<dev>/cmd/<name>`, `<group>/cmd/<name>` | template commands (above) | `multibus/api.py` |
 | `<dev>/<topic>/set` | HA write entities (above) | `multibus/mqtt_publisher.py` |
 | `mbg/rules/<id>/set` | rule control (above) | `multibus/rules_runtime.py` |
-| MQTT **device sources** (`connection.protocol: mqtt`) | a separate paho client per device, on `connection.broker`: subscribes to `connection.topic` and to every register's own `topic` (`+`/`#` wildcards allowed). A register with `json_path` extracts from a JSON payload; without one the whole payload must be a number. **Retained deliveries are dropped** unless `accept_retained: true` — a retained value has no trustworthy measurement time | `multibus/mqtt_input.py` |
+| MQTT **device sources** (`connection.protocol: mqtt`) | a separate paho client per device, on `connection.broker`: subscribes to `connection.topic` and to every register's own `topic` (`+`/`#` wildcards allowed). A register with `json_path` extracts from a JSON payload; without one the whole payload must be a number. **Retained deliveries are dropped** unless `accept_retained: true` — a retained value has no trustworthy measurement time — or the source declares **`availability`** (`{topic, online, offline}`, in the template's `protocol` or the connection): then its retained values are taken while it says online, wait while it has said nothing, and are dropped while offline, and its health follows what it says instead of the age of its last message (`stale_after_s`, default 30, without availability). `broker: "@gateway"` reads from the gateway's own broker | `multibus/mqtt_input.py` |
+| `mbg/nodes/+/announce`, `tasmota/discovery/+/config`, your rules' topics | devices announcing themselves, listed under Devices → Found on MQTT; nothing is added by itself ([mqtt-discovery.md](mqtt-discovery.md)) | `multibus/mqtt_discovery.py` |
 | commissioning probes | short-lived subscriptions while the UI samples a topic or discovers a source | `multibus/discovery.py`, `multibus/routes/diagnostics.py` |
 
 ## Compatibility aliases

@@ -8,6 +8,7 @@
     "version": "1.0.0",
     "author": "built-in",
     "description": "A BLE sensor (Xiaomi LYWSD03MMC/ATC, RuuviTag, Govee, SwitchBot…) whose advertisements are decoded to MQTT JSON by Theengs Gateway or OpenMQTTGateway. Set the device connection topic to the gateway's per-device topic (e.g. home/TheengsGateway/BTtoMQTT/<MAC>). Field names follow the Theengs decoder properties (tempc/hum/batt/volt/rssi) — edit per your sensor model. BLE advertising is slow: keep generous per-row stale bounds when used in composites.",
+    "kind": "sensor",
     "source_document": "https://decoder.theengs.io/devices/devices_by_brand.html",
     "protocol": { "transports": ["mqtt"] },
     "poll_groups": {

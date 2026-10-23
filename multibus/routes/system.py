@@ -24,6 +24,7 @@ import time
 from typing import Dict
 
 from fastapi import APIRouter, Body, HTTPException, Request
+from ..payload import flag
 
 from ._shared import secrets_visible as _secrets_visible
 
@@ -129,8 +130,8 @@ def build(ctx) -> APIRouter:
             "min_interval_s": a.get("min_interval_s", 300),
             "latency_ms": a.get("latency_ms", 1000),
             "buffer_points": a.get("buffer_points", 1000),
-            "signals": a.get("signals") or {"device": True, "sink": True,
-                                            "latency": True, "buffer": True},
+            "signals": {"device": True, "sink": True, "latency": True, "buffer": True,
+                        "threshold": False, "alarm": True, **(a.get("signals") or {})},
             "threshold_deadband_pct": a.get("threshold_deadband_pct", 2.0),
             "threshold_alert_on_start": bool(a.get("threshold_alert_on_start", True)),
         }
@@ -157,7 +158,7 @@ def build(ctx) -> APIRouter:
             errors.append("webhook_body must be a JSON object or empty")
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors})
-        a["enabled"] = bool(payload.get("enabled", a.get("enabled", False)))
+        a["enabled"] = flag(payload, "enabled", a.get("enabled", False))
         a["mqtt"] = bool(payload.get("mqtt", a.get("mqtt", True)))
         a["webhook_url"] = url
         a["webhook_body"] = (body or None)
@@ -168,7 +169,9 @@ def build(ctx) -> APIRouter:
         if "buffer_points" in payload:
             a["buffer_points"] = int(payload["buffer_points"] or 1000)
         if isinstance(payload.get("signals"), dict):
-            a["signals"] = {k: bool(v) for k, v in payload["signals"].items()}
+            # merge: a form that does not show a signal must not switch it off
+            a["signals"] = {**(a.get("signals") or {}),
+                            **{k: bool(v) for k, v in payload["signals"].items()}}
         if "threshold_deadband_pct" in payload:
             try:
                 a["threshold_deadband_pct"] = max(0.0, float(payload["threshold_deadband_pct"]))

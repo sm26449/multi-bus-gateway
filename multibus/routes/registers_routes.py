@@ -22,6 +22,8 @@ time (rebindable via /api/config/apply).
 """
 from __future__ import annotations
 
+import copy
+import time
 import json
 import logging
 from datetime import datetime
@@ -149,6 +151,73 @@ def build(ctx) -> APIRouter:
                 if meta.get('icon'):
                     row['category_icon'] = meta['icon']
         return rows
+
+    def _stored_rows(path) -> List[Dict]:
+        try:
+            with open(path) as f:
+                return (json.load(f) or {}).get('registers') or []
+        except (OSError, ValueError):
+            return []
+
+    def _carry_unedited(rows: List[Dict], stored: List[Dict], tpl=None) -> List[Dict]:
+        """Keep what this editor does not edit. The Measurements page sends
+        the fields it knows; a stored row may carry more — its template
+        section (the InfluxDB measurement of a field nothing else
+        classifies), how it adds up across an installation (aggregates), a
+        day counter flag, and whatever a later version adds. Those are taken
+        from the stored row, matched by name (or by its address, for a row
+        that was renamed). A row ticked for the first time takes its section
+        from the template."""
+        names = {r.get('name') for r in rows}
+        by_name = {r.get('name'): r for r in stored if r.get('name')}
+        by_addr = {((r.get('register_type') or 'holding'), r.get('address')): r
+                   for r in stored if r.get('name') not in names}
+        trows = {r.name: r for r in (tpl.registers or [])} if tpl is not None else {}
+        for row in rows:
+            old = by_name.get(row.get('name')) or by_addr.get(
+                ((row.get('register_type') or 'holding'), row.get('address')))
+            if old is not None:
+                for k, v in old.items():
+                    if k not in row:
+                        row[k] = v
+                continue
+            t = trows.get(row.get('name'))
+            if t is None:
+                continue
+            # a row ticked for the first time: what the editor sends as a
+            # default (holding, no states) yields to what the template says —
+            # an input register stays input, a state register keeps its states
+            if not row.get('category') and getattr(t, 'category', ''):
+                row['category'] = t.category
+            if (row.get('register_type') or 'holding') == 'holding' \
+                    and (getattr(t, 'register_type', 'holding') or 'holding') != 'holding':
+                row['register_type'] = t.register_type
+            for k in ('enum', 'bits', 'mask', 'shift', 'nan'):
+                tv = getattr(t, k, None)
+                if row.get(k) in (None, '', {}) and tv not in (None, '', {}):
+                    row[k] = copy.deepcopy(tv)
+        return rows
+
+    def _unit_topics(dev_cfg) -> set:
+        """The retained state topics a unit's selection publishes to."""
+        mp = ctx.mqtt_publisher
+        if not mp or not hasattr(mp, 'register_topics'):
+            return set()
+        if dev_cfg is None or dev_cfg.primary:
+            return mp.register_topics(config.selected_registers, None)
+        return mp.register_topics(config.unit_registers(dev_cfg), dev_cfg.mqtt_topic_prefix)
+
+    def _clear_dropped(before: set, dev_cfg) -> None:
+        """A row unticked (or moved to another topic) leaves its last value
+        retained on the broker, read by every new subscriber as if it were
+        still measured — delete it."""
+        mp = ctx.mqtt_publisher
+        gone = before - _unit_topics(dev_cfg)
+        if gone and mp and hasattr(mp, 'clear_topics'):
+            try:
+                mp.clear_topics(gone)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("clearing unticked topics failed: %s", e)
 
     def _has_source_files(dev_cfg) -> bool:
         """True when the device's registers live in per-source files (an
@@ -407,6 +476,17 @@ def build(ctx) -> APIRouter:
     async def update_selected_registers(registers: List[SelectedRegisterUpdate],
                                         device: str = Query(default=""),
                                         source: str = Query(default="")):
+        """Update selected registers (see _save_selected_registers)."""
+        try:
+            return await _save_selected_registers(registers, device, source)
+        finally:
+            # what the device reads changed: rules' `inputs` judged afresh
+            hook = getattr(ctx, 'rule_fields_changed', None)
+            if hook:
+                hook()
+
+    async def _save_selected_registers(registers: List[SelectedRegisterUpdate],
+                                       device: str = "", source: str = ""):
         """Update selected registers configuration (optionally per device —
         a non-primary device saves to its own file and hot-reloads only its
         own pollers)."""
@@ -477,6 +557,7 @@ def build(ctx) -> APIRouter:
                 # source file that owns its name (first source wins — mirror
                 # of the read) instead of writing a device-root file the read
                 # would shadow forever.
+                topics_before = _unit_topics(dev_cfg)
                 if not _source_of(dev_cfg, source) and _has_source_files(dev_cfg):
                     by_name = {x["name"]: x for x in reg_list if x.get("name")}
                     consumed: set = set()
@@ -493,9 +574,10 @@ def build(ctx) -> APIRouter:
                             e = by_name.get(nm)
                             if e is not None and nm not in consumed:
                                 consumed.add(nm)
-                                if row != e:
+                                merged = _carry_unedited([dict(e)], [row])[0]
+                                if row != merged:
                                     row.clear()
-                                    row.update(e)
+                                    row.update(merged)
                                     changed = True
                         if changed:
                             config.save_device_registers(
@@ -512,6 +594,7 @@ def build(ctx) -> APIRouter:
                                 pass           # bare driver: nothing per-source to reload
                     if touched_sources and dev_client and hasattr(dev_client, 'reload_registers'):
                         dev_client.reload_registers()
+                    _clear_dropped(topics_before, dev_cfg)
                     return {"status": "ok", "count": len(consumed),
                             "device": device,
                             "sources": [s.id for s in touched_sources]}
@@ -523,10 +606,20 @@ def build(ctx) -> APIRouter:
                 _tid = (getattr(src, 'template', '') or dev_cfg.template) if src \
                     else dev_cfg.template
                 tpl = template_registry.get(_tid) if _tid else None
-                if tpl and getattr(tpl, 'poll_groups', None):
+                _path = (config.source_registers_path(dev_cfg.id, source) if source
+                         else config.device_registers_path(dev_cfg.id))
+                try:
+                    with open(_path) as f:
+                        _has_groups = bool((json.load(f) or {}).get("poll_groups"))
+                except (OSError, ValueError):
+                    _has_groups = False
+                # a device that already has its intervals (maybe tuned on its
+                # page) keeps them; the template's only seed a first save
+                if tpl and getattr(tpl, 'poll_groups', None) and not _has_groups:
                     tpg = {n: {"interval": g.get("interval", 5),
                                "description": g.get("description", "")}
                            for n, g in tpl.poll_groups.items()}
+                _carry_unedited(reg_list, _stored_rows(_path), tpl)
                 config.save_device_registers(device, reg_list, poll_groups=tpg,
                                              source_id=source)
                 regs, groups = config.load_device_registers(dev_cfg, source=src)
@@ -548,8 +641,13 @@ def build(ctx) -> APIRouter:
                 _store = registry.store_for(device)
                 if _store is not None:
                     purge_deselected(_store, regs)
+                _clear_dropped(topics_before, dev_cfg)
                 return {"status": "ok", "count": len(reg_list), "device": device}
 
+            _ptpl = template_registry.get(config.primary_device.template) \
+                if (template_registry and getattr(config.primary_device, 'template', '')) else None
+            _carry_unedited(reg_list, _stored_rows(config.registers_path), _ptpl)
+            topics_before = _unit_topics(None)
             config.save_selected_registers(reg_list)
 
             # Auto-reload pollers with new registers
@@ -570,6 +668,7 @@ def build(ctx) -> APIRouter:
             if influxdb_publisher:
                 influxdb_publisher.update_registers(config.selected_registers)
 
+            _clear_dropped(topics_before, None)
             return {"status": "ok", "count": len(reg_list)}
         except HTTPException:
             raise
@@ -643,6 +742,7 @@ def build(ctx) -> APIRouter:
                 "register_type": rt,
                 "device_id": query.device_id,
                 "timestamp": datetime.now().isoformat(),
+                "ts": time.time(),
             }
             corrected = _corrected_value(client, query.address, rt, value)
             if corrected is not ...:
@@ -682,6 +782,7 @@ def build(ctx) -> APIRouter:
             },
             "device_id": query.device_id,
             "timestamp": datetime.now().isoformat(),
+            "ts": time.time(),
         }
         if corrected:
             out["corrected"] = corrected

@@ -8,6 +8,7 @@
   "version": "1.0",
   "author": "Multi-Bus Gateway",
   "description": "One battery pack of the seplos-bms-mqtt collector (https://github.com/sm2669/seplos-bms-mqtt): the collector passively snoops the RS485 pack bus and publishes seplos/battery_N/<field>; this template ingests the full field set over MQTT. Set the device input topic to seplos/battery_N/# — register topics are RELATIVE (~/).",
+  "kind": "battery",
   "protocol": {
    "transports": [
     "mqtt"
@@ -699,7 +700,7 @@
    {
     "address": 31,
     "name": "current",
-    "label": "Current",
+    "label": "Current (+ charging)",
     "unit": "A",
     "data_type": "float",
     "category": "battery",
@@ -941,7 +942,7 @@
    {
     "address": 42,
     "name": "power",
-    "label": "Power",
+    "label": "Power (− charging)",
     "unit": "W",
     "data_type": "float",
     "category": "battery",

@@ -6,55 +6,49 @@
 Object.assign(JanitzaMonitor.prototype, {
 
     // ── Add/Edit Device wizard ──────────────────────────────────────────────
+    _wizTopicFor(did) {
+        const pat = this._devWiz?.topicPattern || 'mbg/devices/{device}';
+        return pat.replaceAll('{device_id}', did).replaceAll('{device}', did);
+    },
+
+    // Add Device. A saved device is edited on its page (Configure →
+    // Connection): the wizard only adds — one connection form, two places.
     async openDeviceWizard(editId = null, prefill = null) {
+        if (editId) return this.openDeviceEdit(editId);
         await this._fetchDevices(true);
         let templates = [];
         try { templates = (await (await fetch('/api/device-templates')).json()).templates || []; }
         catch (e) { console.error(e); }
-        const editing = editId ? (this._devices || []).find(d => d.id === editId) : null;
         if (this._loadBridges) await this._loadBridges();
-        this._devWiz = {
-            step: 1, editId, templates,
-            primary: !!editing?.primary,
-            data: editing ? {
-                id: editing.id, name: editing.name || editing.id,
-                template: editing.template || '',
-                enabled: editing.enabled !== false,
-                // a device on a bridge edits as "over network, this bridge, this bus"
-                // resolved: rtu-tcp, tcp (through a gateway), rtu_tap…; the
-                // UDP and ASCII variants show as TCP / RTU with their option set
-                protocol: ({ udp: 'tcp', ascii: 'rtu', 'ascii-tcp': 'rtu-tcp' })[editing.protocol] || editing.protocol || 'tcp',
-                udp: editing.protocol === 'udp',
-                framing: (editing.protocol === 'ascii' || editing.protocol === 'ascii-tcp') ? 'ascii' : 'rtu',
-                bridge: editing.bridge || '', bridge_port: editing.bridge_port || null,
-                host: editing.host || '', port: editing.port || 502,
-                unit_id: editing.unit_id ?? 1, timeout: editing.timeout ?? 3,
-                serial_port: editing.serial?.serial_port || '', baudrate: editing.serial?.baudrate || 9600,
-                parity: editing.serial?.parity || 'N', stopbits: editing.serial?.stopbits || 1,
-                url: editing.connection?.url || editing.http?.url || '',
-                topic_prefix: editing.mqtt_topic_prefix || '',
-                bucket: editing.influxdb_bucket || '',
-                device_tag: editing.influxdb_device_tag || editing.id,
-                ha_discovery_enabled: editing.ha_discovery_enabled !== false,
-            } : {
-                id: '', name: '', template: '', enabled: true,
-                protocol: 'tcp', host: '', port: 502, unit_id: 1, timeout: 3,
-                serial_port: '', baudrate: 9600, parity: 'N', stopbits: 1, url: '',
-                topic_prefix: '', bucket: '', device_tag: '', ha_discovery_enabled: true,
-            },
-        };
-        // Prefill a fresh wizard from a discovered device (protocol/url/template/name/id…).
-        if (prefill && !editing) Object.assign(this._devWiz.data, prefill);
+        if (this._meterRoles) await this._meterRoles();     // the kinds a meter-only device may be
+        // where a new device publishes when the field is left empty: the
+        // gateway's pattern (Settings → MQTT), resolved by the server too
+        // (loaded with the config at boot; asked again only when missing)
+        let topicPattern = this.config?.mqtt?.default_topic_pattern || '';
+        if (!topicPattern) {
+            try { topicPattern = (await (await fetch('/api/config/mqtt')).json()).default_topic_pattern || ''; }
+            catch (e) { /* the server applies its own pattern anyway */ }
+        }
+        topicPattern = topicPattern || 'mbg/devices/{device}';
+        // a prefill (discovery, a bridge's "+ Device") says both how the device
+        // is reached (the connection form's model) and what it is (the rest)
+        const CONN = ['protocol', 'host', 'port', 'unit_id', 'timeout', 'url', 'bridge', 'bridge_port', 'serial_port',
+                      'baudrate', 'parity', 'stopbits', 'bytesize', 'broker', 'mqtt_port', 'topic', 'mqtt_username',
+                      'mqtt_password', 'mqtt_tls', 'udp', 'framing'];
+        const conn = {}, rest = {};
+        for (const [k, v] of Object.entries(prefill || {})) (CONN.includes(k) ? conn : rest)[k] = v;
+        const cf = window.ConnformModel.blank(conn);
         // a device on a bus of a Modbus TCP gateway is a Modbus TCP device
-        if (this._devWiz.data.bridge && this._bridgeType && this._bridgeType(
-                (this._bridges || []).find(b => b.id === this._devWiz.data.bridge)?.type).framing === 'modbus_tcp')
-            this._devWiz.data.protocol = 'tcp';
-        // what the protocol may become when editing: Modbus variants share a
-        // register map (by address); HTTP and MQTT maps read by path
-        const _cls = p => (p === 'http' || p === 'mqtt') ? p : 'modbus';
-        this._devWiz.lockClass = editing ? _cls(this._devWiz.data.protocol) : null;
-        document.getElementById('devWizTitle').textContent =
-            editId ? this.t('devices.wizard.titleEdit', 'Edit Device') : this.t('devices.wizard.titleAdd', 'Add Device');
+        if (cf.bridge && this._bridgeType && this._bridgeType(
+                (this._bridges || []).find(b => b.id === cf.bridge)?.type).framing === 'modbus_tcp') cf.mode = 'tcp';
+        this._devWiz = {
+            step: 1, templates, topicPattern, cf,
+            data: Object.assign({
+                id: '', name: '', template: '', enabled: true, protocol: cf.mode,
+                topic_prefix: '', bucket: '', device_tag: '', ha_discovery_enabled: true,
+            }, rest),
+        };
+        document.getElementById('devWizTitle').textContent = this.t('devices.wizard.titleAdd', 'Add Device');
         this._devWizRender();
         this.openModal('deviceWizardModal');
         // Clickable step rail — jump back to an already-seen step (no re-validation
@@ -81,14 +75,21 @@ Object.assign(JanitzaMonitor.prototype, {
         });
         document.getElementById('devWizBack').style.visibility = w.step === 1 ? 'hidden' : 'visible';
         document.getElementById('devWizNextLabel').textContent = w.step === 3
-            ? (w.editId ? this.t('common.save', 'Save') : this.t('devices.wizard.create', 'Create device'))
+            ? this.t('devices.wizard.create', 'Create device')
             : this.t('common.next', 'Next');
         const fb = document.getElementById('devWizFeedback');
         if (fb) { fb.textContent = ''; fb.className = 'save-feedback'; }
         const body = document.getElementById('devWizBody');
         body.innerHTML = w.step === 1 ? this._devWizStep1Html()
-                       : w.step === 2 ? this._devWizStep2Html()
+                       : w.step === 2 ? (w.data.protocol === 'none' ? this._devWizMetersStepHtml() : this._devWizStep2Html())
                        : this._devWizStep3Html();
+        // step 2's name follows what it asks
+        const s2 = document.querySelector('#devWizSteps [data-step="2"] [data-i18n]');
+        if (s2) {
+            const k = w.data.protocol === 'none' ? 'wizMtr.step2' : 'devices.wizard.step2';
+            s2.setAttribute('data-i18n', k);           // a language switch keeps it
+            s2.textContent = this.t(k, w.data.protocol === 'none' ? 'Meters & kind' : 'Template');
+        }
         this._devWizWire();
         // Move focus to the first field of the step (keyboard + screen-reader
         // users land where they can act; setTimeout lets the modal become visible
@@ -97,261 +98,9 @@ Object.assign(JanitzaMonitor.prototype, {
             'input:not([disabled]), select:not([disabled]), textarea')?.focus(), 0);
     },
 
+    // step 1 is the connection form (app-connform.js), mounted by _devWizWire
     _devWizStep1Html() {
-        const d = this._devWiz.data;
-        const tcp = d.protocol === 'tcp';
-        const http = d.protocol === 'http';
-        const isRtu = d.protocol === 'rtu' || d.protocol === 'rtu-tcp' || d.protocol === 'rtu_tap';
-        const rtuBridge = d.protocol === 'rtu-tcp';   // over-network (ser2net) vs direct serial
-        const tap = d.protocol === 'rtu_tap';         // listen-only: another master owns the bus
-        const tapNet = tap && !!d.bridge;             // …heard through a transparent bridge
-        // Protocol is fixed after creation: the template's register map is
-        // transport-specific (Modbus reads by address, HTTP by json_path), so
-        // switching transport would orphan the map.
-        // editing: only the variants that keep the register map valid
-        const lockClass = this._devWiz.lockClass;
-        const cls = p => (p === 'http' || p === 'mqtt') ? p : 'modbus';
-        const off = p => lockClass && cls(p) !== lockClass;
-        const locked = !!lockClass;
-        const lk = p => off(p) ? 'disabled' : '';
-        return `
-        <div class="wiz-eyebrow">${this.t('devices.wizard.protoQ', 'How is it connected?')}</div>
-        <div class="seg" role="radiogroup" aria-label="${this.t('devices.wizard.protocol', 'Protocol')}">
-            <label class="seg-btn ${tcp ? 'on' : ''} ${off('tcp') ? 'disabled' : ''}"><input type="radio" name="devWizProto" value="tcp" ${tcp ? 'checked' : ''} ${lk('tcp')}><span class="s"></span> Modbus TCP</label>
-            <label class="seg-btn ${isRtu ? 'on' : ''} ${off('rtu') ? 'disabled' : ''}"><input type="radio" name="devWizProto" value="rtu" ${isRtu ? 'checked' : ''} ${lk('rtu')}><span class="s"></span> Modbus RTU</label>
-            <label class="seg-btn ${http ? 'on' : ''} ${off('http') ? 'disabled' : ''}"><input type="radio" name="devWizProto" value="http" ${http ? 'checked' : ''} ${lk('http')}><span class="s"></span> HTTP / JSON</label>
-            <label class="seg-btn ${d.protocol === 'mqtt' ? 'on' : ''} ${off('mqtt') ? 'disabled' : ''}"><input type="radio" name="devWizProto" value="mqtt" ${d.protocol === 'mqtt' ? 'checked' : ''} ${lk('mqtt')}><span class="s"></span> MQTT</label>
-        </div>
-        ${locked ? `<div class="field-hint" style="margin:-8px 0 14px;"><i aria-hidden="true" class="bi bi-lock"></i> ${lockClass === 'modbus'
-            ? this.t('devices.wizard.protoModbusOnly', 'A Modbus device can move between Modbus TCP, RTU, over the network or listen-only — its register map stays valid. HTTP and MQTT read by path, so they need a new device.')
-            : this.t('devices.wizard.protoLocked', 'Fixed after creation — the template map is transport-specific.')}</div>` : ''}
-        <div id="devWizHttpFields" style="display:${http ? '' : 'none'}">
-            <div class="form-group">
-                <label class="form-label" for="devWizUrl">${this.t('devices.wizard.httpUrl', 'JSON endpoint URL')}</label>
-                <input type="text" id="devWizUrl" class="input" value="${this._esc(d.url || '')}" placeholder="http://192.168.1.50/rpc/Shelly.GetStatus">
-                <div class="field-hint">${this.t('devices.wizard.httpHint', 'The device polls this URL and reads values by the template’s json_path. Values arrive already scaled.')}</div>
-            </div>
-            <button class="btn btn-secondary btn-sm" data-action="devWizardTest" data-with-el>
-                <i aria-hidden="true" class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
-            <div class="wiz-test-result" id="devWizTestResult3" role="status"></div>
-        </div>
-        <div id="devWizTcpFields" style="display:${tcp ? '' : 'none'}">
-            ${this._devWizGatewayPickHtml(d)}
-            <div class="form-row">
-                <div class="form-group flex-2" ${tcp && d.bridge ? 'style="display:none"' : ''}>
-                    <label class="form-label" for="devWizHost">${this.t('lbl.hostIp', "Host / IP")}</label>
-                    <input type="text" id="devWizHost" class="input" value="${this._esc(d.host)}" placeholder="192.168.1.60">
-                </div>
-                <div class="form-group" ${tcp && d.bridge ? 'style="display:none"' : ''}>
-                    <label class="form-label" for="devWizPort">${this.t('lbl.port', "Port")}</label>
-                    <input type="number" id="devWizPort" class="input" aria-label="Port" value="${d.port}" min="1" max="65535">
-                    <div class="field-hint">1–65535 · ${this.t('common.default', 'default')} 502</div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label" for="devWizUnit">${this.t('lbl.unitId', "Unit ID")}</label>
-                    <input type="number" id="devWizUnit" class="input" aria-label="Unit ID" value="${d.unit_id}" min="0" max="255">
-                    <div class="field-hint">0–255 · ${this.t('common.default', 'default')} 1</div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label" for="devWizTimeout">${this.t('lbl.timeoutS', "Timeout (s)")}</label>
-                    <input type="number" id="devWizTimeout" class="input" aria-label="Timeout seconds" value="${d.timeout}" min="1" max="30">
-                    <div class="field-hint">1–30 · ${this.t('common.default', 'default')} 3</div>
-                </div>
-            </div>
-            <label class="checkbox-label" style="margin:-4px 0 10px;${tcp && d.bridge ? 'display:none;' : ''}" title="${this._esc(this.t('devices.wizard.udpHint', 'Some devices and gateways answer Modbus TCP frames in UDP datagrams (usually port 502) instead of a TCP connection. Use it only when the manual says UDP.'))}">
-                <input type="checkbox" id="devWizUdp" ${d.udp ? 'checked' : ''}> <span>${this.t('devices.wizard.udp', 'Over UDP (datagrams instead of a connection)')}</span></label>
-            <button class="btn btn-secondary btn-sm" id="devWizTestBtn" data-action="devWizardTest" data-with-el>
-                <i aria-hidden="true" class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
-            <div class="wiz-test-result" id="devWizTestResult" role="status"></div>
-        </div>
-        <div id="devWizRtuFields" style="display:${isRtu ? '' : 'none'}">
-            <div class="seg seg-sm" role="radiogroup" aria-label="${this.t('devices.wizard.rtuMode', 'RTU connection mode')}" style="margin-bottom:12px;">
-                <label class="seg-btn ${rtuBridge ? 'on' : ''}"><input type="radio" name="devWizRtuMode" value="rtu-tcp" ${rtuBridge ? 'checked' : ''}><span class="s"></span> ${this.t('devices.wizard.rtuOverNet', 'Over network (auto-detect)')} <span class="seg-reco">${this.t('common.recommended', 'recommended')}</span></label>
-                <label class="seg-btn ${d.protocol === 'rtu' ? 'on' : ''}"><input type="radio" name="devWizRtuMode" value="rtu" ${d.protocol === 'rtu' ? 'checked' : ''}><span class="s"></span> ${this.t('devices.wizard.rtuDirect', 'Direct serial')}</label>
-                <label class="seg-btn ${tap ? 'on' : ''}"><input type="radio" name="devWizRtuMode" value="rtu_tap" ${tap ? 'checked' : ''}><span class="s"></span> ${this.t('devices.wizard.rtuTap', 'Listen only (tap)')}</label>
-            </div>
-            <div id="devWizRtuBridge" style="display:${rtuBridge ? '' : 'none'}">
-                ${this._devWizBridgePickHtml(d)}
-                <div class="form-row" style="align-items:end;${(this._bridges || []).length ? 'display:none;' : ''}" id="devWizLegacyScan">
-                    <div class="form-group flex-2">
-                        <label class="form-label" for="devWizAdapter">${this.t('devices.wizard.adapter', 'USB serial adapter')}</label>
-                        <select id="devWizAdapter" class="input" data-action="_devWizAdapterPick" data-with-value data-on="change">
-                            ${this._devWizAdapterOptions(d)}
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <button class="btn btn-secondary btn-sm" id="devWizScanBtn" data-action="devWizScanBridge" data-with-el>
-                            <i aria-hidden="true" class="bi bi-arrow-repeat"></i> ${this.t('devices.wizard.scan', 'Scan')}</button>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label" for="devWizUnitB">${this.t('lbl.unitId', "Unit ID")}</label>
-                        <input type="number" id="devWizUnitB" class="input" aria-label="Unit ID" value="${d.unit_id}" min="0" max="255">
-                    </div>
-                </div>
-                <div class="field-hint" id="devWizBridgeHint" style="margin-top:2px;">${
-                    d.host && rtuBridge
-                        ? this.t('devices.wizard.bridgeBound', 'Bound to {ep} — the adapter keeps this endpoint across replug.').replace('{ep}', `${d.host}:${d.port}`)
-                        : this.t('devices.wizard.bridgeScanHint', 'Plug the adapter in and press Scan. Baud rate is set on the bridge (default 9600 8N1).')}</div>
-                <button class="btn btn-secondary btn-sm" style="margin-top:8px;" data-action="devWizardTest" data-with-el>
-                    <i aria-hidden="true" class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
-            </div>
-            <div id="devWizRtuDirect" style="display:${rtuBridge ? 'none' : ''}">
-                ${tap ? this._devWizTapWhereHtml(d) : ''}
-                <div class="form-row">
-                    <div class="form-group flex-2" ${tapNet ? 'style="display:none"' : ''}>
-                        <label class="form-label" for="devWizSerial">${this.t('devices.wizard.serialPort', 'Serial port')}</label>
-                        <input type="text" id="devWizSerial" class="input" value="${this._esc(d.serial_port)}" placeholder="/dev/ttyUSB0">
-                    </div>
-                    <div class="form-group" ${tapNet ? 'style="display:none"' : ''}>
-                        <label class="form-label" for="devWizBaud">${this.t('lbl.baudrate', "Baudrate")}</label>
-                        <select id="devWizBaud" class="input">
-                            ${[9600, 19200, 38400, 57600, 115200].map(b => `<option ${b === +d.baudrate ? 'selected' : ''}>${b}</option>`).join('')}
-                        </select>
-                    </div>
-                    <div class="form-group" ${tapNet ? 'style="display:none"' : ''}>
-                        <label class="form-label" for="devWizParity">${this.t('lbl.parity', "Parity")}</label>
-                        <select id="devWizParity" class="input">
-                            ${['N', 'E', 'O'].map(x => `<option ${x === d.parity ? 'selected' : ''}>${x}</option>`).join('')}
-                        </select>
-                    </div>
-                    <div class="form-group" ${tap ? 'style="display:none"' : ''}>
-                        <label class="form-label" for="devWizFraming">${this.t('devices.wizard.framing', 'Framing')}</label>
-                        <select id="devWizFraming" class="input" title="${this._esc(this.t('devices.wizard.framingHint', 'RTU (binary, CRC) is what almost every device speaks. ASCII (“:” … LRC, readable hex) is found on older PLCs and meters — use it only when the manual says Modbus ASCII. All slaves on one line speak the same one.'))}">
-                            <option value="rtu" ${d.framing !== 'ascii' ? 'selected' : ''}>RTU</option>
-                            <option value="ascii" ${d.framing === 'ascii' ? 'selected' : ''}>ASCII</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label" for="devWizUnitR">${this.t('lbl.unitId', "Unit ID")}</label>
-                        <input type="number" id="devWizUnitR" class="input" aria-label="Unit ID" value="${d.unit_id}" min="0" max="255">
-                    </div>
-                </div>
-                ${tapNet ? `<div class="field-hint" style="margin-top:6px;"><i aria-hidden="true" class="bi bi-ear"></i> ${this.t('devices.wizard.rtuTapNetNote', 'Listen-only through the bridge: another master already polls this bus — the gateway never transmits, it decodes the answers that unit gives, at the master’s rhythm. Several taps can listen to one bus, each with its own unit id; a bus is either polled or tapped. After saving, Test on the device shows what the tap hears.')}</div>`
-                : tap ? `<div class="field-hint" style="margin-top:6px;"><i aria-hidden="true" class="bi bi-ear"></i> ${this.t('devices.wizard.rtuTapNote', 'Listen-only: another master already polls this bus — the gateway never transmits, it decodes the answers that unit gives. Values arrive at the master’s rhythm; several taps can share one port (same baud/parity). The adapter must be mapped into the container (e.g. devices: /dev/ttyUSB1). After saving, Test on the device shows what the tap hears.')}</div>` : `
-                <button class="btn btn-secondary btn-sm" data-action="devWizardTest" data-with-el>
-                    <i aria-hidden="true" class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
-                <div class="field-hint" style="margin-top:6px;">${this.t('devices.wizard.rtuNote', 'The serial device must be attached to the host and mapped into the container (e.g. devices: /dev/ttyUSB0). It starts polling right after saving.')}</div>`}
-            </div>
-            <div class="wiz-test-result" id="devWizTestResult2" role="status"></div>
-        </div>
-        <div id="devWizMqttFields" style="display:${d.protocol === 'mqtt' ? '' : 'none'}">
-            <div class="form-row">
-                <div class="form-group flex-2">
-                    <label class="form-label" for="devWizBroker">${this.t('devices.wizard.broker', 'MQTT broker')}</label>
-                    <input type="text" id="devWizBroker" class="input" value="${this._esc(d.broker || '')}" placeholder="192.168.1.100">
-                </div>
-                <div class="form-group">
-                    <label class="form-label" for="devWizMqttPort">${this.t('lbl.port', 'Port')}</label>
-                    <input type="number" id="devWizMqttPort" class="input" value="${d.mqtt_port || 1883}" min="1" max="65535">
-                </div>
-            </div>
-            <div class="form-group">
-                <label class="form-label" for="devWizMqttTopic">${this.t('devices.wizard.mqttTopic', 'Topic (subscribe)')}</label>
-                <input type="text" id="devWizMqttTopic" class="input" value="${this._esc(d.topic || '')}" placeholder="sensors/# or shellies/shelly1/status">
-                <div class="field-hint">${this.t('devices.wizard.mqttTopicHint', 'The device subscribes here; values are read from the JSON payload by the template’s json_path. + and # wildcards supported.')}</div>
-                <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-                    <span class="field-hint" style="margin:0;">${this.t('devices.wizard.presets', 'Presets:')}</span>
-                    <button type="button" class="calc-chip" ${this._act('_devWizMqttPreset', ["zigbee2mqtt_sensor", "zigbee2mqtt/<friendly_name>"])}><i aria-hidden="true" class="bi bi-broadcast-pin"></i> Zigbee (zigbee2mqtt)</button>
-                    <button type="button" class="calc-chip" ${this._act('_devWizMqttPreset', ["ble_theengs_sensor", "home/TheengsGateway/BTtoMQTT/<MAC>"])}><i aria-hidden="true" class="bi bi-bluetooth"></i> BLE (Theengs/BTHome)</button>
-                </div>
-            </div>
-            <div class="form-row">
-                <div class="form-group"><label class="form-label" for="devWizMqttUser">${this.t('lbl.username', 'Username')}</label>
-                    <input type="text" id="devWizMqttUser" class="input" value="${this._esc(d.mqtt_username || '')}" autocomplete="off"></div>
-                <div class="form-group"><label class="form-label" for="devWizMqttPass">${this.t('lbl.password', 'Password')}</label>
-                    <input type="password" id="devWizMqttPass" class="input" value="${this._esc(d.mqtt_password || '')}" autocomplete="new-password"></div>
-                <div class="form-group" style="align-self:end;"><label style="display:flex;align-items:center;gap:8px;">
-                    <input type="checkbox" id="devWizMqttTls" ${d.mqtt_tls ? 'checked' : ''}> ${this.t('devices.wizard.mqttTls', 'TLS (8883)')}</label></div>
-            </div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                <button class="btn btn-secondary btn-sm" data-action="devWizardTest" data-with-el>
-                    <i aria-hidden="true" class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
-                <button class="btn btn-secondary btn-sm" id="devWizMqttBrowseBtn" data-action="devWizMqttBrowse" data-with-el>
-                    <i aria-hidden="true" class="bi bi-binoculars"></i> ${this.t('devices.wizard.browseTopics', 'Browse topics')}</button>
-            </div>
-            <div class="wiz-test-result" id="devWizTestResult4" role="status"></div>
-            <div id="devWizMqttBrowse" style="display:none;">
-                <input type="text" id="devWizMqttBrowseFilter" class="input" style="margin:8px 0 6px;"
-                       placeholder="${this._esc(this.t('devices.wizard.browseFilter', 'Filter topics…'))}"
-                       data-action="_devWizBrowseRender" data-on="input">
-                <div class="mqtt-browse-list" id="devWizMqttBrowseList" role="listbox"
-                     aria-label="MQTT topics"></div>
-                <div class="field-hint" id="devWizMqttBrowseHint"></div>
-            </div>
-        </div>`;
-    },
-
-    // ── MQTT topic browse: collect the broker's speaking topics, click to fill ──
-    async devWizMqttBrowse(btn) {
-        const g = id => document.getElementById(id);
-        const broker = g('devWizBroker')?.value.trim();
-        const out = g('devWizTestResult4');
-        if (!broker) {
-            out.innerHTML = `<span class="err">${this._esc(this.t('devices.wizard.browseNeedBroker', 'Enter the broker address first.'))}</span>`;
-            return;
-        }
-        btn.disabled = true;
-        g('devWizMqttBrowse').style.display = '';
-        g('devWizMqttBrowseList').innerHTML =
-            `<div class="field-hint" style="padding:8px;">${this._esc(this.t('devices.wizard.browseListening', 'Listening 3s — retained topics appear instantly, live ones as they publish…'))}</div>`;
-        g('devWizMqttBrowseHint').textContent = '';
-        try {
-            const r = await fetch('/api/discover/mqtt/browse', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    broker,
-                    port: parseInt(g('devWizMqttPort')?.value, 10) || 1883,
-                    username: g('devWizMqttUser')?.value.trim() || '',
-                    password: g('devWizMqttPass')?.value || '',
-                    tls: !!g('devWizMqttTls')?.checked,
-                }),
-            });
-            const data = await r.json();
-            if (!r.ok) throw new Error((data.detail?.errors || [r.statusText]).join('; '));
-            if (!data.ok) throw new Error(data.error || 'browse failed');
-            this._mqttBrowseTopics = data.topics || [];
-            this._devWizBrowseRender();
-            g('devWizMqttBrowseHint').textContent = data.truncated
-                ? this.t('devices.wizard.browseTruncated', 'Topic list truncated — narrow it with the filter field.')
-                : this.t('devices.wizard.browsePick', 'Click a topic to use it as the subscribe topic.');
-        } catch (e) {
-            g('devWizMqttBrowseList').innerHTML =
-                `<div class="err" style="padding:8px;">${this._esc(String(e.message || e))}</div>`;
-        } finally {
-            btn.disabled = false;
-        }
-    },
-
-    _devWizBrowseRender() {
-        const list = document.getElementById('devWizMqttBrowseList');
-        if (!list) return;
-        const q = (document.getElementById('devWizMqttBrowseFilter')?.value || '').toLowerCase();
-        const all = this._mqttBrowseTopics || [];
-        const rows = q ? all.filter(t => t.topic.toLowerCase().includes(q)) : all;
-        if (!rows.length) {
-            list.innerHTML = `<div class="field-hint" style="padding:8px;">${this._esc(
-                all.length ? this.t('devices.wizard.browseNoMatch', 'No topic matches the filter.')
-                           : this.t('devices.wizard.browseEmpty', 'No topics heard — the broker may be idle (nothing retained, nobody publishing). Try again while the device is sending.'))}</div>`;
-            return;
-        }
-        list.innerHTML = rows.slice(0, 400).map(t => `
-            <div class="mqtt-browse-row" role="option" tabindex="0"
-                 ${this._act('_devWizBrowsePick', [t.topic])} data-key-enter>
-                <span class="mqtt-browse-topic">${this._esc(t.topic)}</span>
-                ${t.retained ? '<span class="badge badge-secondary">retained</span>' : ''}
-                ${t.count > 1 ? `<span class="mqtt-browse-count">×${t.count}</span>` : ''}
-                <span class="mqtt-browse-payload">${this._esc((t.payload || '').slice(0, 120))}</span>
-            </div>`).join('');
-    },
-
-    _devWizBrowsePick(topic) {
-        const inp = document.getElementById('devWizMqttTopic');
-        if (inp) {
-            inp.value = topic;
-            inp.focus();
-        }
-        const hint = document.getElementById('devWizMqttBrowseHint');
-        if (hint) hint.textContent = this.t('devices.wizard.browsePicked', 'Topic set. Wildcards + and # still work if you generalize it.');
+        return '<div id="devWizConn" class="cf-host"></div>';
     },
 
     // Sensor preset chips (step 1, MQTT): fill the subscribe-topic pattern for
@@ -361,64 +110,144 @@ Object.assign(JanitzaMonitor.prototype, {
         const inp = document.getElementById('devWizMqttTopic');
         if (inp && !inp.value.trim()) inp.value = topicPattern;
         if (this._devWiz) this._devWiz.data.template = templateId;
+        if (this._devWiz && inp) this._devWiz.cf.topic = inp.value;
         inp?.focus();
         inp?.select?.();
     },
 
     _devWizStep2Html() {
         const w = this._devWiz;
+        const t = (k, d, p) => this.t(k, d, p);
         // Only templates whose transport matches the chosen protocol — a Modbus
         // map can't be read over HTTP (and vice versa). Drop a now-incompatible
         // selection so the picker + validation stay honest.
-        const cls = w.data.protocol === 'http' ? 'http'
-                  : w.data.protocol === 'mqtt' ? 'mqtt' : 'modbus';
-        const compatible = w.templates.filter(t => (t.transport || 'modbus') === cls);
-        if (w.data.template && !compatible.some(t => t.id === w.data.template)) w.data.template = '';
-        const rows = compatible.map(t => `
-            <div class="tpl-pick ${t.id === w.data.template ? 'selected' : ''}" data-tpl="${this._esc(t.id)}"
-                 role="radio" aria-checked="${t.id === w.data.template}" tabindex="0">
-                <i aria-hidden="true" class="bi ${t.id === w.data.template ? 'bi-check-circle-fill' : 'bi-circle'}"></i>
-                <div><strong>${this._esc(t.name)}</strong>
-                    <div class="field-hint">${this._esc(t.vendor || '')} ${this._esc(t.model || '')}
-                        ${(t.used_by || []).length ? `· ${this.t('devtpl.usedBy', 'used by')} ${t.used_by.map(x => this._esc(x)).join(', ')}` : ''}</div></div>
-                <div class="tpl-pick-meta">${t.builtin ? this.t('devices.builtin', 'built-in') : this.t('devices.community', 'user')}<br>${t.registers} measurements · v${this._esc(t.version)}</div>
-                <div class="tpl-pick-actions">
-                    ${t.builtin
-                        ? `<button class="btn btn-ghost btn-sm" ${this._act('openTplEditor', [t.id, true])} title="${this.t('devtpl.duplicate', 'Duplicate to edit')}"><i aria-hidden="true" class="bi bi-copy"></i></button>`
-                        : `<button class="btn btn-ghost btn-sm" ${this._act('openTplEditor', [t.id])} title="${this.t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>` +
-                          ((t.used_by || []).length ? '' : `<button class="btn btn-ghost btn-sm" ${this._act('tplDelete', [t.id])} title="${this.t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>`)}
-                    <button class="btn btn-ghost btn-sm" ${this._act('tplExport', [t.id])} title="${this.t('common.export', 'Export')}"><i aria-hidden="true" class="bi bi-download"></i></button>
-                </div>
-            </div>`).join('');
+        const cls = this._devWizTplClass();
+        const compatible = w.templates.filter(x => (x.transport || 'modbus') === cls);
+        if (w.data.template && !compatible.some(x => x.id === w.data.template)) w.data.template = '';
+        // what kind of equipment: the chips that put its templates first
+        const kinds = [...new Set(compatible.map(x => x.device_kind || x.kind || 'other'))]
+            .sort((a, b) => this._KIND_ORDER.indexOf(a) - this._KIND_ORDER.indexOf(b));
+        const kindChips = kinds.length > 1 ? `
+            <div class="tplp-kinds" role="group" aria-label="${this._esc(t('devices.wizard.tplKindQ', 'What kind of equipment'))}">
+                <span class="cbx-facets-label">${this._esc(t('find.facet.kind', 'Kind'))}</span>
+                ${kinds.map(k => `<button type="button" class="find-chip" data-tplp-kind="${this._esc(k)}" aria-pressed="${w.tplKind === k}">
+                    <i aria-hidden="true" class="bi ${this._KIND_ICON[k] || this._KIND_ICON.other}"></i> ${this._esc(this._kindLabel(k))}</button>`).join('')}
+            </div>` : '';
+        const empty = `<span class="field-hint">${this._esc(t('devices.wizard.noTplForProto', 'No {proto} templates yet — upload or create one for this protocol.').replace('{proto}', cls === 'http' ? 'HTTP/JSON' : cls === 'mqtt' ? 'MQTT' : 'Modbus'))}</span>`;
         return `
-        <div class="wiz-eyebrow">${this.t('devices.wizard.tplQ', 'What is it?')}</div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <input type="text" id="devWizTplSearch" class="input" placeholder="${this.t('common.search', 'Search')}…" style="max-width:240px;">
+        <div class="wiz-eyebrow">${t('devices.wizard.tplQ', 'What is it?')}</div>
+        <div class="tplp-toolbar">
+            <div class="tplp-search"><i aria-hidden="true" class="bi bi-search"></i>
+                <input type="text" id="devWizTplSearch" class="input" aria-label="${this._esc(t('devices.wizard.tplSearch', 'Search templates by name, vendor or model'))}"
+                       placeholder="${this._esc(t('devices.wizard.tplSearchPh', 'Search name, vendor, model…'))}"></div>
             <button class="btn btn-secondary btn-sm" data-action="tplUpload">
-                <i aria-hidden="true" class="bi bi-upload"></i> ${this.t('devtpl.upload', 'Upload template')}</button>
+                <i aria-hidden="true" class="bi bi-upload"></i> ${t('devtpl.upload', 'Upload template')}</button>
             <button class="btn btn-secondary btn-sm" ${this._act('openTplEditor', [null])}>
-                <i aria-hidden="true" class="bi bi-plus-lg"></i> ${this.t('devtpl.new', 'New template')}</button>
+                <i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('devtpl.new', 'New template')}</button>
         </div>
-        <p class="field-hint" style="margin:6px 0;">${this.t('devices.wizard.tplIntro2', 'The template is the measurement map of the equipment: pick one, upload a file, or create your own.')}</p>
-        <div class="tpl-pick-list" id="devWizTplList" role="radiogroup">${rows ||
-            `<span class="field-hint">${this.t('devices.wizard.noTplForProto', 'No {proto} templates yet — upload or create one for this protocol.').replace('{proto}', cls === 'http' ? 'HTTP/JSON' : cls === 'mqtt' ? 'MQTT' : 'Modbus')}</span>`}</div>
-        <div class="field-error" id="devWizTplError" style="display:none;">${this.t('devices.wizard.tplRequired', 'Choose a template to continue.')}</div>`;
+        ${kindChips}
+        <p class="field-hint" style="margin:6px 0;">${t('devices.wizard.tplIntro2', 'The template is the measurement map of the equipment: pick one, upload a file, or create your own.')}</p>
+        <div class="tpl-pick-list tplp" id="devWizTplList">${compatible.length ? '' : empty}</div>
+        <div class="tplp-actions" id="devWizTplActions"></div>
+        <div id="devWizTplNotes">${this._tplNotesHtml((compatible.find(x => x.id === w.data.template) || {}).notes)}</div>
+        <div class="field-error" id="devWizTplError" style="display:none;">${t('devices.wizard.tplRequired', 'Choose a template to continue.')}</div>`;
+    },
+
+    _devWizTplClass() {
+        const p = this._devWiz.data.protocol;
+        return p === 'http' ? 'http' : p === 'mqtt' ? 'mqtt' : 'modbus';
+    },
+
+    // the template list: the shared picker, always open — search, the kind
+    // chips (its templates first, the others folded), the vendor chips;
+    // the actions under it act on the template chosen
+    _devWizTplPanel() {
+        const w = this._devWiz;
+        const host = document.getElementById('devWizTplList');
+        const search = document.getElementById('devWizTplSearch');
+        if (!host || !search) return;
+        const t = (k, d, p) => this.t(k, d, p);
+        const cls = this._devWizTplClass();
+        const compatible = w.templates.filter(x => (x.transport || 'modbus') === cls);
+        if (!compatible.length) return;
+        // Sensor presets: picking a bridge-backed sensor template prefills
+        // the (still empty) subscribe topic with the bridge's documented
+        // pattern — the user replaces the <placeholder> with their device.
+        const TOPIC_PRESETS = {
+            zigbee2mqtt_sensor: 'zigbee2mqtt/<friendly_name>',
+            ble_theengs_sensor: 'home/TheengsGateway/BTtoMQTT/<MAC>',
+        };
+        const items = () => compatible.map(x => {
+            const k = x.device_kind || x.kind || 'other';
+            const fits = !w.tplKind || k === w.tplKind;
+            return {
+                value: x.id, label: x.name || x.id, chip: x.id, kind: k, facet: x.vendor || t('pick.noVendor', 'No vendor'),
+                group: w.tplKind ? t('pick.recommended', 'For {kind}', { kind: this._kindLabel(w.tplKind) }) : this._kindLabel(k),
+                more: !fits,
+                sub: [[x.vendor, x.model].filter(Boolean).join(' '),
+                      (x.used_by || []).length ? `${t('devtpl.usedBy', 'used by')} ${x.used_by.join(', ')}` : ''].filter(Boolean).join(' · '),
+                aside: `${x.builtin ? t('devices.builtin', 'built-in') : t('devices.community', 'user')} · ${this.tn('pick.nMeasurements', x.registers || 0, '{n} measurements')}${x.version ? ` · v${x.version}` : ''}`,
+                warn: (x.notes || []).some(n => n.level === 'warning') ? t('tplNotes.hasWarning', 'This template has a note to read') : '',
+                search: `${x.vendor || ''} ${x.model || ''} ${(this._KIND_WORDS || {})[k] || ''}`,
+                attrs: { 'data-tpl': x.id },
+            };
+        }).sort((a, b) => (a.more - b.more) || (this._KIND_ORDER.indexOf(a.kind) - this._KIND_ORDER.indexOf(b.kind))
+            || a.label.localeCompare(b.label));
+        const c = this._cbxNew(search, {
+            inline: true, optClass: 'tpl-pick',
+            listLabel: t('devices.wizard.tplList', 'Templates'),
+            current: () => w.data.template,
+            facet: { label: t('find.facet.vendor', 'Vendor') },
+            moreGroup: t('pick.otherKinds', 'Other kinds'),
+            moreLabel: n => this.tn('pick.showOtherKinds', n, 'Show {n} templates of other kinds…'),
+            onPick: it => {
+                w.data.template = it.value;
+                if (w.cf.mode === 'mqtt' && !(w.cf.topic || '').trim() && TOPIC_PRESETS[it.value]) {
+                    w.cf.topic = TOPIC_PRESETS[it.value];
+                }
+                const err = document.getElementById('devWizTplError');
+                if (err) err.style.display = 'none';
+                this._cbxRender(c);
+                this._devWizTplAfterPick(compatible);
+            },
+        });
+        host.append(c.pop, c.live);
+        c.items = items();
+        this._cbxRender(c);
+        search.addEventListener('input', () => { c.q = search.value; c.activeValue = null; this._cbxRender(c); });
+        document.querySelectorAll('[data-tplp-kind]').forEach(b => b.addEventListener('click', () => {
+            w.tplKind = w.tplKind === b.dataset.tplpKind ? '' : b.dataset.tplpKind;
+            document.querySelectorAll('[data-tplp-kind]').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.tplpKind === w.tplKind)));
+            c.more = false;
+            c.items = items();
+            this._cbxRender(c);
+        }));
+        this._devWizTplAfterPick(compatible);
+    },
+
+    // what the chosen template's toolbar and notes say
+    _devWizTplAfterPick(compatible) {
+        const w = this._devWiz;
+        const t = (k, d) => this.t(k, d);
+        const x = compatible.find(y => y.id === w.data.template);
+        const bar = document.getElementById('devWizTplActions');
+        if (bar) {
+            bar.innerHTML = x ? `<span class="field-hint">${this._esc(x.name || x.id)}:</span>
+                ${x.builtin
+                    ? `<button type="button" class="btn btn-ghost btn-sm" ${this._act('openTplEditor', [x.id, true])}><i aria-hidden="true" class="bi bi-copy"></i> ${t('devtpl.duplicate', 'Duplicate to edit')}</button>`
+                    : `<button type="button" class="btn btn-ghost btn-sm" ${this._act('openTplEditor', [x.id])}><i aria-hidden="true" class="bi bi-pencil"></i> ${t('common.edit', 'Edit')}</button>`
+                      + ((x.used_by || []).length ? '' : `<button type="button" data-admin class="btn btn-ghost btn-sm" ${this._act('tplDelete', [x.id])}><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>`)}
+                <button type="button" class="btn btn-ghost btn-sm" ${this._act('tplExport', [x.id])}><i aria-hidden="true" class="bi bi-download"></i> ${t('common.export', 'Export')}</button>` : '';
+        }
+        const notes = document.getElementById('devWizTplNotes');
+        if (notes) notes.innerHTML = this._tplNotesHtml((x || {}).notes);
     },
 
     _devWizStep3Html() {
         const d = this._devWiz.data;
-        const idLocked = !!this._devWiz.editId;
-        // The primary device (UMG512) keeps its published identity byte-for-byte:
-        // topic, bucket and Influx tag are fixed so existing history/HA entities
-        // don't break. Only its connection, name and HA-discovery flag are editable.
-        // Routing (topic/bucket/tag) is fixed for the primary AND after creation:
-        // changing it re-routes future data and orphans existing history / HA entities.
-        const routeLocked = this._devWiz.primary || !!this._devWiz.editId;
-        const routeNote = routeLocked
-            ? `<div class="field-hint"><i aria-hidden="true" class="bi bi-lock"></i> ${this._devWiz.primary
-                ? this.t('devices.wizard.routeLocked', 'Fixed for device #1 (protects existing history &amp; Home Assistant entities).')
-                : this.t('devices.wizard.routeLockedEdit', 'Fixed after creation — changing it would orphan existing history &amp; HA entities.')}</div>`
-            : '';
+        // a new device: its id and routing are chosen here, and fixed once
+        // it exists (they name its topics and its history)
+        const idLocked = false, routeLocked = false, routeNote = '';
         return `
         <div class="wiz-eyebrow">${this.t('devices.wizard.routeQ', 'Where does its data go?')}</div>
         <div class="form-row">
@@ -438,7 +267,7 @@ Object.assign(JanitzaMonitor.prototype, {
         <div class="form-row">
             <div class="form-group flex-2">
                 <label class="form-label" for="devWizTopic">${this.t('devices.wizard.topicPrefix', 'MQTT topic prefix')}</label>
-                <input type="text" id="devWizTopic" class="input" value="${this._esc(d.topic_prefix)}" placeholder="meters/em24-hala" ${routeLocked ? 'disabled' : ''}>
+                <input type="text" id="devWizTopic" class="input" value="${this._esc(d.topic_prefix)}" placeholder="${this._esc(this._wizTopicFor(d.id || 'em24-hala'))}" ${routeLocked ? 'disabled' : ''}>
                 ${routeNote}
             </div>
             <div class="form-group">
@@ -479,56 +308,25 @@ Object.assign(JanitzaMonitor.prototype, {
             });
         });
         if (w.step === 1) {
-            document.querySelectorAll('input[name="devWizProto"]').forEach(r =>
-                r.addEventListener('change', () => {
-                    this._devWizCollect();
-                    // RTU defaults to over-network (bridge) — the recommended mode;
-                    // the sub-toggle lets the user switch to direct serial.
-                    w.data.protocol = r.value === 'rtu' ? 'rtu-tcp' : r.value;
-                    this._devWizFitBridge();
-                    this._devWizRender();
-                }));
-            document.querySelectorAll('input[name="devWizRtuMode"]').forEach(r =>
-                r.addEventListener('change', () => {
-                    this._devWizCollect();
-                    w.data.protocol = r.value;          // 'rtu' | 'rtu-tcp' | 'rtu_tap'
-                    this._devWizFitBridge();
-                    this._devWizRender();
-                }));
+            this._cfMount(document.getElementById('devWizConn'), 'devWiz', w.cf, {
+                context: 'add', allowNone: true,
+                template: () => w.data.template,
+                onChange: f => this._devWizConnChanged(f),
+            });
+        } else if (w.step === 2 && w.data.protocol === 'none') {
+            this._metersRowsMount('wizMtr', {});
+            document.querySelectorAll('input[name="wizMtrKind"]').forEach(r => r.addEventListener('change', () => {
+                document.querySelectorAll('#wizMtrKinds .seg-btn').forEach(l => l.classList.toggle('on', l.querySelector('input').checked));
+            }));
         } else if (w.step === 2) {
-            const list = document.getElementById('devWizTplList');
-            // Sensor presets: picking a bridge-backed sensor template prefills
-            // the (still empty) subscribe topic with the bridge's documented
-            // pattern — the user replaces the <placeholder> with their device.
-            const TOPIC_PRESETS = {
-                zigbee2mqtt_sensor: 'zigbee2mqtt/<friendly_name>',
-                ble_theengs_sensor: 'home/TheengsGateway/BTtoMQTT/<MAC>',
-            };
-            const pick = (el) => {
-                w.data.template = el.dataset.tpl;
-                if (w.data.protocol === 'mqtt' && !(w.data.topic || '').trim()
-                    && TOPIC_PRESETS[el.dataset.tpl]) {
-                    w.data.topic = TOPIC_PRESETS[el.dataset.tpl];
-                }
-                this._devWizRender();
-            };
-            list?.querySelectorAll('.tpl-pick').forEach(el => {
-                el.addEventListener('click', (e) => { if (!e.target.closest('.tpl-pick-actions')) pick(el); });
-                el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(el); } });
-            });
-            const search = document.getElementById('devWizTplSearch');
-            search?.addEventListener('input', () => {
-                const q = search.value.toLowerCase();
-                list.querySelectorAll('.tpl-pick').forEach(el =>
-                    el.style.display = el.textContent.toLowerCase().includes(q) ? '' : 'none');
-            });
+            this._devWizTplPanel();
         } else if (w.step === 3) {
             const name = document.getElementById('devWizName');
             const id = document.getElementById('devWizId');
             const topic = document.getElementById('devWizTopic');
             const preview = () => {
                 const did = id.value.trim() || 'device-id';
-                const p = topic.value.trim() || `meters/${did}`;
+                const p = topic.value.trim() || this._wizTopicFor(did);
                 const tag = document.getElementById('devWizTag')?.value.trim() || did;
                 document.getElementById('devWizTopicPreview').innerHTML =
                     `<div class="tp-row"><span class="tp-node">${this._esc(did)}</span>` +
@@ -538,7 +336,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     `<span class="tp-topic">${this._esc(tag)}</span></div>`;
             };
             name?.addEventListener('input', () => {
-                if (!this._devWiz.editId && !id.dataset.touched) {
+                if (!id.dataset.touched) {
                     id.value = name.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
                     preview();
                 }
@@ -550,130 +348,39 @@ Object.assign(JanitzaMonitor.prototype, {
         }
     },
 
-    // Build the <option> list for the bridge adapter dropdown from the last
-    // scan (cached on w.data._adapters). Keeps the currently-bound endpoint
-    // visible even before a scan (e.g. when editing an rtu-tcp device).
-    _devWizAdapterOptions(d) {
-        const ads = (this._devWiz.data._adapters || []).filter(a => a.available && a.tcp_port);
-        const cur = (d.host && d.port) ? `${d.host}::${d.port}` : '';
-        const opts = [];
-        if (!ads.length && !cur) {
-            return `<option value="">${this._esc(this.t('devices.wizard.noAdapters', '— press Scan to detect adapters —'))}</option>`;
+    // the connection form redrew (a mode, a bridge): step 2 is named after
+    // what it will ask, and Enter on any of its inputs moves the wizard on
+    _devWizConnChanged(f) {
+        const w = this._devWiz;
+        w.cf = f.M;
+        w.data.protocol = f.M.mode;
+        const s2 = document.querySelector('#devWizSteps [data-step="2"] [data-i18n]');
+        if (s2) {
+            const k = f.M.mode === 'none' ? 'wizMtr.step2' : 'devices.wizard.step2';
+            s2.setAttribute('data-i18n', k);
+            s2.textContent = this.t(k, f.M.mode === 'none' ? 'Meters & kind' : 'Template');
         }
-        let curSeen = false;
-        for (const a of ads) {
-            const val = `${a.bridge_host}::${a.tcp_port}`;
-            if (val === cur) curSeen = true;
-            const label = `${a.model || a.manufacturer || a.vendor_id || 'serial'}`
-                        + `${a.serial ? ' (' + a.serial + ')' : ''} → :${a.tcp_port}`;
-            opts.push(`<option value="${this._esc(val)}" ${val === cur ? 'selected' : ''}>${this._esc(label)}</option>`);
-        }
-        if (cur && !curSeen) {   // bound endpoint not in the (possibly empty) scan — keep it selectable
-            opts.unshift(`<option value="${this._esc(cur)}" selected>${this._esc(`${d.host}:${d.port}`)}</option>`);
-        }
-        return opts.join('');
-    },
-
-    // A dropdown pick binds the device to that adapter's stable endpoint.
-    _devWizAdapterPick(value) {
-        const [host, port] = String(value).split('::');
-        const d = this._devWiz.data;
-        d.host = host || '';
-        d.port = parseInt(port, 10) || 0;
-        const hint = document.getElementById('devWizBridgeHint');
-        if (hint && d.host) {
-            hint.textContent = this.t('devices.wizard.bridgeBound',
-                'Bound to {ep} — the adapter keeps this endpoint across replug.')
-                .replace('{ep}', `${d.host}:${d.port}`);
-        }
-    },
-
-    // Scan the serial bridge for live adapters and refresh the dropdown.
-    async devWizScanBridge(btn) {
-        btn.disabled = true;
-        const orig = btn.innerHTML;
-        btn.innerHTML = `<i aria-hidden="true" class="bi bi-arrow-repeat"></i> ${this._esc(this.t('devices.wizard.scanning', 'Scanning…'))}`;
-        let msg = '', ok = false;
-        try {
-            const r = await fetch('/api/bridge/adapters');
-            const data = await r.json();
-            if (!r.ok) throw new Error((data.detail?.errors || [data.detail || r.statusText]).join('; '));
-            if (!data.available) throw new Error(data.error || this.t('devices.wizard.bridgeDown', 'Serial bridge not reachable.'));
-            this._devWiz.data._adapters = data.adapters || [];
-            const avail = this._devWiz.data._adapters.filter(a => a.available && a.tcp_port);
-            if (avail.length === 1) this._devWizAdapterPick(`${avail[0].bridge_host}::${avail[0].tcp_port}`);
-            ok = avail.length > 0;
-            msg = avail.length
-                ? this.t('devices.wizard.scanFound', 'Found {n} adapter(s).').replace('{n}', avail.length)
-                : this.t('devices.wizard.scanNone', 'No available adapters — plug one in and Scan again.');
-        } catch (e) {
-            msg = String(e.message || e);
-        }
-        // The dropdown lives inside the re-rendered body, so render first, then
-        // report into the freshly-created result element.
-        this._devWizRender();
-        const out = document.getElementById('devWizTestResult2');
-        if (out) { out.className = 'wiz-test-result ' + (ok ? 'ok' : 'err'); out.textContent = (ok ? '✓ ' : '✗ ') + msg; }
+        f.host.querySelectorAll('.input').forEach(inp => inp.addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); this.devWizardNext(); }
+        }));
     },
 
     _devWizCollect() {
         const w = this._devWiz, d = w.data;
         const g = id => document.getElementById(id);
+        if (w.step === 2 && d.protocol === 'none') {
+            d.kind = document.querySelector('input[name="wizMtrKind"]:checked')?.value || d.kind || '';
+            d.meters = this._metersRowsRead('wizMtr');
+            return;
+        }
         if (w.step === 1) {
-            d.protocol = document.querySelector('input[name="devWizProto"]:checked')?.value || 'tcp';
-            if (d.protocol === 'http') {
-                d.url = g('devWizUrl')?.value.trim() ?? d.url;
-            } else if (d.protocol === 'tcp') {
-                if (g('devWizGw')) {
-                    const [b, p] = (g('devWizGw').value || '').split('::');
-                    d.bridge = b || '';
-                    d.bridge_port = parseInt(p, 10) || null;
-                } else if (d.bridge && this._bridgeType(((this._bridges || []).find(x => x.id === d.bridge) || {}).type).framing !== 'modbus_tcp') {
-                    d.bridge = ''; d.bridge_port = null;     // came from an RTU bridge: TCP is direct
-                }
-                d.host = g('devWizHost')?.value.trim() ?? d.host;
-                d.udp = !!g('devWizUdp')?.checked;
-                d.port = parseInt(g('devWizPort')?.value, 10) || 502;
-                d.unit_id = parseInt(g('devWizUnit')?.value, 10) ?? 1;
-                d.timeout = parseFloat(g('devWizTimeout')?.value) || 3;
-            } else if (d.protocol === 'mqtt') {
-                d.broker = g('devWizBroker')?.value.trim() ?? d.broker;
-                d.mqtt_port = parseInt(g('devWizMqttPort')?.value, 10) || 1883;
-                d.topic = g('devWizMqttTopic')?.value.trim() ?? d.topic;
-                d.mqtt_username = g('devWizMqttUser')?.value.trim() ?? d.mqtt_username;
-                d.mqtt_password = g('devWizMqttPass')?.value ?? d.mqtt_password;
-                d.mqtt_tls = !!g('devWizMqttTls')?.checked;
-            } else {   // rtu (direct serial), rtu_tap (listening) or rtu-tcp (over the bridge)
-                const mode = document.querySelector('input[name="devWizRtuMode"]:checked')?.value;
-                if (mode) d.protocol = mode;
-                if (d.protocol === 'rtu-tcp') {
-                    // through a bridge (its bus picked here), or the legacy scan
-                    // of the local bridge (host/port set by _devWizAdapterPick)
-                    if (g('devWizBridge')) {
-                        d.bridge = g('devWizBridge').value || '';
-                        d.bridge_port = parseInt(g('devWizBridgePort')?.value, 10) || null;
-                        d.unit_id = parseInt(g('devWizUnitBr')?.value, 10) || 1;
-                    } else {
-                        d.unit_id = parseInt(g('devWizUnitB')?.value, 10) ?? 1;
-                    }
-                } else {
-                    if (d.protocol === 'rtu_tap' && g('devWizTapWhere')) {
-                        const [b, p] = (g('devWizTapWhere').value || '').split('::');
-                        d.bridge = b || '';
-                        d.bridge_port = parseInt(p, 10) || null;
-                    } else if (d.protocol === 'rtu') {
-                        d.bridge = ''; d.bridge_port = null;
-                    }
-                    d.serial_port = g('devWizSerial')?.value.trim() ?? d.serial_port;
-                    if (d.protocol === 'rtu') d.framing = g('devWizFraming')?.value || 'rtu';
-                    d.baudrate = parseInt(g('devWizBaud')?.value, 10) || 9600;
-                    d.parity = g('devWizParity')?.value || 'N';
-                    d.unit_id = parseInt(g('devWizUnitR')?.value, 10) ?? 1;
-                }
-            }
+            const f = (this._cf || {}).devWiz;
+            if (f) w.cf = f.read().model;
+            d.protocol = w.cf.mode;
+            if (d.protocol === 'none') d.template = '';
         } else if (w.step === 3) {
             d.name = g('devWizName')?.value.trim() ?? d.name;
-            if (!w.editId) d.id = g('devWizId')?.value.trim() ?? d.id;
+            d.id = g('devWizId')?.value.trim() ?? d.id;
             d.topic_prefix = g('devWizTopic')?.value.trim() ?? d.topic_prefix;
             d.bucket = g('devWizBucket')?.value.trim() ?? d.bucket;
             d.device_tag = g('devWizTag')?.value.trim() ?? d.device_tag;
@@ -694,20 +401,37 @@ Object.assign(JanitzaMonitor.prototype, {
 
     _devWizValidate() {
         const w = this._devWiz, d = w.data;
-        if (w.step === 1 && d.protocol === 'tcp' && !d.host && !d.bridge) return this._wizInvalid('devWizHost');
-        if (w.step === 1 && (d.protocol === 'rtu' || (d.protocol === 'rtu_tap' && !d.bridge)) && !d.serial_port)
-            return this._wizInvalid('devWizSerial');
-        if (w.step === 1 && d.protocol === 'rtu-tcp' && !d.host && !d.bridge) return this._wizInvalid('devWizAdapter');
-        if (w.step === 1 && d.protocol === 'http' && !/^https?:\/\//.test(d.url || ''))
-            return this._wizInvalid('devWizUrl');
-        if (w.step === 1 && d.protocol === 'mqtt' && !d.broker) return this._wizInvalid('devWizBroker');
-        if (w.step === 1 && d.protocol === 'mqtt' && !d.topic) return this._wizInvalid('devWizMqttTopic');
+        if (w.step === 1 && d.protocol !== 'none') {
+            const f = (this._cf || {}).devWiz;
+            const errs = f ? window.ConnformModel.errors(w.cf, (k, x) => this.t(k, x)) : {};
+            if (Object.keys(errs).length) {
+                const left = f.showErrors(errs);
+                this._wizSay(left.length ? left.join(' · ') : this.t('devices.fixMarked', 'Fix the marked fields.'));
+                return false;
+            }
+        }
+        if (w.step === 2 && d.protocol === 'none') {
+            const f = {};
+            if (!d.kind) f.kind = this.t('wizMtr.needKind', 'Say what it is');
+            if (!(d.meters || []).length) f['meters[0].device'] = this.t('wizMtr.needMeter', 'Name at least one meter');
+            (d.meters || []).forEach((l, i) => {
+                if (!l.role) f[`meters[${i}].role`] = this.t('meters.needRole', 'Choose its role');
+                if (!l.device) f[`meters[${i}].device`] = this.t('meters.needMeter', 'Choose the meter');
+                else if (!l.power && !l.energy) f[`meters[${i}].power`] = this.t('meters.needField', 'Choose what it reads: its power or its energy counter');
+            });
+            if (Object.keys(f).length) {
+                const left = this._placeFieldErrors(document.getElementById('devWizBody'), f, p => this._wizMtrFieldId(p));
+                this._wizSay(left.length ? left.join(' · ') : this.t('devices.fixMarked', 'Fix the marked fields.'));
+                return false;
+            }
+            return true;
+        }
         if (w.step === 2 && !d.template) {
             const err = document.getElementById('devWizTplError');
             if (err) err.style.display = '';
             return false;
         }
-        if (w.step === 3 && !w.editId && !/^[a-z0-9][a-z0-9_-]{1,63}$/.test(d.id)) {
+        if (w.step === 3 && !/^[a-z0-9][a-z0-9_-]{1,63}$/.test(d.id)) {
             const err = document.getElementById('devWizIdError');
             if (err) {
                 err.textContent = this.t('devices.wizard.idInvalid', 'Use a-z 0-9 - _ (2-64 chars).');
@@ -719,48 +443,65 @@ Object.assign(JanitzaMonitor.prototype, {
         return true;
     },
 
-    async devWizardTest(btn) {
-        this._devWizCollect();
+    // Test: the connection form's own (the one builder for Test, the step-1
+    // check and Create)
+    devWizardTest(btn) {
+        return this._cfTest('devWiz', btn);
+    },
+
+    _devWizConnection() {
+        return window.ConnformModel.wire(this._devWiz.cf);
+    },
+
+    // a server path → the wizard input that holds it
+    _wizFieldId(path) {
+        if (path.startsWith('connection.')) return (this._cf || {}).devWiz?.fieldId(path) || null;
+        return ({ id: 'devWizId', name: 'devWizName' })[path] || null;
+    },
+
+    _wizSay(text) {
+        const fb = document.getElementById('devWizFeedback');
+        if (fb) { fb.textContent = text; fb.className = text ? 'save-feedback err' : 'save-feedback'; }
+    },
+
+    // Step 1 asks the gateway before moving on: what it would refuse about
+    // this connection (a URL it may not reach, a bus already taken, a line
+    // set differently) is said here, at its field — not on step 3 as a
+    // joined path. Only the connection is judged; the rest comes later.
+    async _devWizCheckConnection() {
         const d = this._devWiz.data;
-        const out = document.getElementById(
-            d.protocol === 'http' ? 'devWizTestResult3'
-            : d.protocol === 'mqtt' ? 'devWizTestResult4'
-            // both RTU modes (direct serial, over the network bridge) live in the RTU block
-            : (d.protocol === 'rtu' || d.protocol === 'rtu-tcp') ? 'devWizTestResult2' : 'devWizTestResult');
-        const orig = btn.innerHTML;
-        btn.disabled = true;
-        btn.innerHTML = '<span class="btn-spinner"></span> …';
+        let r, res;
         try {
-            const conn = d.protocol === 'http'
-                ? { protocol: 'http', url: d.url }
-                : d.protocol === 'mqtt'
-                ? { protocol: 'mqtt', broker: d.broker, port: d.mqtt_port || 1883, topic: d.topic,
-                    username: d.mqtt_username || '', password: d.mqtt_password || '', tls: !!d.mqtt_tls }
-                : d.protocol === 'rtu'
-                ? { protocol: this._devWizWireProto(d), serial_port: d.serial_port, baudrate: d.baudrate,
-                    parity: d.parity, stopbits: d.stopbits, unit_id: d.unit_id, timeout: d.timeout }
-                : d.protocol === 'rtu-tcp' && d.bridge
-                ? { bridge: d.bridge, bridge_port: d.bridge_port, unit_id: d.unit_id, timeout: d.timeout }
-                : d.protocol === 'rtu-tcp'
-                ? { protocol: 'rtu-tcp', host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout }
-                : d.bridge
-                ? { bridge: d.bridge, bridge_port: d.bridge_port, unit_id: d.unit_id, timeout: d.timeout }
-                : { protocol: this._devWizWireProto(d), host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout };
-            const r = await fetch('/api/devices/test', {
+            r = await fetch('/api/devices?dry_run=true', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                // include the chosen template so an HTTP test resolves its json_paths
-                body: JSON.stringify({ connection: conn, template: d.template || '' }),
+                body: JSON.stringify({ id: 'x-dry-run', name: 'x', template: '', enabled: false,
+                                       connection: this._devWizConnection() }),
             });
-            const res = await r.json();
-            out.className = 'wiz-test-result ' + (res.ok ? 'ok' : 'err');
-            out.textContent = (res.ok ? '✓ ' : '✗ ') + (res.message || '');
-        } catch (e) {
-            out.className = 'wiz-test-result err';
-            out.textContent = '✗ ' + e.message;
-        } finally {
-            btn.disabled = false;
-            btn.innerHTML = orig;
+            res = await r.json().catch(() => ({}));
+        } catch (e) { return true; }            // the gateway unreachable: Create will say
+        if (r.ok) {
+            if (res.status === 'valid' && res.would) return true;
+            // a gateway that does not know the check stored the probe for
+            // real: it is taken away again, and the wizard goes on without
+            if (res.status === 'created' || res.device) {
+                await fetch('/api/devices/x-dry-run', { method: 'DELETE' }).catch(() => {});
+                this.showToast('warning', this.t('devices.wizard.noCheckTitle', 'Connection not checked'),
+                    this.t('devices.wizard.noCheck', 'This gateway is too old to check a connection before saving; Create will say what it refuses.'));
+            }
+            return true;
         }
+        if (r.status !== 422) return true;
+        const det = res.detail || {};
+        const conn = Object.fromEntries(Object.entries(det.fields || {}).filter(([k]) => k.startsWith('connection.')));
+        const keys = Object.keys(conn);
+        // what the check cannot judge without a template or an id is not for
+        // step 1 (the probe's own build); everything else is said
+        const other = (det.errors || []).filter(e => !keys.some(k => String(e).startsWith(k + ': '))
+            && !/^device 'x-dry-run' could not be built/.test(String(e)));
+        if (!Object.keys(conn).length && !other.length) return true;
+        const left = this._placeFieldErrors(document.getElementById('devWizBody'), conn, p => this._wizFieldId(p));
+        this._wizSay([...left, ...other].join(' · '));
+        return false;
     },
 
     devWizardBack() {
@@ -772,184 +513,60 @@ Object.assign(JanitzaMonitor.prototype, {
         this._devWizCollect();
         if (!this._devWizValidate()) return;
         const w = this._devWiz;
+        if (w.step === 1 && w.data.protocol !== 'none') {
+            this._wizSay('');
+            if (!await this._devWizCheckConnection()) return;
+        }
+        if (w.step === 2 && w.data.protocol === 'none') {
+            this._wizSay('');
+            if (!await this._devWizCheckMeters()) return;
+        }
         if (w.step < 3) { w.step++; this._devWizRender(); return; }
 
         // step 3 → submit
         const d = w.data;
+        if (d.protocol === 'none') return this._devWizCreateMeterOnly();
         const payload = {
             id: d.id, name: d.name || d.id, template: d.template, enabled: d.enabled,
-            connection: d.protocol === 'http'
-                ? { protocol: 'http', url: d.url }
-                : d.protocol === 'mqtt'
-                ? { protocol: 'mqtt', broker: d.broker, port: d.mqtt_port || 1883, topic: d.topic,
-                    username: d.mqtt_username || '', password: d.mqtt_password || '', tls: !!d.mqtt_tls }
-                : d.protocol === 'tcp' && d.bridge
-                ? { bridge: d.bridge, bridge_port: d.bridge_port, unit_id: d.unit_id, timeout: d.timeout }
-                : d.protocol === 'tcp'
-                ? { protocol: this._devWizWireProto(d), host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout }
-                : d.protocol === 'rtu-tcp' && d.bridge
-                ? { bridge: d.bridge, bridge_port: d.bridge_port, unit_id: d.unit_id, timeout: d.timeout }
-                : d.protocol === 'rtu-tcp'
-                ? { protocol: 'rtu-tcp', host: d.host, port: d.port, unit_id: d.unit_id, timeout: d.timeout }
-                : d.protocol === 'rtu_tap' && d.bridge
-                ? { protocol: 'rtu_tap', bridge: d.bridge, bridge_port: d.bridge_port, unit_id: d.unit_id }
-                : { protocol: d.protocol === 'rtu_tap' ? 'rtu_tap' : this._devWizWireProto(d), serial_port: d.serial_port,
-                    baudrate: d.baudrate, parity: d.parity, stopbits: d.stopbits, unit_id: d.unit_id },
-            mqtt: { topic_prefix: d.topic_prefix || `meters/${d.id}` },
+            connection: this._devWizConnection(),
+            // empty = the gateway's pattern, resolved by the server
+            mqtt: d.topic_prefix ? { topic_prefix: d.topic_prefix } : {},
             influxdb: { bucket: d.bucket || undefined, device_tag: d.device_tag || undefined },
             ha_discovery_enabled: d.ha_discovery_enabled,
         };
         const fb = document.getElementById('devWizFeedback');
         try {
-            const r = await fetch(w.editId ? `/api/devices/${encodeURIComponent(w.editId)}` : '/api/devices', {
-                method: w.editId ? 'PUT' : 'POST',
+            const r = await fetch('/api/devices', {
+                method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
             });
+            const res = await r.json().catch(() => ({}));
             if (!r.ok) {
-                const errs = (await r.json()).detail?.errors || ['save failed'];
-                fb.textContent = errs.join(' · ');
-                fb.className = 'save-feedback err';
+                const det = res.detail;
+                const fields = det?.fields || {};
+                const errs = det?.errors || [typeof det === 'string' ? det : this.t('toast.saveFailed', 'Save Failed')];
+                // a refusal goes back to the step that owns its field
+                const step = Object.keys(fields).some(k => k.startsWith('connection.')) ? 1
+                    : ('template' in fields) ? 2 : 3;
+                if (step !== w.step) { w.step = step; this._devWizRender(); }
+                const keys = Object.keys(fields);
+                const left = this._placeFieldErrors(document.getElementById('devWizBody'), fields, p => this._wizFieldId(p));
+                this._wizSay([...left, ...errs.filter(e => !keys.some(k => String(e).startsWith(k + ': ')))].join(' · '));
                 return;
             }
             this.closeModal('deviceWizardModal');
+            // where it publishes, as the server decided it
+            const where = res.device?.mqtt_topic_prefix || payload.mqtt.topic_prefix || this._wizTopicFor(d.id);
             this.showToast('success',
-                w.editId ? this.t('devices.updated', 'Device updated') : this.t('devices.created', 'Device created'),
-                `${d.name || d.id} → MQTT ${payload.mqtt.topic_prefix}/…`);
+                this.t('devices.created', 'Device created'),
+                `${d.name || d.id} → MQTT ${where}/…`);
             await this.renderDevicesList();
-            if (!w.editId && d.enabled) this.jumpToDeviceRegisters(d.id);
+            if (d.enabled) this.jumpToDeviceRegisters(d.id);
         } catch (e) {
             fb.textContent = e.message;
             fb.className = 'save-feedback err';
         }
     },
 
-    // the bridge and bus a device on the network side of RS-485 is read through
-    // a bridge chosen in one mode that the new mode cannot use is dropped:
-    // TCP goes through a gateway, RTU over the network and listening need RTU
-    _devWizFitBridge() {
-        const d = this._devWiz.data;
-        if (!d.bridge) return;
-        const gw = this._bridgeType(((this._bridges || []).find(b => b.id === d.bridge) || {}).type).framing === 'modbus_tcp';
-        const ok = d.protocol === 'tcp' ? gw : (d.protocol === 'rtu-tcp' || d.protocol === 'rtu_tap') ? !gw : false;
-        if (!ok) { d.bridge = ''; d.bridge_port = null; }
-    },
-
-    // what goes on the wire: the UI mode plus its option (UDP, ASCII framing)
-    _devWizWireProto(d) {
-        if (d.protocol === 'tcp') return d.udp ? 'udp' : 'tcp';
-        if (d.protocol === 'rtu') return d.framing === 'ascii' ? 'ascii' : 'rtu';
-        return d.protocol;
-    },
-
-    // bridges that pass RTU frames (a Modbus TCP gateway is reached as TCP)
-    _rtuBridges() {
-        return (this._bridges || []).filter(b => this._bridgeType(b.type).framing !== 'modbus_tcp');
-    },
-
-    // Modbus TCP: directly, or through a Modbus TCP gateway's bus
-    _devWizGatewayPickHtml(d) {
-        const t = (k, def, p) => this.t(k, def, p);
-        const buses = [];
-        for (const b of this._bridges || []) {
-            if (this._bridgeType(b.type).framing !== 'modbus_tcp') continue;
-            for (const p of b.ports || []) buses.push({ b, p });
-        }
-        if (!buses.length) return '';
-        const cur = d.protocol === 'tcp' && d.bridge ? `${d.bridge}::${d.bridge_port || (buses.find(x => x.b.id === d.bridge)?.p.port ?? '')}` : '';
-        return `<div class="form-row"><div class="form-group flex-2">
-            <label class="form-label" for="devWizGw">${t('devices.wizard.gwWhere', 'Reached')}</label>
-            <select id="devWizGw" class="input" data-action="_devWizTapWhereChanged" data-on="change">
-              <option value="" ${cur ? '' : 'selected'}>${t('devices.wizard.gwDirect', 'Directly — its own IP and port')}</option>
-              ${buses.map(({ b, p }) => {
-                  const v = `${b.id}::${p.port}`;
-                  const n = (p.devices || []).filter(x => x.id !== d.id).length;
-                  return `<option value="${this._esc(v)}" ${v === cur ? 'selected' : ''}>${this._esc(t('devices.wizard.gwVia', 'Through the gateway {name} · {host}:{port}', { name: b.name || b.id, host: b.host, port: p.port }))}${n ? ' · ' + this._esc(t('bridges.nDevices', '{n} device(s)', { n })) : ''}</option>`;
-              }).join('')}
-            </select>
-            <div class="field-hint">${t('devices.wizard.gwHint', 'An RS-485 slave behind a converter in “Modbus TCP to RTU” mode: pick the gateway, then the slave’s unit ID. The gateway’s address and connection limit come from the bridge.')}</div>
-          </div></div>`;
-    },
-
-    _devWizBridgePickHtml(d) {
-        const bridges = this._rtuBridges();
-        const t = (k, def, p) => this.t(k, def, p);
-        if (!bridges.length) {
-            return `<div class="field-hint" style="margin-bottom:8px;">${t('devices.wizard.noBridge', 'No bridge yet. A bridge is the box the bus is reached through — our serial bridge on a Raspberry Pi or server, or an RS-485-to-Ethernet converter (Waveshare, USR, Elfin…).')}
-                <a href="#" ${this._act('openBridgeModal', [])}>${t('bridges.add', 'Add bridge')}</a> · ${t('devices.wizard.orLocal', 'or scan a bridge running next to the gateway:')}</div>`;
-        }
-        const cur = bridges.find(b => b.id === d.bridge) || bridges[0];
-        const ports = cur.ports || [];
-        const port = d.bridge_port || (ports[0] || {}).port;
-        const used = (ports.find(p => +p.port === +port)?.devices || []).filter(x => x.id !== d.id);
-        return `<div class="form-row" style="align-items:end;" id="devWizBridgeRow">
-            <div class="form-group flex-2"><label class="form-label" for="devWizBridge">${t('devices.wizard.bridge', 'Bridge')}</label>
-              <select id="devWizBridge" class="input" data-action="_devWizBridgeChanged" data-on="change">
-                ${bridges.map(b => `<option value="${this._esc(b.id)}" ${b.id === cur.id ? 'selected' : ''}>${this._esc(b.name || b.id)} · ${this._esc(b.host)}</option>`).join('')}
-              </select></div>
-            <div class="form-group"><label class="form-label" for="devWizBridgePort">${t('devices.wizard.bus', 'Bus')}</label>
-              <select id="devWizBridgePort" class="input" data-action="_devWizBridgeChanged" data-on="change">
-                ${ports.map(p => `<option value="${this._esc(p.port)}" ${+p.port === +port ? 'selected' : ''}>:${this._esc(p.port)}${p.label ? ' · ' + this._esc(p.label) : ''}</option>`).join('')
-                  || `<option value="">${t('devices.wizard.noBus', 'no bus yet')}</option>`}
-              </select></div>
-            <div class="form-group"><label class="form-label" for="devWizUnitBr">${t('lbl.unitId', 'Unit ID')}</label>
-              <input type="number" id="devWizUnitBr" class="input" min="0" max="255" value="${this._esc(d.unit_id ?? 1)}"></div>
-          </div>
-          <div class="field-hint" id="devWizBridgeHint2" style="margin-bottom:8px;">${used.length
-              ? this._esc(t('devices.wizard.busHas', 'Also on this bus: {list} — each slave needs its own unit id; they take turns on one connection.', { list: used.map(x => `${x.name || x.id} (unit ${x.unit_id})`).join(', ') }))
-              : this._esc(t('devices.wizard.busEmpty', 'First device on this bus.'))}
-            · <a href="#" ${this._act('_devWizShowLegacyScan', [])}>${t('devices.wizard.legacyScan', 'scan a bridge next to the gateway instead')}</a></div>`;
-    },
-
-    // listen-only: where the bus is heard — a serial port on this host, or the
-    // bus of a bridge that passes the bytes on (a gateway only answers questions)
-    _devWizTapWhereHtml(d) {
-        const t = (k, def, p) => this.t(k, def, p);
-        const buses = [];
-        for (const b of this._bridges || []) {
-            if (this._bridgeType(b.type).framing === 'modbus_tcp') continue;
-            for (const p of b.ports || []) buses.push({ b, p });
-        }
-        if (!buses.length && !d.bridge) return '';
-        const cur = d.bridge ? `${d.bridge}::${d.bridge_port || ''}` : '';
-        return `<div class="form-row"><div class="form-group flex-2">
-            <label class="form-label" for="devWizTapWhere">${t('devices.wizard.tapWhere', 'Where the bus is')}</label>
-            <select id="devWizTapWhere" class="input" data-action="_devWizTapWhereChanged" data-on="change">
-              <option value="" ${cur ? '' : 'selected'}>${t('devices.wizard.tapLocal', 'A serial port on this host')}</option>
-              ${buses.map(({ b, p }) => {
-                  const v = `${b.id}::${p.port}`;
-                  const sel = v === cur || (d.bridge === b.id && !d.bridge_port && p === b.ports[0]);
-                  return `<option value="${this._esc(v)}" ${sel ? 'selected' : ''}>${this._esc(b.name || b.id)} · ${this._esc(b.host)}:${this._esc(p.port)}${p.label ? ' · ' + this._esc(p.label) : ''}</option>`;
-              }).join('')}
-            </select>
-            <div class="field-hint">${t('devices.wizard.tapWhereHint', 'Through a bridge, the gateway reads the bridge\u2019s port and never writes to it. Only transparent bridges and the MBG serial bridge pass the bus\u2019s traffic on — a Modbus TCP gateway only answers questions. The line settings are the bus\u2019s, set on the bridge.')}</div>
-          </div></div>`;
-    },
-
-    _devWizTapWhereChanged() {
-        this._devWizCollect();
-        this._devWizRender();
-    },
-
-    _devWizBridgeChanged() {
-        const d = this._devWiz.data;
-        const b = document.getElementById('devWizBridge')?.value;
-        // the picker shows the first bridge until one is chosen
-        const shown = d.bridge || (this._rtuBridges()[0] || {}).id;
-        if (b !== shown) { d.bridge = b; d.bridge_port = null; }
-        else d.bridge_port = parseInt(document.getElementById('devWizBridgePort')?.value, 10) || null;
-        d.unit_id = parseInt(document.getElementById('devWizUnitBr')?.value, 10) || d.unit_id;
-        // redraw just the picker
-        document.getElementById('devWizBridgeRow')?.remove();
-        document.getElementById('devWizBridgeHint2')?.remove();
-        document.getElementById('devWizRtuBridge')?.insertAdjacentHTML('afterbegin', this._devWizBridgePickHtml(d));
-    },
-
-    _devWizShowLegacyScan() {
-        const d = this._devWiz.data;
-        d.bridge = ''; d.bridge_port = null;
-        document.getElementById('devWizLegacyScan')?.style.removeProperty('display');
-        document.getElementById('devWizBridgeRow')?.remove();
-        document.getElementById('devWizBridgeHint2')?.remove();
-    },
 });

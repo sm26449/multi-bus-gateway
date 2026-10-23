@@ -2,6 +2,7 @@
  * keys + horizontal overflow. Output: /tmp/audit/*.png and report.json */
 import { chromium } from 'playwright';
 import fs from 'fs';
+import { openDeviceTab } from './lib/device-page.mjs';
 const B = 'http://localhost:18090', OUT = '/tmp/audit';
 const report = [];
 const br = await chromium.launch({ executablePath: '/root/.cache/ms-playwright/chromium-1148/chrome-linux/chrome' });
@@ -50,7 +51,7 @@ await snap(p, '20-installation', { full: true, wait: 3500 });
 await p.locator('[data-group-units] tr[data-unit="pv-u1"] button[data-action="openDeviceDetail"]').first().click();
 for (const tab of ['overview', 'edit', 'outputs', 'measurements', 'calculated', 'logs', 'monitor', 'history', 'energy']) {
   try {
-    await p.locator(`#deviceWsTabs .config-main-tab[data-dtab="${tab}"]`).click();
+    await openDeviceTab(p, tab);
     await snap(p, `30-unit-${tab}`, { full: true, wait: 2500 });
   } catch (e) { console.log('skip tab', tab, e.message.slice(0, 60)); }
 }

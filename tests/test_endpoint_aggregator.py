@@ -663,3 +663,90 @@ def test_a_text_value_never_reaches_a_numeric_total():
     reg = _Reg({"u1": {1: ent("x", "n/a", {"x_sum": "sum"})},
                 "u2": {1: ent("x", 5.0, {"x_sum": "sum"})}})
     assert compute_endpoint_aggregates(_Cfg(["u1", "u2"]), reg, "p")["x_sum"] == 5.0
+
+
+# ── asleep, not missing (docs/attributes.md) ─────────────────────────────────
+
+def _inv(id):
+    d = _Dev(id)
+    d.role = 'inverter'
+    return d
+
+
+def _with_sun(elev):
+    from multibus import endpoint_aggregator as ea
+    ea.set_sun_provider(None if elev is None else (lambda pid: elev))
+
+
+def test_silent_inverters_are_asleep_when_the_sun_is_low():
+    now = time.time()
+    cfg = _Cfg([_inv("u1"), _inv("u2")])
+    reg = _Reg({"u1": {1: _entry("power_active_total", 900, ts=now)},
+                "u2": {1: _entry("power_active_total", 40, ts=now)}})
+    try:
+        _with_sun(4.0)                                     # both still answer, the sun is low
+        assert compute_endpoint_aggregates(cfg, reg, "p", now=now)["units_online"] == 2
+        reg._stores["u2"][1] = _entry("power_active_total", 40, ts=now - 600)
+        _with_sun(3.0)                                     # dusk: u2 went quiet with the sun low
+        dusk = compute_endpoint_aggregates(cfg, reg, "p", now=now)
+        assert dusk["power_active_total"] == 900 and dusk["status"] == "online" and dusk["units_asleep"] == 1
+        from multibus.endpoint_aggregator import asleep_units
+        assert asleep_units("p") == {"u2"}                 # the status page names it
+        _with_sun(30.0)                                    # daytime: a silent inverter is missing
+        day = compute_endpoint_aggregates(cfg, reg, "p", now=now)
+        assert day["status"] == "partial" and day["units_asleep"] == 0
+        assert asleep_units("p") == set()                  # by day a silent inverter is missing
+        reg._stores["u1"][1] = _entry("power_active_total", 50, ts=now - 600)
+        _with_sun(-12.0)                                   # night: all asleep
+        night = compute_endpoint_aggregates(cfg, reg, "p", now=now)
+        assert night["power_active_total"] == 0 and night["units_asleep"] == 2 and night["status"] == "asleep"
+    finally:
+        _with_sun(None)
+
+
+def test_an_inverter_that_stopped_at_two_is_missing_until_night():
+    from multibus import endpoint_aggregator as ea
+    now = time.time()
+    cfg = _Cfg([_inv("u1"), _inv("u2")])
+    reg = _Reg({"u1": {1: _entry("power_active_total", 900, ts=now)},
+                "u2": {1: _entry("power_active_total", 4000, ts=now)}})
+    try:
+        _with_sun(40.0)
+        compute_endpoint_aggregates(cfg, reg, "p", now=now)          # 14:00, both answer
+        reg._stores["u2"][1] = _entry("power_active_total", 4000, ts=now - 600)
+        _with_sun(3.0)                                               # dusk
+        assert compute_endpoint_aggregates(cfg, reg, "p", now=now)["status"] == "partial"
+        _with_sun(-3.0)                                              # night
+        assert compute_endpoint_aggregates(cfg, reg, "p", now=now)["units_asleep"] == 1
+    finally:
+        _with_sun(None)
+        ea._last_fresh_elev.clear()
+
+
+def test_at_night_declared_totals_read_zero_too():
+    now = time.time()
+    u = _inv("u1")
+    cfg = _Cfg([u, _inv("u2")])
+    e = _entry("power_active_total", 50, ts=now - 600)
+    e["aggregates"] = {"pv_total_w": "sum"}
+    reg = _Reg({"u1": {1: e}, "u2": {}})                    # u2: nothing read since a restart
+    try:
+        _with_sun(-20.0)
+        agg = compute_endpoint_aggregates(cfg, reg, "p", now=now)
+        assert agg["pv_total_w"] == 0 and agg["power_active_total"] == 0 and agg["status"] == "asleep"
+    finally:
+        _with_sun(None)
+
+
+def test_without_a_location_or_for_meters_nothing_changes():
+    now = time.time()
+    reg = _Reg({"m": {1: _entry("power_active_total", 50, ts=now - 600)}})
+    try:
+        _with_sun(-12.0)
+        agg = compute_endpoint_aggregates(_Cfg(["m"]), reg, "p", now=now)     # not an inverter
+        assert "units_asleep" not in agg and agg["status"] == "offline"
+        _with_sun(None)
+        agg = compute_endpoint_aggregates(_Cfg([_inv("m")]), reg, "p", now=now)
+        assert "units_asleep" not in agg and agg["status"] == "offline"
+    finally:
+        _with_sun(None)

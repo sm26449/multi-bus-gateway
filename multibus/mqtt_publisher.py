@@ -26,6 +26,7 @@ from typing import Any, Callable, Dict, List, Optional
 import paho.mqtt.client as mqtt
 
 from . import __version__
+from . import role as gateway_role
 from .config import MQTTConfig, SelectedRegister, store_key
 
 import logging
@@ -267,6 +268,7 @@ class MQTTPublisher:
 
     def _on_connect(self, client, userdata, flags, reason_code, properties=None):
         """Handle connection established."""
+        self.connects = getattr(self, 'connects', 0) + 1     # a (re)connect, for whoever republishes retained state
         if reason_code == 0:
             self.connected = True
             self.connection_count += 1
@@ -448,7 +450,30 @@ class MQTTPublisher:
             safe_name = register.name.lower().replace('[', '_').replace(']', '').replace('_g_', '')
             return f"{prefix}/{safe_name}"
 
-    def _should_publish(self, topic: str, value: Any) -> bool:
+    def register_topics(self, registers, topic_prefix: Optional[str] = None) -> set:
+        """The state topics these registers publish to (MQTT-enabled ones)."""
+        return {self._build_topic(r, topic_prefix) for r in (registers or [])
+                if getattr(r, 'mqtt_enabled', True)}
+
+    def clear_topics(self, topics) -> int:
+        """Delete retained values nobody publishes any more — a row that was
+        unticked, a device that was deleted. An empty retained payload removes
+        the message from the broker; without it a subscriber reads the last
+        value forever, as if it were still measured. The change cache forgets
+        the topic too, so a row ticked again publishes at once."""
+        n = 0
+        for topic in sorted(topics or ()):
+            with self.lock:
+                self.last_values.pop(topic, None)
+                self.last_publish_at.pop(topic, None)
+            if self.connected and self._publish(topic, "", retain=True):
+                n += 1
+        if n:
+            logger.info("MQTT: cleared %d retained topic(s) no longer published", n)
+        return n
+
+    def _should_publish(self, topic: str, value: Any, mode: Optional[str] = None,
+                        heartbeat: Optional[int] = None) -> bool:
         """
         Check if value should be published based on mode.
         Does NOT update cache — cache is updated after successful publish
@@ -459,19 +484,24 @@ class MQTTPublisher:
         # would also bypass change detection below.
         if isinstance(value, float) and not math.isfinite(value):
             return False
-        if self.publish_mode == 'all':
+        if (mode or self.publish_mode) == 'all':
             return True
 
         with self.lock:
-            return self._should_publish_locked(topic, value)
+            return self._should_publish_locked(topic, value, mode, heartbeat)
 
-    def _should_publish_locked(self, topic: str, value: Any) -> bool:
-        """Body of _should_publish; caller holds self.lock."""
+    def _should_publish_locked(self, topic: str, value: Any, mode: Optional[str] = None,
+                               heartbeat: Optional[int] = None) -> bool:
+        """Body of _should_publish; caller holds self.lock. ``mode`` and
+        ``heartbeat`` are a device's own publishing (its `mqtt:` block); None =
+        the gateway's (Settings → MQTT)."""
+        mode = mode or self.publish_mode
+        heartbeat = self.heartbeat_interval if heartbeat is None else int(heartbeat)
         # NaN/Inf guard — see _should_publish (this body is also entered
         # directly by publish_if_changed, so the guard lives here too)
         if isinstance(value, float) and not math.isfinite(value):
             return False
-        if self.publish_mode == 'all':
+        if mode == 'all':
             return True
         if topic not in self.last_values:
             return True
@@ -486,9 +516,9 @@ class MQTTPublisher:
 
         # heartbeat: unchanged, but republish if it's been quiet too long so
         # the value keeps a fresh timestamp for HA/consumers
-        if self.heartbeat_interval > 0:
+        if heartbeat > 0:
             last = self.last_publish_at.get(topic, 0)
-            if time.monotonic() - last >= self.heartbeat_interval:   # F-58: step-proof
+            if time.monotonic() - last >= heartbeat:   # F-58: step-proof
                 return True
 
         return False
@@ -573,7 +603,8 @@ class MQTTPublisher:
 
         return self._publish(topic, payload, retain)
 
-    def publish_if_changed(self, topic: str, value: Any, retain: bool = None) -> bool:
+    def publish_if_changed(self, topic: str, value: Any, retain: bool = None,
+                           mode: Optional[str] = None, heartbeat: Optional[int] = None) -> bool:
         """Publish only if value changed — the WHOLE check→publish→confirm
         sequence holds the cache lock (audit DP-21): two threads racing the
         same topic (a calc register colliding with a raw one) could otherwise
@@ -582,7 +613,7 @@ class MQTTPublisher:
         the right value was never resent. client.publish is a queue append,
         so holding the lock across it costs microseconds."""
         with self.lock:
-            if not self._should_publish_locked(topic, value):
+            if not self._should_publish_locked(topic, value, mode, heartbeat):
                 self.messages_skipped += 1
                 return False
             if self.publish(topic, value, retain):
@@ -591,9 +622,11 @@ class MQTTPublisher:
             return False
 
     def publish_register_data(self, poll_group: str, data: Dict[int, Dict],
-                              topic_prefix: Optional[str] = None):
+                              topic_prefix: Optional[str] = None,
+                              mode: Optional[str] = None, heartbeat: Optional[int] = None):
         """Publish register data from a poll group. ``topic_prefix`` routes the
-        values of one device (Tier 2); omitted = legacy global prefix."""
+        values of one device (Tier 2); omitted = legacy global prefix. ``mode``
+        and ``heartbeat``: the device's own publishing, None = the gateway's."""
         if not self.connected:
             # audit DP-25: an outage used to be invisible in stats (skipped and
             # failed both flat) — count the values that never got a chance
@@ -610,10 +643,12 @@ class MQTTPublisher:
                 continue
 
             topic = self._build_topic(register, topic_prefix)
-            self.publish_if_changed(topic, value)
+            self.publish_if_changed(topic, value, mode=mode, heartbeat=heartbeat)
 
     def publish_ha_discovery(self) -> int:
         """Publish Home Assistant MQTT autodiscovery configs."""
+        if not gateway_role.is_active():          # the active gateway announces, not a standby
+            return 0
         if not self.connected or not self.config.ha_discovery_enabled:
             return 0
 
@@ -670,6 +705,8 @@ class MQTTPublisher:
         register present there is published as a controllable number/select and
         its command topic is subscribed. The caller owns the gate; the actual
         write is re-validated by the command handler."""
+        if not gateway_role.is_active():          # the active gateway announces, not a standby
+            return 0
         if not self.connected or not self.config.ha_discovery_enabled:
             return 0
         write_rules = write_rules or {}
@@ -696,7 +733,11 @@ class MQTTPublisher:
                 # not the gateway's: an inverter asleep at night must show as
                 # unavailable even while the gateway and its primary meter live
                 "availability_topic": f"{topic_prefix}/availability",
-                "unique_id": f"mbg_dev_{device_id}_{register.address}_{safe_name}",
+                # a value a meter gives the device is known by its name: its
+                # synthetic address follows the device's own calculated fields
+                "unique_id": (f"mbg_dev_{device_id}_{register.discovery_key}"
+                              if getattr(register, 'discovery_key', '')
+                              else f"mbg_dev_{device_id}_{register.address}_{safe_name}"),
                 "device": device_info,
             }
             component = "sensor"
@@ -707,7 +748,14 @@ class MQTTPublisher:
                                                       f"{topic}/set", device_id)
             else:
                 apply_ha_typing(config, register)
-            disc = f"{self.config.ha_discovery_prefix}/{component}/mbg_dev_{device_id}/{register.address}_{safe_name}/config"
+            # a value that can be absent (an input/output pair's efficiency):
+            # HA's MQTT sensor ignores an empty state, so it is told when a
+            # silence means "no value" — the gateway re-sends the value while
+            # it exists (linked_meter.pair_heartbeat)
+            if getattr(register, 'ha_expire_after', None):
+                config["expire_after"] = int(register.ha_expire_after)
+            _dk = getattr(register, 'discovery_key', '') or f"{register.address}_{safe_name}"
+            disc = f"{self.config.ha_discovery_prefix}/{component}/mbg_dev_{device_id}/{_dk}/config"
             published.add(disc)
             if self._publish(disc, json.dumps(config), retain=True):
                 count += 1
@@ -782,6 +830,8 @@ class MQTTPublisher:
     def publish_device_availability(self, topic_prefix: str, online: bool) -> None:
         """Publish a device's online/offline state (retained) for its HA
         connectivity binary_sensor. No-op when disconnected or unchanged."""
+        if not gateway_role.is_active():          # the active gateway announces, not a standby
+            return
         if not self.connected or not topic_prefix:
             return
         topic = f"{topic_prefix}/availability"
@@ -808,6 +858,8 @@ class MQTTPublisher:
         dashboards, heartbeat watchers) keep working on the new namespace.
         A ``None`` component is left untouched rather than published empty.
         Change-only, same confirm-after-publish discipline as availability."""
+        if not gateway_role.is_active():          # the active gateway announces, not a standby
+            return
         if not self.connected or not topic_prefix:
             return
         for leaf, value in (("status", "online" if online else "offline"),
@@ -835,6 +887,14 @@ class MQTTPublisher:
             try:
                 self.client.publish(topic, "", retain=True)   # never replay a stale command
                 self.client.subscribe(topic)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def unregister_command(self, topic: str) -> None:
+        """Drop one command topic, exactly (never its neighbours)."""
+        if self._topic_handlers.pop(topic, None) is not None and self.client is not None and self.connected:
+            try:
+                self.client.unsubscribe(topic)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -919,6 +979,8 @@ class MQTTPublisher:
         HA device (linked to the Janitza via `via_device`) exposing serving
         state, throughput, connections, freshness, uptime and last error — read
         from the retained `…/vmeter/<id>/state` JSON. No electrical data here."""
+        if not gateway_role.is_active():          # the active gateway announces, not a standby
+            return 0
         if not self.connected or not self.config.ha_discovery_enabled:
             return 0
         # (key, friendly, component, value_template, extra)

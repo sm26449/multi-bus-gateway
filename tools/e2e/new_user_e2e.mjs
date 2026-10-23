@@ -19,6 +19,7 @@
  *   cd tools/e2e && CHROMIUM_PATH=<chrome> MBG_URL=http://127.0.0.1:8099 node new_user_e2e.mjs
  */
 import { chromium } from 'playwright';
+import { watchDialogs } from './lib/dialogs.mjs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -105,7 +106,7 @@ const browser = await chromium.launch(
   process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 const page = await browser.newPage({ viewport: { width: 1440, height: 950 } });
 page.setDefaultTimeout(15000);
-page.on('dialog', d => d.accept());
+await watchDialogs(page);
 const errs = [];
 // a refused save is a deliberate 4xx the browser logs as a resource error
 page.on('console', m => { if (m.type() === 'error' && !/status of 4\d\d/.test(m.text())) errs.push(m.text()); });
@@ -150,6 +151,10 @@ async function addDevice({ proto, fill, template, id, name }) {
   await page.click(`#deviceWizardModal label:has(input[name="devWizProto"][value="${proto}"])`);
   const testOut = await fill();
   await page.click('#devWizNext');
+  // step 1 asks the gateway first: a refusal stays on step 1, said there
+  await page.waitForFunction(() => window.app._devWiz.step === 2
+    || document.querySelector('#devWizBody .field-error[data-placed]') || document.getElementById('devWizFeedback')?.textContent.trim());
+  if (await page.evaluate(() => window.app._devWiz.step) === 1) return testOut;
   await page.click(`.tpl-pick[data-tpl="${template}"]`);
   await page.click('#devWizNext');
   await page.fill('#devWizId', id);
@@ -315,7 +320,7 @@ try {
     await page.fill('#devWizSerial', '/tmp/ttySIM');
     await page.selectOption('#devWizBaud', '9600');
     await page.fill('#devWizUnitR', '7');
-    return wizardTest('devWizTestResult2');
+    return wizardTest('devWizTestResult');
   } });
   check('wizard Test (RTU direct serial) succeeds', /^✓/.test(rtuTest), rtuTest);
   await page.waitForSelector('#deviceWizardModal', { state: 'hidden' });
@@ -323,24 +328,32 @@ try {
   // HTTP: a new user's first try is the sim on loopback — refused (SSRF guard)
   const loopTest = await addDevice({ proto: 'http', template: T.http, id: D.http, name: 'E2E HTTP inverter', fill: async () => {
     await page.fill('#devWizUrl', 'http://127.0.0.1:18089/status.json');
-    return wizardTest('devWizTestResult3');
+    return wizardTest('devWizTestResult');
   } });
   check('wizard Test refuses a loopback HTTP URL', /^✗/.test(loopTest), loopTest);
-  await page.waitForFunction(() => document.getElementById('devWizFeedback')?.textContent.trim());
-  const fb = await page.textContent('#devWizFeedback');
-  check('…and Save says why (private LAN / allow_nonlan)', /private LAN|allow_nonlan/.test(fb), fb);
-  // back to step 1, the LAN address of the same sim
-  await page.click('#devWizBack'); await page.click('#devWizBack');
+  const fb = await page.innerText('#devWizBody');
+  check('…and step 1 says why, at the URL (private LAN / allow_nonlan)',
+    /private LAN|allow_nonlan/.test(fb) && await page.evaluate(() => window.app._devWiz.step) === 1, fb.slice(0, 300));
+  // still on step 1: the LAN address of the same sim (the last Test's
+  // answer is cleared, so the next one is read, not the old one)
   await page.fill('#devWizUrl', `http://${CTR_IP}:18089/status.json`);
-  const httpTest = await wizardTest('devWizTestResult3');
+  await page.evaluate(() => { document.getElementById('devWizTestResult').textContent = ''; });
+  const httpTest = await wizardTest('devWizTestResult');
   check('wizard Test (HTTP, LAN address) succeeds', /^✓/.test(httpTest), httpTest);
-  await page.click('#devWizNext'); await page.click('#devWizNext'); await page.click('#devWizNext');
+  // refused on step 1, it never reached the template and the name: now it does
+  await page.click('#devWizNext');
+  await page.click(`.tpl-pick[data-tpl="${T.http}"]`);
+  await page.click('#devWizNext');
+  await page.fill('#devWizId', D.http);
+  await page.fill('#devWizName', 'E2E HTTP inverter');
+  if (!(await page.isChecked('#devWizEnabled'))) await page.click('label:has(#devWizEnabled)');
+  await page.click('#devWizNext');
   await page.waitForSelector('#deviceWizardModal', { state: 'hidden' });
 
   const mqttTest = await addDevice({ proto: 'mqtt', template: T.mqtt, id: D.mqtt, name: 'E2E MQTT meter', fill: async () => {
     await page.fill('#devWizBroker', BROKER);
     await page.fill('#devWizMqttTopic', 'e2e/meter/#');
-    return wizardTest('devWizTestResult4');
+    return wizardTest('devWizTestResult');
   } });
   check('wizard Test (MQTT) succeeds', /^✓/.test(mqttTest), mqttTest);
   await page.waitForSelector('#deviceWizardModal', { state: 'hidden' });

@@ -8,6 +8,7 @@
     "version": "1.0",
     "author": "Multi-Bus Gateway",
     "description": "The whole battery BANK as one device: the seplos-bms-mqtt collector aggregates its packs under seplos/pack/pack_* (sums, averages, min/max, worst-cell). Set the device input topic to seplos/pack/# — register topics are relative. Pairs with seplos_bms_mqtt for per-pack detail.",
+    "kind": "battery",
     "protocol": {
       "transports": [
         "mqtt"
@@ -65,7 +66,7 @@
       {
         "address": 2,
         "name": "total_power",
-        "label": "Total power",
+        "label": "Total power (− charging)",
         "unit": "W",
         "data_type": "float",
         "category": "battery",
@@ -109,7 +110,7 @@
       {
         "address": 4,
         "name": "total_current",
-        "label": "Total current",
+        "label": "Total current (+ charging)",
         "unit": "A",
         "data_type": "float",
         "category": "battery",

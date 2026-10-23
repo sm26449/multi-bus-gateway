@@ -728,7 +728,7 @@ body.ws-stale .dashboard-table-container {
     margin-bottom: 12px;
 }
 
-.fleet-search { max-width: 260px; }
+.fleet-search { max-width: 320px; flex: 1 1 220px; }
 
 .fleet-summary {
     font-size: 12px;
@@ -860,10 +860,8 @@ body.ws-stale .dashboard-table-container {
 .fb-warning { background: var(--warning-tint, rgba(245, 158, 11, 0.15)); color: var(--warning-text); }
 
 .fleet-health {
-    font-size: 10.5px;
-    color: var(--text-tertiary);
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
+    font-size: 11.5px;
+    color: var(--text-secondary);
 }
 
 .fleet-row .bi-chevron-right {
@@ -898,6 +896,14 @@ body.ws-stale .dashboard-table-container {
     .fm-l { display: none; }           /* narrow: value+unit carry the row */
     .fleet-controls { flex-wrap: wrap; }
     .fleet-summary { margin-left: 0; width: 100%; }
+}
+/* phone: the name gets its own line, the values wrap below it with their
+   labels — a number is never cut in half */
+@media (max-width: 600px) {
+    .fleet-row { flex-wrap: wrap; row-gap: 4px; }
+    .fleet-name { flex: 1 1 0; min-width: 0; }
+    .fleet-metrics { order: 10; flex: 1 1 100%; flex-wrap: wrap; gap: 2px 14px; overflow: visible; padding-left: 20px; }
+    .fm-l { display: inline; max-width: none; }
 }
 
 /* ==================== DEVICE VALUE SECTIONS ==================== */

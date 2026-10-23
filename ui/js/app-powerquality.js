@@ -63,20 +63,29 @@ Object.assign(JanitzaMonitor.prototype, {
             const r = await fetch('/api/pq/status');
             if (!r.ok) return;
             const data = await r.json();
-            const dev = (data.devices || []).find(d => d.device === (this._viewDevice || this._primaryDeviceId()))
-                     || (data.devices || [])[0];
+            // the device shown, and only its row — never another device's
+            // counters; embedded on a device page the switch is on this tab
+            const embedded = !!document.getElementById('pqInfo')?.closest('#deviceDetailView');
+            const id = this._viewDevice || this._primaryDeviceId();
+            const dev = (data.devices || []).find(d => d.device === id);
             const el = document.getElementById('pqInfo');
-            if (!el || !dev) return;
+            if (!el) return;
+            if (!dev) {
+                el.textContent = this.t('pq.noStatus', 'No recorder status for this device yet.');
+                return;
+            }
             if (!dev.enabled) {
-                el.textContent = this.t('pq.disabled',
-                    'PQ recorder is not enabled for this device — enable it in the device Outputs tab.');
+                // the switch is on this same tab of the device page
+                el.textContent = embedded
+                    ? this.t('pq.disabledHere', 'The PQ event recorder is off — switch it on above.')
+                    : this.t('pq.disabledThere', "The PQ event recorder is off — switch it on in the device's Power Quality tab.");
                 return;
             }
             const c = dev.counters || {};
             const bits = [`${this.t('pq.counters', 'Lifetime counters')}: ` +
                 `${c.events ?? '—'} ${this.t('pq.eventsWord', 'events')} · ` +
                 `${c.transients ?? '—'} ${this.t('pq.transients', 'transients')}`];
-            if (dev.last_poll) bits.push(`${this.t('pq.lastPoll', 'last poll')} ${new Date(dev.last_poll * 1000).toLocaleTimeString()}`);
+            if (dev.last_poll) bits.push(`${this.t('pq.lastPoll', 'last poll')} ${new Date(dev.last_poll * 1000).toLocaleTimeString(this._loc())}`);
             if (dev.last_error) bits.push(`${this.t('pq.lastError', 'last error')}: ${dev.last_error}`);
             el.textContent = bits.join(' · ');
         } catch (e) { /* status line is best-effort */ }
@@ -128,7 +137,7 @@ Object.assign(JanitzaMonitor.prototype, {
         let html = '', lastDay = '';
         events.forEach(ev => {
             const d = new Date(ev.ts_ms);
-            const day = d.toLocaleDateString(undefined, { weekday: 'short', day: '2-digit', month: 'short' });
+            const day = d.toLocaleDateString(this._loc(), { weekday: 'short', day: '2-digit', month: 'short' });
             if (day !== lastDay) {
                 html += `<div class="monitor-category-header" style="cursor:default;padding:6px 10px 2px;color:var(--text-tertiary);font-size:11px;text-transform:uppercase;letter-spacing:.4px;">${this._esc(day)}</div>`;
                 lastDay = day;
@@ -137,7 +146,7 @@ Object.assign(JanitzaMonitor.prototype, {
             const causes = [...new Set(ev.causes.map(c => this._pqCauseLabel(c.cause)))].join(', ');
             const chans = [...new Set(ev.causes.map(c => c.channel).filter(ch => ch !== 'all'))].join(' ');
             const sel = this._pqSelected === ev.ts_ms ? ' selected' : '';
-            const time = d.toLocaleTimeString(undefined, { hour12: false }) + '.' + String(ev.ts_ms % 1000).padStart(3, '0');
+            const time = d.toLocaleTimeString(this._loc(), { hour12: false }) + '.' + String(ev.ts_ms % 1000).padStart(3, '0');
             html += `<div class="monitor-item pq-event${sel}" role="button" tabindex="0" data-key-enter
                         style="display:block;padding:6px 10px;"
                         ${this._act('selectPqEvent', [ev.ts_ms, ev.causes[0]?.cause || '', ev.causes[0]?.channel || ''])}>
@@ -200,7 +209,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const stat = (label, val) => `<span style="color:var(--text-secondary);">${label}</span> <b style="font-variant-numeric:tabular-nums;">${val}</b>`;
         el.innerHTML = `
             <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
-                <b style="font-size:13px;">${new Date(ev.ts_ms).toLocaleString()}</b>
+                <b style="font-size:13px;">${new Date(ev.ts_ms).toLocaleString(this._loc())}</b>
                 ${badges}
             </div>
             <div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:4px;font-size:12px;">

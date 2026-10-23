@@ -84,6 +84,8 @@ def build(ctx) -> APIRouter:
                                         "phase_custom": dc.get("phase_custom") or [],
                                         "categories": cats}
         config.ui.timezone = tz
+        from .. import clock
+        clock.set_timezone(tz)          # rules and calculated fields read the hour in it
         config.save_yaml_config()
         return {"status": "ok", "timezone": tz, "applies": "live",
                 "default_colors": config.ui.default_colors}

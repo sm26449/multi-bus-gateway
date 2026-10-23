@@ -14,6 +14,7 @@
 import { chromium } from 'playwright';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { openDeviceTab } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://localhost:18090';
 const USER = process.env.MBG_USER || 'admin';
@@ -44,7 +45,7 @@ const openUnit = async (unitId, tab, ms = 2500) => {
     await wait(400);
     await page.locator(`[data-action="openDeviceDetail"][data-args='["${unitId}"]']`).first().click();
     await wait(2000);
-    if (tab) { await page.locator(`#deviceWsTabs .config-main-tab[data-dtab="${tab}"]`).click(); await wait(ms); }
+    if (tab) { await openDeviceTab(page, tab); await wait(ms); }
 };
 
 // ---- login ----------------------------------------------------------------
@@ -177,7 +178,7 @@ await top(); await shot('guide/19-installation.png');
 
 // ---- 20 unit overview, 21 unit commands -----------------------------------------------------
 await openUnit('sunfield-u1', 'overview', 2500); await top(); await shot('guide/20-unit-overview.png');
-await page.locator('#deviceWsTabs .config-main-tab[data-dtab="commands"]').click(); await wait(2500);
+await openDeviceTab(page, 'commands'); await wait(2500);
 await top(); await shot('guide/21-unit-outputs-commands.png');
 
 // ---- 22 rules ---------------------------------------------------------------------------------

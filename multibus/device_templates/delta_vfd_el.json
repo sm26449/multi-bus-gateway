@@ -1,0 +1,625 @@
+{
+  "device_template": {
+    "schema_version": 1,
+    "id": "delta_vfd_el",
+    "name": "Delta VFD-EL frequency drive",
+    "vendor": "Delta Electronics",
+    "model": "VFD-EL (e.g. VFD022EL43A)",
+    "version": "0.4.0",
+    "author": "",
+    "description": "Delta VFD-EL micro drive on its built-in RS-485 (RJ-45), Modbus RTU. Reads the fault code, the run state, the frequency command and output frequency, output current and voltage, the DC bus, the IGBT temperature and the drive's own communication settings; runs, stops, reverses, sets the frequency, runs at a frequency in one command (run_at, the one for rules) and resets a fault through Commands (dry run, check after write, lease back to stop). The drive answers only FC3 (up to 20 words), FC6 and FC8 and reads one parameter per request: this map writes one register per FC6 and reads one word per request. Set the drive first: Pr 09.00 address, Pr 09.01 speed, Pr 09.04 an RTU format, Pr 02.00 = 3, Pr 02.01 = RS-485 with the keypad STOP active, Pr 09.02 = 1 and Pr 09.03 = 2.0 s. No command is enabled until you enable it on the device.",
+    "source_document": "Delta VFD-EL User Manual, revision 2016/03 (6ELE, V1.14): Group 9 communication parameters p. 102, function codes p. 105 (03H read n≤20 words, 06H write, 08H loop detection), address list p. 108-110 (2000H-2002H, 2100H-210AH, parameter address GGnnH), Pr 02.00 p. 36. Not yet field-checked: the 0.01 Hz scaling of 2001H, 2101H bit 10, block reads of 2100H-210AH and the Pr 02.01 values are to be confirmed on a VFD022EL43A.",
+    "protocol": {
+      "transports": [
+        "rtu",
+        "tcp"
+      ],
+      "byte_order": "big",
+      "default_unit_id": 1,
+      "max_registers_per_read": 1,
+      "single_register_writes": true
+    },
+    "poll_groups": {
+      "fast": {
+        "interval": 2,
+        "description": "run state, frequencies, current, voltages (also re-read right after a command)"
+      },
+      "normal": {
+        "interval": 10,
+        "description": "temperature, PID feedback, the last command written"
+      },
+      "settings": {
+        "interval": 300,
+        "description": "the drive's own source and communication settings"
+      }
+    },
+    "categories": {
+      "status": {
+        "label": "Status",
+        "order": 1
+      },
+      "motor": {
+        "label": "Motor",
+        "order": 2
+      },
+      "controls": {
+        "label": "Controls",
+        "order": 3
+      },
+      "settings": {
+        "label": "Drive settings",
+        "order": 4
+      }
+    },
+    "canonical": false,
+    "registers": [
+      {
+        "address": 8192,
+        "name": "command_word",
+        "label": "Command word",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "controls",
+        "poll_group": "normal",
+        "writable": true,
+        "access": "RD/WR",
+        "write_allowed": [
+          1,
+          6,
+          10
+        ],
+        "description": "2000H. Bits 0-1: 01 stop, 10 run, 11 jog+run; bits 2-3: 01 FWD, 10 REV, 11 change direction; bits 4-5: 1st/2nd accel/decel. Written only through the run / stop commands: 1 = stop, 6 = run forward, 10 = run reverse.",
+        "enum": {
+          "1": "Stop",
+          "6": "Run forward",
+          "10": "Run reverse"
+        }
+      },
+      {
+        "address": 8193,
+        "name": "frequency_setpoint",
+        "label": "Frequency set point (written)",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "controls",
+        "poll_group": "normal",
+        "unit": "Hz",
+        "scale": 100,
+        "writable": true,
+        "access": "RD/WR",
+        "write_min": 0,
+        "write_max": 50,
+        "description": "2001H, frequency command in 0.01 Hz (to be confirmed on the drive: 5000 = 50.00 Hz). Taken only when Pr 02.00 = 3 (RS-485). Written through the set_frequency command. write_max 50 Hz: raise it to the drive's Pr 01.00 if the motor is rated higher."
+      },
+      {
+        "address": 8194,
+        "name": "fault_control",
+        "label": "External fault / reset",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "controls",
+        "poll_group": "normal",
+        "writable": true,
+        "access": "WR",
+        "write_allowed": [
+          2
+        ],
+        "description": "2002H. Bit 0 = external fault (EF) on (never written by this map), bit 1 = reset. Written only through the reset_fault command (value 2)."
+      },
+      {
+        "address": 8448,
+        "name": "error_code",
+        "label": "Fault code",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "status",
+        "poll_group": "fast",
+        "enum": {
+          "0": "No error",
+          "1": "Over-current (oc)",
+          "2": "Over-voltage (ov)",
+          "3": "IGBT overheat (oH1)",
+          "4": "Reserved",
+          "5": "Overload (oL)",
+          "6": "Overload 1 (oL1)",
+          "7": "Overload 2 (oL2)",
+          "8": "External fault (EF)",
+          "9": "Over 2x rated current while accelerating (ocA)",
+          "10": "Over 2x rated current while decelerating (ocd)",
+          "11": "Over 2x rated current at steady speed (ocn)",
+          "12": "Ground fault (GFF)",
+          "13": "Reserved",
+          "14": "Phase loss (PHL)",
+          "15": "Reserved",
+          "16": "Auto accel/decel failure (cFA)",
+          "17": "Software protection (codE)",
+          "18": "Power board CPU write failure (CF1.0)",
+          "19": "Power board CPU read failure (CF2.0)",
+          "20": "CC/OC hardware protection failure (HPF1)",
+          "21": "OV hardware protection failure (HPF2)",
+          "22": "GFF hardware protection failure (HPF3)",
+          "23": "OC hardware protection failure (HPF4)",
+          "24": "U-phase error (cF3.0)",
+          "25": "V-phase error (cF3.1)",
+          "26": "W-phase error (cF3.2)",
+          "27": "DC bus error (cF3.3)",
+          "28": "IGBT overheat (cF3.4)",
+          "32": "ACI signal error (AErr)",
+          "34": "Motor PTC overheat (PtC1)"
+        },
+        "description": "2100H, the drive's present fault (0 = none)."
+      },
+      {
+        "address": 8449,
+        "name": "status_word",
+        "label": "Status word",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "status",
+        "poll_group": "fast",
+        "description": "2101H. Bits 0-1: 00 stopped, 01 decelerating to stop, 10 standby, 11 running; bit 2 jog; bits 3-4: 00 forward, 01 reverse→forward, 10 forward→reverse, 11 reverse; bit 8 = frequency from the communication port; bit 9 = frequency from an analog input; bit 10 = run command from the communication port (to be confirmed). Decoded into run_state, reverse, frequency_from_comm and command_from_comm."
+      },
+      {
+        "address": 8450,
+        "name": "frequency_command",
+        "label": "Frequency command (F)",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "motor",
+        "poll_group": "fast",
+        "unit": "Hz",
+        "scale": 100,
+        "description": "2102H, the frequency the drive is told to reach, 0.01 Hz."
+      },
+      {
+        "address": 8451,
+        "name": "output_frequency",
+        "label": "Output frequency (H)",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "motor",
+        "poll_group": "fast",
+        "unit": "Hz",
+        "scale": 100,
+        "description": "2103H, the frequency at the motor terminals, 0.01 Hz."
+      },
+      {
+        "address": 8452,
+        "name": "output_current",
+        "label": "Output current",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "motor",
+        "poll_group": "fast",
+        "unit": "A",
+        "scale": 10,
+        "description": "2104H, 0.1 A."
+      },
+      {
+        "address": 8454,
+        "name": "pid_feedback",
+        "label": "PID feedback (analog input)",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "motor",
+        "poll_group": "normal",
+        "description": "2106H, the analog signal on the PID feedback terminal, as the drive shows it (raw)."
+      },
+      {
+        "address": 8456,
+        "name": "dc_bus_voltage",
+        "label": "DC bus voltage",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "motor",
+        "poll_group": "fast",
+        "unit": "V",
+        "scale": 10,
+        "description": "2108H, 0.1 V."
+      },
+      {
+        "address": 8457,
+        "name": "output_voltage",
+        "label": "Output voltage",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "motor",
+        "poll_group": "fast",
+        "unit": "V",
+        "scale": 10,
+        "description": "2109H, 0.1 V."
+      },
+      {
+        "address": 8458,
+        "name": "igbt_temperature",
+        "label": "IGBT temperature",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "motor",
+        "poll_group": "normal",
+        "unit": "°C",
+        "description": "210AH, °C."
+      },
+      {
+        "address": 512,
+        "name": "frequency_source",
+        "label": "Frequency source (Pr 02.00)",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "settings",
+        "poll_group": "settings",
+        "enum": {
+          "0": "Keypad UP/DOWN",
+          "1": "AVI 0-10 V",
+          "2": "ACI 4-20 mA",
+          "3": "RS-485 (RJ-45)",
+          "4": "Keypad potentiometer"
+        },
+        "description": "Pr 02.00 (address 0200H). 3 = the frequency comes from RS-485: needed for set_frequency."
+      },
+      {
+        "address": 513,
+        "name": "command_source",
+        "label": "Operation command source (Pr 02.01)",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "settings",
+        "poll_group": "settings",
+        "description": "Pr 02.01 (address 0201H). Must be an RS-485 setting for run / stop from MBG; keep the one that leaves the keypad STOP key active (value to confirm in the manual's Group 2)."
+      },
+      {
+        "address": 2306,
+        "name": "comm_fault_action",
+        "label": "Communication fault action (Pr 09.02)",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "settings",
+        "poll_group": "settings",
+        "enum": {
+          "0": "Warn and keep running",
+          "1": "Warn and ramp to stop",
+          "2": "Warn and coast to stop",
+          "3": "No warning, keep running"
+        },
+        "description": "Pr 09.02 (address 0902H). Factory 3. Recommended 1: when MBG falls silent for Pr 09.03 seconds, the motor ramps to a stop."
+      },
+      {
+        "address": 2307,
+        "name": "comm_timeout",
+        "label": "Communication time-out (Pr 09.03)",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "category": "settings",
+        "poll_group": "settings",
+        "unit": "s",
+        "scale": 10,
+        "description": "Pr 09.03 (address 0903H), 0.0-120.0 s, 0 = off (factory). Recommended 2.0 s with Pr 09.02 = 1."
+      }
+    ],
+    "calculated": [
+      {
+        "name": "run_state",
+        "label": "Run state",
+        "category": "status",
+        "poll_group": "fast",
+        "expr": "status_word % 4",
+        "enum": {
+          "0": "Stopped",
+          "1": "Decelerating to stop",
+          "2": "Standby",
+          "3": "Running"
+        }
+      },
+      {
+        "name": "running",
+        "label": "Running",
+        "category": "status",
+        "poll_group": "fast",
+        "expr": "1 if status_word % 4 == 3 else 0"
+      },
+      {
+        "name": "igbt_hot",
+        "label": "IGBT running hot (80 °C or more)",
+        "category": "status",
+        "poll_group": "normal",
+        "expr": "1 if igbt_temperature >= 80 else 0"
+      },
+      {
+        "name": "reverse",
+        "label": "Direction",
+        "category": "status",
+        "poll_group": "fast",
+        "expr": "1 if (status_word // 8) % 4 >= 2 else 0",
+        "enum": {
+          "0": "Forward",
+          "1": "Reverse"
+        }
+      },
+      {
+        "name": "frequency_from_comm",
+        "label": "Frequency from the bus",
+        "category": "status",
+        "poll_group": "fast",
+        "expr": "(status_word // 256) % 2"
+      },
+      {
+        "name": "command_from_comm",
+        "label": "Run command from the bus (2101H bit 10, to confirm)",
+        "category": "status",
+        "poll_group": "fast",
+        "expr": "(status_word // 1024) % 2"
+      },
+      {
+        "name": "output_apparent_power",
+        "label": "Output apparent power (estimated, √3 × U × I)",
+        "unit": "VA",
+        "decimals": 0,
+        "category": "motor",
+        "poll_group": "fast",
+        "expr": "1.732 * output_voltage * output_current"
+      }
+    ],
+    "commands": {
+      "run": {
+        "label": "Run / stop",
+        "params": {
+          "value": {
+            "label": "0 stop, 1 forward, 2 reverse",
+            "allowed": [
+              0,
+              1,
+              2
+            ],
+            "required": true
+          }
+        },
+        "writes": [
+          {
+            "register": "command_word",
+            "value": {
+              "if": "${value} == 0",
+              "then": 1,
+              "else": {
+                "if": "${value} == 1",
+                "then": 6,
+                "else": 10
+              }
+            }
+          }
+        ],
+        "settle_s": 1,
+        "verify": [
+          {
+            "read": "command_word",
+            "expect": {
+              "if": "${value} == 0",
+              "then": 1,
+              "else": {
+                "if": "${value} == 1",
+                "then": 6,
+                "else": 10
+              }
+            }
+          }
+        ],
+        "safe": {
+          "value": 0
+        },
+        "readback_group": "fast",
+        "confirm": true,
+        "on": "${value} != 0",
+        "channel": "motor"
+      },
+      "stop": {
+        "label": "Stop (ramp)",
+        "alias": {
+          "command": "run",
+          "params": {
+            "value": 0
+          }
+        },
+        "confirm": false
+      },
+      "run_forward": {
+        "label": "Run forward",
+        "alias": {
+          "command": "run",
+          "params": {
+            "value": 1
+          }
+        },
+        "confirm": true
+      },
+      "run_reverse": {
+        "label": "Run reverse",
+        "alias": {
+          "command": "run",
+          "params": {
+            "value": 2
+          }
+        },
+        "confirm": true
+      },
+      "set_frequency": {
+        "label": "Frequency set point",
+        "params": {
+          "value": {
+            "label": "Frequency",
+            "unit": "Hz",
+            "min": 0,
+            "max": 50,
+            "required": true
+          }
+        },
+        "guard": [
+          {
+            "read": "frequency_source",
+            "expect": 3
+          }
+        ],
+        "writes": [
+          {
+            "register": "frequency_setpoint",
+            "value": "${value}"
+          }
+        ],
+        "settle_s": 1,
+        "verify": [
+          {
+            "read": "frequency_command",
+            "expect": "${value}",
+            "tolerance": 0.05
+          }
+        ],
+        "readback_group": "fast",
+        "confirm": true,
+        "channel": "motor"
+      },
+      "run_at": {
+        "label": "Run forward at a frequency (0 = stop)",
+        "params": {
+          "value": {
+            "label": "Frequency (0 = stop)",
+            "unit": "Hz",
+            "min": 0,
+            "max": 50,
+            "required": true
+          }
+        },
+        "guard": [
+          {
+            "read": "frequency_source",
+            "expect": 3
+          }
+        ],
+        "writes": [
+          {
+            "register": "frequency_setpoint",
+            "value": "${value}"
+          },
+          {
+            "register": "command_word",
+            "value": {
+              "if": "${value} == 0",
+              "then": 1,
+              "else": 6
+            }
+          }
+        ],
+        "settle_s": 1,
+        "verify": [
+          {
+            "read": "frequency_command",
+            "expect": "${value}",
+            "tolerance": 0.05
+          },
+          {
+            "read": "command_word",
+            "expect": {
+              "if": "${value} == 0",
+              "then": 1,
+              "else": 6
+            }
+          }
+        ],
+        "safe": {
+          "value": 0
+        },
+        "readback_group": "fast",
+        "confirm": true,
+        "on": "${value} > 0",
+        "channel": "motor"
+      },
+      "reset_fault": {
+        "label": "Reset the fault",
+        "writes": [
+          {
+            "register": "fault_control",
+            "value": 2
+          }
+        ],
+        "settle_s": 1,
+        "verify": [
+          {
+            "read": "error_code",
+            "expect": 0
+          }
+        ],
+        "readback_group": "fast",
+        "confirm": true
+      }
+    },
+    "display": {
+      "unit_label": "drive",
+      "unit_label_plural": "drives",
+      "icon": "fan",
+      "glance": [
+        "run_state",
+        "output_frequency",
+        "output_current",
+        "error_code"
+      ],
+      "hero": [
+        "output_frequency",
+        "output_current",
+        "run_state"
+      ],
+      "alarms": [
+        {
+          "field": "error_code",
+          "severity": "danger"
+        },
+        {
+          "field": "igbt_hot",
+          "severity": "warning",
+          "for_s": 60
+        }
+      ]
+    },
+    "notes": [
+      {
+        "level": "warning",
+        "text": "Before any command: wire an emergency stop that cuts the drive's supply, keep the keypad STOP key active (Pr 02.01) and set Pr 09.02 = 1 with Pr 09.03 = 2.0 s, so the motor ramps to a stop by itself if the gateway, the bus or the cable goes away. MBG polls every 2 s, which keeps that time-out fed.",
+        "fields": [
+          "comm_fault_action",
+          "comm_timeout",
+          "command_source"
+        ]
+      },
+      {
+        "level": "warning",
+        "text": "Runtime control writes only 2000H-2002H. Do not write the drive's parameters (GGnnH) from rules or loops: parameters are stored in the drive's memory, and repeated writes wear it out.",
+        "fields": [
+          "command_word",
+          "frequency_setpoint",
+          "fault_control"
+        ]
+      },
+      {
+        "level": "info",
+        "text": "Version 0.1.0 is written from the manual and not yet checked on a drive. If the drive answers a block read of 2100H-210AH (the manual allows up to 20 words for status), Max registers per read can go up to 20 for fewer requests, provided the parameter rows (0200H, 0201H, 0902H, 0903H) stay unselected, since a parameter is read one per request.",
+        "fields": [
+          "frequency_source",
+          "command_source",
+          "comm_fault_action",
+          "comm_timeout"
+        ]
+      },
+      {
+        "level": "info",
+        "text": "set_frequency refuses to write unless Pr 02.00 = 3 (frequency from RS-485): otherwise the drive would ignore it silently.",
+        "fields": [
+          "frequency_source"
+        ]
+      }
+    ],
+    "channels": {
+      "motor": {
+        "label": "Motor (run, stop, frequency)",
+        "combine": "priority",
+        "min_off_s": 5,
+        "max_starts_per_h": 30
+      }
+    }
+  }
+}

@@ -1,0 +1,1431 @@
+{
+  "device_template": {
+    "schema_version": 1,
+    "id": "samsung_mim_b19n",
+    "name": "Samsung MIM-B19N Modbus interface (DVM / EHS)",
+    "vendor": "Samsung",
+    "model": "MIM-B19N / MIM-B19NT",
+    "version": "1.6.3",
+    "author": "",
+    "description": "Samsung Modbus Interface Module on a DVM/EHS outdoor unit (R1-R2), read over Modbus RTU 9600 8E1. Outdoor block at 0-2, then the indoor unit at address 0 (a hydro kit / EHS, an indoor unit) at 50-79: on/off, mode, set and room temperatures, water in/out, water set point, domestic hot water. Indoor unit N sits at 50 + N*50 + offset (duplicate the rows for more units). The setup steps activate the module's extra values (NASA message ids written to 6000/7000 — a write to the interface module, not a command to the unit). Control registers are written only through the template's Commands (range-checked, spaced 2 s apart, verified by read-back): every write to a holding register is a control command to the unit, so none is enabled until you enable it on the device.",
+    "source_document": "Samsung DB68-07538A-03 Installation manual, Modbus Interface Module MIM-B19N/MIM-B19NT, Table 2 (Modbus register table), p. 13-16; the addresses match a Node-RED flow that read the same unit (FC3, address 50 x28). Field-checked 2026-10-08 on a DVM-S with an HE hydro kit at IU 0: 0x7FFF on the hot water temperature = no tank sensor. Extra registers: Table 3 of DB68-07538A-03 (2022) for the official IDs; community IDs from ZimKev's MIM-B19N notes (EHS) and the 'More Hidden Registers' list.",
+    "protocol": {
+      "transports": [
+        "rtu",
+        "tcp"
+      ],
+      "byte_order": "big",
+      "default_unit_id": 1,
+      "max_registers_per_read": 32,
+      "min_write_gap_s": 2
+    },
+    "poll_groups": {
+      "normal": {
+        "interval": 10,
+        "description": "state, temperatures (also re-read right after a command)"
+      },
+      "slow": {
+        "interval": 60,
+        "description": "outdoor status, unit type"
+      }
+    },
+    "categories": {
+      "status": {
+        "label": "Status",
+        "order": 1
+      },
+      "temperature": {
+        "label": "Temperatures",
+        "order": 2
+      },
+      "water": {
+        "label": "Water circuit",
+        "order": 3
+      },
+      "dhw": {
+        "label": "Domestic hot water",
+        "order": 4
+      },
+      "outdoor": {
+        "label": "Outdoor unit",
+        "order": 5
+      },
+      "compressor": {
+        "label": "Compressor & refrigerant",
+        "order": 6
+      },
+      "hydro": {
+        "label": "Hydro unit internals",
+        "order": 7
+      },
+      "energy_test": {
+        "label": "Energy (experimental)",
+        "order": 8
+      }
+    },
+    "canonical": false,
+    "registers": [
+      {
+        "address": 0,
+        "name": "mim_status",
+        "label": "Interface module status",
+        "data_type": "uint16",
+        "category": "outdoor",
+        "poll_group": "slow",
+        "description": "bit0 address error, bit1 communication error on R1/R2, bit2 tracking error (0 = all fine)",
+        "bits": {
+          "0": "Address error",
+          "1": "R1/R2 communication error",
+          "2": "Tracking error"
+        }
+      },
+      {
+        "address": 1,
+        "name": "outdoor_error_code",
+        "label": "Outdoor unit error code",
+        "data_type": "uint16",
+        "category": "outdoor",
+        "poll_group": "slow",
+        "description": "0 = no error, 100-999 = Samsung error code"
+      },
+      {
+        "address": 2,
+        "name": "outdoor_defrost",
+        "label": "Defrost",
+        "data_type": "uint16",
+        "category": "outdoor",
+        "poll_group": "normal",
+        "description": "0 or 0xFF = no defrost; any other value = defrosting, the value being the step of the cycle (field-seen: 4, 7)",
+        "enum": {
+          "0": "Off",
+          "255": "Off",
+          "1": "On (step 1)",
+          "2": "On (step 2)",
+          "3": "On (step 3)",
+          "4": "On (step 4)",
+          "5": "On (step 5)",
+          "6": "On (step 6)",
+          "7": "On (step 7)",
+          "8": "On (step 8)",
+          "9": "On (step 9)",
+          "10": "On (step 10)",
+          "11": "On (step 11)",
+          "12": "On (step 12)",
+          "13": "On (step 13)",
+          "14": "On (step 14)",
+          "15": "On (step 15)",
+          "16": "On (step 16)",
+          "17": "On (step 17)",
+          "18": "On (step 18)",
+          "19": "On (step 19)",
+          "20": "On (step 20)",
+          "21": "On (step 21)",
+          "22": "On (step 22)",
+          "23": "On (step 23)",
+          "24": "On (step 24)",
+          "25": "On (step 25)",
+          "26": "On (step 26)",
+          "27": "On (step 27)",
+          "28": "On (step 28)",
+          "29": "On (step 29)",
+          "30": "On (step 30)"
+        }
+      },
+      {
+        "address": 50,
+        "name": "iu0_comm_status",
+        "label": "Indoor unit communication",
+        "data_type": "uint16",
+        "category": "status",
+        "poll_group": "slow",
+        "description": "bit0 exists, bit1 type OK, bit2 ready (7 = tracked and controllable), bit3 communication error",
+        "bits": {
+          "0": "Exists",
+          "1": "Type OK",
+          "2": "Ready",
+          "3": "Communication error"
+        }
+      },
+      {
+        "address": 51,
+        "name": "iu0_unit_type",
+        "label": "Indoor unit type",
+        "data_type": "uint16",
+        "category": "status",
+        "poll_group": "slow",
+        "description": "lower byte = model code: HE 110, HT 120, EHS 115-117, AHU 90-99, ERV 100-102 (mask 255 reads the code alone)",
+        "mask": 255,
+        "enum": {
+          "110": "HE",
+          "115": "EHS",
+          "116": "EHS",
+          "117": "EHS",
+          "120": "HT",
+          "108": "ERV+"
+        }
+      },
+      {
+        "address": 52,
+        "name": "iu0_power",
+        "label": "On / off",
+        "data_type": "uint16",
+        "category": "status",
+        "poll_group": "normal",
+        "enum": {
+          "0": "Off",
+          "1": "On"
+        }
+      },
+      {
+        "address": 53,
+        "name": "iu0_mode",
+        "label": "Operation mode",
+        "data_type": "uint16",
+        "category": "status",
+        "poll_group": "normal",
+        "enum": {
+          "0": "Auto",
+          "1": "Cool",
+          "2": "Dry",
+          "3": "Fan",
+          "4": "Heat",
+          "21": "Cool storage",
+          "24": "Heat storage"
+        }
+      },
+      {
+        "address": 56,
+        "name": "iu0_filter_alarm",
+        "label": "Filter alarm",
+        "data_type": "uint16",
+        "category": "status",
+        "poll_group": "slow",
+        "enum": {
+          "0": "OK",
+          "1": "Clean the filter"
+        }
+      },
+      {
+        "address": 58,
+        "name": "iu0_set_temperature",
+        "label": "Set temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "scale": 10,
+        "category": "temperature",
+        "poll_group": "normal",
+        "nan": 32767,
+        "description": "32767 (0x7FFF) = no sensor, read as missing"
+      },
+      {
+        "address": 59,
+        "name": "iu0_room_temperature",
+        "label": "Room temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "scale": 10,
+        "category": "temperature",
+        "poll_group": "normal",
+        "nan": 32767,
+        "description": "32767 (0x7FFF) = no sensor, read as missing"
+      },
+      {
+        "address": 63,
+        "name": "iu0_error_code",
+        "label": "Indoor unit error code",
+        "data_type": "uint16",
+        "category": "status",
+        "poll_group": "normal",
+        "description": "0 = no error, 100-999 = Samsung error code"
+      },
+      {
+        "address": 65,
+        "name": "iu0_water_in_temperature",
+        "label": "Water in",
+        "unit": "°C",
+        "data_type": "int16",
+        "scale": 10,
+        "category": "water",
+        "poll_group": "normal",
+        "nan": 32767,
+        "description": "32767 (0x7FFF) = no sensor, read as missing"
+      },
+      {
+        "address": 66,
+        "name": "iu0_water_out_temperature",
+        "label": "Water out",
+        "unit": "°C",
+        "data_type": "int16",
+        "scale": 10,
+        "category": "water",
+        "poll_group": "normal",
+        "nan": 32767,
+        "description": "32767 (0x7FFF) = no sensor, read as missing"
+      },
+      {
+        "address": 68,
+        "name": "iu0_water_out_set",
+        "label": "Water out set point",
+        "unit": "°C",
+        "data_type": "int16",
+        "scale": 10,
+        "category": "water",
+        "poll_group": "normal",
+        "description": "EHS: cool 5-25 °C, heat 15-65 °C; 32767 (0x7FFF) = no sensor, read as missing",
+        "nan": 32767
+      },
+      {
+        "address": 72,
+        "name": "iu0_dhw_power",
+        "label": "Hot water",
+        "data_type": "uint16",
+        "category": "dhw",
+        "poll_group": "normal",
+        "enum": {
+          "0": "Off",
+          "1": "On"
+        }
+      },
+      {
+        "address": 73,
+        "name": "iu0_dhw_mode",
+        "label": "Hot water mode",
+        "data_type": "uint16",
+        "category": "dhw",
+        "poll_group": "normal",
+        "enum": {
+          "0": "Eco",
+          "1": "Standard",
+          "2": "Power",
+          "3": "Force"
+        }
+      },
+      {
+        "address": 74,
+        "name": "iu0_dhw_set",
+        "label": "Hot water set point",
+        "unit": "°C",
+        "data_type": "int16",
+        "scale": 10,
+        "category": "dhw",
+        "poll_group": "normal",
+        "description": "EHS: 30-70 °C; 32767 (0x7FFF) = no sensor, read as missing",
+        "nan": 32767
+      },
+      {
+        "address": 75,
+        "name": "iu0_dhw_temperature",
+        "label": "Hot water temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "scale": 10,
+        "category": "dhw",
+        "poll_group": "normal",
+        "nan": 32767,
+        "description": "32767 (0x7FFF) = no sensor, read as missing"
+      },
+      {
+        "address": 78,
+        "name": "iu0_quiet",
+        "label": "Quiet mode",
+        "data_type": "uint16",
+        "category": "status",
+        "poll_group": "slow",
+        "enum": {
+          "0": "Off",
+          "1": "On"
+        }
+      },
+      {
+        "address": 79,
+        "name": "iu0_away",
+        "label": "Away (outing) mode",
+        "data_type": "uint16",
+        "category": "status",
+        "poll_group": "slow",
+        "enum": {
+          "0": "Off",
+          "1": "On"
+        }
+      },
+      {
+        "address": 4,
+        "name": "outdoor_operation",
+        "label": "Outdoor operation",
+        "data_type": "uint16",
+        "category": "outdoor",
+        "poll_group": "normal",
+        "description": "NASA 0x8001 (activated by the setup step): what the outdoor unit is doing. Between two heating cycles it goes Normal → Sub-stop → Stop (the thermostat is off) and, on restart, Safety (the start-up sequence) → Normal. States from the 'More Hidden Registers' list — community ID (ZimKev, tested on an EHS system); verify on your unit",
+        "enum": {
+          "0": "Stop",
+          "1": "Safety",
+          "2": "Normal",
+          "3": "Balance",
+          "4": "Recovery",
+          "5": "De-ice",
+          "6": "Compressor down",
+          "7": "Prohibit",
+          "8": "Line jig",
+          "9": "PCB jig",
+          "10": "Test",
+          "11": "Charge",
+          "12": "Pump down",
+          "13": "Pump out",
+          "14": "Vacuum",
+          "15": "Calorie jig",
+          "16": "Pump-down stop",
+          "17": "Sub-stop",
+          "18": "Pipe check",
+          "19": "Refrigerant check",
+          "20": "FPT jig",
+          "21": "Non-stop heat/cool change",
+          "22": "Auto inspection",
+          "23": "Electric discharge",
+          "24": "Split de-ice",
+          "25": "Inverter check",
+          "26": "Non-stop de-ice",
+          "27": "Remote test",
+          "28": "Rating",
+          "29": "PC test",
+          "30": "Pump down (thermo off)",
+          "31": "3-phase test",
+          "32": "Smart-install test",
+          "33": "Device performance test",
+          "34": "Inverter/fan PBA check",
+          "35": "Auto pipe pairing",
+          "36": "Auto charge"
+        }
+      },
+      {
+        "address": 5,
+        "name": "compressor_running",
+        "label": "Compressor",
+        "data_type": "uint16",
+        "category": "compressor",
+        "poll_group": "normal",
+        "description": "NASA 0x8010 (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit",
+        "enum": {
+          "0": "Off",
+          "1": "On"
+        }
+      },
+      {
+        "address": 6,
+        "name": "outdoor_temperature",
+        "label": "Outdoor temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "scale": 10,
+        "category": "outdoor",
+        "poll_group": "normal",
+        "description": "NASA 0x8204 (activated by the setup step) — official: MIM manual DB68-07538A-03, Table 3",
+        "nan": 32767
+      },
+      {
+        "address": 7,
+        "name": "pressure_high",
+        "label": "High pressure",
+        "unit": "kgf/cm²",
+        "data_type": "int16",
+        "scale": 10,
+        "category": "compressor",
+        "poll_group": "normal",
+        "description": "NASA 0x8206 (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit"
+      },
+      {
+        "address": 8,
+        "name": "pressure_low",
+        "label": "Low pressure",
+        "unit": "kgf/cm²",
+        "data_type": "int16",
+        "scale": 10,
+        "category": "compressor",
+        "poll_group": "normal",
+        "description": "NASA 0x8208 (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit"
+      },
+      {
+        "address": 9,
+        "name": "discharge_temperature",
+        "label": "Discharge temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "scale": 10,
+        "category": "compressor",
+        "poll_group": "normal",
+        "description": "NASA 0x820A (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit",
+        "nan": 32767
+      },
+      {
+        "address": 10,
+        "name": "compressor_current",
+        "label": "Compressor current",
+        "unit": "A",
+        "data_type": "uint16",
+        "scale": 10,
+        "category": "compressor",
+        "poll_group": "normal",
+        "description": "NASA 0x8217 — community ID (ZimKev, tested on an EHS system); verify on your unit"
+      },
+      {
+        "address": 11,
+        "name": "condenser_out_temperature",
+        "label": "Heat exchanger outlet (cond-out)",
+        "unit": "°C",
+        "data_type": "int16",
+        "scale": 10,
+        "category": "compressor",
+        "poll_group": "normal",
+        "description": "NASA 0x8218 (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit",
+        "nan": 32767
+      },
+      {
+        "address": 12,
+        "name": "suction_temperature",
+        "label": "Suction temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "scale": 10,
+        "category": "compressor",
+        "poll_group": "normal",
+        "description": "NASA 0x821A (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit",
+        "nan": 32767
+      },
+      {
+        "address": 13,
+        "name": "outdoor_error_detail",
+        "label": "Outdoor error code (NASA)",
+        "data_type": "uint16",
+        "category": "outdoor",
+        "poll_group": "normal",
+        "description": "NASA 0x8235 (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit"
+      },
+      {
+        "address": 14,
+        "name": "compressor_frequency",
+        "label": "Compressor frequency",
+        "unit": "Hz",
+        "data_type": "uint16",
+        "category": "compressor",
+        "poll_group": "normal",
+        "description": "NASA 0x8238 (activated by the setup step) — official: MIM manual DB68-07538A-03, Table 3"
+      },
+      {
+        "address": 15,
+        "name": "compressor_target_frequency",
+        "label": "Compressor target frequency",
+        "unit": "Hz",
+        "data_type": "uint16",
+        "category": "compressor",
+        "poll_group": "normal",
+        "description": "NASA 0x8237 (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit"
+      },
+      {
+        "address": 16,
+        "name": "dc_link_voltage",
+        "label": "DC link voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "category": "compressor",
+        "poll_group": "normal",
+        "description": "NASA 0x823B (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit"
+      },
+      {
+        "address": 17,
+        "name": "outdoor_fan_speed",
+        "label": "Outdoor fan",
+        "data_type": "uint16",
+        "category": "outdoor",
+        "poll_group": "normal",
+        "description": "NASA 0x823D — rpm or step — not confirmed by the community (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit"
+      },
+      {
+        "address": 18,
+        "name": "base_heater",
+        "label": "Base heater",
+        "data_type": "uint16",
+        "category": "outdoor",
+        "poll_group": "normal",
+        "description": "NASA 0x80AF (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit",
+        "enum": {
+          "0": "Off",
+          "1": "On"
+        }
+      },
+      {
+        "address": 19,
+        "name": "ipm_temperature",
+        "label": "Inverter (IPM) temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "scale": 10,
+        "category": "compressor",
+        "poll_group": "normal",
+        "description": "NASA 0x8254 (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit",
+        "nan": 32767
+      },
+      {
+        "address": 20,
+        "name": "compressor_top_temperature",
+        "label": "Compressor top temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "scale": 10,
+        "category": "compressor",
+        "poll_group": "normal",
+        "description": "NASA 0x8280 (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit",
+        "nan": 32767
+      },
+      {
+        "address": 21,
+        "name": "outdoor_power_test",
+        "label": "Outdoor power (test)",
+        "unit": "W",
+        "data_type": "uint16",
+        "category": "energy_test",
+        "poll_group": "normal",
+        "description": "NASA 0x8413 — NASA 0x8413, a 4-byte value through a 16-bit register — experimental: the community reports the MIM may not pass it (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit"
+      },
+      {
+        "address": 22,
+        "name": "outdoor_energy_test",
+        "label": "Outdoor energy, cumulative (test)",
+        "data_type": "uint16",
+        "category": "energy_test",
+        "poll_group": "normal",
+        "description": "NASA 0x8414 — NASA 0x8414, 4 bytes — experimental (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit"
+      },
+      {
+        "address": 82,
+        "name": "valve_3way",
+        "label": "3-way valve",
+        "data_type": "uint16",
+        "category": "hydro",
+        "poll_group": "normal",
+        "description": "NASA 0x4067 (activated by the setup step) — official: MIM manual DB68-07538A-03, Table 3",
+        "enum": {
+          "0": "Space heating",
+          "1": "Hot water tank"
+        }
+      },
+      {
+        "address": 83,
+        "name": "backup_heater",
+        "label": "Backup heater",
+        "data_type": "uint16",
+        "category": "hydro",
+        "poll_group": "normal",
+        "description": "NASA 0x406C (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit",
+        "enum": {
+          "0": "Off",
+          "1": "Step 1",
+          "2": "Step 2"
+        }
+      },
+      {
+        "address": 84,
+        "name": "booster_heater",
+        "label": "Booster heater",
+        "data_type": "uint16",
+        "category": "hydro",
+        "poll_group": "normal",
+        "description": "NASA 0x4087 (activated by the setup step) — official: MIM manual DB68-07538A-03, Table 3",
+        "enum": {
+          "0": "Off",
+          "1": "On"
+        }
+      },
+      {
+        "address": 85,
+        "name": "water_pump_pwm",
+        "label": "Water pump",
+        "unit": "%",
+        "data_type": "uint16",
+        "category": "hydro",
+        "poll_group": "normal",
+        "description": "NASA 0x40C4 (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit"
+      },
+      {
+        "address": 86,
+        "name": "water_flow",
+        "label": "Water flow",
+        "unit": "L/min",
+        "data_type": "uint16",
+        "scale": 10,
+        "category": "water",
+        "poll_group": "normal",
+        "description": "NASA 0x42E9 — may lag behind reality (community reports a delay) (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit"
+      },
+      {
+        "address": 87,
+        "name": "room_sensor_temperature",
+        "label": "Room sensor temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "scale": 10,
+        "category": "temperature",
+        "poll_group": "normal",
+        "description": "NASA 0x4203 (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit",
+        "nan": 32767
+      },
+      {
+        "address": 88,
+        "name": "heater_out_temperature",
+        "label": "Heater outlet temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "scale": 10,
+        "category": "water",
+        "poll_group": "normal",
+        "description": "NASA 0x4239 (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit",
+        "nan": 32767
+      },
+      {
+        "address": 89,
+        "name": "water_out_target",
+        "label": "Water-out target (actual)",
+        "unit": "°C",
+        "data_type": "int16",
+        "scale": 10,
+        "category": "water",
+        "poll_group": "normal",
+        "description": "NASA 0x4247 (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit",
+        "nan": 32767
+      },
+      {
+        "address": 90,
+        "name": "water_law_temperature",
+        "label": "Water law (weather curve) temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "scale": 10,
+        "category": "water",
+        "poll_group": "normal",
+        "description": "NASA 0x427F (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit",
+        "nan": 32767
+      },
+      {
+        "address": 91,
+        "name": "dhw_tank_temperature",
+        "label": "Hot water tank temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "scale": 10,
+        "category": "dhw",
+        "poll_group": "normal",
+        "description": "NASA 0x4237 (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit",
+        "nan": 32767
+      },
+      {
+        "address": 92,
+        "name": "compressor_limit",
+        "label": "Compressor frequency limit (FR)",
+        "data_type": "uint16",
+        "category": "compressor",
+        "poll_group": "normal",
+        "description": "NASA 0x42F1 (activated by the setup step): 256 + percent while a limit is active (306 = 50 %, 406 = 150 %), 0 = none. The unit drops a limit after 1 hour — the compressor_limit command re-writes it every 30 min until it is set to 0 — official: MIM manual DB68-07538A-03, Table 3"
+      },
+      {
+        "address": 93,
+        "name": "thermo_on",
+        "label": "Thermo on",
+        "data_type": "uint16",
+        "category": "hydro",
+        "poll_group": "normal",
+        "description": "NASA 0x4028 (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit",
+        "enum": {
+          "0": "Off",
+          "1": "On"
+        }
+      },
+      {
+        "address": 94,
+        "name": "indoor_defrost",
+        "label": "Defrost (indoor)",
+        "data_type": "uint16",
+        "category": "hydro",
+        "poll_group": "normal",
+        "description": "NASA 0x402E (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit",
+        "enum": {
+          "0": "Off",
+          "1": "On"
+        }
+      },
+      {
+        "address": 95,
+        "name": "heat_output_test",
+        "label": "Heat produced, last minute (test)",
+        "data_type": "uint16",
+        "category": "energy_test",
+        "poll_group": "normal",
+        "description": "NASA 0x4426 — NASA 0x4426, 4 bytes — experimental (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit"
+      },
+      {
+        "address": 96,
+        "name": "heat_total_test",
+        "label": "Heat produced, total (test)",
+        "data_type": "uint16",
+        "category": "energy_test",
+        "poll_group": "normal",
+        "description": "NASA 0x4427 — NASA 0x4427, 4 bytes — experimental (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit"
+      },
+      {
+        "address": 23,
+        "name": "eva_in_temperature",
+        "label": "EVA-in temperature (outdoor coil inlet)",
+        "unit": "°C",
+        "data_type": "int16",
+        "category": "outdoor",
+        "poll_group": "normal",
+        "description": "NASA 0x82DE, listed by Samsung as 'Eva In for EHS' — an EHS-only sensor: reads 0 on a DVM-S outdoor unit (field-checked 2026-10-09) — community ID (ZimKev, tested on an EHS system)",
+        "scale": 10,
+        "nan": 32767
+      },
+      {
+        "address": 24,
+        "name": "condensing_saturation_temperature",
+        "label": "High-pressure saturation temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "category": "compressor",
+        "poll_group": "normal",
+        "description": "NASA 0x829F (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit",
+        "scale": 10,
+        "nan": 32767
+      },
+      {
+        "address": 25,
+        "name": "evaporating_saturation_temperature",
+        "label": "Low-pressure saturation temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "category": "compressor",
+        "poll_group": "normal",
+        "description": "NASA 0x82A0 (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit",
+        "scale": 10,
+        "nan": 32767
+      },
+      {
+        "address": 26,
+        "name": "eev_main_position",
+        "label": "Main expansion valve (EEV1) position",
+        "unit": "steps",
+        "data_type": "uint16",
+        "category": "compressor",
+        "poll_group": "normal",
+        "description": "NASA 0x8229 (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit"
+      },
+      {
+        "address": 27,
+        "name": "evi_in_temperature",
+        "label": "EVI-in temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "category": "compressor",
+        "poll_group": "normal",
+        "description": "NASA 0x821E (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit",
+        "scale": 10,
+        "nan": 32767
+      },
+      {
+        "address": 28,
+        "name": "evi_out_temperature",
+        "label": "EVI-out temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "category": "compressor",
+        "poll_group": "normal",
+        "description": "NASA 0x8220 (activated by the setup step) — community ID (ZimKev, tested on an EHS system); verify on your unit",
+        "scale": 10,
+        "nan": 32767
+      }
+    ],
+    "calculated": [
+      {
+        "name": "iu0_water_delta_t",
+        "label": "Water ΔT (out − in)",
+        "unit": "K",
+        "decimals": 1,
+        "expr": "iu0_water_out_temperature - iu0_water_in_temperature",
+        "poll_group": "normal",
+        "category": "water"
+      },
+      {
+        "name": "water_flow_assumed",
+        "label": "Water flow (assumed)",
+        "unit": "l/min",
+        "expr": "15",
+        "category": "water",
+        "poll_group": "slow",
+        "decimals": 1
+      },
+      {
+        "name": "heat_output_estimated",
+        "label": "Heat output (estimated)",
+        "unit": "kW",
+        "category": "water",
+        "poll_group": "normal",
+        "decimals": 2,
+        "expr": "water_flow_assumed / 60 * 4.186 * iu0_water_delta_t if compressor_frequency > 0 and iu0_water_delta_t > 0 else 0"
+      },
+      {
+        "name": "power_electric_estimated",
+        "label": "Electric power (estimated from the compressor current)",
+        "unit": "W",
+        "category": "compressor",
+        "poll_group": "normal",
+        "decimals": 0,
+        "expr": "1.732 * 400 * compressor_current * 0.95 if compressor_frequency > 0 else 0"
+      },
+      {
+        "name": "cop_estimated",
+        "label": "COP (estimated)",
+        "unit": "",
+        "category": "water",
+        "poll_group": "normal",
+        "decimals": 2,
+        "expr": "heat_output_estimated / (first(power_electric, power_electric_estimated) / 1000) if first(power_electric, power_electric_estimated) > 1500 and heat_output_estimated > 0 else 0"
+      },
+      {
+        "name": "discharge_hot",
+        "label": "Compressor discharge over 100 °C",
+        "unit": "",
+        "category": "compressor",
+        "poll_group": "normal",
+        "expr": "1 if discharge_temperature > 100 else 0"
+      },
+      {
+        "name": "low_flow_suspect",
+        "label": "Water ΔT over 8 K with the compressor running (low water flow?)",
+        "unit": "",
+        "category": "water",
+        "poll_group": "normal",
+        "expr": "1 if compressor_frequency > 30 and iu0_water_delta_t > 8 else 0"
+      }
+    ],
+    "display": {
+      "unit_label": "heat pump",
+      "unit_label_plural": "heat pumps",
+      "icon": "thermometer-sun",
+      "glance": [
+        "iu0_power",
+        "iu0_mode",
+        "iu0_water_out_temperature",
+        "iu0_dhw_temperature"
+      ],
+      "hero": [
+        "iu0_water_out_temperature",
+        "iu0_dhw_temperature",
+        "iu0_mode"
+      ],
+      "alarms": [
+        {
+          "field": "outdoor_error_code",
+          "severity": "danger"
+        },
+        {
+          "field": "iu0_error_code",
+          "severity": "danger"
+        },
+        {
+          "field": "mim_status",
+          "severity": "warning",
+          "for_s": 120
+        },
+        {
+          "field": "discharge_hot",
+          "severity": "warning",
+          "for_s": 300
+        },
+        {
+          "field": "low_flow_suspect",
+          "severity": "warning",
+          "for_s": 1200
+        }
+      ]
+    },
+    "notes": [
+      {
+        "level": "warning",
+        "text": "Read 0 on a DVM-S with an HE hydro kit (field-checked 2026-10-08), with the compressor running: water flow, pump PWM, room sensor, heater-out and tank temperatures, water-out target, DC link voltage, outdoor fan speed, EVA-in temperature (0x82DE is 'Eva In for EHS') and the experimental energy rows. Why: the HE kit has no flow sensor and switches its water pump on/off (DVM HT/HE installation manual DB68-03973A-06); and these NASA IDs are not in Samsung's list for HE/HT/EHS (MIM manual DB68-07538A-03, Table 3, which names only 0x4087, 0x42F1 and 0x4067) — they come from the community, tested on an EHS system. Each row's description says whether its ID is official or community. On an HE kit, leave these unselected rather than trust a 0; an EHS unit may fill them.",
+        "fields": [
+          "dc_link_voltage",
+          "dhw_tank_temperature",
+          "eva_in_temperature",
+          "heat_output_test",
+          "heat_total_test",
+          "heater_out_temperature",
+          "outdoor_energy_test",
+          "outdoor_fan_speed",
+          "outdoor_power_test",
+          "room_sensor_temperature",
+          "water_flow",
+          "water_out_target",
+          "water_pump_pwm"
+        ],
+        "link": "https://github.com/sm26449/heatpump"
+      },
+      {
+        "level": "warning",
+        "text": "Quiet mode and the compressor limit (FR control, NASA 0x42F1) have no effect on an HE hydro kit: the write is accepted and nothing changes. Samsung documents FR control for hydro units with an integrated tank only.",
+        "fields": [
+          "quiet",
+          "compressor_limit"
+        ]
+      },
+      {
+        "level": "info",
+        "text": "The values at 4-28 and 82-96 appear only after the setup steps are written (at connect, with writes allowed on the device). A defrost (outdoor_defrost On, step 1-30) after a hard start in cold, humid air is normal."
+      },
+      {
+        "level": "info",
+        "text": "Heat output is ESTIMATED from the water ΔT and an assumed constant flow, water_flow_assumed (l/min): set it to your circuit's measured flow in the device's Calculated tab (its expression is a plain number). Not the pump's maximum, not Samsung's minimum — an HE kit has no flow sensor and an on/off pump, so the flow is roughly constant while it runs. COP = heat output / electric power, taken from the meter named in Device → Edit → Electricity measured by (power_electric) when there is one, else estimated from the compressor current: √3 × 400 V × I × 0.95 (power_electric_estimated; edit the voltage or the power factor in its expression). The estimate leaves out the fans and the water pump. A heat meter and an electricity meter give the exact COP.",
+        "fields": [
+          "cop_estimated",
+          "heat_output_estimated",
+          "power_electric_estimated",
+          "water_flow_assumed"
+        ]
+      }
+    ],
+    "setup": [
+      {
+        "name": "outdoor_messages",
+        "label": "Activate the outdoor unit values (registers 4…)",
+        "address": 6000,
+        "values": [
+          "0x8001",
+          "0x8010",
+          "0x8204",
+          "0x8206",
+          "0x8208",
+          "0x820A",
+          "0x8217",
+          "0x8218",
+          "0x821A",
+          "0x8235",
+          "0x8238",
+          "0x8237",
+          "0x823B",
+          "0x823D",
+          "0x80AF",
+          "0x8254",
+          "0x8280",
+          "0x8413",
+          "0x8414",
+          "0x82DE",
+          "0x829F",
+          "0x82A0",
+          "0x8229",
+          "0x821E",
+          "0x8220"
+        ],
+        "provides": {
+          "from": 4,
+          "to": 28
+        }
+      },
+      {
+        "name": "indoor_messages",
+        "label": "Activate the hydro unit values (registers 82…)",
+        "address": 7000,
+        "values": [
+          "0x4067",
+          "0x406C",
+          "0x4087",
+          "0x40C4",
+          "0x42E9",
+          "0x4203",
+          "0x4239",
+          "0x4247",
+          "0x427F",
+          "0x4237",
+          "0x42F1",
+          "0x4028",
+          "0x402E",
+          "0x4426",
+          "0x4427"
+        ],
+        "provides": {
+          "from": 82,
+          "to": 96
+        }
+      }
+    ],
+    "commands": {
+      "power": {
+        "label": "Heat pump on / off",
+        "params": {
+          "value": {
+            "label": "Heat pump on / off",
+            "allowed": [
+              0,
+              1
+            ],
+            "required": true
+          }
+        },
+        "writes": [
+          {
+            "register": "iu0_power",
+            "value": "${value}"
+          }
+        ],
+        "settle_s": 8,
+        "verify": [
+          {
+            "read": "iu0_power",
+            "expect": "${value}"
+          }
+        ],
+        "readback_group": "normal",
+        "confirm": true
+      },
+      "mode": {
+        "label": "Operation mode",
+        "params": {
+          "value": {
+            "label": "Mode (0 Auto, 1 Cool, 4 Heat)",
+            "allowed": [
+              0,
+              1,
+              4
+            ],
+            "required": true
+          }
+        },
+        "writes": [
+          {
+            "register": "iu0_mode",
+            "value": "${value}"
+          }
+        ],
+        "settle_s": 8,
+        "verify": [
+          {
+            "read": "iu0_mode",
+            "expect": "${value}"
+          }
+        ],
+        "readback_group": "normal",
+        "confirm": true
+      },
+      "water_out_set": {
+        "label": "Water-out set point",
+        "params": {
+          "value": {
+            "label": "Water-out set point",
+            "unit": "°C",
+            "min": 5,
+            "max": 50,
+            "required": true
+          }
+        },
+        "writes": [
+          {
+            "register": "iu0_water_out_set",
+            "value": "${value}"
+          }
+        ],
+        "settle_s": 8,
+        "verify": [
+          {
+            "read": "iu0_water_out_set",
+            "expect": "${value}",
+            "tolerance": 0.5
+          }
+        ],
+        "readback_group": "normal",
+        "confirm": true
+      },
+      "room_set": {
+        "label": "Room set point",
+        "params": {
+          "value": {
+            "label": "Room set point",
+            "unit": "°C",
+            "min": 16,
+            "max": 30,
+            "required": true
+          }
+        },
+        "writes": [
+          {
+            "register": "iu0_set_temperature",
+            "value": "${value}"
+          }
+        ],
+        "settle_s": 8,
+        "verify": [
+          {
+            "read": "iu0_set_temperature",
+            "expect": "${value}",
+            "tolerance": 0.5
+          }
+        ],
+        "readback_group": "normal",
+        "confirm": true
+      },
+      "dhw_power": {
+        "label": "Hot water on / off",
+        "params": {
+          "value": {
+            "label": "Hot water on / off",
+            "allowed": [
+              0,
+              1
+            ],
+            "required": true
+          }
+        },
+        "writes": [
+          {
+            "register": "iu0_dhw_power",
+            "value": "${value}"
+          }
+        ],
+        "settle_s": 8,
+        "verify": [
+          {
+            "read": "iu0_dhw_power",
+            "expect": "${value}"
+          }
+        ],
+        "readback_group": "normal",
+        "confirm": true
+      },
+      "dhw_mode": {
+        "label": "Hot water mode",
+        "params": {
+          "value": {
+            "label": "Mode (0 Eco, 1 Standard, 2 Power)",
+            "allowed": [
+              0,
+              1,
+              2
+            ],
+            "required": true
+          }
+        },
+        "writes": [
+          {
+            "register": "iu0_dhw_mode",
+            "value": "${value}"
+          }
+        ],
+        "settle_s": 8,
+        "verify": [
+          {
+            "read": "iu0_dhw_mode",
+            "expect": "${value}"
+          }
+        ],
+        "readback_group": "normal",
+        "confirm": true
+      },
+      "dhw_set": {
+        "label": "Hot water set point",
+        "params": {
+          "value": {
+            "label": "Hot water set point",
+            "unit": "°C",
+            "min": 30,
+            "max": 70,
+            "required": true
+          }
+        },
+        "writes": [
+          {
+            "register": "iu0_dhw_set",
+            "value": "${value}"
+          }
+        ],
+        "settle_s": 8,
+        "verify": [
+          {
+            "read": "iu0_dhw_set",
+            "expect": "${value}",
+            "tolerance": 0.5
+          }
+        ],
+        "readback_group": "normal",
+        "confirm": true
+      },
+      "quiet": {
+        "label": "Quiet mode",
+        "params": {
+          "value": {
+            "label": "Quiet mode",
+            "allowed": [
+              0,
+              1
+            ],
+            "required": true
+          }
+        },
+        "writes": [
+          {
+            "register": "iu0_quiet",
+            "value": "${value}"
+          }
+        ],
+        "settle_s": 8,
+        "verify": [
+          {
+            "read": "iu0_quiet",
+            "expect": "${value}"
+          }
+        ],
+        "readback_group": "normal",
+        "confirm": true
+      },
+      "away": {
+        "label": "Away (outing) mode",
+        "params": {
+          "value": {
+            "label": "Away (outing) mode",
+            "allowed": [
+              0,
+              1
+            ],
+            "required": true
+          }
+        },
+        "writes": [
+          {
+            "register": "iu0_away",
+            "value": "${value}"
+          }
+        ],
+        "settle_s": 8,
+        "verify": [
+          {
+            "read": "iu0_away",
+            "expect": "${value}"
+          }
+        ],
+        "readback_group": "normal",
+        "confirm": true
+      },
+      "compressor_limit": {
+        "label": "Compressor frequency limit",
+        "params": {
+          "value": {
+            "label": "Limit (%, 0 = none)",
+            "unit": "%",
+            "allowed": [
+              0,
+              50,
+              60,
+              70,
+              80,
+              90,
+              100,
+              110,
+              120,
+              130,
+              140,
+              150
+            ],
+            "required": true
+          }
+        },
+        "writes": [
+          {
+            "register": "compressor_limit",
+            "value": {
+              "if": "${value} > 0",
+              "then": {
+                "+": [
+                  256,
+                  "${value}"
+                ]
+              },
+              "else": 0
+            }
+          }
+        ],
+        "settle_s": 8,
+        "safe": {
+          "value": 0
+        },
+        "refresh_s": 1800,
+        "confirm": true
+      }
+    },
+    "rules": [
+      {
+        "id": "buffer",
+        "label": "Heat pump · on under 25 °C water in, off over 35 °C",
+        "description": "A buffer thermostat with hysteresis: the unit is switched on when the water returning from the house drops under 25 °C and off only once it is over 35 °C. Between the two nothing changes. At most one switch per 15 minutes, so the compressor is not short-cycled. Change the two temperatures to your system's.",
+        "kind": "condition",
+        "target": {
+          "device": "{device}",
+          "command": "power"
+        },
+        "when": "{device}.iu0_water_in_temperature < 25",
+        "release": "{device}.iu0_water_in_temperature > 35",
+        "then": {
+          "params": {
+            "value": 1
+          }
+        },
+        "else": {
+          "params": {
+            "value": 0
+          }
+        },
+        "timing": {
+          "every_s": 10,
+          "debounce": 3,
+          "min_interval_s": 900,
+          "reassert_s": 1800
+        },
+        "stale_after_s": 120,
+        "on_stale": "hold",
+        "on_disable": "hold"
+      },
+      {
+        "id": "discharge-guard",
+        "label": "Heat pump · lower the water set point while the discharge runs hot",
+        "description": "Steps on the compressor discharge temperature: over 95 °C the water set point goes to 38 °C, over 100 °C to 35 °C at once; back to your usual set point (normal, 42 °C here) only under 90 °C. A hotter discharge usually means too little water flow or a set point too high for the weather. Set `normal` to your own set point before arming.",
+        "kind": "steps",
+        "target": {
+          "device": "{device}",
+          "command": "water_out_set"
+        },
+        "signal": "{device}.discharge_temperature",
+        "signal_valid": {
+          "min": -20,
+          "max": 150,
+          "max_step": 15
+        },
+        "steps": [
+          {
+            "at": 95,
+            "value": 38,
+            "label": "Hot"
+          },
+          {
+            "at": 100,
+            "value": 35,
+            "label": "Very hot",
+            "fast": true
+          }
+        ],
+        "release_below": 90,
+        "normal": {
+          "value": 42
+        },
+        "timing": {
+          "every_s": 10,
+          "debounce": 3,
+          "min_interval_s": 300,
+          "reassert_s": 1800
+        },
+        "stale_after_s": 120,
+        "on_stale": "hold",
+        "on_disable": "hold"
+      }
+    ]
+  }
+}

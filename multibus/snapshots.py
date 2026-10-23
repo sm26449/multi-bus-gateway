@@ -43,8 +43,10 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-BUNDLE_EXTRAS = ("calculated_templates.json", "builder_profiles.json",
-                 "rules.yaml", "passkeys.json")   # beside the classic backup set
+BUNDLE_EXTRAS = ("calculated_templates.json",
+                 "rules.yaml", "sequences.yaml", "passkeys.json",
+                 "mqtt_discovery.json",
+                 "attributes.yaml")               # beside the classic backup set
 _INDEX = "index.json"
 _LKG_ZIP = "lkg.zip"
 _LKG_META = "lkg.json"
@@ -228,7 +230,95 @@ def validate_bundle(zf: zipfile.ZipFile, *, allow_nonlan: bool = False) -> List[
                     errors.append(f"rules.yaml[{i}]: {e}")
         except Exception as e:  # noqa: BLE001
             errors.append(f"rules.yaml: {e}")
+    if "attributes.yaml" in names:
+        errors.extend(validate_attributes_doc(zf.read("attributes.yaml")))
+    if "sequences.yaml" in names:
+        try:
+            from .sequences import validate_sequence
+            sdoc = yaml.safe_load(zf.read("sequences.yaml")) or {}
+            for i, raw in enumerate((sdoc.get("sequences") if isinstance(sdoc, dict) else None) or []):
+                # its devices are this installation's question, asked when it
+                # is saved or run; a restore checks only its shape
+                for e in validate_sequence(raw, devices=lambda d: None):
+                    if "no device '" not in e:
+                        errors.append(f"sequences.yaml[{i}]: {e}")
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"sequences.yaml: {e}")
     return errors
+
+
+def validate_attributes_doc(raw: bytes) -> List[str]:
+    """attributes.yaml as a restore would install it: a mapping of known
+    levels, each category checked against the catalog."""
+    from .attribute_catalog import validate as _validate
+    try:
+        doc = yaml.safe_load(raw) or {}
+    except Exception as e:  # noqa: BLE001
+        return [f"attributes.yaml: not valid YAML ({e})"]
+    if not isinstance(doc, dict):
+        return ["attributes.yaml: not a mapping"]
+    errors: List[str] = []
+
+    def _cats(level, node, where):
+        if not isinstance(node, dict):
+            errors.append(f"attributes.yaml {where}: a mapping of categories")
+            return
+        for c, v in node.items():
+            _clean, errs, _w = _validate(str(c), v, level=level)
+            errors.extend(f"attributes.yaml {where}: {e}" for e in errs)
+    from .attribute_catalog import PUBLISH_MODES
+    for lv in ('settings', 'site', 'installation', 'device'):
+        if lv in doc and doc[lv] is not None and not isinstance(doc[lv], dict):
+            errors.append(f"attributes.yaml {lv}: a mapping")
+    if errors:
+        return errors
+    mode = (doc.get('settings') or {}).get('location_publish')
+    if mode is not None and mode not in PUBLISH_MODES:
+        errors.append(f"attributes.yaml settings.location_publish: one of {', '.join(PUBLISH_MODES)}")
+    _cats('site', doc.get('site') or {}, 'site')
+    for lv in ('installation', 'device'):
+        held = doc.get(lv) or {}
+        if not isinstance(held, dict):
+            errors.append(f"attributes.yaml {lv}: a mapping of ids")
+            continue
+        for tid, node in held.items():
+            _cats(lv, node or {}, f"{lv} {tid}")
+    return errors
+
+
+def merge_attributes_doc(live_raw: Optional[bytes], incoming_raw: bytes) -> bytes:
+    """A merge import of attributes.yaml, the way config.yaml merges devices:
+    what the backup holds replaces the same category of the same id; what
+    only the live file holds stays. A location a sanitised export left out
+    keeps the live one (coordinates are identity)."""
+    from .attributes import normalize_doc
+    raw_in = yaml.safe_load(incoming_raw) or {}
+    incoming = normalize_doc(raw_in)
+    merged = normalize_doc((yaml.safe_load(live_raw) or {}) if live_raw else {})
+    if isinstance(raw_in, dict) and isinstance(raw_in.get('settings'), dict):
+        merged['settings'].update(incoming['settings'])
+    merged['site'].update(incoming['site'])
+    for lv in ('installation', 'device'):
+        for tid, cats in incoming[lv].items():
+            merged[lv].setdefault(tid, {}).update(cats)
+    return yaml.safe_dump(merged, default_flow_style=False, allow_unicode=True,
+                          sort_keys=False).encode('utf-8')
+
+
+def strip_attribute_locations(raw: bytes) -> bytes:
+    """attributes.yaml for a sanitised export: no coordinates. Raises
+    ValueError on a file that does not parse (the caller leaves it out)."""
+    try:
+        doc = yaml.safe_load(raw) or {}
+    except yaml.YAMLError as e:
+        raise ValueError(f"attributes.yaml does not parse: {e}")
+    if isinstance(doc, dict):
+        (doc.get('site') or {}).pop('location', None)
+        for node in (doc.get('installation') or {}).values():
+            if isinstance(node, dict):
+                node.pop('location', None)
+    return yaml.safe_dump(doc, default_flow_style=False, allow_unicode=True,
+                          sort_keys=False).encode('utf-8')
 
 
 def write_bundle_files(zf: zipfile.ZipFile, *, cfg_dir: Path, user_tpl_dir: Path,
@@ -320,6 +410,16 @@ def write_bundle_files(zf: zipfile.ZipFile, *, cfg_dir: Path, user_tpl_dir: Path
             # the auth registry from a possibly-foreign backup.
             if n == "passkeys.json" and not replace_config:
                 summary.setdefault("skipped", []).append("passkeys.json (merge-import)")
+                continue
+            if n == "attributes.yaml":
+                # under the store's own lock: never interleaved with a change
+                from .config_store import lock_for
+                live_p = cfg_dir / n
+                with lock_for(live_p):
+                    data = zf.read(n) if replace_config else merge_attributes_doc(
+                        live_p.read_bytes() if live_p.exists() else None, zf.read(n))
+                    _atomic(live_p, data)
+                summary["extras"] += 1
                 continue
             _atomic(cfg_dir / n, zf.read(n))
             summary["extras"] += 1
@@ -587,6 +687,14 @@ def _mask(path: str, value):
     leaf = path.rsplit(".", 1)[-1].split("[")[0]
     if _is_secret_key(leaf):
         return "***"
+    # coordinates are identity: the diff is viewer-readable
+    from .attribute_catalog import COORD_FIELDS, mask_coordinates
+    if leaf in ('latitude_deg', 'longitude_deg') and isinstance(value, (int, float)):
+        return round(float(value), 2)
+    if leaf in COORD_FIELDS:
+        return "***"
+    if isinstance(value, dict):
+        value = mask_coordinates(value)
     if isinstance(value, (dict, list)):
         return redact_obj(value)
     # a SCALAR at a url leaf can embed userinfo/query secrets — the diff is

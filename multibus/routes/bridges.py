@@ -23,6 +23,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 
 from ..bridges import (FRAMING_PROTOCOL, TYPES, _crc16, _exchange, _mbap_ok,  # noqa: F401 — _crc16 is used by tests
                        _mbap_read, _rtu_ok, _rtu_read, public_view, validate_bridge)
+from .. import modbus_client
 from ._shared import secrets_visible
 
 logger = logging.getLogger(__name__)
@@ -100,19 +101,47 @@ def build(ctx) -> APIRouter:
         return {"status": "offline", "detail": "none of its devices answers", "source": "devices"}
 
     def _busy_share(dev_id: str) -> Optional[float]:
-        """How much of the bus this device takes: Σ over its poll groups of
-        (wire time of one sweep ÷ the group's interval), as MEASURED."""
+        """How much of the bus this device took in the last minute: the time
+        its transactions held the wire ÷ the window (0..1), as MEASURED —
+        never the time it waited for its turn behind the others (D21)."""
         for d, c in registry:
             if d.id != dev_id or c is None or not d.enabled:
                 continue
             try:
-                groups = (c.get_stats() or {}).get("poll_groups_detail") or []
+                return (c.get_stats() or {}).get("bus_occupancy")
             except Exception:  # noqa: BLE001
                 return None
-            shares = [g["cycle_s"] / g["interval"] for g in groups
-                      if g.get("cycle_s") and g.get("interval")]
-            return round(sum(shares), 4) if shares else None
         return None
+
+    BUSY_HIGH, BUSY_FULL = 0.70, 0.95
+
+    def _bus_busy(devlist: List[Dict], polled: List) -> Optional[Dict]:
+        """One value per bus: the wire time of its lane(s) over the last
+        minute — taken once per lane, so N slaves never count the wire N
+        times. Over capacity is a state (turns given up, or ≥95 %), never a
+        percentage above 100."""
+        occ = None
+        for d in polled:
+            host = getattr(d.connection, "host", None)
+            if host:
+                occ = modbus_client.bus_occupancy(host, int(d.connection.port))
+                break
+        if occ is None:
+            # no shared lane measured (yet): the devices' own wire shares
+            shares = [x["bus_share"] for x in devlist if x.get("bus_share") is not None]
+            if not shares:
+                return None
+            occ = {"share": min(1.0, sum(shares)), "busy_s": None, "window_s": None, "missed": 0}
+        share = occ["share"]
+        pct = int(round(100 * share))
+        over = occ.get("missed", 0) > 0 or share >= BUSY_FULL
+        return {"pct": pct,
+                "level": "full" if over else "high" if share >= BUSY_HIGH else "ok",
+                "over_capacity": over,
+                "busy_s": occ.get("busy_s"), "window_s": occ.get("window_s"),
+                "missed_turns": occ.get("missed", 0),
+                "devices": sum(1 for x in devlist if not x.get("tap")),
+                "capacity_left_pct": max(0, 100 - pct)}
 
     def _tap_wire(dev_id: str) -> Optional[Dict]:
         """What a tap hears on its bus: frames, CRC errors, the link."""
@@ -157,18 +186,20 @@ def build(ctx) -> APIRouter:
         out = public_view(b)
         out["type_name"] = t.get("name", b.get("type"))
         out["protocol"] = FRAMING_PROTOCOL.get(t.get("framing"), "")
-        def busy(devlist):
-            shares = [x["bus_share"] for x in devlist if x.get("bus_share") is not None]
-            if not shares:
-                return None
-            pct = round(100 * sum(shares))
-            return {"pct": pct, "level": "full" if pct >= 100 else "high" if pct >= 70 else "ok"}
+        polled_on: Dict[int, List] = {}
+        for d in devs:
+            # every polled device of the bus names the same lane(s): host:port
+            if d.protocol != "rtu_tap":
+                polled_on.setdefault(int(d.connection.port), []).append(d)
+
+        def busy(p, devlist):
+            return _bus_busy(devlist, polled_on.get(p, []))
         def wire(devlist):
             # a tapped bus: the reader is shared, so any of its taps tells
             taps = [x for x in devlist if x.get("tap")]
             return _tap_wire(taps[0]["id"]) if taps else None
         out["ports"] = [{**ports[p], "devices": sorted(on.get(p, []), key=lambda x: x["unit_id"]),
-                         "busy": busy(on.get(p, [])),
+                         "busy": busy(p, on.get(p, [])),
                          "tapped": any(x.get("tap") for x in on.get(p, [])),
                          "wire": wire(on.get(p, []))}
                         for p in sorted(ports)]

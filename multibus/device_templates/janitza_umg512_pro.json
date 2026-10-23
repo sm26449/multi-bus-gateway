@@ -8,6 +8,7 @@
   "version": "1.0.0",
   "author": "multi-bus-gateway built-in",
   "description": "Full Modbus register map of the Janitza UMG 512-PRO power quality analyzer, generated from the vendor Modbus address list. Curated defaults included for the common electrical measurements.",
+  "kind": "meter",
   "source_document": "Modbus Address List",
   "protocol": {
    "transports": [

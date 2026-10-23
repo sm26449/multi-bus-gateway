@@ -75,7 +75,6 @@ entrypoint starts as root only to `chown` this directory to the app user
 |---|---|---|---|
 | `mosquitto` | `mbg-mosquitto` | MQTT broker — requires `MQTT_USERNAME`/`MQTT_PASSWORD` from `.env` (3.81.0); every LAN consumer logs in with that pair | `mosquitto-data` (retained messages + the generated password file) |
 | `mqtt-explorer` | `mbg-mqtt-explorer` | web view of every topic, `127.0.0.1:4000`, only with `--profile debug` (it has no login of its own) | `mqtt-explorer-config` |
-| `esphome` | `esphome` | build engine for the Device Builder; no published port on purpose | `esphome-config` |
 | `influxdb` | `mbg-influxdb` | history/energy store; self-configures on first boot (org/bucket `multibus`) | `influxdb-data`, `influxdb-config` |
 | `grafana` | `mbg-grafana` | dashboards, `:3000`, login `admin` / `GF_SECURITY_ADMIN_PASSWORD` | `grafana-data` |
 
@@ -102,13 +101,16 @@ services:
   grafana:       { profiles: ["extras"] }
   influxdb:      { profiles: ["extras"] }
   mqtt-explorer: { profiles: ["extras"] }
-  esphome:       { profiles: ["extras"] }
 ```
 
 They then start only with `docker compose --profile extras up -d`. Deleting
-the service blocks from your copy of `docker-compose.yml` works too. If you
-turn ESPHome off, set `ESPHOME_ENABLED=false` in `.env` (or just turn the
-Builder off in the UI — that sticks).
+the service blocks from your copy of `docker-compose.yml` works too.
+
+**ESP boards** (flashing from the browser, the node list) are the job of the
+separate **multi-bus-gateway-esphome** service, which brings its own ESPHome
+build engine. Run it behind the same host name (e.g. under `/nodes`, with the
+proxy asking `/api/auth/forward` so the gateway's login covers it) and set
+`ui.nodes_url` (or a `modules:` entry) to list it in Settings → Modules.
 
 **Connection settings** (Modbus, MQTT, InfluxDB) are made in the UI and
 persisted to `config/config.yaml`, applied without a restart. The `.env`
@@ -291,8 +293,7 @@ gateway's `:8080`. Four things make it work properly:
    ```
    (`ui.tls` stays off — the proxy owns the certificate.) Restart after the
    edit.
-2. **WebSockets.** Two paths upgrade: `/ws` (live values for the UI) and
-   `/api/builder/stream/<command>` (Device Builder build/flash streams).
+2. **WebSockets.** `/ws` (live values for the UI) upgrades.
    Pass the `Upgrade`/`Connection` headers through and forward `Host` and
    `Origin` unchanged — the gateway checks `Origin` / `Sec-Fetch-Site` on
    `/ws` and on every state-changing request, so a proxy that rewrites them

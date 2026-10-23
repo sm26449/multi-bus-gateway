@@ -18,7 +18,7 @@ branch.
 from __future__ import annotations
 
 import logging
-from typing import Any, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from .config import MODBUS_PROTOCOLS
 
@@ -26,6 +26,28 @@ logger = logging.getLogger(__name__)
 
 DRIVER_PROTOCOLS = MODBUS_PROTOCOLS + ('http', 'mqtt')
 
+
+GATEWAY_BROKER = '@gateway'
+
+
+def gateway_broker(config, mqtt_cfg):
+    """``broker: "@gateway"``: the source reads from the broker the gateway
+    itself publishes to (host, port, credentials, TLS), so a device on the
+    stack's own broker carries no copy of its password. No hostname contains
+    an ``@``, so the word cannot shadow a real host."""
+    if str(mqtt_cfg.get('broker', '')).strip() != GATEWAY_BROKER:
+        return mqtt_cfg
+    g = getattr(config, 'mqtt', None)
+    out = dict(mqtt_cfg)
+    out.update(broker=getattr(g, 'broker', '') or '', port=getattr(g, 'port', 1883) or 1883,
+               username=getattr(g, 'username', '') or '', password=getattr(g, 'password', '') or '',
+               tls=bool(getattr(g, 'tls_enabled', False)))
+    return out
+
+
+# an RTU bus this gateway polls it can also LISTEN to (rtu_tap): what a
+# standby does with it, its partner being the master there
+TAPPABLE = ('rtu', 'rtu-tcp')
 
 def driver_for(config, template_registry, dev_cfg, src, regs, groups, allow_nonlan):
     """One real driver for one SOURCE of a unit.
@@ -41,7 +63,23 @@ def driver_for(config, template_registry, dev_cfg, src, regs, groups, allow_nonl
                           allow_nonlan=allow_nonlan)
     if proto == 'mqtt':
         from .mqtt_input import MqttInputClient
-        return MqttInputClient(mqtt_cfg=src.mqtt_in, registers=regs,
+        # the template knows the source's topic layout, so it may declare
+        # how the source says it is alive; the connection's own word wins
+        tpl = template_registry.get(src.template or dev_cfg.template)
+        proto = (getattr(tpl, 'protocol', None) or {}) if tpl is not None else {}
+        av = proto.get('availability')
+        mqtt_cfg = dict(src.mqtt_in or {})
+        if isinstance(av, dict) and not mqtt_cfg.get('availability'):
+            mqtt_cfg['availability'] = av
+        # the keepalive too; only when the connection says nothing about it,
+        # so its `keepalive: false` turns the template's off
+        if isinstance(proto.get('keepalive'), dict) and mqtt_cfg.get('keepalive') is None:
+            mqtt_cfg['keepalive'] = proto['keepalive']
+        mqtt_cfg = gateway_broker(config, mqtt_cfg)
+        # one connection per device: its components read through their
+        # parent's (mqtt_link.py)
+        mqtt_cfg['link'] = getattr(dev_cfg, 'component_of', '') or dev_cfg.id
+        return MqttInputClient(mqtt_cfg=mqtt_cfg, registers=regs,
                                poll_groups=groups)
     if proto == 'rtu_tap':
         # listen-only observer of a bus mastered by someone else — byte order
@@ -68,9 +106,23 @@ def driver_for(config, template_registry, dev_cfg, src, regs, groups, allow_nonl
                          "not polling with a default byte order")
     bo = template_registry.byte_order_for(tid)
     multi = len(dev_cfg.sources or []) > 1
+    tpl = template_registry.get(tid) if tid else None
+    setup = list(getattr(tpl, 'setup', None) or [])
+
+    def setup_gate():
+        # the template's setup writes obey the same switches as any write
+        if not getattr(config.security, 'allow_writes', False):
+            return "writes are off (Settings → Security → allow writes)"
+        if getattr(dev_cfg, 'write_locked', False):
+            return "the device is write-locked"
+        return None
     return ModbusClient(config=src.connection, registers=regs, poll_groups=groups,
                         byte_order=bo,
-                        device_id=f'{dev_cfg.id}:{src.id}' if multi else dev_cfg.id)
+                        device_id=f'{dev_cfg.id}:{src.id}' if multi else dev_cfg.id,
+                        setup_steps=setup, setup_gate=setup_gate if setup else None,
+                        min_write_gap_s=float(((getattr(tpl, 'protocol', None) or {}).get('min_write_gap_s')) or 0),
+                        max_read=int(((getattr(tpl, 'protocol', None) or {}).get('max_registers_per_read')) or 0),
+                        single_writes=bool((getattr(tpl, 'protocol', None) or {}).get('single_register_writes')))
 
 
 def apply_template_hygiene(regs, template):
@@ -113,6 +165,10 @@ def build_device_client(config, template_registry, dev_cfg, allow_nonlan=False):
     if not dev_cfg.enabled:
         logger.info("Device '%s' disabled — skipping", dev_cfg.id)
         return None
+    if (dev_cfg.protocol or '').lower() == 'none':
+        # a device that IS its meters: nothing to read, alive when they are
+        from .meter_only import MeterOnlyClient
+        return MeterOnlyClient(config, dev_cfg.id)
 
     srcs = [s for s in (dev_cfg.sources or []) if s.enabled]
     unknown = [s for s in srcs if (s.protocol or 'tcp').lower() not in DRIVER_PROTOCOLS]
@@ -124,6 +180,7 @@ def build_device_client(config, template_registry, dev_cfg, allow_nonlan=False):
         return None
 
     parts: List[Tuple[Any, Any]] = []
+    taps: Dict[str, Any] = {}
     for src in srcs:
         try:
             if dev_cfg.primary and not getattr(src, 'poll_groups', None):
@@ -140,6 +197,15 @@ def build_device_client(config, template_registry, dev_cfg, allow_nonlan=False):
                             dev_cfg.id, src.id, ', '.join(hygiene))
             parts.append((src, driver_for(config, template_registry, dev_cfg,
                                           src, regs, groups, allow_nonlan)))
+            if (src.protocol or '').lower() in TAPPABLE:
+                # what this source does while the gateway is standby: listen
+                # to the bus its partner masters (the same port, the same map)
+                def _tap(src=src, regs=regs, groups=groups):
+                    from .rtu_tap import RtuTapClient
+                    return RtuTapClient(conn_cfg=src.connection, registers=regs, poll_groups=groups,
+                                        byte_order=template_registry.byte_order_for(src.template or dev_cfg.template),
+                                        device_id=dev_cfg.id)
+                taps[src.id] = _tap
             where = ((src.http or {}).get('url')
                      or src.connection.bus)
             logger.info("Device '%s' source '%s': %s, %d registers, %s",
@@ -151,4 +217,4 @@ def build_device_client(config, template_registry, dev_cfg, allow_nonlan=False):
     if not parts:
         return None
     from .multi_source import MultiSourceClient
-    return MultiSourceClient(dev_cfg.id, parts)
+    return MultiSourceClient(dev_cfg.id, parts, tap_factories=taps)

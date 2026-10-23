@@ -138,7 +138,7 @@ Every attempt, accepted or refused, is an `AUDIT` line.
 
 | Symptom | Check | Fix |
 |---|---|---|
-| Log timestamps are off by hours | The gateway logs in the container's local time; the compose passes `TZ` only to the ESPHome service | Add `TZ=${TZ}` to the gateway's `environment:` in a local override if you want local-time logs; InfluxDB points are UTC regardless |
+| Log timestamps are off by hours | The gateway logs in the container's local time; the compose does not pass `TZ` to it | Add `TZ=${TZ}` to the gateway's `environment:` in a local override if you want local-time logs; InfluxDB points are UTC regardless |
 | Monthly energy totals split on the wrong day | `ui.timezone` (**Config → General**, IANA name, default `Europe/Bucharest`) drives the calendar boundaries — not `TZ` | Set it; applied live |
 | Points land in the past / future | InfluxDB timestamps are the **read** time from the host clock | Run NTP on the host; buffered points keep their original stamps by design |
 | Staleness verdicts flap after a clock step | They don't: staleness uses the monotonic clock (`staleness_age_s` is NTP-step-proof) | If the device still reads stale, the cause is the link, not the clock |

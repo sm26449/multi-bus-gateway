@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 
 
 def autoselect_template_registers(config: Any, template_registry: Any,
-                                  dev_cfg: Any, source: Any = None) -> None:
+                                  dev_cfg: Any, source: Any = None,
+                                  topics_must_match: bool = False) -> None:
     """Seed a device — or ONE of its sources — with its template's registers.
 
     A source has its own template and therefore its own map: the SunSpec view of
@@ -46,16 +47,27 @@ def autoselect_template_registers(config: Any, template_registry: Any,
     if tpl is None or not tpl.registers:
         return
     existing, _g = config.load_device_registers(dev_cfg, source=source)
+    stale_file = False
     if existing:
         # A kept file from a PREVIOUS device at this id may belong to a
         # different template — reusing it would decode against the wrong
         # map. Keep it only if it still fits (any selected name is in the
         # assigned template); otherwise fall through and re-seed.
         tpl_names = {r.name for r in tpl.registers}
-        if any(getattr(r, 'name', None) in tpl_names for r in existing):
+        # ``topics_must_match``: a component added at an id an earlier device
+        # used. Its kept rows may carry that device's topics (another
+        # template's variables), which would never receive a value.
+        tpl_topics = {r.name: getattr(r, 'topic', '') for r in tpl.registers}
+        drifted = topics_must_match and any(
+            getattr(r, 'name', None) in tpl_topics
+            and (getattr(r, 'topic', '') or '') != tpl_topics[r.name] for r in existing)
+        if not drifted and any(getattr(r, 'name', None) in tpl_names for r in existing):
             return
         logger.warning(f"device {dev_cfg.id}: kept registers don't match "
                        f"template {tpl.id} — re-seeding from the template")
+        # a previous device's file: its formulas, Energy selection and poll
+        # intervals belong to that device, not to this one
+        stale_file = True
     # Curated templates mark a recommended subset via per-register `defaults`
     # (the Janitza map has 58 of 4126) — seed only those. A template without
     # defaults is seeded whole, but capped so a huge map can't flood
@@ -121,7 +133,8 @@ def autoselect_template_registers(config: Any, template_registry: Any,
     tpg = {n: {'interval': g.get('interval', 5), 'description': g.get('description', '')}
            for n, g in (tpl.poll_groups or {}).items()} or None
     config.save_device_registers(dev_cfg.id, reg_list, poll_groups=tpg,
-                                 source_id=getattr(source, 'id', '') if source else '')
+                                 source_id=getattr(source, 'id', '') if source else '',
+                                 replace=stale_file)
     # Derived measurements ship WITH the map. A template that decodes its own
     # status word or derives an alarm hands every device seeded from it the
     # same output — instead of each unit of an endpoint needing the formula
@@ -136,3 +149,38 @@ def autoselect_template_registers(config: Any, template_registry: Any,
     _who = f"{dev_cfg.id}" + (f" source {source.id}" if source else "")
     logger.info(f"device {_who}: auto-selected {len(reg_list)} template "
                 f"registers" + (f" + {len(calcs)} derived" if calcs and not source else ""))
+
+
+def seed_devices_at_boot(config: Any, template_registry: Any) -> None:
+    """At boot, give each device written straight into config.yaml the
+    registers of its template, as the API's create does.
+
+    - **Installation units**, per source: each way of reaching a unit has
+      its own template and its own file, so adding a second source never
+      disturbs the first one's selection.
+    - **A device of its own** with a template and no selection file yet. It
+      used to start with no registers and no error. A file that exists, even
+      one emptied on purpose, is the user's and is never re-seeded.
+
+    Seeding never blocks the boot: a failure is logged."""
+    for device in config.devices:
+        if not (device.endpoint_id and device.enabled):
+            continue
+        for src in (device.sources or []):
+            if not (src.enabled and (src.template or device.template)):
+                continue
+            try:
+                autoselect_template_registers(config, template_registry, device,
+                                              source=src if len(device.sources) > 1 else None)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"device {device.id} source {src.id}: template seeding failed: {e}")
+    for device in config.devices:
+        if device.endpoint_id or device.primary or not device.enabled or not device.template:
+            continue
+        if config.device_registers_path(device.id).exists():
+            continue
+        try:
+            autoselect_template_registers(config, template_registry, device)
+            logger.info(f"device {device.id}: registers seeded from template {device.template}")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"device {device.id}: template seeding failed: {e}")

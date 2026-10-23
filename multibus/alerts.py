@@ -91,6 +91,9 @@ class AlertManager:
         # value-based alerting off the dashboard's per-register thresholds
         # (off by default — a separate ThresholdEngine does the evaluation)
         self.sig_threshold = bool(sig.get("threshold", False))
+        # what a DEVICE says is wrong: the alarm fields its template declares
+        # (display.alarms — a fault word, an error code) going active / clear
+        self.sig_alarm = bool(sig.get("alarm", True))
         self.threshold_deadband_pct = float(cfg.get("threshold_deadband_pct", 2.0))
         self.threshold_alert_on_start = bool(cfg.get("threshold_alert_on_start", True))
 
@@ -108,7 +111,7 @@ class AlertManager:
             "thresholds": {"latency_ms": self.latency_ms, "buffer_points": self.buffer_points},
             "signals": {"device": self.sig_device, "sink": self.sig_sink,
                         "latency": self.sig_latency, "buffer": self.sig_buffer,
-                        "threshold": self.sig_threshold},
+                        "threshold": self.sig_threshold, "alarm": self.sig_alarm},
             "threshold_deadband_pct": self.threshold_deadband_pct,
         }
 
@@ -165,14 +168,22 @@ class AlertManager:
             logger.warning("alert MQTT publish failed: %s", e)
 
     def _render_body(self, alert: dict) -> dict:
-        if isinstance(self.webhook_body, dict):
-            out = {}
-            for k, v in self.webhook_body.items():
+        """The webhook body with {severity}/{source}/{message}/{key}/{ts}/{host}
+        filled in — at any depth, so a receiver that wants the alert nested
+        (alertd's /v1/fire: {type, context: {...}}) gets it."""
+        def fill(v):
+            if isinstance(v, str):
                 try:
-                    out[k] = v.format(**alert) if isinstance(v, str) else v
+                    return v.format(**alert)
                 except (KeyError, IndexError, ValueError):
-                    out[k] = v
-            return out
+                    return v
+            if isinstance(v, dict):
+                return {k: fill(x) for k, x in v.items()}
+            if isinstance(v, list):
+                return [fill(x) for x in v]
+            return v
+        if isinstance(self.webhook_body, dict):
+            return fill(self.webhook_body)
         return alert
 
     def _post_webhook_sync(self, alert: dict):

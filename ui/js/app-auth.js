@@ -15,6 +15,7 @@ Object.assign(JanitzaMonitor.prototype, {
         window.fetch = (input, opts = {}) => {
             const method = ((opts && opts.method) || (input && input.method) || 'GET').toUpperCase();
             const writing = method !== 'GET' && method !== 'HEAD';
+            if (writing) this._writeGen = (this._writeGen || 0) + 1;
             // the key belongs to THIS gateway: never attach it to another origin
             const url = typeof input === 'string' ? input : (input && input.url) || '';
             const sameOrigin = url.startsWith('/') || url.startsWith(location.origin + '/') || url === location.origin;
@@ -34,13 +35,14 @@ Object.assign(JanitzaMonitor.prototype, {
                 return orig(input, { ...opts, headers: h });
             };
             return send(localStorage.getItem(KEY)).then(async (res) => {
+                if (res.status === 403) this._roleRefused(res);
                 if (res.status !== 401) return res;
                 // A 401 with login ENABLED and no live session is a DEAD
                 // SESSION (a security save revokes all sessions), not a
                 // missing API key — the old prompt sent the operator hunting
                 // for a key that usually does not exist. Re-login instead.
                 if (!(await this._verifySession())) return res;
-                const k = window.prompt('This action needs the API key:');
+                const k = await this._askApiKey();
                 if (!k) return res;
                 localStorage.setItem(KEY, k);
                 return send(k);
@@ -82,6 +84,37 @@ Object.assign(JanitzaMonitor.prototype, {
         this._showLogin(this._role ? this.t('auth.sessionExpired', 'Session expired — sign in again') : '');
     },
 
+    // what the server lets this account do: a viewer or an operator sees a
+    // configuration control's state, but cannot change it
+    _isAdminView() {
+        const b = document.body.classList;
+        return !b.contains('role-viewer') && !b.contains('role-operator');
+    },
+
+    // true when _roleRefused explains this 403 itself — a refusal for the
+    // account's role; any other 403 ("writes are disabled", "arming requires
+    // authentication") is the caller's to say
+    _roleSpeaks(detail) {
+        return !!this._authEnabled && this._role !== 'admin'
+            && typeof detail === 'string' && /read-only|operator|configuration/i.test(detail);
+    },
+
+    // A write the role may not do (a control nobody marked): say so plainly,
+    // once a moment, instead of whatever the caller makes of an empty error.
+    _roleRefused(res) {
+        if (!this._authEnabled || this._role === 'admin') return;
+        const now = Date.now();
+        if (now - (this._roleRefusedAt || 0) < 4000) return;
+        this._roleRefusedAt = now;
+        res.clone().json().then(d => {
+            if (!this._roleSpeaks(d?.detail)) return;
+            this.showToast('warning', this.t('auth.notAllowed', 'Not allowed for your account'),
+                this._role === 'viewer'
+                    ? this.t('auth.viewerRefused', 'This account can only look. Ask an administrator.')
+                    : this.t('auth.operatorRefused', 'This account runs live actions, not configuration. Ask an administrator.'));
+        }).catch(() => {});
+    },
+
     async _checkAuth() {
         // returns true if we may proceed (auth off, or authenticated)
         try {
@@ -89,12 +122,68 @@ Object.assign(JanitzaMonitor.prototype, {
             this._authEnabled = !!s.enabled;
             this._role = s.role;
             // a read-only session sees no control it could not use: every
-            // control marked data-admin is hidden by CSS (body.role-viewer)
+            // control marked data-admin / data-live is hidden by CSS (base.css)
             document.body.classList.toggle('role-viewer', !!s.enabled && s.role === 'viewer');
+            document.body.classList.toggle('role-operator', !!s.enabled && s.role === 'operator');
+            this._applyModules(s.modules);
+            this._watchRole();
             return !s.enabled || !!s.role;
         } catch (e) {
             return true;   // status endpoint is always open; if it fails, don't lock the UI
         }
+    },
+
+    // modules (modules: in config, and the ESP nodes service set the old way):
+    // listed in Settings → Modules — what each is, whether it answers, Open.
+    // The tab exists only when there is one.
+    _applyModules(mods) {
+        const ok = (Array.isArray(mods) ? mods : []).filter(m =>
+            m && /^(\/(?!\/)|https?:\/\/)/.test(m.url || '') && /^[a-z0-9-]+$/.test(m.icon || ''));
+        const tab = document.getElementById('cfgTabModules');
+        if (tab) tab.hidden = !ok.length;
+        const host = document.getElementById('modulesList');
+        if (!host) return;
+        host.innerHTML = ok.map(m => `
+            <div class="module-row" data-module="${this._esc(m.id)}">
+                <i class="bi bi-${this._esc(m.icon)}" aria-hidden="true"></i>
+                <div class="module-main">
+                    <strong>${this._esc(m.name)} <span class="sink-pill off module-health" aria-live="polite">${m.health ? this._esc(this.t('modules.checking', 'checking…')) : ''}</span></strong>
+                    ${m.description ? `<span class="module-desc">${this._esc(m.description)}</span>` : ''}
+                    <code class="field-hint">${this._esc(m.url)}</code>
+                </div>
+                <a class="btn btn-primary btn-sm" href="${this._esc(m.url)}"><i class="bi bi-box-arrow-up-right" aria-hidden="true"></i> ${this._esc(this.t('common.open', 'Open'))}</a>
+            </div>`).join('');
+        ok.filter(m => m.health).forEach(async m => {
+            const pill = host.querySelector(`.module-row[data-module="${m.id}"] .module-health`);
+            let up = false;
+            try { up = (await fetch(m.health, { cache: 'no-store' })).ok; } catch (e) { up = false; }
+            if (!pill) return;
+            pill.className = `sink-pill ${up ? 'ok' : 'warn'} module-health`;
+            pill.textContent = up ? this.t('modules.up', 'answers') : this.t('modules.down', 'does not answer');
+        });
+    },
+
+    // a standby gateway says so on every page: what it is, since when, why
+    _watchRole() {
+        if (this._roleTimer) return;
+        const tick = async () => {
+            let st = null;
+            try { st = await (await fetch('/api/role')).json(); } catch (e) { return; }
+            const el = document.getElementById('roleBanner');
+            if (!el || !st) return;
+            const standby = st.role === 'standby';
+            el.hidden = !standby;
+            document.body.classList.toggle('role-standby', standby);
+            if (standby) {
+                const since = st.since ? new Date(st.since * 1000).toLocaleString(this._loc()) : '';
+                el.innerHTML = `<i class="bi bi-pause-circle" aria-hidden="true"></i>
+                    <strong>${this._esc(this.t('role.standby', 'Standby'))}</strong> —
+                    ${this._esc(this.t('role.standbyText', 'this gateway is the backup: it does not poll, write or publish; its partner does.'))}
+                    <span class="role-banner-meta">${this._esc(this.t('role.since', 'Since'))} ${this._esc(since)} · ${this._esc(this.t('role.epoch', 'epoch'))} ${this._esc(String(st.epoch))}${st.set_by ? ' · ' + this._esc(st.set_by) : ''}${st.reason ? ' · ' + this._esc(st.reason) : ''}</span>`;
+            }
+        };
+        tick();
+        this._roleTimer = setInterval(tick, 10000);
     },
 
     _showLogin(message) {
@@ -236,8 +325,14 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     async passkeyRegister() {
-        const label = prompt(this.t('passkeys.labelPrompt', 'A name for this passkey (e.g. "laptop", "phone"):'), '');
-        if (label === null) return;
+        const v = await this.askValues({
+            title: this.t('passkeys.addTitle', 'Add a passkey'),
+            confirmLabel: this.t('common.next', 'Next'),
+            fields: [{ name: 'label', kind: 'text', required: false,
+                       label: this.t('passkeys.labelPrompt', 'A name for this passkey (e.g. "laptop", "phone"):') }],
+        });
+        if (!v) return;
+        const label = v.label || '';
         try {
             if (!this._passkeysUsable()) {
                 throw new Error(this.t('passkeys.insecure',
@@ -289,6 +384,8 @@ Object.assign(JanitzaMonitor.prototype, {
             if (!r.ok) throw new Error(r.statusText);
             const d = await r.json();
             const rows = d.passkeys || [];
+            this._secPasskeys = rows;
+            if (this._secPaint) this._secPaint();
             if (!rows.length) {
                 body.innerHTML = `<tr><td colspan="5" class="diag-empty">${this._esc(
                     this.t('passkeys.empty', 'No passkeys yet. Register one from a secure context (localhost or an HTTPS hostname).'))}</td></tr>`;
@@ -298,9 +395,9 @@ Object.assign(JanitzaMonitor.prototype, {
                 <td>${this._esc(p.label)}</td>
                 <td>${this._esc(p.user)} <span class="badge badge-secondary">${this._esc(p.role)}</span></td>
                 <td class="mono" style="font-size:11.5px;">${this._esc(p.rp_id)}</td>
-                <td style="white-space:nowrap;">${this._esc(new Date(p.created * 1000).toLocaleDateString())}</td>
-                <td style="text-align:right;"><button class="btn btn-ghost btn-sm"
-                    ${this._act('deletePasskey', [p.id])} title="${this._esc(this.t('common.delete', 'Delete'))}">
+                <td style="white-space:nowrap;">${this._esc(new Date(p.created * 1000).toLocaleDateString(this._loc()))}</td>
+                <td style="text-align:right;"><button data-live class="btn btn-ghost btn-sm"
+                    ${this._act('deletePasskey', [p.id])} ${this._ib(this.t('common.delete', 'Delete'), p.label)}>
                     <i aria-hidden="true" class="bi bi-trash"></i></button></td>
             </tr>`).join('');
         } catch (e) {
@@ -309,13 +406,90 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     async deletePasskey(id) {
-        if (!confirm(this.t('passkeys.deleteConfirm', 'Delete this passkey? Sign-in with it stops working immediately.'))) return;
+        if (!await this.confirmAction({
+            title: this.t('passkeys.deleteTitle', 'Delete passkey'),
+            message: this.t('passkeys.deleteConfirm', 'Sign-in with it stops working immediately.'),
+            confirmLabel: this.t('common.delete', 'Delete'), danger: true,
+        })) return;
         try {
             const r = await fetch(`/api/auth/passkeys/${encodeURIComponent(id)}`, { method: 'DELETE' });
             if (!r.ok) throw new Error(await r.text());
             this.loadPasskeys();
         } catch (e) {
             this.showToast('error', this.t('passkeys.title', 'Passkeys'), String(e.message || e));
+        }
+    },
+
+    // ── service tokens (programs) ──
+    async loadTokens() {
+        const body = document.getElementById('tokenTableBody');
+        if (!body) return;
+        try {
+            const r = await fetch('/api/auth/service-tokens');
+            // not an admin: the tokens are unknown here, not zero
+            if (r.status === 403) { this._secTokens = null; if (this._secPaint) this._secPaint(); }
+            if (!r.ok) throw new Error(r.statusText);
+            const rows = (await r.json()).tokens || [];
+            this._secTokens = rows;
+            if (this._secPaint) this._secPaint();
+            if (!rows.length) {
+                body.innerHTML = `<tr><td colspan="5" class="diag-empty">${this._esc(
+                    this.t('tokens.empty', 'No service tokens.'))}</td></tr>`;
+                return;
+            }
+            const when = ts => ts ? new Date(ts * 1000).toLocaleString(this._loc()) : this.t('tokens.never', 'never');
+            body.innerHTML = rows.map(k => `<tr>
+                <td class="mono">${this._esc(k.name)}</td>
+                <td><span class="badge badge-secondary">${this._esc(k.role)}</span></td>
+                <td style="white-space:nowrap;">${this._esc(when(k.created))}</td>
+                <td style="white-space:nowrap;">${this._esc(when(k.last_used))}</td>
+                <td style="text-align:right;"><button data-admin class="btn btn-ghost btn-sm"
+                    ${this._act('tokenRevoke', [k.name])} ${this._ib(this.t('tokens.revoke', 'Revoke'), k.name)}>
+                    <i aria-hidden="true" class="bi bi-trash"></i></button></td>
+            </tr>`).join('');
+        } catch (e) {
+            body.innerHTML = `<tr><td colspan="5" class="err">${this._esc(String(e.message || e))}</td></tr>`;
+        }
+    },
+
+    async tokenCreate() {
+        const name = (document.getElementById('tokName')?.value || '').trim();
+        const role = document.getElementById('tokRole')?.value || 'viewer';
+        const out = document.getElementById('tokNew');
+        try {
+            const r = await fetch('/api/auth/service-tokens', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, role }),
+            });
+            const d = await r.json();
+            if (!r.ok) throw new Error((d.detail?.errors || [d.detail || r.statusText]).join('; '));
+            if (out) {
+                out.style.display = '';
+                out.innerHTML = `<strong>${this._esc(this.t('tokens.once', 'Copy it now: it is not shown again.'))}</strong>
+                    <input type="text" class="input mono" readonly value="${this._esc(d.token)}" aria-label="${this._esc(d.name)}">`;
+                out.querySelector('input')?.select();
+            }
+            document.getElementById('tokName').value = '';
+            this.loadTokens();
+        } catch (e) {
+            this.showToast('error', this.t('tokens.title', 'Service tokens'), String(e.message || e));
+        }
+    },
+
+    async tokenRevoke(name) {
+        if (!await this.confirmAction({
+            title: this.t('tokens.revokeTitle', 'Revoke token {name}', { name }),
+            message: this.t('tokens.revokeConfirm', 'The program using it is refused at once.'),
+            confirmLabel: this.t('tokens.revoke', 'Revoke'), danger: true,
+        })) return;
+        try {
+            const r = await fetch(`/api/auth/service-tokens/${encodeURIComponent(name)}`, { method: 'DELETE' });
+            if (!r.ok) throw new Error(await r.text());
+            const out = document.getElementById('tokNew');
+            if (out) { out.style.display = 'none'; out.innerHTML = ''; }
+            this.loadTokens();
+        } catch (e) {
+            this.showToast('error', this.t('tokens.title', 'Service tokens'), String(e.message || e));
         }
     },
 });

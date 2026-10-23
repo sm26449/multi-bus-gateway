@@ -1,15 +1,9 @@
-# Exact pinned runtime dependency set WITH artifact hashes — the Dockerfile and
-# CI install it with `pip install --require-hashes -r requirements.lock`, so a
-# tampered or substituted package (PyPI, a mirror, a proxy) is refused at
-# install time. Every version carries the hashes of ALL its published files
-# (every wheel + the sdist), so the same lock serves amd64 and arm64.
-#
-# Regenerate after a deliberate upgrade (edit requirements.txt, then):
-#   docker run --rm -v "$PWD":/app -w /tmp python:3.11-slim bash -c \
-#     "pip install -q pip-tools && pip-compile --generate-hashes --no-header \
-#      --no-annotate --allow-unsafe --output-file /app/requirements.lock /app/requirements.txt"
-# and review the version diff before committing. requirements.txt stays the
-# human-edited intent file (ranges); this file is what actually ships.
+aiofiles==25.1.0 \
+    --hash=sha256:a8d728f0a29de45dc521f18f07297428d56992a742f0cd2701ba86e44d23d5b2 \
+    --hash=sha256:abe311e527c862958650f9438e859c1fa7568a141b22abcd015e120e86a85695
+aiosqlite==0.22.1 \
+    --hash=sha256:043e0bd78d32888c0a9ca90fc788b38796843360c855a7262a532813133a0650 \
+    --hash=sha256:21c002eb13823fad740196c5a2e9d8e62f6243bd9e7e4a1f87fb5e44ecb4fceb
 annotated-doc==0.0.4 \
     --hash=sha256:571ac1dc6991c450b25a9c2d84a3705e2ae7a53467b5d111c24fa8baabbed320 \
     --hash=sha256:fbcda96e87e9c92ad167c2e53839e57503ecfda18804ea28102353485033faa4
@@ -19,6 +13,9 @@ annotated-types==0.7.0 \
 anyio==4.15.1 \
     --hash=sha256:6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101 \
     --hash=sha256:9f28306018cbd6d329e64a36d58256edff76dd996fe423bc957326e578b82a94
+asyncua==1.1.8 \
+    --hash=sha256:40c57151b93537beb77cb3f1a0190d75cef5326e8c40978de28b69e5b41e6ede \
+    --hash=sha256:4a348e2b9bdfa7869edaef2d7f1b08920140d01ab79f336744b06e4c692e509d
 cbor2==5.9.0 \
     --hash=sha256:0322296b9d52f55880e300ba8ba09ecf644303b99b51138bbb1c0fb644fa7c3e \
     --hash=sha256:0485d3372fc832c5e16d4eb45fa1a20fc53e806e6c29a1d2b0d3e176cedd52b9 \
@@ -64,9 +61,9 @@ cbor2==5.9.0 \
     --hash=sha256:fb7afe77f8d269e42d7c4b515c6fd14f1ccc0625379fb6829b269f493d16eddd \
     --hash=sha256:fbb06f34aa645b4deca66643bba3d400d20c15312d1fe88d429be60c1ab50f27 \
     --hash=sha256:fbdcf4d74acbeb7672e6413e81cd2c1ced1a4a8cf949484ac54e9af5265c3c72
-certifi==2026.6.17 \
-    --hash=sha256:024c88eeec92ca068db80f02b8b07c9cef7b9fe261d1d535abfd5abd6f6af432 \
-    --hash=sha256:2227dcbaafe0d2f59279d1762ddddc37783ed4354594f194ffc31d20f41fc3db
+certifi==2026.10.19 \
+    --hash=sha256:035c1e85572b141bf1c3a3eff0e33a8eb74917522f2559075ff8d2fea780a1ae \
+    --hash=sha256:42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b
 cffi==2.1.0 \
     --hash=sha256:02cb7ff33ded4f1532476731f89ede53e2e488a8e6205515a82144246ffa7dcc \
     --hash=sha256:03e9810d18c646077e501f661b682fbf5dee4676048527ca3cffe66faa9960dd \
@@ -432,6 +429,9 @@ python-dateutil==2.9.0.post0 \
 python-dotenv==1.2.2 \
     --hash=sha256:1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a \
     --hash=sha256:2c371a91fbd7ba082c2c1dc1f8bf89ca22564a087c2c287cd9b662adde799cf3
+pytz==2026.5 \
+    --hash=sha256:e658af3757f9e26a9d25dd2aff38335acd92bc9104f890a894b2c1ba28311b03 \
+    --hash=sha256:fa23724b9c486543b9ff54a327ee7569ac83ade54bb9afd0fc18676620401c86
 pyyaml==6.0.3 \
     --hash=sha256:00c4bdeba853cc34e7dd471f16b4114f4162dc03e6b7afcc2128711f0eca823c \
     --hash=sha256:0150219816b6a1fa26fb4699fb7daa9caf09eb1999f3b70fb6e786805e80375a \
@@ -512,6 +512,9 @@ reactivex==4.1.0 \
 six==1.17.0 \
     --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274 \
     --hash=sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81
+sortedcontainers==2.4.0 \
+    --hash=sha256:25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88 \
+    --hash=sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0
 starlette==1.3.1 \
     --hash=sha256:05d0213193f2fbaae60e2ecb593b4add4262ad4e46536b54abe36f11a71724e0 \
     --hash=sha256:c7372aae11c3c3f26a42df7bd626cec2f47d03483d261d369516a615a53714c6
@@ -577,6 +580,8 @@ uvloop==0.22.1 \
     --hash=sha256:ea721dd3203b809039fcc2983f14608dae82b212288b346e0bfe46ec2fab0b7c \
     --hash=sha256:ef6f0d4cc8a9fa1f6a910230cd53545d9a14479311e87e3cb225495952eb672c \
     --hash=sha256:fe94b4564e865d968414598eea1a6de60adba0c040ba4ed05ac1300de402cd42
+wait-for2==0.3.2 \
+    --hash=sha256:93863026dc35f3471104ecf7de1f4a0b31f4c8b12a2241c0d6ee26dcc0c2092a
 watchfiles==1.2.0 \
     --hash=sha256:01859b11fd9fbca670f4d5da00fbac282cfea9bd67a2125d8b2833a3b5617ea9 \
     --hash=sha256:01ea8d66f0693b9b60a6541c8d10263091ca9a9060d242f3c1f3143f9aad2c98 \

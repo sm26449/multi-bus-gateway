@@ -185,3 +185,137 @@ def test_hostile_payloads_do_not_cost_the_message_its_other_registers():
     oversized = b'{"voltage": 1}' + b' ' * mi.MAX_PAYLOAD_BYTES
     cli._on_message(None, None, SimpleNamespace(topic="sensors/x", payload=oversized))
     assert cli.oversized_dropped == 1 and not captured
+
+
+# ── availability (birth / last will) and per-source staleness (3.92.0) ─────
+def _node(**cfg):
+    regs = [_reg(1, "relay_1", topic="~/switch/relay_1/state"),
+            _reg(2, "flow", topic="~/sensor/flow/state")]
+    regs[0].enum = {"0": "OFF", "1": "ON"}
+    cli = mi.MqttInputClient({"topic": "mbg/nodes/aa", **cfg}, regs)
+    got = {}
+    cli.publish_callback = lambda pg, data: got.update(data)
+    cli.connected = True
+    return cli, got
+
+
+def _msg(topic, payload, retain=False):
+    return SimpleNamespace(topic=topic, payload=payload, retain=retain)
+
+
+AV = {"availability": {"topic": "~/status", "online": "online", "offline": "offline"}}
+
+
+def test_availability_topic_is_subscribed_once():
+    cli, _ = _node(**AV)
+    assert "mbg/nodes/aa/status" in cli._subscriptions()
+    assert cli._subscriptions().count("mbg/nodes/aa/status") == 1
+    wide, _ = _node(topic="mbg/nodes/aa/#", **AV)
+    wide.registers, wide._by_topic = [], {}
+    assert wide._subscriptions() == ["mbg/nodes/aa/#"]
+
+
+def test_online_source_is_healthy_however_old_its_last_value():
+    cli, got = _node(**AV)
+    cli._on_message(None, None, _msg("mbg/nodes/aa/status", b"online", retain=True))
+    cli._on_message(None, None, _msg("mbg/nodes/aa/switch/relay_1/state", b"ON"))
+    assert got[1]["value"] == "ON"                 # the enum, decoded
+    cli.last_msg_mono -= 3600                      # an hour with no change
+    h = cli.data_health()
+    assert h["status"] == "ok" and h["stale"] is False and h["available"] is True
+
+
+def test_offline_source_is_down_at_once():
+    cli, _ = _node(**AV)
+    cli._on_message(None, None, _msg("mbg/nodes/aa/switch/relay_1/state", b"ON"))
+    cli._on_message(None, None, _msg("mbg/nodes/aa/status", b"offline", retain=True))
+    h = cli.data_health()
+    assert h["status"] == "down" and h["available"] is False
+
+
+def test_retained_values_wait_for_the_source_to_say_online():
+    cli, got = _node(**AV)
+    cli._on_message(None, None, _msg("mbg/nodes/aa/sensor/flow/state", b"12.5", retain=True))
+    assert got == {}                                # nobody knows yet: held
+    cli._on_message(None, None, _msg("mbg/nodes/aa/status", b"online", retain=True))
+    assert got[2]["value"] == 12.5                  # replayed once online
+
+
+def test_retained_values_of_an_offline_source_are_dropped():
+    cli, got = _node(**AV)
+    cli._on_message(None, None, _msg("mbg/nodes/aa/sensor/flow/state", b"12.5", retain=True))
+    cli._on_message(None, None, _msg("mbg/nodes/aa/status", b"offline", retain=True))
+    cli._on_message(None, None, _msg("mbg/nodes/aa/sensor/flow/state", b"13", retain=True))
+    assert got == {} and cli.retained_dropped == 1
+
+
+def test_cleared_availability_falls_back_to_message_age():
+    cli, _ = _node(stale_after_s=120, **AV)
+    cli._on_message(None, None, _msg("mbg/nodes/aa/status", b"online"))
+    cli._on_message(None, None, _msg("mbg/nodes/aa/status", b""))
+    cli._on_message(None, None, _msg("mbg/nodes/aa/sensor/flow/state", b"1"))
+    cli.last_msg_mono -= 60
+    assert cli.data_health()["status"] == "ok"      # within its own 120 s
+    cli.last_msg_mono -= 120
+    assert cli.data_health()["status"] == "down"
+
+
+def test_without_availability_nothing_changes():
+    cli, got = _node()
+    cli._on_message(None, None, _msg("mbg/nodes/aa/sensor/flow/state", b"1", retain=True))
+    assert got == {} and cli.retained_dropped == 1  # retained still dropped
+    cli._on_message(None, None, _msg("mbg/nodes/aa/sensor/flow/state", b"1"))
+    cli.last_msg_mono -= 31
+    assert cli.data_health()["status"] == "down"    # the old 30 s
+    assert "available" not in cli.get_stats()
+
+
+def test_template_availability_reaches_the_driver():
+    from multibus.device_runtime import driver_for
+    tpl = SimpleNamespace(protocol={"transports": ["mqtt"], **AV})
+    reg = SimpleNamespace(get=lambda tid: tpl if tid == "esp_node" else None)
+    src = SimpleNamespace(protocol="mqtt", template="esp_node", mqtt_in={"topic": "mbg/nodes/aa"})
+    dev = SimpleNamespace(template="", id="n1")
+    drv = driver_for(None, reg, dev, src, [_reg(1, "x", topic="~/x")], {}, False)
+    assert drv.availability_topic == "~/status"
+    src.mqtt_in = {"topic": "mbg/nodes/aa", "availability": {"topic": "~/alive"}}
+    assert driver_for(None, reg, dev, src, [], {}, False).availability_topic == "~/alive"
+
+
+def test_template_availability_is_checked():
+    from multibus.device_template import _availability_errors
+    assert _availability_errors({"availability": {"topic": "~/status"}}) == []
+    assert _availability_errors({"availability": {"topic": "a/+/status"}})
+    assert _availability_errors({"availability": {"topic": ""}})
+    assert _availability_errors({"availability": {"topic": "~/s", "online": "x", "offline": "x"}})
+
+
+@needs_tc
+def test_an_edit_keeps_what_the_editor_does_not_show(tmp_path):
+    cfg, client = make_app(tmp_path)
+    conn = {"protocol": "mqtt", "broker": "@gateway", "port": 1883, "topic": "mbg/nodes/aa",
+            "accept_retained": True, "stale_after_s": 300,
+            "availability": {"topic": "~/status"}}
+    payload = {"id": "node-1", "name": "Node", "enabled": False,
+               "template": "mqtt_json_generic", "connection": conn}
+    assert client.post("/api/devices", json=payload).status_code == 200
+    # the device editor sends only what it shows
+    edit = {**payload, "name": "Pump node",
+            "connection": {"protocol": "mqtt", "broker": "@gateway", "port": 1883,
+                           "topic": "mbg/nodes/aa", "username": "", "password": "", "tls": False}}
+    assert client.put("/api/devices/node-1", json=edit).status_code == 200
+    dev = Config(str(tmp_path / "config.yaml")).get_device("node-1")
+    assert dev.mqtt_in["accept_retained"] is True
+    assert dev.mqtt_in["stale_after_s"] == 300
+    assert dev.mqtt_in["availability"] == {"topic": "~/status"}
+
+
+def test_gateway_broker_takes_the_gateways_own_connection():
+    from multibus.device_runtime import gateway_broker
+    g = SimpleNamespace(mqtt=SimpleNamespace(broker="mosquitto", port=1884, username="gw",
+                                             password="pw", tls_enabled=False))
+    out = gateway_broker(g, {"broker": "@gateway", "topic": "mbg/nodes/aa"})
+    assert (out["broker"], out["port"], out["username"], out["password"]) == ("mosquitto", 1884, "gw", "pw")
+    assert out["topic"] == "mbg/nodes/aa"
+    own = {"broker": "10.0.0.5", "username": "x"}
+    assert gateway_broker(g, own) is own

@@ -23,3 +23,7 @@ PyYAML>=6.0.1
 
 # Passkeys / WebAuthn (login without passwords)
 webauthn>=2.1.0,<3
+
+# OPC UA server (northbound, for SCADA / HMI) — imported only when
+# opcua.enabled is true; LGPL-3.0, compatible with the AGPL core
+asyncua>=1.1.5,<2

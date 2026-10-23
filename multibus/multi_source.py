@@ -29,7 +29,9 @@ import time
 from collections import deque
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from . import role as gateway_role
 from .source_arbiter import FieldArbiter, field_of
+
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +39,16 @@ logger = logging.getLogger(__name__)
 class MultiSourceClient:
     """A unit fed by an ordered list of sources."""
 
-    def __init__(self, device_id: str, parts: List[Tuple[Any, Any]]):
+    def __init__(self, device_id: str, parts: List[Tuple[Any, Any]],
+                 tap_factories: Optional[Dict[str, Callable[[], Any]]] = None):
         """`parts` is [(SourceConfig, driver), …] in DECLARATION ORDER, which is
-        precedence order — index 0 wins ties."""
+        precedence order — index 0 wins ties. `tap_factories`: for a source
+        polled on an RTU bus, how to LISTEN to that bus instead — what the
+        source does while the gateway is standby."""
         self.device_id = device_id
         self.parts = parts
+        self._tap_factories = dict(tap_factories or {})
+        self._standby_taps: Dict[str, Any] = {}
         self.arbiter = FieldArbiter()
         # Per-source (monotonic, ok, failed) snapshots, taken on the stats path
         # (the harvester runs it every few seconds). A since-boot counter says
@@ -117,11 +124,67 @@ class MultiSourceClient:
     def connection(self):
         return getattr(self.primary, 'connection', None)
 
+    def _live_parts(self):
+        """The sources that run now: all of them on an active gateway, only
+        the listening ones (a bus tap, an MQTT subscription) on a standby."""
+        if gateway_role.wire_allowed():
+            return list(self.parts)
+        return [(s, d) for s, d in self.parts if gateway_role.listens_only(getattr(s, 'protocol', ''))]
+
+    def standby(self) -> None:
+        """The gateway became standby: stop every source that talks to the
+        device; the listening ones go on, and an RTU bus it polled it now
+        listens to (the active partner is the master there)."""
+        for src, drv in self.parts:
+            if not gateway_role.listens_only(getattr(src, 'protocol', '')):
+                try:
+                    drv.disconnect()
+                except Exception as e:  # noqa: BLE001
+                    logger.debug("device %s source %s: standby — %s", self.device_id, src.id, e)
+        self._start_taps()
+
+    def _start_taps(self) -> None:
+        for rank, (src, _drv) in enumerate(self.parts):
+            make = self._tap_factories.get(src.id)
+            if make is None or src.id in self._standby_taps:
+                continue
+            try:
+                tap = make()
+                tap.publish_callback = self._make_filter(rank, src)
+                tap.connect()
+                self._standby_taps[src.id] = tap
+            except Exception as e:  # noqa: BLE001 — listening is a bonus, never a fault
+                logger.warning("device %s source %s: cannot listen to the bus on standby — %s",
+                               self.device_id, src.id, e)
+
+    def _stop_taps(self) -> None:
+        for sid, tap in list(self._standby_taps.items()):
+            try:
+                tap.disconnect()
+            except Exception as e:  # noqa: BLE001
+                logger.debug("device %s source %s: stopping the standby tap — %s", self.device_id, sid, e)
+        self._standby_taps.clear()
+
+    def resume(self) -> None:
+        """The gateway became active: stop listening (the port is the poller's
+        again) and start the sources a standby had stopped."""
+        self._stop_taps()
+        for src, drv in self.parts:
+            if gateway_role.listens_only(getattr(src, 'protocol', '')):
+                continue
+            try:
+                drv.connect()
+                drv.start_polling()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("device %s source %s: resume failed — %s", self.device_id, src.id, e)
+
     def connect(self) -> bool:
         """Connected when ANY source is. One transport being down must not make
         the unit look absent while another is delivering."""
         ok = False
-        for src, drv in self.parts:
+        if not gateway_role.wire_allowed():
+            self._start_taps()                     # booting as a standby: listen
+        for src, drv in self._live_parts():
             try:
                 ok = bool(drv.connect()) or ok
             except Exception as e:  # noqa: BLE001 — one source must not stop another
@@ -130,7 +193,7 @@ class MultiSourceClient:
         return ok
 
     def start_polling(self) -> None:
-        for src, drv in self.parts:
+        for src, drv in self._live_parts():
             try:
                 drv.start_polling()
             except Exception as e:  # noqa: BLE001
@@ -138,6 +201,7 @@ class MultiSourceClient:
                                self.device_id, src.id, e)
 
     def disconnect(self) -> None:
+        self._stop_taps()
         for src, drv in self.parts:
             try:
                 drv.disconnect()

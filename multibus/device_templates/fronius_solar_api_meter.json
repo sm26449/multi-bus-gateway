@@ -1,0 +1,593 @@
+{
+  "device_template": {
+    "id": "fronius_solar_api_meter",
+    "name": "Fronius Smart Meter (Solar API / HTTP-JSON)",
+    "manufacturer": "Fronius",
+    "description": "ONE HTTP request per poll to the Fronius DataManager's Solar API: GetMeterRealtimeData.cgi?Scope=Device&DeviceId=<id>. Built from a real capture (2026-10-22: DataManager card SW 3.34.1-5, Smart Meter TS 5kA-3, meter id 1). Use it when the meter cannot be read over Modbus; with Modbus available, fronius_sunspec_meter carries more (per-phase energies, average voltages).\n\nLOAD ON THE DATALOGGER: every register is in one poll group, so the meter costs exactly one GET per interval: 12 requests/min at the default 5 s, 30/min at 2 s. The inverters and the site poll the same web server, and the DataManager refreshes its values only about every 2.5 s, so polling faster than 5 s buys nothing. Keep it at 5 s or slower.\n\nTHE ID IN THE URL is the meter's Solar API id, as discovery reports it (1 on the captured installation, not 0). It is written into the URL literally; the unit stays the meter's Modbus address (240), so the device id and its history do not change when the meter moves between HTTP and Modbus. Do not put ${unit_id} in this source's URL: with unit 240 it would ask for DeviceId=240 and get nothing.\n\nSIGNS: power_active_total > 0 is import from the grid, < 0 is export. energy_active_import is the Consumed counter, energy_active_export the Produced one. Power factor is a ±1 fraction as the meter gives it, negative while importing.\n\nThe addresses are the SunSpec model-203 addresses of the same points (as in fronius_sunspec_meter), so a field keeps its identity (HA unique_id, InfluxDB series) whichever way the meter is read. Model and serial are text and cannot be read over this path. A GEN24 / Tauro datalogger names its meter fields differently (SMARTMETER_*) and needs its own template.\n\nNIGHT: the DataManager sleeps at night; the source goes offline like the other Solar API sources. No field is defaulted to zero.",
+    "kind": "meter",
+    "protocol": {
+      "transports": [
+        "http"
+      ],
+      "byte_order": "big"
+    },
+    "poll_groups": {
+      "realtime": {
+        "interval": 5,
+        "description": "everything, in one request (the datalogger refreshes ~2.5 s; keep it at 5 s or slower)"
+      }
+    },
+    "registers": [
+      {
+        "address": 40087,
+        "name": "power_active_total",
+        "label": "Total active power",
+        "unit": "W",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.PowerReal_P_Sum",
+        "description": "Positive = importing from the grid, negative = exporting (checked against the datalogger's own P_Grid).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40088,
+        "name": "power_active_l1",
+        "label": "L1 active power",
+        "unit": "W",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.PowerReal_P_Phase_1",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40089,
+        "name": "power_active_l2",
+        "label": "L2 active power",
+        "unit": "W",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.PowerReal_P_Phase_2",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40090,
+        "name": "power_active_l3",
+        "label": "L3 active power",
+        "unit": "W",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.PowerReal_P_Phase_3",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40092,
+        "name": "power_apparent_total",
+        "label": "Total apparent power",
+        "unit": "VA",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.PowerApparent_S_Sum",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40093,
+        "name": "power_apparent_l1",
+        "label": "L1 apparent power",
+        "unit": "VA",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.PowerApparent_S_Phase_1",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40094,
+        "name": "power_apparent_l2",
+        "label": "L2 apparent power",
+        "unit": "VA",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.PowerApparent_S_Phase_2",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40095,
+        "name": "power_apparent_l3",
+        "label": "L3 apparent power",
+        "unit": "VA",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.PowerApparent_S_Phase_3",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40097,
+        "name": "power_reactive_total",
+        "label": "Total reactive power",
+        "unit": "var",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.PowerReactive_Q_Sum",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40098,
+        "name": "power_reactive_l1",
+        "label": "L1 reactive power",
+        "unit": "var",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.PowerReactive_Q_Phase_1",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40099,
+        "name": "power_reactive_l2",
+        "label": "L2 reactive power",
+        "unit": "var",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.PowerReactive_Q_Phase_2",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40100,
+        "name": "power_reactive_l3",
+        "label": "L3 reactive power",
+        "unit": "var",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.PowerReactive_Q_Phase_3",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40102,
+        "name": "power_factor_total",
+        "label": "System power factor",
+        "unit": "",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.PowerFactor_Sum",
+        "description": "A ±1 fraction as the meter reports it; negative while importing. For the total it matches |P/S|.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40103,
+        "name": "power_factor_l1",
+        "label": "L1 power factor",
+        "unit": "",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.PowerFactor_Phase_1",
+        "description": "Off by default: per phase the datalogger's figure is not P/S (its S includes distortion), so it does not compare with a SunSpec meter's.",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          }
+        }
+      },
+      {
+        "address": 40104,
+        "name": "power_factor_l2",
+        "label": "L2 power factor",
+        "unit": "",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.PowerFactor_Phase_2",
+        "description": "Off by default: see L1.",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          }
+        }
+      },
+      {
+        "address": 40105,
+        "name": "power_factor_l3",
+        "label": "L3 power factor",
+        "unit": "",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.PowerFactor_Phase_3",
+        "description": "Off by default: see L1.",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          }
+        }
+      },
+      {
+        "address": 40077,
+        "name": "voltage_l1_n",
+        "label": "L1–N RMS voltage",
+        "unit": "V",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.Voltage_AC_Phase_1",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40078,
+        "name": "voltage_l2_n",
+        "label": "L2–N RMS voltage",
+        "unit": "V",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.Voltage_AC_Phase_2",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40079,
+        "name": "voltage_l3_n",
+        "label": "L3–N RMS voltage",
+        "unit": "V",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.Voltage_AC_Phase_3",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40081,
+        "name": "voltage_l1_l2",
+        "label": "L1–L2 line voltage",
+        "unit": "V",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.Voltage_AC_PhaseToPhase_12",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40082,
+        "name": "voltage_l2_l3",
+        "label": "L2–L3 line voltage",
+        "unit": "V",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.Voltage_AC_PhaseToPhase_23",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40083,
+        "name": "voltage_l3_l1",
+        "label": "L3–L1 line voltage",
+        "unit": "V",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.Voltage_AC_PhaseToPhase_31",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40071,
+        "name": "current_total",
+        "label": "Total / sum current",
+        "unit": "A",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.Current_AC_Sum",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40072,
+        "name": "current_l1",
+        "label": "L1 current",
+        "unit": "A",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.Current_AC_Phase_1",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40073,
+        "name": "current_l2",
+        "label": "L2 current",
+        "unit": "A",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.Current_AC_Phase_2",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40074,
+        "name": "current_l3",
+        "label": "L3 current",
+        "unit": "A",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.Current_AC_Phase_3",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40085,
+        "name": "frequency",
+        "label": "Grid frequency",
+        "unit": "Hz",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.Frequency_Phase_Average",
+        "description": "Coarse: it read exactly 50 in every captured sample. Check its resolution on your meter before a frequency rule relies on it.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40115,
+        "name": "energy_active_import",
+        "label": "Total imported active energy",
+        "unit": "Wh",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.EnergyReal_WAC_Sum_Consumed",
+        "description": "Consumed = from the grid (the same counter as EnergyReal_WAC_Plus_Absolute).",
+        "monotonic": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40107,
+        "name": "energy_active_export",
+        "label": "Total exported active energy",
+        "unit": "Wh",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.EnergyReal_WAC_Sum_Produced",
+        "description": "Produced = to the grid (the same counter as EnergyReal_WAC_Minus_Absolute).",
+        "monotonic": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 40200,
+        "name": "energy_reactive_import",
+        "label": "Total reactive energy, consumed",
+        "unit": "varh",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.EnergyReactive_VArAC_Sum_Consumed",
+        "description": "Off by default: the Modbus meter template has no counterpart.",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          }
+        }
+      },
+      {
+        "address": 40201,
+        "name": "energy_reactive_export",
+        "label": "Total reactive energy, produced",
+        "unit": "varh",
+        "data_type": "float",
+        "access": "RD",
+        "poll_group": "realtime",
+        "json_path": "Body.Data.EnergyReactive_VArAC_Sum_Produced",
+        "description": "Off by default: the Modbus meter template has no counterpart.",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          }
+        }
+      }
+    ]
+  }
+}

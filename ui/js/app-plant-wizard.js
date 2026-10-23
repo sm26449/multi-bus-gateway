@@ -35,7 +35,11 @@ Object.assign(JanitzaMonitor.prototype, {
     _TPL_FOR: {           // role × transport → the bundled template, when there is one
         'inverter:http': 'fronius_solar_api_inverter', 'inverter:modbus': 'fronius_sunspec_inverter',
         'site:http': 'fronius_solar_api_site',
-        'meter:http': 'fronius_solar_api', 'meter:modbus': 'fronius_sunspec_meter',
+        // a meter over the Solar API: fronius_solar_api_meter reads the
+        // DataManager's classic keys (a GEN24 names them differently); on a
+        // gateway without it the wizard says the group cannot be read that
+        // way instead of dropping it
+        'meter:http': 'fronius_solar_api_meter', 'meter:modbus': 'fronius_sunspec_meter',
     },
 
     async openPlantWizard() {
@@ -46,7 +50,7 @@ Object.assign(JanitzaMonitor.prototype, {
             step: 1, templates,
             data: {
                 id: '', idTouched: false, name: '', host: '', port: 502, ways: 'both', root: 'pv',
-                probe: {}, discovered: null, groups: [],
+                probe: {}, discovered: null, discoveredFor: '', seedSig: '', groups: [],
             },
         };
         document.getElementById('plantWizTitle').textContent =
@@ -82,8 +86,28 @@ Object.assign(JanitzaMonitor.prototype, {
                        : w.step === 2 ? this._plantWizStep2()
                        : w.step === 3 ? this._plantWizStep3()
                        : this._plantWizStep4();
-        const first = body.querySelector('input:not([type=checkbox]):not([type=radio]), select');
+        const first = body.querySelector('input:not([type=checkbox]):not([type=radio]), select:not([id^="pwTpl"])');
         if (first) setTimeout(() => first.focus(), 30);
+        if (w.step === 3 && !body._pwLoadWired) {
+            // the load line follows what is typed (the body outlives the
+            // steps: wired once)
+            body._pwLoadWired = true;
+            body.addEventListener('input', () => {
+                const el = document.getElementById('pwLoad');
+                if (!el || this._plantWiz.step !== 3) return;
+                this._plantWizCollect();
+                el.innerHTML = this._pwLoadHtml();
+            });
+        }
+        if (w.step === 2) {
+            // each group's template: its kind first, the others folded
+            const ways = this._pwWays();
+            const transport = ways.http && !ways.modbus ? 'http' : ways.modbus && !ways.http ? 'modbus' : '';
+            body.querySelectorAll('select[id^="pwTpl"]').forEach(sel => {
+                const g = w.data.groups[parseInt(sel.dataset.g, 10)] || {};
+                this._pickTemplate(sel, { kind: g.role || '', transport });
+            });
+        }
     },
 
     _pwWays() { const d = this._plantWiz.data; return { http: d.ways !== 'modbus', modbus: d.ways !== 'http' }; },
@@ -166,10 +190,11 @@ Object.assign(JanitzaMonitor.prototype, {
                 const r = await fetch(`/api/fronius/discover?host=${encodeURIComponent(hp.host)}&port=${hp.port}`);
                 const j = await r.json();
                 const ms = Math.round(performance.now() - t0);
-                if (!r.ok) { d.probe.http = { ok: false, msg: j.detail || r.statusText }; d.discovered = null; return; }
+                if (!r.ok) { d.probe.http = { ok: false, msg: j.detail || r.statusText }; d.discovered = null; d.discoveredFor = ''; return; }
                 d.discovered = j;
-                d.probe.http = { ok: true, ms, msg: `${this.t('plant.wizard.answered', 'answered')} · ${ms} ms · ${(j.inverters || []).length} ${this.t('plant.role.inverter', 'inverters').toLowerCase()}${(j.meters || []).length ? ` · ${(j.meters || []).length} ${this.t('plant.wizard.meters', 'meter(s)')}` : ''}` };
-            } catch (e) { d.probe.http = { ok: false, msg: e.message }; d.discovered = null; }
+                d.discoveredFor = `${hp.host}:${hp.port}`;
+                d.probe.http = { ok: true, ms, msg: `${this.t('plant.wizard.answered', 'answered')} · ${ms} ms · ${(j.inverters || []).length} ${this.t('plant.role.inverter', 'Inverters').toLowerCase()}${(j.meters || []).length ? ` · ${(j.meters || []).length} ${this.t('plant.wizard.meters', 'meter(s)')}` : ''}` };
+            } catch (e) { d.probe.http = { ok: false, msg: e.message }; d.discovered = null; d.discoveredFor = ''; }
         })());
         if (ways.modbus) jobs.push((async () => {
             const t0 = performance.now();
@@ -191,39 +216,75 @@ Object.assign(JanitzaMonitor.prototype, {
     // ── 2. what it holds ────────────────────────────────────────────────────
     // Groups come from what the datalogger reported, each a tick; anything else
     // is added by hand. Templates follow from role × transport.
+    //
+    // Seeded once per (way, address, discovery): Back → Next keeps every tick,
+    // template and unit list. A new address or way replaces only what was
+    // found; groups added by hand and filled in stay.
     _pwSeedGroups() {
-        const d = this._plantWiz.data, ways = this._pwWays(), disc = d.discovered;
-        if (d.groups.length) return;
+        const d = this._plantWiz.data, ways = this._pwWays();
+        const hp = this._pwHostPort();
+        // what the datalogger reported, only for the address it was asked at
+        // (Modbus only asks nothing: another address's inverters are not these)
+        const disc = ways.http && d.discoveredFor === `${hp.host}:${hp.port}` ? d.discovered : null;
+        const sig = `${d.ways}|${d.host}|${d.port}|${disc ? d.discoveredFor : ''}`;
+        if (d.seedSig === sig && d.groups.length) return;
+        // groups the user added stay until the user removes them; only the
+        // untouched first placeholder goes
+        const kept = d.groups.filter(g => !g.found && !(g.placeholder && !g.units && !g.template && !g.url));
+        const found = [];
         if (disc && (disc.inverters || []).length) {
             const ids = disc.inverters.map(x => parseInt(x.solar_api_id, 10)).filter(n => !isNaN(n)).sort((a, b) => a - b);
-            d.groups.push({ id: 'inverters', role: 'inverter', found: true, on: true, units: ids.join(', '),
-                            detail: disc.inverters.map(x => `${x.solar_api_id}${x.dt ? ' · DT ' + x.dt : ''}`).join(' · ') });
-            d.groups.push({ id: 'site', role: 'site', found: true, on: ways.http, units: '0',
-                            detail: this.t('plant.wizard.siteDetail', 'generation · load · grid · autonomy (Solar API)') });
+            found.push({ id: 'inverters', role: 'inverter', found: true, on: true, units: ids.join(', '),
+                         detail: disc.inverters.map(x => `${x.solar_api_id}${x.dt ? ' · DT ' + x.dt : ''}`).join(' · ') });
+            found.push({ id: 'site', role: 'site', found: true, on: ways.http, units: '0',
+                         detail: this.t('plant.wizard.siteDetail', 'generation · load · grid · autonomy (Solar API)') });
+            // the meter keeps its Modbus address as its unit whichever way it
+            // is read: its Solar API id (whatever discovery reports — 1 on a
+            // DataManager card, sometimes 0) could collide with the
+            // site's unit 0, and the device id stays the same if the way changes
             (disc.meters || []).forEach(m => {
-                d.groups.push({ id: 'grid', role: 'meter', found: true, on: false,
-                                units: ways.modbus ? String(m.modbus_unit_hint || 240) : String(m.solar_api_id),
-                                meterSolarId: String(m.solar_api_id),
-                                detail: `${m.model || 'Smart Meter'}${ways.modbus ? ` · Modbus unit ${m.modbus_unit_hint || 240}` : ` · Solar API id ${m.solar_api_id}`}` });
+                found.push({ id: 'grid', role: 'meter', found: true, on: false,
+                             units: String(m.modbus_unit_hint || 240),
+                             meterSolarId: String(m.solar_api_id ?? 0),
+                             detail: this.t('plant.wizard.meterDetail', '{model} · Modbus unit {unit} · Solar API id {sid}', { model: m.model || 'Smart Meter', unit: m.modbus_unit_hint || 240, sid: m.solar_api_id }) });
             });
-        } else {
-            d.groups.push({ id: 'inverters', role: 'inverter', found: false, on: true, units: '' });
         }
+        d.groups = found.concat(kept);
+        if (!d.groups.length) d.groups.push({ id: 'inverters', role: 'inverter', found: false, on: true, units: '', placeholder: true });
+        d.seedSig = sig;
     },
 
+    // {fit, other}: the templates of this transport whose kind is this role,
+    // and those that declare no kind (offered apart). A template of another
+    // kind is never offered. No role: every template of the transport fits.
     _pwTemplatesFor(role, transport, templates) {
-        const pool = templates || (this._plantWiz || {}).templates || this._srcTemplates || [];
-        const roleOf = x => {
-            const s = `${x.id} ${x.name || ''}`.toLowerCase();
-            if (/site|installation/.test(s)) return 'site';
-            if (/meter|sdm|em24|iem3|b2[13]|umg/.test(s)) return 'meter';
-            if (/inverter|sunspec/.test(s)) return 'inverter';
-            if (/battery|bms/.test(s)) return 'battery';
-            if (/sensor|ble|zigbee|mqtt/.test(s)) return 'sensor';
-            return '';
-        };
-        return pool.filter(x =>
-            (!transport || x.transport === transport) && (roleOf(x) === role || roleOf(x) === ''));
+        const pool = (templates || (this._plantWiz || {}).templates || this._srcTemplates || [])
+            .filter(x => !transport || x.transport === transport);
+        if (!role) return { fit: pool, other: [] };
+        const kindOf = x => ('kind' in x ? x.kind || '' : this._pwGuessKind(x));
+        return { fit: pool.filter(x => kindOf(x) === role), other: pool.filter(x => kindOf(x) === '') };
+    },
+
+    // an older gateway sends no `kind`: guess it from the id and name
+    _pwGuessKind(x) {
+        const s = `${x.id} ${x.name || ''}`.toLowerCase();
+        if (/site|installation/.test(s)) return 'site';
+        if (/meter|sdm|em24|iem3|b2[13]|umg/.test(s)) return 'meter';
+        if (/inverter|sunspec/.test(s)) return 'inverter';
+        if (/battery|bms/.test(s)) return 'battery';
+        if (/sensor|ble|zigbee|mqtt/.test(s)) return 'sensor';
+        return '';
+    },
+
+    // <option>s for {fit, other}: the fitting ones, then those of no declared
+    // kind in their own group; `selected` is kept even when it fits neither
+    _tplOptionsHtml({ fit, other }, selected, all = [], withTransport = false) {
+        const opt = x => `<option value="${this._esc(x.id)}" ${selected === x.id ? 'selected' : ''}>${this._esc(x.name || x.id)}${withTransport ? ` · ${this._esc(x.transport)}` : ''}</option>`;
+        const listed = new Set([...fit, ...other].map(x => x.id));
+        const extra = selected && !listed.has(selected) ? all.filter(x => x.id === selected) : [];
+        return ['<option value="">—</option>', ...fit.concat(extra).map(opt),
+            other.length ? `<optgroup label="${this._esc(this.t('plant.wizard.kindUndeclared', 'Kind not declared'))}">${other.map(opt).join('')}</optgroup>` : '',
+        ].join('');
     },
 
     _plantWizStep2() {
@@ -242,9 +303,7 @@ Object.assign(JanitzaMonitor.prototype, {
             : `<div class="field-hint" style="margin-bottom:10px;">${d.discovered ? t('plant.wizard.foundNone', 'The datalogger reported no inverters.') : t('plant.wizard.notAsked', ways.http ? 'The datalogger did not answer, so nothing could be found — add what it holds by hand.' : 'Modbus cannot list what is behind the datalogger — add what it holds by hand.')}</div>`;
         const tplOpts = (g) => {
             const transport = ways.http && !ways.modbus ? 'http' : ways.modbus && !ways.http ? 'modbus' : '';
-            const list = this._pwTemplatesFor(g.role, transport);
-            return ['<option value="">—</option>'].concat(list.map(x =>
-                `<option value="${this._esc(x.id)}" ${g.template === x.id ? 'selected' : ''}>${this._esc(x.name || x.id)} · ${x.transport}</option>`)).join('');
+            return this._tplOptionsHtml(this._pwTemplatesFor(g.role, transport), g.template, this._plantWiz.templates, true);
         };
         const manualHtml = manual.map(g => { const i = d.groups.indexOf(g), pre = this.ROLE_PRESETS[g.role] || this.ROLE_PRESETS.inverter;
             return `
@@ -252,7 +311,7 @@ Object.assign(JanitzaMonitor.prototype, {
               <div class="settings-card-header">
                 <h3><i aria-hidden="true" class="bi ${pre.icon}"></i> ${this._esc(g.id || pre.group)}</h3>
                 <button class="btn btn-ghost btn-sm" ${d.groups.length < 2 ? 'disabled' : ''} ${this._act('plantWizRemoveGroup', [i])}
-                        title="${t('common.delete', 'Remove')}" aria-label="${t('common.delete', 'Remove')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
+                        title="${t('common.remove', 'Remove')}" aria-label="${t('common.remove', 'Remove')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
               </div>
               <div class="settings-card-body">
                 <div class="form-row">
@@ -267,7 +326,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <div class="field-hint">${t('endpoints.unitsHint', 'Comma-separated, ranges allowed (1-4).')}</div></div>
                   <div class="form-group flex-2"><label class="form-label" for="pwTpl${i}">${t('devices.wizard.template', 'Template')}</label>
                     <select id="pwTpl${i}" class="input" data-g="${i}" data-f="template">${tplOpts(g)}</select>
-                    <div class="field-hint">${t('plant.wizard.tplHint', 'Only templates for this kind of unit and the way it is reached.')}</div></div>
+                    <div class="field-hint">${t('plant.wizard.tplHint', 'Templates for this kind of unit and the way it is reached come first; the others are under "Other kinds", and templates that declare no kind are listed apart.')}</div></div>
                 </div>
                 ${ways.http ? `<div class="form-group"><label class="form-label" for="pwUrl${i}">${t('plant.wizard.httpUrl', 'Solar API / JSON URL')}</label>
                     <input id="pwUrl${i}" class="input" data-g="${i}" data-f="url" value="${this._esc(g.url || '')}" placeholder="http://${this._esc(d.host || 'host')}/solar_api/v1/...DeviceId=\${unit_id}">
@@ -285,6 +344,44 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     // ── 3. how often ────────────────────────────────────────────────────────
+    // The Solar API meter's template reads everything in one request: 5 s is
+    // its own default and the datalogger refreshes only every ~2.5 s, so a
+    // faster default would only load a web server the inverters share
+    _pwHttpEvery(g) {
+        return g.httpEvery || (g.role === 'meter' ? 5 : 2);
+    },
+
+    // What this installation alone asks of the datalogger per minute. The
+    // budgets are the measured ones (memory fronius-datalogger-limits):
+    // Modbus collapses above ~26 transactions/min (20 s per unit is the only
+    // error-free rate seen); the Solar API answers from a cache in ~54 ms, but
+    // 150/min more on top of production degraded it, so ~120/min is the cap.
+    _pwLoad() {
+        const d = this._plantWiz.data, ways = this._pwWays();
+        let http = 0, modbus = 0;
+        d.groups.filter(g => g.on !== false).forEach(g => {
+            const units = g.role === 'site' || g.role === 'meter' ? 1 : (this._parseUnitList(g.units) || []).length;
+            const viaHttp = ways.http && (g.role !== 'meter' || !ways.modbus);
+            if (viaHttp) http += units * (60 / (parseFloat(this._pwHttpEvery(g)) || 2)
+                + (g.role === 'meter' ? 0 : 60 / (parseFloat(g.energyEvery) || 30)));
+            if (ways.modbus && g.role !== 'site')
+                modbus += units * (60 / (parseFloat(g.modbusEvery) || 20) + 60 / (parseFloat(g.slowEvery) || 120));
+        });
+        return { http: Math.round(http), modbus: Math.round(modbus), httpMax: 120, modbusMax: 20 };
+    },
+
+    _pwLoadHtml() {
+        const t = (k, d, p) => this.t(k, d, p), l = this._pwLoad();
+        const over = l.http > l.httpMax || l.modbus > l.modbusMax;
+        const parts = [];
+        if (l.http) parts.push(t('plant.wizard.loadHttp', '≈ {n} Solar API requests/min', { n: l.http }));
+        if (l.modbus) parts.push(t('plant.wizard.loadModbus', '≈ {n} Modbus reads/min (at least)', { n: l.modbus }));
+        if (!parts.length) return '';
+        return `<i aria-hidden="true" class="bi ${over ? 'bi-exclamation-triangle' : 'bi-speedometer2'}"></i>
+            ${t('plant.wizard.loadIntro', 'To the datalogger, this installation alone:')} ${parts.join(' · ')}${over
+            ? ` — <strong>${t('plant.wizard.loadOver', 'more than it is known to sustain (≈ {h}/min Solar API, ≈ {m}/min Modbus); read less often.', { h: l.httpMax, m: l.modbusMax })}</strong>` : ''}`;
+    },
+
     _plantWizStep3() {
         const t = (k, d) => this.t(k, d), d = this._plantWiz.data, ways = this._pwWays();
         const active = d.groups.filter(g => g.on !== false);
@@ -303,8 +400,11 @@ Object.assign(JanitzaMonitor.prototype, {
               <div class="settings-card-header"><h3><i aria-hidden="true" class="bi ${pre.icon}"></i> ${t('plant.role.' + g.role, pre.label)}</h3></div>
               <div class="settings-card-body" style="display:flex;flex-direction:column;gap:10px;">
                 ${http ? way('Solar API',
-                    num(i, 'httpEvery', g.httpEvery || 2, 1, t('plant.wizard.fastEvery', 'power, voltages, currents every')),
-                    num(i, 'energyEvery', g.energyEvery || 30, 5, t('plant.wizard.energyEvery', 'energy counters every'))) : ''}
+                    ...(g.role === 'meter'
+                        // the meter's template reads everything in one request
+                        ? [num(i, 'httpEvery', this._pwHttpEvery(g), 5, t('plant.wizard.meterEvery', 'everything (one request) every'))]
+                        : [num(i, 'httpEvery', this._pwHttpEvery(g), 1, t('plant.wizard.fastEvery', 'power, voltages, currents every')),
+                           num(i, 'energyEvery', g.energyEvery || 30, 5, t('plant.wizard.energyEvery', 'energy counters every'))])) : ''}
                 ${modbus ? way('Modbus',
                     num(i, 'modbusEvery', g.modbusEvery || 20, 5, t('plant.wizard.fullEvery', 'the complete reading (SunSpec) every')),
                     num(i, 'slowEvery', g.slowEvery || 120, 30, t('plant.wizard.slowEvery', 'counters and static data every'))) : ''}
@@ -316,6 +416,7 @@ Object.assign(JanitzaMonitor.prototype, {
         <p class="field-hint" style="margin:0 0 14px;">${t('plant.wizard.readIntro',
             'How often each group is read. Solar API is cheap; Modbus on this datalogger is not — the measured floor is shown where it matters.')}</p>
         ${rows}
+        <div id="pwLoad" class="field-hint" aria-live="polite" style="margin:0 0 12px;">${this._pwLoadHtml()}</div>
         ${ways.http && ways.modbus ? `<div class="field-hint" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             ${t('plant.wizard.precedence', 'Solar API (fast, partial) goes first and Modbus fills in the rest. If the Solar API goes quiet for')}
             <input class="input" type="number" min="5" step="1" style="width:84px;" id="pwStale" value="${d.staleAfter || 30}" aria-label="${t('plant.wizard.staleLabel', 'stale after seconds')}"> s
@@ -324,8 +425,8 @@ Object.assign(JanitzaMonitor.prototype, {
 
     // ── 4. review ───────────────────────────────────────────────────────────
     _plantWizStep4() {
-        const t = (k, d) => this.t(k, d), d = this._plantWiz.data;
-        const body = this._plantWizBody();
+        const t = (k, d, p) => this.t(k, d, p), d = this._plantWiz.data;
+        const { body, unread } = this._plantWizPlan();
         const rows = body.groups.map((g, i) => {
             const pre = this.ROLE_PRESETS[g.role] || this.ROLE_PRESETS.inverter;
             const units = (g.units || []).map(u => typeof u === 'object' ? u.unit_id : u);
@@ -345,9 +446,12 @@ Object.assign(JanitzaMonitor.prototype, {
             'What will be created. Every unit becomes its own device with its own history, read exactly as shown.')}</p>
         <div style="overflow-x:auto;"><table style="width:100%;font-size:13px;">
           <tr style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;">
-            <td>${t('endpoints.group', 'group')}</td><td>${t('endpoints.unitsTitle', 'units')}</td>
-            <td>${t('endpoints.readVia', 'read via')}</td><td>${t('endpoints.publishesTo', 'publishes to')}</td></tr>
+            <td>${t('endpoints.group', 'Group')}</td><td>${t('endpoints.unitsTitle', 'Units')}</td>
+            <td>${t('endpoints.readVia', 'Read via')}</td><td>${t('endpoints.publishesTo', 'Publishes to')}</td></tr>
           ${rows}
+          ${unread.map(u => `<tr><td colspan="4" style="padding:4px 0;color:var(--warning,#f59e0b);">
+              <i aria-hidden="true" class="bi bi-exclamation-triangle"></i>
+              ${this._esc(u.text)}</td></tr>`).join('')}
         </table></div>
         <p class="field-hint" style="margin-top:14px;"><i aria-hidden="true" class="bi bi-cpu"></i>
           ${t('plant.wizard.willCreate', 'Devices to be created')}: <code>${devs.map(x => this._esc(x)).join('</code>, <code>')}</code>
@@ -403,14 +507,20 @@ Object.assign(JanitzaMonitor.prototype, {
         const pre = this.ROLE_PRESETS[role];
         const wasPreset = Object.values(this.ROLE_PRESETS).some(v => v.group === g.id);
         g.role = role;
+        g.placeholder = false;                    // the user's own now: it stays
         if (wasPreset && pre) g.id = pre.group;
         g.template = '';
         this._plantWizRender();
     },
 
     // the payload the API expects, built from the wizard's own shape
-    _plantWizBody() {
+    _plantWizBody() { return this._plantWizPlan().body; },
+
+    // {body, unread}: unread lists every ticked group nothing can read the
+    // chosen way (no template for it, or no URL) — said, never dropped
+    _plantWizPlan() {
         const d = this._plantWiz.data, ways = this._pwWays();
+        const unread = [];
         const base = `http://${d.host}`;
         const root = d.root ? d.root.replace(/\/+$/, '') : '';
         const stale = ways.http && ways.modbus ? (d.staleAfter || 30) : 0;
@@ -428,18 +538,24 @@ Object.assign(JanitzaMonitor.prototype, {
             const chosenT = (g.template && (this._plantWiz.templates.find(x => x.id === g.template) || {}).transport) || '';
             const httpTpl = chosenT === 'http' ? g.template : (has(this._TPL_FOR[`${g.role}:http`]) ? this._TPL_FOR[`${g.role}:http`] : '');
             const mbTpl = chosenT === 'modbus' ? g.template : (has(this._TPL_FOR[`${g.role}:modbus`]) ? this._TPL_FOR[`${g.role}:modbus`] : '');
-            const url = g.found ? (this._SOLAR_API[g.role] ? base + this._SOLAR_API[g.role] : '') : (g.url || '').trim();
+            // a found meter is addressed by its Modbus unit; its Solar API id
+            // (from discovery; the 0 below is only a last resort) goes into
+            // the URL literally
+            const call = this._SOLAR_API[g.role] && (g.role === 'meter'
+                ? this._SOLAR_API.meter.replace('${unit_id}', g.meterSolarId ?? '0') : this._SOLAR_API[g.role]);
+            const url = g.found ? (call ? base + call : '') : (g.url || '').trim();
             const wantHttp = ways.http && url && httpTpl && !(g.role === 'meter' && ways.modbus);
             const wantModbus = ways.modbus && g.role !== 'site' && mbTpl;
             if (wantHttp) sources.push({ id: 'solar_api', protocol: 'http', url, template: httpTpl, timeout: 5,
-                poll_groups: { realtime: { interval: parseFloat(g.httpEvery) || 2 }, normal: { interval: parseFloat(g.energyEvery) || 30 } },
+                poll_groups: { realtime: { interval: parseFloat(g.httpEvery) || this._pwHttpEvery(g) }, normal: { interval: parseFloat(g.energyEvery) || 30 } },
                 stale_after_s: wantModbus ? stale : 0 });
             if (wantModbus) sources.push({ id: 'sunspec', protocol: 'tcp', host: this._pwHostPort().host, port: d.port, timeout: 3, template: mbTpl,
                 poll_groups: { normal: { interval: parseFloat(g.modbusEvery) || 20 }, slow: { interval: parseFloat(g.slowEvery) || 120 } },
                 stale_after_s: 0 });
             out.sources = sources;
+            if (!sources.length) unread.push({ gid, role: g.role, text: this._pwUnreadText(gid, g, { ways, url, httpTpl, mbTpl }) });
             return out;
-        }).filter(g => g.sources.length);       // a group nothing can read is not created
+        }).filter(g => g.sources.length);       // never POSTed — and said (unread)
         const body = { id: d.id, name: d.name || d.id, enabled: true,
                        connection: ways.modbus ? { protocol: 'tcp', host: this._pwHostPort().host, port: d.port } : {},
                        units: groups[0] ? groups[0].units : [], groups };
@@ -447,7 +563,27 @@ Object.assign(JanitzaMonitor.prototype, {
             body.mqtt = { topic_prefix: `${root}/units/\${unit_id}`, aggregate_prefix: `${root}/\${group_id}/summary` };
             body.influxdb = { bucket: root, device_tag: '${device_id}' };
         }
-        return body;
+        return { body, unread };
+    },
+
+    // why a ticked group cannot be read the way the installation is reached,
+    // and the way out that exists
+    _pwUnreadText(gid, g, { ways, url, httpTpl, mbTpl }) {
+        const t = (k, d, p) => this.t(k, d, p);
+        const role = t('plant.role.' + g.role, (this.ROLE_PRESETS[g.role] || {}).label || g.role).toLowerCase();
+        // the Smart Meter the datalogger reported, on a gateway without the
+        // Solar API meter template: Modbus reads it
+        if (g.found && g.role === 'meter' && ways.http && !ways.modbus && !httpTpl)
+            return t('plant.wizard.meterModbusOnly', 'Group "{gid}": the Smart Meter is read over Modbus — choose "Solar API + Modbus" on step 1, or untick it.', { gid });
+        let why = t('plant.wizard.noWay', 'no template reads it the way the datalogger is reached');
+        if (ways.http && !ways.modbus) {
+            if (!httpTpl) why = t('plant.wizard.noHttpTpl', 'no template reads a {role} over Solar API', { role });
+            else if (!url) why = t('plant.wizard.noUrl', 'it has no Solar API / JSON URL');
+        } else if (ways.modbus && !ways.http) {
+            if (g.role === 'site') why = t('plant.wizard.siteHttpOnly', 'the site totals exist only over Solar API');
+            else if (!mbTpl) why = t('plant.wizard.noModbusTpl', 'no template reads a {role} over Modbus', { role });
+        }
+        return t('plant.wizard.unread', 'Group "{gid}": {why}. Untick it, or change how it is read.', { gid, why });
     },
 
     plantWizardBack() {
@@ -468,14 +604,15 @@ Object.assign(JanitzaMonitor.prototype, {
             if (d.root && !/^[a-z0-9][a-z0-9_\/-]{0,63}$/.test(d.root)) {
                 fb.textContent = this.t('plant.wizard.badRoot', 'Publishes under: a-z 0-9 - _ /'); return;
             }
-            // ask the datalogger what it holds — the Test may have done it already
-            if (ways.http && !d.discovered) {
+            // ask the datalogger what it holds — the Test may have done it
+            // already, for this address
+            const hp = this._pwHostPort();
+            if (ways.http && (!d.discovered || d.discoveredFor !== `${hp.host}:${hp.port}`)) {
                 const btn = document.getElementById('plantWizNext'); btn.disabled = true;
                 fb.textContent = this.t('plant.wizard.asking', 'Asking the datalogger what it holds…');
                 try { await this.plantWizProbe(true); } finally { btn.disabled = false; }
                 fb.textContent = '';
             }
-            d.groups = [];   // seeded from what was found, on entering step 2
         }
         if (w.step === 2) {
             const active = d.groups.filter(g => g.on !== false);
@@ -485,13 +622,18 @@ Object.assign(JanitzaMonitor.prototype, {
                 const gid = (g.id || '').trim().toLowerCase();
                 if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(gid)) { fb.textContent = this.t('plant.wizard.badGroupId', 'Group ID: use a-z 0-9 - _ (1-32 chars).'); return; }
                 const u = this._parseUnitList(g.units);
-                if (!u || !u.length) { fb.textContent = this.t('plant.wizard.needUnits', `Group "${gid}": enter its unit IDs.`); return; }
-                if (!g.found && !g.template) { fb.textContent = this.t('plant.wizard.needTemplate', `Group "${gid}": choose a template.`); return; }
-                if (!g.found && ways.http && !ways.modbus && !(g.url || '').trim()) { fb.textContent = this.t('plant.wizard.needUrl', `Group "${gid}": the Solar API / JSON source needs a URL.`); return; }
+                if (!u || !u.length) { fb.textContent = this.t('plant.wizard.needUnits', 'Group "{gid}": enter its unit IDs.', { gid }); return; }
+                if (!g.found && !g.template) { fb.textContent = this.t('plant.wizard.needTemplate', 'Group "{gid}": choose a template.', { gid }); return; }
+                if (!g.found && ways.http && !ways.modbus && !(g.url || '').trim()) { fb.textContent = this.t('plant.wizard.needUrl', 'Group "{gid}": the Solar API / JSON source needs a URL.', { gid }); return; }
                 for (const x of u) {
-                    if (seen.has(x)) { fb.textContent = this.t('plant.wizard.dupUnit', `Unit ${x} is claimed by two groups — one address, one device.`); return; }
+                    if (seen.has(x)) { fb.textContent = this.t('plant.wizard.dupUnit', 'Unit {n} is claimed by two groups — one address, one device.', { n: x }); return; }
                     seen.add(x);
                 }
+            }
+            const unread = this._plantWizPlan().unread[0];
+            if (unread) {
+                fb.textContent = unread.text;
+                return;
             }
         }
         if (w.step < 4) { w.step++; this._plantWizRender(); return; }
@@ -509,7 +651,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 return;
             }
             this.closeModal('plantWizardModal');
-            this.showToast(this.t('plant.wizard.created', 'Installation created'), 'success');
+            this.showToast('success', this.t('plant.wizard.created', 'Installation created'), d.name || d.id);
             await this.renderDevicesList?.();
             this.openEndpointDetail?.(d.id);
         } finally {

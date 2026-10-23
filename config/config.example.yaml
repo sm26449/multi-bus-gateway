@@ -170,24 +170,6 @@ alerts:
     buffer: true          # InfluxDB buffer backlog or dropped points
     threshold: false      # per-register value crossings (warning/danger limits)
 
-# Device Builder — authoring/compiling/flashing ESP32/ESP8266 node firmware
-# from the UI, with an ESPHome dashboard as the build engine. The bundled
-# docker-compose ships that service and seeds this block via ESPHOME_URL, so
-# on a fresh deploy the Builder just works — you normally never edit this.
-# The integration is network-only (no shared volume); YAML content and
-# build/flash streams are admin-only while auth is enabled.
-#
-# Env seeding: ESPHOME_URL enables the feature when this block is absent;
-# once you save a choice in the UI it sticks. ESPHOME_USERNAME /
-# ESPHOME_PASSWORD override at runtime (the password never lands in this
-# file); ESPHOME_ENABLED=true|false forces the switch on every start.
-esphome:
-  enabled: false
-  # ESPHome dashboard URL as reachable FROM THIS CONTAINER, e.g. the compose
-  # service name (http://esphome:6052) or a LAN address.
-  url: "http://esphome:6052"
-  # Only if the dashboard itself runs with a login (USERNAME/PASSWORD envs):
-  username: ""
-  password: ""
-  # HTTP timeout for dashboard calls (compile/flash streams are unaffected).
-  timeout_s: 10
+# ESP flashing and the node list live in the separate
+# multi-bus-gateway-esphome service. To link to it from Devices, set
+# ui.nodes_url (e.g. /nodes/ when it runs behind the same host name).

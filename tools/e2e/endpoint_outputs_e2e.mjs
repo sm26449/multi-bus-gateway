@@ -10,6 +10,7 @@
  *   cd tools/e2e && MBG_URL=http://127.0.0.1:8099 node endpoint_outputs_e2e.mjs
  */
 import { chromium } from 'playwright';
+import { watchDialogs } from './lib/dialogs.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const PORT = process.env.TAP_PORT || '/tmp/ttyTAPE2E';
@@ -50,6 +51,7 @@ const browser = await chromium.launch(
   process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 const page = await browser.newPage({ viewport: { width: 1440, height: 950 } });
 page.setDefaultTimeout(15000);
+const dlg = await watchDialogs(page);
 const errs = [];
 // the malformed output in step 4 is a deliberate 422 the browser logs
 page.on('console', m => { if (m.type() === 'error' && !/status of 422/.test(m.text())) errs.push(m.text()); });
@@ -160,7 +162,7 @@ try {
   // the totals list folds by default (it is long) — open it
   await page.click('#plTotals details > summary');
   await page.waitForSelector('#plTotals table');
-  page.once('dialog', d => d.accept());
+  dlg.answers.push(true);
   await page.click('#plInfluxExtras [data-action="removeInfluxOutput"]');
   await sleep(800);
   await page.click('#plTotals tr:has-text("pack_max_temp") [data-action="removeEndpointTotal"]');

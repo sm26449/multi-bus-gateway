@@ -4,7 +4,7 @@
 
 Every built-in device map, with its Modbus transport (function code + byte/word order), the exact register table, and the **source it was verified against**. We do not fabricate maps — each entry cites its provenance. **Confidence varies by entry:** some are *vendor-verified* (confirmed against the manufacturer manual or a field-tested driver — e.g. ABB B23 vs the ABB manual, Schneider iEM3000 vs volkszaehler/mbmd, Carlo Gavazzi EM24 vs Victron), while others are *community-sourced* and their description says to verify against your specific unit's manual before billing-grade use (e.g. the Eastron SDM entries). Read each entry's Source line. `scale` is a divisor — engineering value = raw / scale.
 
-**19 device maps.**
+**24 device maps.**
 
 | Map | Vendor | Model | Registers | Transport |
 |---|---|---|---|---|
@@ -13,19 +13,24 @@ Every built-in device map, with its Modbus transport (function code + byte/word 
 | [ABB B23 (3-phase)](#abb-b23-3-phase) | ABB | B23 (System pro M compact) | 32 | FC03 / big |
 | [BLE sensor (Theengs / BTHome → MQTT)](#ble-sensor-theengs--bthome--mqtt) | Theengs | BLE advertisement sensor | 5 | MQTT |
 | [Carlo Gavazzi EM24 (AV5/AV53, 3-phase)](#carlo-gavazzi-em24-av5av53-3-phase) | Carlo Gavazzi | EM24-DIN AV5(3) | 17 | FC03 / little |
+| [Delta VFD-EL frequency drive](#delta-vfd-el-frequency-drive) | Delta Electronics | VFD-EL (e.g. VFD022EL43A) | 16 | FC03 / big |
 | [Eastron SDM120 (single-phase)](#eastron-sdm120-single-phase) | Eastron | SDM120 Modbus | 10 | FC04 / big |
 | [Eastron SDM630 (3-phase)](#eastron-sdm630-3-phase) | Eastron | SDM630 Modbus V2 | 29 | FC04 / big |
 | [Fronius Smart Meter 65A-3 (RTU)](#fronius-smart-meter-65a-3-rtu) | Fronius | Smart Meter 65A-3 | 30 | FC03 / little |
 | [Fronius inverter (Solar API / HTTP-JSON)](#fronius-inverter-solar-api--http-json) | — | — | 7 | HTTP/JSON |
 | [Fronius inverter, per-phase AC (Solar API / HTTP-JSON)](#fronius-inverter-per-phase-ac-solar-api--http-json) | — | — | 6 | HTTP/JSON |
+| [Fronius Smart Meter (Solar API / HTTP-JSON)](#fronius-smart-meter-solar-api--http-json) | — | — | 31 | HTTP/JSON |
 | [Fronius installation (Solar API site totals)](#fronius-installation-solar-api-site-totals) | — | — | 9 | HTTP/JSON |
 | [Fronius SunSpec inverter (int+SF, via datalogger)](#fronius-sunspec-inverter-intsf-via-datalogger) | Fronius | Symo / Primo / Eco (SunSpec 103) | 69 | FC03 / big |
 | [Fronius SunSpec meter (int+SF, via datalogger)](#fronius-sunspec-meter-intsf-via-datalogger) | Fronius | Smart Meter 63A/50kA (SunSpec 203) | 48 | FC03 / big |
 | [Generic MQTT (JSON)](#generic-mqtt-json) | Generic | MQTT JSON source | 3 | MQTT |
+| [Samsung MIM-B19N Modbus interface (DVM / EHS)](#samsung-mim-b19n-modbus-interface-dvm--ehs) | Samsung | MIM-B19N / MIM-B19NT | 60 | FC03 / big |
 | [Schneider iEM3000 (3-phase)](#schneider-iem3000-3-phase) | Schneider Electric | iEM3155 / iEM3255 / iEM3455 / iEM3555 | 22 | FC03 / big |
 | [Seplos BMS V3 bank (via seplos-bms-mqtt)](#seplos-bms-v3-bank-via-seplos-bms-mqtt) | Seplos | BMS V3 bank | 28 | MQTT |
 | [Seplos BMS V3 (via seplos-bms-mqtt)](#seplos-bms-v3-via-seplos-bms-mqtt) | Seplos | BMS V3 | 58 | MQTT |
 | [Seplos BMS V3 pack (RTU tap, listen-only)](#seplos-bms-v3-pack-rtu-tap-listen-only) | Seplos | BMS V3 | 84 | RTU tap FC01+FC04 / big |
+| [Tasmota device (relays, energy, Wi-Fi)](#tasmota-device-relays-energy-wi-fi) | Tasmota | any Tasmota device | 12 | MQTT |
+| [Victron GX (Venus OS) over MQTT](#victron-gx-venus-os-over-mqtt) | Victron Energy | GX device (Cerbo, Ekrano, Venus GX) | 38 | MQTT |
 | [Zigbee sensor (zigbee2mqtt)](#zigbee-sensor-zigbee2mqtt) | Zigbee2MQTT | climate / battery sensor | 6 | MQTT |
 
 ---
@@ -152,6 +157,45 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 | 66 / 0x0042 | `energy_active_import_l2` | Import active energy L2 | int32 | 0.01 | Wh | slow |
 | 68 / 0x0044 | `energy_active_import_l3` | Import active energy L3 | int32 | 0.01 | Wh | slow |
 | 78 / 0x004E | `energy_active_export` | Export active energy (total) | int32 | 0.01 | Wh | slow |
+
+## Delta VFD-EL frequency drive
+
+**id** `delta_vfd_el` · **vendor** Delta Electronics · **model** VFD-EL (e.g. VFD022EL43A) · **version** 0.3.0 · **registers** 16
+
+- **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
+- **Source / provenance:** Delta VFD-EL User Manual, revision 2016/03 (6ELE, V1.14): Group 9 communication parameters p. 102, function codes p. 105 (03H read n≤20 words, 06H write, 08H loop detection), address list p. 108-110 (2000H-2002H, 2100H-210AH, parameter address GGnnH), Pr 02.00 p. 36. Not yet field-checked: the 0.01 Hz scaling of 2001H, 2101H bit 10, block reads of 2100H-210AH and the Pr 02.01 values are to be confirmed on a VFD022EL43A.
+
+> Delta VFD-EL micro drive on its built-in RS-485 (RJ-45), Modbus RTU. Reads the fault code, the run state, the frequency command and output frequency, output current and voltage, the DC bus, the IGBT temperature and the drive's own communication settings; runs, stops, reverses, sets the frequency, runs at a frequency in one command (run_at, the one for rules) and resets a fault through Commands (dry run, check after write, lease back to stop). The drive answers only FC3 (up to 20 words), FC6 and FC8 and reads one parameter per request: this map writes one register per FC6 and reads one word per request. Set the drive first: Pr 09.00 address, Pr 09.01 speed, Pr 09.04 an RTU format, Pr 02.00 = 3, Pr 02.01 = RS-485 with the keypad STOP active, Pr 09.02 = 1 and Pr 09.03 = 2.0 s. No command is enabled until you enable it on the device.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 512 / 0x0200 | `frequency_source` | Frequency source (Pr 02.00) | uint16 | 1 | — | settings |
+| 513 / 0x0201 | `command_source` | Operation command source (Pr 02.01) | uint16 | 1 | — | settings |
+| 2306 / 0x0902 | `comm_fault_action` | Communication fault action (Pr 09.02) | uint16 | 1 | — | settings |
+| 2307 / 0x0903 | `comm_timeout` | Communication time-out (Pr 09.03) | uint16 | 10 | s | settings |
+| 8192 / 0x2000 | `command_word` | Command word | uint16 | 1 | — | normal |
+| 8193 / 0x2001 | `frequency_setpoint` | Frequency set point (written) | uint16 | 100 | Hz | normal |
+| 8194 / 0x2002 | `fault_control` | External fault / reset | uint16 | 1 | — | normal |
+| 8448 / 0x2100 | `error_code` | Fault code | uint16 | 1 | — | fast |
+| 8449 / 0x2101 | `status_word` | Status word | uint16 | 1 | — | fast |
+| 8450 / 0x2102 | `frequency_command` | Frequency command (F) | uint16 | 100 | Hz | fast |
+| 8451 / 0x2103 | `output_frequency` | Output frequency (H) | uint16 | 100 | Hz | fast |
+| 8452 / 0x2104 | `output_current` | Output current | uint16 | 10 | A | fast |
+| 8454 / 0x2106 | `pid_feedback` | PID feedback (analog input) | uint16 | 1 | — | normal |
+| 8456 / 0x2108 | `dc_bus_voltage` | DC bus voltage | uint16 | 10 | V | fast |
+| 8457 / 0x2109 | `output_voltage` | Output voltage | uint16 | 10 | V | fast |
+| 8458 / 0x210A | `igbt_temperature` | IGBT temperature | uint16 | 1 | °C | normal |
+
+**Derived measurements** — computed from the registers above and seeded into every device made from this template, so each unit publishes them identically.
+
+| Name | MQTT topic | Formula | Decoded |
+|---|---|---|---|
+| `run_state` | `run_state` | `status_word % 4` | 4 states |
+| `running` | `running` | `1 if status_word % 4 == 3 else 0` | — |
+| `reverse` | `reverse` | `1 if (status_word // 8) % 4 >= 2 else 0` | 2 states |
+| `frequency_from_comm` | `frequency_from_comm` | `(status_word // 256) % 2` | — |
+| `command_from_comm` | `command_from_comm` | `(status_word // 1024) % 2` | — |
+| `output_apparent_power` | `output_apparent_power` | `1.732 * output_voltage * output_current` | — |
 
 ## Eastron SDM120 (single-phase)
 
@@ -305,6 +349,58 @@ NIGHT: like CommonInverterData, the DataManager omits UAC_*/IAC_* once the inver
 | 40080 / 0x9C90 | `voltage_l2_n` | L2-N voltage | float | 1 | V | realtime |
 | 40081 / 0x9C91 | `voltage_l3_n` | L3-N voltage | float | 1 | V | realtime |
 
+## Fronius Smart Meter (Solar API / HTTP-JSON)
+
+**id** `fronius_solar_api_meter` · **vendor** — · **model** — · **version** — · **registers** 31
+
+- **Transport:** HTTP/JSON — values by `json_path`
+
+> ONE HTTP request per poll to the Fronius DataManager's Solar API: GetMeterRealtimeData.cgi?Scope=Device&DeviceId=<id>. Built from a real capture (2026-10-22: DataManager card SW 3.34.1-5, Smart Meter TS 5kA-3, meter id 1). Use it when the meter cannot be read over Modbus; with Modbus available, fronius_sunspec_meter carries more (per-phase energies, average voltages).
+
+LOAD ON THE DATALOGGER: every register is in one poll group, so the meter costs exactly one GET per interval: 12 requests/min at the default 5 s, 30/min at 2 s. The inverters and the site poll the same web server, and the DataManager refreshes its values only about every 2.5 s, so polling faster than 5 s buys nothing. Keep it at 5 s or slower.
+
+THE ID IN THE URL is the meter's Solar API id, as discovery reports it (1 on the captured installation, not 0). It is written into the URL literally; the unit stays the meter's Modbus address (240), so the device id and its history do not change when the meter moves between HTTP and Modbus. Do not put ${unit_id} in this source's URL: with unit 240 it would ask for DeviceId=240 and get nothing.
+
+SIGNS: power_active_total > 0 is import from the grid, < 0 is export. energy_active_import is the Consumed counter, energy_active_export the Produced one. Power factor is a ±1 fraction as the meter gives it, negative while importing.
+
+The addresses are the SunSpec model-203 addresses of the same points (as in fronius_sunspec_meter), so a field keeps its identity (HA unique_id, InfluxDB series) whichever way the meter is read. Model and serial are text and cannot be read over this path. A GEN24 / Tauro datalogger names its meter fields differently (SMARTMETER_*) and needs its own template.
+
+NIGHT: the DataManager sleeps at night; the source goes offline like the other Solar API sources. No field is defaulted to zero.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 40071 / 0x9C87 | `current_total` | Total / sum current | float | 1 | A | realtime |
+| 40072 / 0x9C88 | `current_l1` | L1 current | float | 1 | A | realtime |
+| 40073 / 0x9C89 | `current_l2` | L2 current | float | 1 | A | realtime |
+| 40074 / 0x9C8A | `current_l3` | L3 current | float | 1 | A | realtime |
+| 40077 / 0x9C8D | `voltage_l1_n` | L1–N RMS voltage | float | 1 | V | realtime |
+| 40078 / 0x9C8E | `voltage_l2_n` | L2–N RMS voltage | float | 1 | V | realtime |
+| 40079 / 0x9C8F | `voltage_l3_n` | L3–N RMS voltage | float | 1 | V | realtime |
+| 40081 / 0x9C91 | `voltage_l1_l2` | L1–L2 line voltage | float | 1 | V | realtime |
+| 40082 / 0x9C92 | `voltage_l2_l3` | L2–L3 line voltage | float | 1 | V | realtime |
+| 40083 / 0x9C93 | `voltage_l3_l1` | L3–L1 line voltage | float | 1 | V | realtime |
+| 40085 / 0x9C95 | `frequency` | Grid frequency | float | 1 | Hz | realtime |
+| 40087 / 0x9C97 | `power_active_total` | Total active power | float | 1 | W | realtime |
+| 40088 / 0x9C98 | `power_active_l1` | L1 active power | float | 1 | W | realtime |
+| 40089 / 0x9C99 | `power_active_l2` | L2 active power | float | 1 | W | realtime |
+| 40090 / 0x9C9A | `power_active_l3` | L3 active power | float | 1 | W | realtime |
+| 40092 / 0x9C9C | `power_apparent_total` | Total apparent power | float | 1 | VA | realtime |
+| 40093 / 0x9C9D | `power_apparent_l1` | L1 apparent power | float | 1 | VA | realtime |
+| 40094 / 0x9C9E | `power_apparent_l2` | L2 apparent power | float | 1 | VA | realtime |
+| 40095 / 0x9C9F | `power_apparent_l3` | L3 apparent power | float | 1 | VA | realtime |
+| 40097 / 0x9CA1 | `power_reactive_total` | Total reactive power | float | 1 | var | realtime |
+| 40098 / 0x9CA2 | `power_reactive_l1` | L1 reactive power | float | 1 | var | realtime |
+| 40099 / 0x9CA3 | `power_reactive_l2` | L2 reactive power | float | 1 | var | realtime |
+| 40100 / 0x9CA4 | `power_reactive_l3` | L3 reactive power | float | 1 | var | realtime |
+| 40102 / 0x9CA6 | `power_factor_total` | System power factor | float | 1 | — | realtime |
+| 40103 / 0x9CA7 | `power_factor_l1` | L1 power factor | float | 1 | — | realtime |
+| 40104 / 0x9CA8 | `power_factor_l2` | L2 power factor | float | 1 | — | realtime |
+| 40105 / 0x9CA9 | `power_factor_l3` | L3 power factor | float | 1 | — | realtime |
+| 40107 / 0x9CAB | `energy_active_export` | Total exported active energy | float | 1 | Wh | realtime |
+| 40115 / 0x9CB3 | `energy_active_import` | Total imported active energy | float | 1 | Wh | realtime |
+| 40200 / 0x9D08 | `energy_reactive_import` | Total reactive energy, consumed | float | 1 | varh | realtime |
+| 40201 / 0x9D09 | `energy_reactive_export` | Total reactive energy, produced | float | 1 | varh | realtime |
+
 ## Fronius installation (Solar API site totals)
 
 **id** `fronius_solar_api_site` · **vendor** — · **model** — · **version** — · **registers** 9
@@ -337,7 +433,7 @@ The URL carries no ${unit_id}: an installation is one thing, so this group holds
 
 ## Fronius SunSpec inverter (int+SF, via datalogger)
 
-**id** `fronius_sunspec_inverter` · **vendor** Fronius · **model** Symo / Primo / Eco (SunSpec 103) · **version** 2.2.0 · **registers** 69
+**id** `fronius_sunspec_inverter` · **vendor** Fronius · **model** Symo / Primo / Eco (SunSpec 103) · **version** 2.3.0 · **registers** 69
 
 - **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
 - **Source / provenance:** SunSpec Information Models (int+SF); register map verified live against a production Fronius fleet (raw-frame decode parity, 2026-09-11)
@@ -497,6 +593,90 @@ The URL carries no ${unit_id}: an installation is one thing, so this group holds
 | 1 / 0x0001 | `power` | Power | float | 1 | W | normal |
 | 2 / 0x0002 | `voltage` | Voltage | float | 1 | V | normal |
 | 3 / 0x0003 | `current` | Current | float | 1 | A | normal |
+
+## Samsung MIM-B19N Modbus interface (DVM / EHS)
+
+**id** `samsung_mim_b19n` · **vendor** Samsung · **model** MIM-B19N / MIM-B19NT · **version** 1.6.3 · **registers** 60
+
+- **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
+- **Source / provenance:** Samsung DB68-07538A-03 Installation manual, Modbus Interface Module MIM-B19N/MIM-B19NT, Table 2 (Modbus register table), p. 13-16; the addresses match a Node-RED flow that read the same unit (FC3, address 50 x28). Field-checked 2026-10-08 on a DVM-S with an HE hydro kit at IU 0: 0x7FFF on the hot water temperature = no tank sensor. Extra registers: Table 3 of DB68-07538A-03 (2022) for the official IDs; community IDs from ZimKev's MIM-B19N notes (EHS) and the 'More Hidden Registers' list.
+
+> Samsung Modbus Interface Module on a DVM/EHS outdoor unit (R1-R2), read over Modbus RTU 9600 8E1. Outdoor block at 0-2, then the indoor unit at address 0 (a hydro kit / EHS, an indoor unit) at 50-79: on/off, mode, set and room temperatures, water in/out, water set point, domestic hot water. Indoor unit N sits at 50 + N*50 + offset (duplicate the rows for more units). The setup steps activate the module's extra values (NASA message ids written to 6000/7000 — a write to the interface module, not a command to the unit). Control registers are written only through the template's Commands (range-checked, spaced 2 s apart, verified by read-back): every write to a holding register is a control command to the unit, so none is enabled until you enable it on the device.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 0 / 0x0000 | `mim_status` | Interface module status | uint16 | 1 | — | slow |
+| 1 / 0x0001 | `outdoor_error_code` | Outdoor unit error code | uint16 | 1 | — | slow |
+| 2 / 0x0002 | `outdoor_defrost` | Defrost | uint16 | 1 | — | normal |
+| 4 / 0x0004 | `outdoor_operation` | Outdoor operation | uint16 | 1 | — | normal |
+| 5 / 0x0005 | `compressor_running` | Compressor | uint16 | 1 | — | normal |
+| 6 / 0x0006 | `outdoor_temperature` | Outdoor temperature | int16 | 10 | °C | normal |
+| 7 / 0x0007 | `pressure_high` | High pressure | int16 | 10 | kgf/cm² | normal |
+| 8 / 0x0008 | `pressure_low` | Low pressure | int16 | 10 | kgf/cm² | normal |
+| 9 / 0x0009 | `discharge_temperature` | Discharge temperature | int16 | 10 | °C | normal |
+| 10 / 0x000A | `compressor_current` | Compressor current | uint16 | 10 | A | normal |
+| 11 / 0x000B | `condenser_out_temperature` | Heat exchanger outlet (cond-out) | int16 | 10 | °C | normal |
+| 12 / 0x000C | `suction_temperature` | Suction temperature | int16 | 10 | °C | normal |
+| 13 / 0x000D | `outdoor_error_detail` | Outdoor error code (NASA) | uint16 | 1 | — | normal |
+| 14 / 0x000E | `compressor_frequency` | Compressor frequency | uint16 | 1 | Hz | normal |
+| 15 / 0x000F | `compressor_target_frequency` | Compressor target frequency | uint16 | 1 | Hz | normal |
+| 16 / 0x0010 | `dc_link_voltage` | DC link voltage | uint16 | 1 | V | normal |
+| 17 / 0x0011 | `outdoor_fan_speed` | Outdoor fan | uint16 | 1 | — | normal |
+| 18 / 0x0012 | `base_heater` | Base heater | uint16 | 1 | — | normal |
+| 19 / 0x0013 | `ipm_temperature` | Inverter (IPM) temperature | int16 | 10 | °C | normal |
+| 20 / 0x0014 | `compressor_top_temperature` | Compressor top temperature | int16 | 10 | °C | normal |
+| 21 / 0x0015 | `outdoor_power_test` | Outdoor power (test) | uint16 | 1 | W | normal |
+| 22 / 0x0016 | `outdoor_energy_test` | Outdoor energy, cumulative (test) | uint16 | 1 | — | normal |
+| 23 / 0x0017 | `eva_in_temperature` | EVA-in temperature (outdoor coil inlet) | int16 | 10 | °C | normal |
+| 24 / 0x0018 | `condensing_saturation_temperature` | High-pressure saturation temperature | int16 | 10 | °C | normal |
+| 25 / 0x0019 | `evaporating_saturation_temperature` | Low-pressure saturation temperature | int16 | 10 | °C | normal |
+| 26 / 0x001A | `eev_main_position` | Main expansion valve (EEV1) position | uint16 | 1 | steps | normal |
+| 27 / 0x001B | `evi_in_temperature` | EVI-in temperature | int16 | 10 | °C | normal |
+| 28 / 0x001C | `evi_out_temperature` | EVI-out temperature | int16 | 10 | °C | normal |
+| 50 / 0x0032 | `iu0_comm_status` | Indoor unit communication | uint16 | 1 | — | slow |
+| 51 / 0x0033 | `iu0_unit_type` | Indoor unit type | uint16 | 1 | — | slow |
+| 52 / 0x0034 | `iu0_power` | On / off | uint16 | 1 | — | normal |
+| 53 / 0x0035 | `iu0_mode` | Operation mode | uint16 | 1 | — | normal |
+| 56 / 0x0038 | `iu0_filter_alarm` | Filter alarm | uint16 | 1 | — | slow |
+| 58 / 0x003A | `iu0_set_temperature` | Set temperature | int16 | 10 | °C | normal |
+| 59 / 0x003B | `iu0_room_temperature` | Room temperature | int16 | 10 | °C | normal |
+| 63 / 0x003F | `iu0_error_code` | Indoor unit error code | uint16 | 1 | — | normal |
+| 65 / 0x0041 | `iu0_water_in_temperature` | Water in | int16 | 10 | °C | normal |
+| 66 / 0x0042 | `iu0_water_out_temperature` | Water out | int16 | 10 | °C | normal |
+| 68 / 0x0044 | `iu0_water_out_set` | Water out set point | int16 | 10 | °C | normal |
+| 72 / 0x0048 | `iu0_dhw_power` | Hot water | uint16 | 1 | — | normal |
+| 73 / 0x0049 | `iu0_dhw_mode` | Hot water mode | uint16 | 1 | — | normal |
+| 74 / 0x004A | `iu0_dhw_set` | Hot water set point | int16 | 10 | °C | normal |
+| 75 / 0x004B | `iu0_dhw_temperature` | Hot water temperature | int16 | 10 | °C | normal |
+| 78 / 0x004E | `iu0_quiet` | Quiet mode | uint16 | 1 | — | slow |
+| 79 / 0x004F | `iu0_away` | Away (outing) mode | uint16 | 1 | — | slow |
+| 82 / 0x0052 | `valve_3way` | 3-way valve | uint16 | 1 | — | normal |
+| 83 / 0x0053 | `backup_heater` | Backup heater | uint16 | 1 | — | normal |
+| 84 / 0x0054 | `booster_heater` | Booster heater | uint16 | 1 | — | normal |
+| 85 / 0x0055 | `water_pump_pwm` | Water pump | uint16 | 1 | % | normal |
+| 86 / 0x0056 | `water_flow` | Water flow | uint16 | 10 | L/min | normal |
+| 87 / 0x0057 | `room_sensor_temperature` | Room sensor temperature | int16 | 10 | °C | normal |
+| 88 / 0x0058 | `heater_out_temperature` | Heater outlet temperature | int16 | 10 | °C | normal |
+| 89 / 0x0059 | `water_out_target` | Water-out target (actual) | int16 | 10 | °C | normal |
+| 90 / 0x005A | `water_law_temperature` | Water law (weather curve) temperature | int16 | 10 | °C | normal |
+| 91 / 0x005B | `dhw_tank_temperature` | Hot water tank temperature | int16 | 10 | °C | normal |
+| 92 / 0x005C | `compressor_limit` | Compressor frequency limit (FR) | uint16 | 1 | — | normal |
+| 93 / 0x005D | `thermo_on` | Thermo on | uint16 | 1 | — | normal |
+| 94 / 0x005E | `indoor_defrost` | Defrost (indoor) | uint16 | 1 | — | normal |
+| 95 / 0x005F | `heat_output_test` | Heat produced, last minute (test) | uint16 | 1 | — | normal |
+| 96 / 0x0060 | `heat_total_test` | Heat produced, total (test) | uint16 | 1 | — | normal |
+
+**Derived measurements** — computed from the registers above and seeded into every device made from this template, so each unit publishes them identically.
+
+| Name | MQTT topic | Formula | Decoded |
+|---|---|---|---|
+| `iu0_water_delta_t` | `iu0_water_delta_t` | `iu0_water_out_temperature - iu0_water_in_temperature` | — |
+| `water_flow_assumed` | `water_flow_assumed` | `15` | — |
+| `heat_output_estimated` | `heat_output_estimated` | `water_flow_assumed / 60 * 4.186 * iu0_water_delta_t if compressor_frequency > 0 and iu0_water_delta_t > 0 else 0` | — |
+| `power_electric_estimated` | `power_electric_estimated` | `1.732 * 400 * compressor_current * 0.95 if compressor_frequency > 0 else 0` | — |
+| `cop_estimated` | `cop_estimated` | `heat_output_estimated / (first(power_electric, power_electric_estimated) / 1000) if first(power_electric, power_electric_estimated) > 1500 and heat_output_estimated > 0 else 0` | — |
+| `discharge_hot` | `discharge_hot` | `1 if discharge_temperature > 100 else 0` | — |
+| `low_flow_suspect` | `low_flow_suspect` | `1 if compressor_frequency > 30 and iu0_water_delta_t > 8 else 0` | — |
 
 ## Schneider iEM3000 (3-phase)
 
@@ -748,6 +928,187 @@ The URL carries no ${unit_id}: an installation is one thing, so this group holds
 | `failure_count` | `failure_count` | `failure_ntc + failure_afe + failure_charge_mosfet + failure_discharge_mosfet + failure_cell_diff` | — |
 | `energy_remaining` | `energy_remaining` | `remaining_capacity * pack_voltage` | — |
 | `energy_to_full` | `energy_to_full` | `(total_capacity - remaining_capacity) * pack_voltage` | — |
+
+## Tasmota device (relays, energy, Wi-Fi)
+
+**id** `tasmota_generic` · **vendor** Tasmota · **model** any Tasmota device · **version** 1.0.0 · **registers** 12
+
+- **Transport:** MQTT — values by `json_path` from the subscribed payload
+- **Source / provenance:** https://tasmota.github.io/docs/MQTT/
+
+> A device running Tasmota, read from its own MQTT topics: its relays (stat/<topic>/POWER, POWER1–4), its energy monitor if it has one (tele/<topic>/SENSOR ENERGY), Wi-Fi signal and uptime (tele/<topic>/STATE), and whether it is online (tele/<topic>/LWT). Found and adopted from Devices → Found on MQTT: the device's topics come from its discovery announcement as {stat} and {tele}. Rows the device does not have stay empty: remove them, or add its sensors (tele/<topic>/SENSOR, a JSON path per value). A relay's state arrives when it changes; set PowerRetain 1 on the device to have it at once after a restart.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 1 / 0x0001 | `power` | Relay | uint16 | 1 | — | push |
+| 2 / 0x0002 | `power1` | Relay 1 | uint16 | 1 | — | push |
+| 3 / 0x0003 | `power2` | Relay 2 | uint16 | 1 | — | push |
+| 4 / 0x0004 | `power3` | Relay 3 | uint16 | 1 | — | push |
+| 5 / 0x0005 | `power4` | Relay 4 | uint16 | 1 | — | push |
+| 10 / 0x000A | `power_active_total` | Power | float | 1 | W | push |
+| 11 / 0x000B | `voltage` | Voltage | float | 1 | V | push |
+| 12 / 0x000C | `current` | Current | float | 1 | A | push |
+| 13 / 0x000D | `energy_active_total` | Energy | float | 0.001 | Wh | push |
+| 14 / 0x000E | `energy_today` | Energy today | float | 0.001 | Wh | push |
+| 20 / 0x0014 | `wifi_signal` | Wi-Fi signal | float | 1 | dBm | push |
+| 21 / 0x0015 | `uptime` | Uptime | float | 1 | s | push |
+
+## Victron GX (Venus OS) over MQTT
+
+**id** `victron_gx_mqtt` · **vendor** Victron Energy · **model** GX device (Cerbo, Ekrano, Venus GX) · **version** 1.1 · **registers** 38
+
+- **Transport:** MQTT — values by `json_path` from the subscribed payload
+- **Source / provenance:** https://github.com/victronenergy/dbus-flashmq
+
+> A Victron system through its GX device's MQTT (Venus OS): battery, ESS state, grid, consumption, PV, the inverter/charger, and the ESS settings — with commands for them (grid setpoint, charge current and power, inverter power, feed-in, minimum SOC). Set the topic variables `portal` (the VRM portal id) and `vebus` (the inverter/charger instance). The GX needs 'MQTT on LAN' on. Commands are off until enabled on the device; the settings live in the GX's flash, so each is written at most once a minute. Batteries and temperature sensors the GX sees are added as components of this device (any number, by instance), read through the same connection.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 1 / 0x0001 | `soc` | State of charge | float | 1 | % | normal |
+| 2 / 0x0002 | `battery_power` | Battery power (+ charging) | float | 1 | W | normal |
+| 3 / 0x0003 | `battery_voltage` | Battery voltage | float | 1 | V | normal |
+| 4 / 0x0004 | `battery_current` | Battery current (+ charging) | float | 1 | A | normal |
+| 5 / 0x0005 | `battery_temperature` | Battery temperature | float | 1 | °C | normal |
+| 6 / 0x0006 | `battery_status` | Battery state | float | 1 | — | normal |
+| 10 / 0x000A | `ess_state` | ESS state | float | 1 | — | normal |
+| 11 / 0x000B | `active_soc_limit` | Active SOC limit (ESS) | float | 1 | % | normal |
+| 12 / 0x000C | `dvcc` | DVCC | float | 1 | — | normal |
+| 13 / 0x000D | `ac_input_source` | AC input source | float | 1 | — | normal |
+| 21 / 0x0015 | `grid_power_l1` | Grid L1 power (+ import) | float | 1 | W | normal |
+| 22 / 0x0016 | `grid_power_l2` | Grid L2 power (+ import) | float | 1 | W | normal |
+| 23 / 0x0017 | `grid_power_l3` | Grid L3 power (+ import) | float | 1 | W | normal |
+| 31 / 0x001F | `consumption_power_l1` | Consumption L1 | float | 1 | W | normal |
+| 32 / 0x0020 | `consumption_power_l2` | Consumption L2 | float | 1 | W | normal |
+| 33 / 0x0021 | `consumption_power_l3` | Consumption L3 | float | 1 | W | normal |
+| 41 / 0x0029 | `pv_on_grid_power_l1` | PV on the grid side L1 | float | 1 | W | normal |
+| 42 / 0x002A | `pv_on_grid_power_l2` | PV on the grid side L2 | float | 1 | W | normal |
+| 43 / 0x002B | `pv_on_grid_power_l3` | PV on the grid side L3 | float | 1 | W | normal |
+| 50 / 0x0032 | `vebus_dc_power` | Inverter/charger DC power (+ charging) | float | 1 | W | normal |
+| 51 / 0x0033 | `dc_pv_power` | DC PV (solar chargers) | float | 1 | W | normal |
+| 100 / 0x0064 | `ess_setpoint` | Grid setpoint (+ import, − export) | float | 1 | W | normal |
+| 101 / 0x0065 | `max_charge_current` | Max charge current (DVCC, −1 = no limit) | float | 1 | A | normal |
+| 102 / 0x0066 | `max_charge_power` | Max charge power (−1 = no limit) | float | 1 | W | normal |
+| 103 / 0x0067 | `max_discharge_power` | Max inverter power (−1 = no limit) | float | 1 | W | normal |
+| 104 / 0x0068 | `max_feed_in_power` | Max feed-in (−1 = no limit) | float | 1 | W | normal |
+| 105 / 0x0069 | `min_soc_limit` | Minimum SOC (unless grid fails) | float | 1 | % | normal |
+| 106 / 0x006A | `ess_mode` | ESS mode (Hub4Mode) | float | 1 | — | normal |
+| 107 / 0x006B | `battery_life_state` | BatteryLife state | float | 1 | — | normal |
+| 200 / 0x00C8 | `inverter_ac_in_power` | Inverter/charger AC-in (+ into it) | float | 1 | W | normal |
+| 201 / 0x00C9 | `inverter_ac_in_power_l1` | Inverter/charger AC-in L1 | float | 1 | W | normal |
+| 202 / 0x00CA | `inverter_ac_in_power_l2` | Inverter/charger AC-in L2 | float | 1 | W | normal |
+| 203 / 0x00CB | `inverter_ac_in_power_l3` | Inverter/charger AC-in L3 | float | 1 | W | normal |
+| 211 / 0x00D3 | `inverter_ac_out_power_l1` | Inverter/charger AC-out L1 | float | 1 | W | normal |
+| 212 / 0x00D4 | `inverter_ac_out_power_l2` | Inverter/charger AC-out L2 | float | 1 | W | normal |
+| 213 / 0x00D5 | `inverter_ac_out_power_l3` | Inverter/charger AC-out L3 | float | 1 | W | normal |
+| 220 / 0x00DC | `grid_connected` | Grid connected (0 = island) | float | 1 | — | normal |
+| 221 / 0x00DD | `bms_connection_lost` | BMS connection lost | float | 1 | — | normal |
+
+**Derived measurements** — computed from the registers above and seeded into every device made from this template, so each unit publishes them identically.
+
+| Name | MQTT topic | Formula | Decoded |
+|---|---|---|---|
+| `power_grid` | `power_grid` | `grid_power_l1 + first(grid_power_l2, 0) + first(grid_power_l3, 0)` | — |
+| `grid_export` | `grid_export` | `max(0, 0 - (grid_power_l1 + first(grid_power_l2, 0) + first(grid_power_l3, 0)))` | — |
+| `consumption_power` | `consumption_power` | `consumption_power_l1 + first(consumption_power_l2, 0) + first(consumption_power_l3, 0)` | — |
+| `pv_on_grid_power` | `pv_on_grid_power` | `pv_on_grid_power_l1 + first(pv_on_grid_power_l2, 0) + first(pv_on_grid_power_l3, 0)` | — |
+| `battery_charging` | `battery_charging` | `1 if battery_power > 0 else 0` | 2 states |
+
+### Component `battery` — Battery
+
+Added to a device of this template any number of times, by instance (`{instance}` in its topics), and read through that device's connection. Its own template id is `victron_gx_mqtt:battery`.
+
+> A battery service of the GX: a battery monitor (SmartShunt, BMV) or a BMS on the GX's CAN (Seplos, Pylontech, BYD…). Fields a model does not have never arrive: a monitor has no cell data, a BMS no discharge history.
+
+- **Battery instance:** The service's instance on the GX (Settings → Services, or the VRM device list), e.g. 288 or 512. "Find on the device" lists them.
+- **Found on the device** through `N/{portal}/battery/+/ProductName`.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 1 / 0x0001 | `soc` | State of charge | float | 1 | % | normal |
+| 2 / 0x0002 | `soh` | State of health | float | 1 | % | normal |
+| 3 / 0x0003 | `pack_voltage` | Voltage | float | 1 | V | normal |
+| 4 / 0x0004 | `battery_current` | Current (+ charging) | float | 1 | A | normal |
+| 5 / 0x0005 | `battery_power` | Power (+ charging) | float | 1 | W | normal |
+| 6 / 0x0006 | `battery_temperature` | Battery temperature | float | 1 | °C | normal |
+| 7 / 0x0007 | `total_capacity` | Capacity | float | 1 | Ah | normal |
+| 8 / 0x0008 | `installed_capacity` | Installed capacity | float | 1 | Ah | normal |
+| 9 / 0x0009 | `consumed_ah` | Consumed since full | float | 1 | Ah | normal |
+| 10 / 0x000A | `time_to_go` | Time to go | float | 1 | s | normal |
+| 11 / 0x000B | `connected` | Connected | float | 1 | — | normal |
+| 40 / 0x0028 | `charge_current_limit` | Max charge current (BMS) | float | 1 | A | normal |
+| 41 / 0x0029 | `discharge_current_limit` | Max discharge current (BMS) | float | 1 | A | normal |
+| 42 / 0x002A | `charge_voltage_limit` | Max charge voltage (BMS) | float | 1 | V | normal |
+| 43 / 0x002B | `discharge_voltage_limit` | Low-voltage cut-off (BMS) | float | 1 | V | normal |
+| 44 / 0x002C | `min_cell_voltage` | Lowest cell voltage | float | 1 | V | normal |
+| 45 / 0x002D | `max_cell_voltage` | Highest cell voltage | float | 1 | V | normal |
+| 46 / 0x002E | `min_cell_temp` | Lowest cell temperature | float | 1 | °C | normal |
+| 47 / 0x002F | `max_cell_temp` | Highest cell temperature | float | 1 | °C | normal |
+| 52 / 0x0034 | `modules_online` | Modules online | float | 1 | — | normal |
+| 53 / 0x0035 | `modules_offline` | Modules offline | float | 1 | — | normal |
+| 54 / 0x0036 | `modules_blocking_charge` | Modules blocking charge | float | 1 | — | normal |
+| 55 / 0x0037 | `modules_blocking_discharge` | Modules blocking discharge | float | 1 | — | normal |
+| 70 / 0x0046 | `cycles` | Charge cycles | float | 1 | — | normal |
+| 71 / 0x0047 | `full_discharges` | Full discharges | float | 1 | — | normal |
+| 72 / 0x0048 | `charged_energy` | Energy charged (lifetime) | float | 1 | kWh | normal |
+| 73 / 0x0049 | `discharged_energy` | Energy discharged (lifetime) | float | 1 | kWh | normal |
+| 74 / 0x004A | `deepest_discharge` | Deepest discharge | float | 1 | Ah | normal |
+| 75 / 0x004B | `last_discharge` | Last discharge | float | 1 | Ah | normal |
+| 76 / 0x004C | `average_discharge` | Average discharge | float | 1 | Ah | normal |
+| 77 / 0x004D | `total_ah_drawn` | Total drawn | float | 1 | Ah | normal |
+| 78 / 0x004E | `time_since_full` | Since the last full charge | float | 1 | s | normal |
+| 79 / 0x004F | `min_voltage_seen` | Lowest voltage seen | float | 1 | V | normal |
+| 80 / 0x0050 | `max_voltage_seen` | Highest voltage seen | float | 1 | V | normal |
+| 100 / 0x0064 | `alarm` | Alarm | float | 1 | — | normal |
+| 101 / 0x0065 | `alarm_low_soc` | Low state of charge | float | 1 | — | normal |
+| 102 / 0x0066 | `alarm_low_voltage` | Low voltage | float | 1 | — | normal |
+| 103 / 0x0067 | `alarm_high_voltage` | High voltage | float | 1 | — | normal |
+| 104 / 0x0068 | `alarm_low_temperature` | Low temperature | float | 1 | — | normal |
+| 105 / 0x0069 | `alarm_high_temperature` | High temperature | float | 1 | — | normal |
+| 106 / 0x006A | `alarm_mid_voltage` | Midpoint deviation | float | 1 | — | normal |
+| 107 / 0x006B | `alarm_cell_imbalance` | Cell imbalance | float | 1 | — | normal |
+| 108 / 0x006C | `alarm_high_cell_voltage` | High cell voltage | float | 1 | — | normal |
+| 109 / 0x006D | `alarm_high_charge_current` | High charge current | float | 1 | — | normal |
+| 110 / 0x006E | `alarm_high_discharge_current` | High discharge current | float | 1 | — | normal |
+| 111 / 0x006F | `alarm_high_charge_temperature` | High charge temperature | float | 1 | — | normal |
+| 112 / 0x0070 | `alarm_low_charge_temperature` | Low charge temperature | float | 1 | — | normal |
+| 113 / 0x0071 | `alarm_internal_failure` | Internal failure | float | 1 | — | normal |
+| 114 / 0x0072 | `alarm_charge_blocked` | Charge blocked | float | 1 | — | normal |
+| 115 / 0x0073 | `alarm_discharge_blocked` | Discharge blocked | float | 1 | — | normal |
+| 300 / 0x012C | `product_name` | Product | string:16 | 1 | — | normal |
+| 320 / 0x0140 | `custom_name` | Name on the GX | string:16 | 1 | — | normal |
+| 340 / 0x0154 | `min_voltage_cell` | Where the lowest cell is | string:16 | 1 | — | normal |
+| 360 / 0x0168 | `max_voltage_cell` | Where the highest cell is | string:16 | 1 | — | normal |
+| 380 / 0x017C | `min_temp_cell` | Where the coldest cell is | string:16 | 1 | — | normal |
+| 400 / 0x0190 | `max_temp_cell` | Where the warmest cell is | string:16 | 1 | — | normal |
+
+| Derived | MQTT topic | Formula |
+|---|---|---|
+| `cell_delta` | `cell_delta` | `(max_cell_voltage - min_cell_voltage) * 1000` |
+| `energy_remaining` | `energy_remaining` | `total_capacity * soc / 100 * pack_voltage` |
+| `time_to_go_h` | `time_to_go_h` | `time_to_go / 3600` |
+| `battery_status` | `battery_status` | `1 if battery_power > 20 else 2 if battery_power < -20 else 0` |
+
+### Component `temperature` — Temperature sensor
+
+Added to a device of this template any number of times, by instance (`{instance}` in its topics), and read through that device's connection. Its own template id is `victron_gx_mqtt:temperature`.
+
+> A temperature service of the GX: a Bluetooth sensor it hears (RuuviTag, Mopeka…) or a wired temperature input. Humidity and pressure arrive only from sensors that measure them. BLE sensors report every few seconds to a minute.
+
+- **Sensor instance:** The sensor's instance on the GX, e.g. 22. "Find on the device" lists them.
+- **Found on the device** through `N/{portal}/temperature/+/ProductName`.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 1 / 0x0001 | `ambient_temp` | Temperature | float | 1 | °C | normal |
+| 2 / 0x0002 | `humidity` | Humidity | float | 1 | % | normal |
+| 3 / 0x0003 | `air_pressure` | Air pressure | float | 1 | hPa | normal |
+| 4 / 0x0004 | `sensor_battery_voltage` | Sensor battery | float | 1 | V | normal |
+| 5 / 0x0005 | `alarm_low_battery` | Sensor battery low | float | 1 | — | normal |
+| 6 / 0x0006 | `connected` | Connected | float | 1 | — | normal |
+| 7 / 0x0007 | `sensor_status` | Sensor status | float | 1 | — | normal |
+| 8 / 0x0008 | `temperature_type` | Kind of place | float | 1 | — | normal |
+| 300 / 0x012C | `product_name` | Product | string:16 | 1 | — | normal |
+| 320 / 0x0140 | `custom_name` | Name on the GX | string:16 | 1 | — | normal |
 
 ## Zigbee sensor (zigbee2mqtt)
 

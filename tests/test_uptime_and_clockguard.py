@@ -92,14 +92,14 @@ def test_snapshot_bundle_includes_new_artifacts(tmp_path):
     import zipfile
     from multibus.snapshots import SnapshotStore, write_bundle_files
     cfg = write_config(tmp_path)
-    (tmp_path / "builder_profiles.json").write_text('[{"id": "p1"}]')
+    (tmp_path / "calculated_templates.json").write_text('[{"id": "p1"}]')
     (tmp_path / "passkeys.json").write_text('{"creds": []}')
     (tmp_path / "templates").mkdir()
     (tmp_path / "templates" / "my_vm.yaml").write_text("kind: flat\n")
     store = SnapshotStore(tmp_path, tmp_path / "device_templates",
                           device_ids=lambda: [], registers_path_for=None)
     names = set(zipfile.ZipFile(io.BytesIO(store.build_bundle_bytes())).namelist())
-    for expected in ("builder_profiles.json", "passkeys.json", "templates/my_vm.yaml"):
+    for expected in ("calculated_templates.json", "passkeys.json", "templates/my_vm.yaml"):
         assert expected in names, names
 
     # restore round-trip into a fresh dir
@@ -109,7 +109,7 @@ def test_snapshot_bundle_includes_new_artifacts(tmp_path):
     write_bundle_files(zf, cfg_dir=out, user_tpl_dir=out / "device_templates",
                        registers_path_for=lambda d: out / "devices" / d / "selected_registers.json",
                        replace_config=True)
-    assert (out / "builder_profiles.json").exists()
+    assert (out / "calculated_templates.json").exists()
     assert (out / "passkeys.json").exists()
     assert (out / "templates" / "my_vm.yaml").exists()
 

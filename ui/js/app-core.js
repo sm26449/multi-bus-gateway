@@ -235,10 +235,13 @@ Object.assign(JanitzaMonitor.prototype, {
             .filter(n => n.offsetParent !== null);
     },
 
-    openModal(modalId) {
+    // opts.focus: the element that takes focus (default: the first focusable).
+    openModal(modalId, opts = {}) {
         const modal = document.getElementById(modalId);
         if (!modal) return;
-        this._modalReturnFocus = document.activeElement;      // restore on close
+        // per modal, not one shared slot: a confirm opened over an editor
+        // overwrote the editor's opener, and closing the editor stranded focus
+        modal._returnFocus = document.activeElement;
         modal.classList.add('active');
         // Stacking: every .modal shares z-index 1000, so which of two OPEN
         // modals paints on top used to be DOM order — the enum builder
@@ -258,7 +261,11 @@ Object.assign(JanitzaMonitor.prototype, {
             dialog.setAttribute('aria-labelledby', head.id);
         }
         // Move focus into the dialog (keyboard + screen-reader users land inside).
-        setTimeout(() => { const f = this._modalFocusables(modal); (f[0] || dialog).focus(); }, 30);
+        setTimeout(() => {
+            if (!modal.classList.contains('active')) return;
+            const f = this._modalFocusables(modal);
+            (opts.focus || f[0] || dialog).focus();
+        }, 30);
         // Trap Tab within the dialog; Escape closes. stopPropagation: without
         // it the document-level shortcut handler saw the same Escape and
         // closed ANOTHER modal too — one press dismissed both the enum
@@ -283,6 +290,7 @@ Object.assign(JanitzaMonitor.prototype, {
             : [...document.querySelectorAll('.modal.active')]
                 .sort((a, b) => (+b.style.zIndex || 0) - (+a.style.zIndex || 0))[0];
         if (!modal) return;
+        if (modal._keepOpen && modal._keepOpen()) return;
         modal.classList.remove('active');
         modal.style.zIndex = '';                 // back to the stylesheet default
         // nested modals (enum builder over the template editor): only unlock
@@ -297,21 +305,44 @@ Object.assign(JanitzaMonitor.prototype, {
             modal._trapHandler = null;
         }
         // Return focus to whatever opened the modal (don't strand the caret).
-        const ret = this._modalReturnFocus;
-        this._modalReturnFocus = null;
+        const ret = modal._returnFocus;
+        modal._returnFocus = null;
         if (ret && typeof ret.focus === 'function') setTimeout(() => ret.focus(), 0);
+        // whoever waits on this modal (app-dialogs) hears every way it closes:
+        // ✕, Escape, Cancel — not only its own buttons
+        const onClose = modal._onClose;
+        modal._onClose = null;
+        if (onClose) onClose();
+    },
+
+    // A time the gateway wrote as a naive ISO string (its own zone, no offset)
+    // shown as written — a browser in another zone would otherwise move it by
+    // the difference. Epoch numbers and strings with a zone are converted.
+    _gatewayTime(v) {
+        if (v === null || v === undefined || v === '') return '—';
+        if (typeof v === 'number') return new Date(v * (v < 1e12 ? 1000 : 1)).toLocaleTimeString(this._loc());
+        const s = String(v);
+        const naive = /^\d{4}-\d{2}-\d{2}T(\d{2}:\d{2}:\d{2})(\.\d+)?$/.exec(s);
+        if (naive) return naive[1];
+        const d = new Date(s);
+        return isNaN(d.getTime()) ? s : d.toLocaleTimeString(this._loc());
     },
 
     // ── First-run "connect your meter" prompt ──────────────────────────────
     // Shows once per session only when Modbus has never connected (fresh/
     // misconfigured deploy). Auto-closes the moment a read succeeds, and never
     // appears on a configured system having a temporary outage.
-    _maybeFirstRun(modbus) {
-        if (modbus && modbus.last_success_ts) {
+    _maybeFirstRun(modbus, devices = []) {
+        // any device that reads counts: device #1 may be a spare that is off
+        // while ten others run
+        if ((modbus && modbus.last_success_ts)
+                || (devices || []).some(d => d.connected || (d.successful_reads || 0) > 0)) {
             this._everConnected = true;
             this._closeFirstRun();
             return;
         }
+        // setting a device up is an admin's job: never offered to anyone else
+        if (this._authEnabled && this._role !== 'admin') return;
         if (this._everConnected || !this._firstRunGraceOver || this._firstRunShown) return;
         this._firstRunShown = true;
         this.openModal('firstRunModal');
@@ -327,7 +358,7 @@ Object.assign(JanitzaMonitor.prototype, {
     firstRunOpenSettings() {
         this.closeModal('firstRunModal');
         // Connection settings live on the device now (Devices → device → Edit)
-        this.openDeviceDetail(this._primaryDeviceId()).then(() => this._switchDeviceTab('edit'));
+        this.openDeviceDetail(this._primaryDeviceId()).then(() => this._switchDeviceTab('connection'));
     },
 
     // ============ Toast Notifications ============
@@ -393,10 +424,26 @@ Object.assign(JanitzaMonitor.prototype, {
         catch (e) { return {}; }
     },
 
+    // dates, times and numbers in the page's language, not the browser's:
+    // en-GB keeps a 24-hour clock and day/month order
+    _loc() {
+        return ({ ro: 'ro-RO', en: 'en-GB' })[this._lang] || this._lang || 'en-GB';
+    },
+
     t(key, fallback, params) {
         let s = (this._t && this._t[key]) || fallback || key;
         if (params) s = s.replace(/\{(\w+)\}/g, (m, name) => name in params ? String(params[name]) : m);
         return s;
+    },
+
+    // a count said in the language's own plural: `${key}.${category}` (one,
+    // few, other… from Intl.PluralRules), else `${key}`; {n} is the count
+    tn(key, n, fallback, params = {}) {
+        let cat = 'other';
+        try { cat = new Intl.PluralRules(this._lang || 'en').select(n); } catch (e) { /* old browser */ }
+        const k = (this._t && this._t[`${key}.${cat}`]) ? `${key}.${cat}`
+            : (this._t && this._t[`${key}.other`]) ? `${key}.other` : key;
+        return this.t(k, fallback, { ...params, n });
     },
 
     async setLanguage(code, persist = true) {
@@ -412,10 +459,24 @@ Object.assign(JanitzaMonitor.prototype, {
         if (persist && this.currentPage) this.navigateTo(this.currentPage);
     },
 
+    // a dictionary text with markup → HTML where only b, strong, em, code and
+    // br are tags; everything else is escaped text
+    _i18nMarkup(text) {
+        return this._esc(String(text ?? ''))
+            .replace(/&lt;(\/?)(b|strong|em|code)&gt;/g, '<$1$2>')
+            .replace(/&lt;br\s*\/?&gt;/g, '<br>');
+    },
+
     applyTranslations() {
         document.querySelectorAll('[data-i18n]').forEach(el => {
             if (el.dataset.i18nOrig === undefined) el.dataset.i18nOrig = el.textContent;
             el.textContent = this.t(el.getAttribute('data-i18n'), el.dataset.i18nOrig);
+        });
+        // a text with a few words marked (bold, code): opt-in per element, and
+        // only those tags survive — every other < is shown, never parsed
+        document.querySelectorAll('[data-i18n-html]').forEach(el => {
+            if (el.dataset.i18nOrigHtml === undefined) el.dataset.i18nOrigHtml = el.innerHTML;
+            el.innerHTML = this._i18nMarkup(this.t(el.getAttribute('data-i18n-html'), el.dataset.i18nOrigHtml));
         });
         document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
             if (el.dataset.i18nOrigPh === undefined) el.dataset.i18nOrigPh = el.getAttribute('placeholder') || '';
@@ -436,14 +497,107 @@ Object.assign(JanitzaMonitor.prototype, {
     // Secondary tab bars (.config-main-tabs): tab semantics + selection state
     // synced from .active — the bars were plain buttons whose active state was
     // color-only. Call after every toggle; idempotent.
+    // One tab stop per bar (roving tabindex): the selected tab is reached
+    // with Tab, ←/→/Home/End move between the bar's shown tabs, Enter or
+    // Space opens one (manual activation — some tabs embed a heavy page).
+    // A tab names its panel (aria-controls) only when that panel exists.
     _tabAria(sel) {
-        const bar = document.querySelector(sel);
+        const bar = typeof sel === 'string' ? document.querySelector(sel) : sel;
         if (!bar) return;
         bar.setAttribute('role', 'tablist');
-        bar.querySelectorAll('.config-main-tab').forEach(t => {
+        const tabs = [...bar.querySelectorAll('[role=tab], .config-main-tab')];
+        const shown = tabs.filter(t => !t.hidden);
+        const sel1 = shown.find(t => t.classList.contains('active')) || shown[0];
+        tabs.forEach(t => {
             t.setAttribute('role', 'tab');
-            t.setAttribute('aria-selected', String(t.classList.contains('active')));
+            const on = t.classList.contains('active');
+            t.setAttribute('aria-selected', String(on));
+            t.tabIndex = t === sel1 ? 0 : -1;
+            const pid = t.dataset.panelId;
+            if (pid && document.getElementById(pid)) t.setAttribute('aria-controls', pid);
         });
+        if (bar._keys) return;
+        bar._keys = true;
+        bar.addEventListener('keydown', e => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+            const its = [...bar.querySelectorAll('[role=tab]')].filter(t => !t.hidden);
+            const i = its.indexOf(document.activeElement);
+            if (i < 0 || !its.length) return;
+            e.preventDefault();
+            const j = e.key === 'Home' ? 0 : e.key === 'End' ? its.length - 1
+                : (i + (e.key === 'ArrowRight' ? 1 : -1) + its.length) % its.length;
+            its.forEach(t => { t.tabIndex = t === its[j] ? 0 : -1; });
+            its[j].focus();
+            if (its[j].scrollIntoView) its[j].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        });
+    },
+
+    // ── one actions menu (⋯) ────────────────────────────────────────────────
+    // A button (aria-haspopup="menu", aria-controls=<the menu's id>) and its
+    // role=menu list of role=menuitem buttons. ↑/↓/Home/End move, Esc and a
+    // click elsewhere close it; an item closes the menu and gives the focus
+    // back to the button BEFORE it acts, so a dialog it opens returns there.
+    // One document listener serves every menu on the page.
+    _menuToggle(btn, open) {
+        if (typeof btn === 'string') btn = document.getElementById(btn);
+        const menu = btn && document.getElementById(btn.getAttribute('aria-controls'));
+        if (!menu) return;
+        this._menuWire();
+        const willOpen = open === undefined ? menu.hidden : !!open;
+        if (willOpen) document.querySelectorAll('.mbg-menu:not([hidden])').forEach(m => {
+            if (m !== menu) this._menuClose(m);
+        });
+        menu.hidden = !willOpen;
+        btn.setAttribute('aria-expanded', String(willOpen));
+        if (willOpen) this._menuItems(menu)[0]?.focus();
+    },
+
+    _menuItems(menu) {
+        return [...menu.querySelectorAll('[role=menuitem]')].filter(x => !x.hidden && x.offsetParent !== null);
+    },
+
+    _menuClose(menu, focusBtn = false) {
+        if (!menu || menu.hidden) return;
+        menu.hidden = true;
+        const btn = document.querySelector(`[aria-controls="${CSS.escape(menu.id)}"]`);
+        if (btn) { btn.setAttribute('aria-expanded', 'false'); if (focusBtn) btn.focus(); }
+    },
+
+    _menuWire() {
+        if (this._menuWired) return;
+        this._menuWired = true;
+        // capture: the item closes its menu and hands the focus to its button
+        // before the item's own action runs
+        document.addEventListener('click', e => {
+            const item = e.target.closest && e.target.closest('.mbg-menu [role=menuitem]');
+            if (item) { this._menuClose(item.closest('.mbg-menu'), true); return; }
+            document.querySelectorAll('.mbg-menu:not([hidden])').forEach(m => {
+                const btn = document.querySelector(`[aria-controls="${CSS.escape(m.id)}"]`);
+                if (!m.contains(e.target) && !(btn && btn.contains(e.target))) this._menuClose(m);
+            });
+        }, true);
+        document.addEventListener('keydown', e => {
+            // Esc on the ⋯ button of an open menu closes it too
+            const opener = e.key === 'Escape' && e.target.closest && e.target.closest('[aria-haspopup=menu][aria-expanded=true]');
+            if (opener) {
+                const m = document.getElementById(opener.getAttribute('aria-controls'));
+                if (m && !m.hidden) { e.preventDefault(); e.stopPropagation(); this._menuClose(m, true); return; }
+            }
+            const menu = e.target.closest && e.target.closest('.mbg-menu');
+            if (!menu || menu.hidden) return;
+            const its = this._menuItems(menu);
+            const i = its.indexOf(document.activeElement);
+            let j = null;
+            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); this._menuClose(menu, true); return; }
+            if (e.key === 'Tab') { this._menuClose(menu); return; }
+            if (e.key === 'ArrowDown') j = (i + 1) % its.length;
+            else if (e.key === 'ArrowUp') j = (i - 1 + its.length) % its.length;
+            else if (e.key === 'Home') j = 0;
+            else if (e.key === 'End') j = its.length - 1;
+            if (j == null || !its.length) return;
+            e.preventDefault();
+            its[j].focus();
+        }, true);
     },
 
     _renderLangSelector() {
@@ -509,6 +663,8 @@ Object.assign(JanitzaMonitor.prototype, {
 
         // Start status polling (stopped by _sessionLost)
         this._statusTimer = setInterval(() => this.loadStatus(), 5000);
+        // the address says where to go (a link, a reload); from now on it follows the view
+        if (this._routeStart) await this._routeStart();
     },
 
     async loadConfig() {
@@ -534,6 +690,24 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     navigateTo(page, opts = {}) {
+        const prevPage = this.currentPage;
+        // unsaved security settings: ask before leaving them behind, and put
+        // the stored values back when the answer is "leave"
+        // (navigateTo is synchronous: it stops here, and the answer "leave"
+        // navigates again with _leave set)
+        if (prevPage === 'config' && page !== 'config' && this._secDirty && !opts._leave) {
+            this.confirmAction({
+                title: this.t('security.leaveTitle', 'Leave without saving?'),
+                message: this.t('security.leaveUnsaved', 'The security settings have unsaved changes. Leaving puts the saved values back.'),
+                confirmLabel: this.t('security.leave', 'Leave'),
+                cancelLabel: this.t('security.stay', 'Stay'),
+            }).then(ok => {
+                if (!ok || this.currentPage !== 'config') return;
+                if (this._secDiscard) this._secDiscard();
+                this.navigateTo(page, { ...opts, _leave: true });
+            });
+            return;
+        }
         // Update nav tabs (class + ARIA selected state for the tablist)
         document.querySelectorAll('.nav-tab').forEach(t => {
             t.classList.remove('active');
@@ -544,6 +718,11 @@ Object.assign(JanitzaMonitor.prototype, {
             activeTab.classList.add('active');
             if (activeTab.hasAttribute('role')) activeTab.setAttribute('aria-selected', 'true');
         }
+
+        // leaving Devices: an open device page stops its log poll and sends
+        // the pages it embedded (Monitor, History…) home — before the pages
+        // are switched, so the one asked for is shown where it lives
+        if (page !== 'devices' && this._leaveDeviceDetail) this._leaveDeviceDetail();
 
         // Update pages
         document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -561,8 +740,6 @@ Object.assign(JanitzaMonitor.prototype, {
         if (page !== 'status' && this._stopStatusPoll) this._stopStatusPoll();
         // stop the bus-monitor live poll when leaving Diagnostics
         if (page !== 'diagnostics' && this._stopDiagPoll) this._stopDiagPoll();
-        // close a running builder console stream when leaving Devices
-        if (page !== 'devices' && this._builderCloseWs) this._builderCloseWs();
 
         // The register-editing context (device selector) only follows the
         // registers/config pages; anywhere else snaps back to device #1 so the
@@ -576,14 +753,30 @@ Object.assign(JanitzaMonitor.prototype, {
             const detailOpen = document.getElementById('deviceDetailView')?.style.display !== 'none'
                             && document.getElementById('deviceDetailView')?.innerHTML;
             const regOpen = document.getElementById('deviceRegistersView')?.style.display !== 'none';
-            if (opts.fromNav || (!detailOpen && !regOpen)) {
+            if (opts._opening) {
+                // the caller shows a device or an installation itself (and the
+                // router draws the list it restores): nothing drawn here
+            } else if (opts.fromNav || (!detailOpen && !regOpen)) {
                 this._showDevicesList();
                 this.renderDevicesList();
-                this.renderBuilder();          // the Builder card lives on this page
+            } else if (detailOpen && prevPage !== 'devices' && this._devDetail && !opts._opening) {
+                // back on a device page left open: its tab starts again
+                // (its embedded page and log poll were stopped on the way out)
+                const tab = document.querySelector('#deviceWsTabs .config-main-tab.active[data-dtab]');
+                if (tab) this._switchDeviceTab(tab.dataset.dtab);
+                const rv = this._devDetail.entry?.read_via || [];
+                this._footerOverride = rv.length ? rv : null;
             }
         } else if (page === 'config') {
-            this.loadSettingsConfig();
-            this.switchConfigTab('mqtt');       // Devices moved out; land on MQTT
+            if (prevPage === 'config' && this._secDirty) {
+                // already here with unsaved security edits (a language switch,
+                // a link on the page): keep them, redraw what is translated
+                if (this._secPaint) this._secPaint();
+            } else {
+                this.loadSettingsConfig();
+                // a re-render (a language switch) stays on the sub-tab it was on
+                this.switchConfigTab(prevPage === 'config' && this._cfgTab ? this._cfgTab : 'mqtt');
+            }
         } else if (page === 'monitor') {
             this.initMonitorPage();
         } else if (page === 'history') {
@@ -601,6 +794,15 @@ Object.assign(JanitzaMonitor.prototype, {
         } else if (page === 'diagnostics') {
             this.initDiagnosticsPage();
         }
+    },
+
+    // an icon-only button's name: what it does to which thing, for a screen
+    // reader (unique in a list of rows), and the same words shown on hover
+    // and on keyboard focus (data-tip; a title never shows on focus or touch)
+    _ib(action, name) {
+        const a = String(action || '');
+        const full = name ? `${a} ${name}` : a;
+        return `aria-label="${this._esc(full)}" data-tip="${this._esc(a)}"`;
     },
 
     _fmtInterval(s) {
@@ -676,12 +878,39 @@ Object.assign(JanitzaMonitor.prototype, {
     // Locale-aware number for display: thousands grouping + fixed fraction
     // digits (54840 → 54,840 / -45017.62 → -45,017.62). One formatter for the
     // whole UI so KPIs, cards and tables never disagree on formatting.
+    // one way to show a measured value, everywhere: the dashboard's unit
+    // scaling (W → kW, Wh → kWh …), locale separators, and seconds as a
+    // duration. Returns {text, unit}; text is not escaped (numbers only,
+    // or the value as given when it is not a number — escape that).
+    _fmtValue(value, unit) {
+        if (typeof value !== 'number' || !isFinite(value)) return { text: value == null ? '—' : String(value), unit: unit || '', raw: true };
+        if (unit === 's' && Math.abs(value) >= 60) {
+            const sec = Math.floor(Math.abs(value)), d = Math.floor(sec / 86400),
+                h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+            const txt = d ? `${d} d ${h} h` : h ? `${h} h ${m} min` : `${m} min ${sec % 60} s`;
+            return { text: (value < 0 ? '−' : '') + txt, unit: '' };
+        }
+        const f = this.formatValueWithUnit(value, unit || '');
+        return { text: this._fmtNum(f.value, f.decimals), unit: f.unit || '' };
+    },
+
+    // one empty state for every page: an icon, a short title, one sentence
+    // and (optionally) the action that fills it. Strings are escaped here;
+    // actionHtml is trusted markup built by the caller.
+    _emptyState({ icon = 'bi-inbox', title = '', body = '', actionHtml = '' } = {}) {
+        return `<div class="empty-state compact" role="status">
+            <i aria-hidden="true" class="bi ${this._esc(icon)}"></i>
+            ${title ? `<h3>${this._esc(title)}</h3>` : ''}
+            ${body ? `<p>${this._esc(body)}</p>` : ''}
+            ${actionHtml || ''}</div>`;
+    },
+
     _fmtNum(value, decimals = 2) {
         if (typeof value !== 'number' || isNaN(value)) return '--';
         // an integer is an integer: 'Packs online 8.00' and 'Alarms 0.00'
         // read as broken, not precise (counts, enum codes, whole mV deltas)
         const d = Number.isInteger(value) ? 0 : decimals;
-        return value.toLocaleString(undefined, {
+        return value.toLocaleString(this._loc(), {
             minimumFractionDigits: d, maximumFractionDigits: d });
     },
 
@@ -749,6 +978,9 @@ Object.assign(JanitzaMonitor.prototype, {
         document.addEventListener('click', (ev) => dispatch(ev, 'click'));
         document.addEventListener('change', (ev) => dispatch(ev, 'change'));
         document.addEventListener('input', (ev) => dispatch(ev, 'input'));
+        // a formula or a topic pasted with characters nobody sees: said at once,
+        // under the field (the server refuses to save them anyway)
+        document.addEventListener('input', (ev) => this._pasteCheck(ev.target));
         // Enter on non-<button> actionable elements (div[role=button] rows) —
         // real buttons already synthesize a click on Enter natively.
         document.addEventListener('keydown', (ev) => {
@@ -784,6 +1016,41 @@ Object.assign(JanitzaMonitor.prototype, {
         return { protocol: p, host: c.host || dev.host, port: c.port || dev.port, unit_id: c.unit_id ?? dev.unit_id, timeout: c.timeout ?? 3 };
     },
 
+    // What a template tells its users (a limitation, a model it does not fit,
+    // a step to take first) — shown where the template is picked and on every
+    // device made from it. `fields` names the rows/commands a note is about.
+    // notes: the template's own notes. folded: one line "N notes" that opens
+    // them (the device page — they are read once, not on every visit)
+    _tplNotesHtml(notes, { folded = false } = {}) {
+        const list = (notes || []).filter(n => n && n.text);
+        if (!list.length) return '';
+        const body = this._tplNotesList(list);
+        if (!folded) return body;
+        const warn = list.some(n => n.level === 'warning');
+        return `<details class="tpl-notes-fold${warn ? ' warn' : ''}">
+            <summary><i aria-hidden="true" class="bi ${warn ? 'bi-exclamation-triangle' : 'bi-info-circle'}"></i>
+            ${this._esc(this.tn('tplNotes.count', list.length, '{n} notes about this template'))}</summary>${body}</details>`;
+    },
+
+    _tplNotesList(list) {
+        return `<div class="tpl-notes">${list.map(n => {
+            const warn = n.level === 'warning';
+            const fields = (n.fields || []).map(f => `<code>${this._esc(f)}</code>`).join(' ');
+            const link = /^https?:\/\//.test(n.link || '')
+                ? ` <a href="${this._esc(n.link)}" target="_blank" rel="noopener">${this.t('common.moreInfo', 'More')} <i aria-hidden="true" class="bi bi-box-arrow-up-right"></i></a>` : '';
+            return `<div class="tpl-note ${warn ? 'warn' : ''}" role="note">
+                <i aria-hidden="true" class="bi ${warn ? 'bi-exclamation-triangle' : 'bi-info-circle'}"></i>
+                <div><span class="tpl-note-text">${this._esc(n.text)}</span>${link}${fields ? `<div class="tpl-note-fields">${fields}</div>` : ''}</div>
+            </div>`;
+        }).join('')}</div>`;
+    },
+
+    // The warning notes that name `field` (a row or a command) — one line.
+    _tplNoteFor(notes, field) {
+        return (notes || []).filter(n => n && n.level === 'warning' && (n.fields || []).includes(field))
+            .map(n => n.text).join(' · ');
+    },
+
     // A register's identity: its address IN ITS TABLE. coil 0, holding 0 and
     // input 0 are three registers; the server's store keys each by address +
     // the table's offset (the API sends it as `key`). The address itself is
@@ -793,6 +1060,112 @@ Object.assign(JanitzaMonitor.prototype, {
         if (reg.key != null) return Number(reg.key);
         const off = { input: 100000, coil: 200000, discrete: 300000 }[String(reg.register_type || 'holding').toLowerCase()] || 0;
         return Number(reg.address) + off;
+    },
+
+    // ── what a copy/paste brings (mirrors multibus/text_check.py) ──────────
+    _PASTE_FORMULA_IDS: ['calcExpr', 'advExpr', 'rlSignal', 'rlWhen', 'rlUntil', 'rlSchedWhen', 'rlTrimSignal'],
+    _PASTE_TOPIC_IDS: ['ddvMqttTopic', 'devWizMqttTopic', 'ddvKaTopic', 'tplKaTopic', 'tplAvTopic'],
+    _PASTE_INSTEAD: {
+        0x2212: '-', 0x2010: '-', 0x2011: '-', 0x2012: '-', 0x2013: '-', 0x2014: '-',
+        0x00A0: ' ', 0x202F: ' ', 0x2009: ' ', 0x2007: ' ', 0x3000: ' ',
+        0x2018: "'", 0x2019: "'", 0x201A: "'", 0x201C: '"', 0x201D: '"', 0x201E: '"', 0x00AB: '"', 0x00BB: '"',
+        0x00D7: '*', 0x22C5: '*', 0x00B7: '*', 0x00F7: '/', 0x2215: '/',
+        0x2264: '<=', 0x2265: '>=', 0x2260: '!=', 0xFF08: '(', 0xFF09: ')', 0xFF0C: ',',
+    },
+    _PASTE_INVISIBLE: [0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x00AD, 0x200E, 0x200F,
+                       0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069],
+
+    _pasteCharIssue(ch, pos) {
+        const cp = ch.codePointAt(0);
+        const code = 'U+' + cp.toString(16).toUpperCase().padStart(4, '0');
+        if (this._PASTE_INVISIBLE.includes(cp) || cp < 0x20 || (cp >= 0x7F && cp < 0xA0))
+            return this.t('paste.invisible', 'An invisible character at position {pos} ({code}) — delete it (it usually comes with a copy/paste).', { pos, code });
+        if (cp in this._PASTE_INSTEAD) {
+            const fix = this._PASTE_INSTEAD[cp] === ' ' ? this.t('paste.space', 'a normal space') : `“${this._PASTE_INSTEAD[cp]}”`;
+            return this.t('paste.instead', '“{ch}” at position {pos} ({code}) is not allowed — type {fix} instead.', { ch, pos, code, fix });
+        }
+        if (/\p{L}/u.test(ch))
+            return this.t('paste.letter', '“{ch}” at position {pos} ({code}) is not a plain letter — names use a–z, 0–9 and _ (a look-alike or a diacritic names a value that does not exist).', { ch, pos, code });
+        return this.t('paste.other', '“{ch}” at position {pos} ({code}) is not allowed here.', { ch, pos, code });
+    },
+
+    // the first character a formula must not carry, or ''
+    _formulaIssue(text) {
+        let pos = 0;
+        for (const ch of String(text || '')) {
+            pos++;
+            if (ch === '\t' || ch === '\n' || ch === '\r' || (ch >= ' ' && ch <= '~')) continue;
+            return this._pasteCharIssue(ch, pos);
+        }
+        return '';
+    },
+
+    // a topic may carry any printable text, never an invisible character, a
+    // look-alike space or a space at either end
+    _topicIssue(text) {
+        const s = String(text || '');
+        let pos = 0;
+        for (const ch of s) {
+            pos++;
+            const cp = ch.codePointAt(0);
+            if (this._PASTE_INVISIBLE.includes(cp) || cp < 0x20 || (cp >= 0x7F && cp < 0xA0)
+                    || (/\s/u.test(ch) && ch !== ' ')) return this._pasteCharIssue(ch, pos);
+        }
+        if (s !== s.replace(/^ +| +$/g, '')) return this.t('paste.edgeSpace', 'It starts or ends with a space — remove it.');
+        return '';
+    },
+
+    _pasteCheck(el) {
+        if (!el || !(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) return;
+        const formula = this._PASTE_FORMULA_IDS.includes(el.id);
+        const topic = this._PASTE_TOPIC_IDS.includes(el.id) || ['topic', 'write_topic'].includes(el.dataset.f);
+        if (!formula && !topic) return;
+        const msg = formula ? this._formulaIssue(el.value) : this._topicIssue(el.value);
+        const host = el.closest('.secret-field') || el;
+        let box = host.nextElementSibling;
+        if (!box || !box.classList.contains('paste-issue')) box = null;
+        if (!msg) {
+            el.removeAttribute('aria-invalid');
+            box?.remove();
+            return;
+        }
+        el.setAttribute('aria-invalid', 'true');
+        if (!box) {
+            box = document.createElement('div');
+            box.className = 'field-error paste-issue';
+            box.setAttribute('role', 'alert');
+            host.insertAdjacentElement('afterend', box);
+        }
+        box.textContent = msg;
+    },
+
+    // A field whose value should not sit on the screen (a password, a topic
+    // carrying a site id): shown as •••• with an eye that reveals it.
+    // a masked input with a Show/Hide toggle; `what` names it for a screen
+    // reader ("Show topic", not a bare "Show" beside every masked field)
+    _secretInput(id, value, attrs = '', what = '') {
+        const show = this._esc(what ? this.t('common.showWhat', 'Show {what}', { what }) : this.t('common.show', 'Show'));
+        return `<div class="secret-field" style="display:flex;gap:4px;align-items:center;">
+            <input type="password" id="${id}" class="input" value="${this._esc(value ?? '')}" ${attrs}
+                autocomplete="new-password" data-lpignore="true" data-1p-ignore spellcheck="false" style="flex:1;min-width:0;">
+            <button type="button" class="btn btn-ghost btn-sm" ${this._act('toggleSecret', [id], { el: true })}
+                ${what ? `data-secret-name="${this._esc(what)}"` : ''} title="${show}" aria-label="${show}" aria-pressed="false"><i aria-hidden="true" class="bi bi-eye"></i></button></div>`;
+    },
+
+    toggleSecret(id, btn) {
+        const inp = document.getElementById(id);
+        if (!inp) return;
+        const reveal = inp.type === 'password';
+        inp.type = reveal ? 'text' : 'password';
+        btn?.setAttribute('aria-pressed', String(reveal));
+        const what = btn?.dataset.secretName;
+        const label = what
+            ? (reveal ? this.t('common.hideWhat', 'Hide {what}', { what }) : this.t('common.showWhat', 'Show {what}', { what }))
+            : (reveal ? this.t('common.hide', 'Hide') : this.t('common.show', 'Show'));
+        btn?.setAttribute('title', label);
+        btn?.setAttribute('aria-label', label);
+        const ic = btn?.querySelector('i');
+        if (ic) ic.className = `bi ${reveal ? 'bi-eye-slash' : 'bi-eye'}`;
     },
 
     _act(method, args = [], opts = {}) {
@@ -1088,10 +1461,14 @@ Object.assign(JanitzaMonitor.prototype, {
             }
 
             // Update last update time
-            if (msg.timestamp) {
+            if (msg.ts || msg.timestamp) {
                 const lastUpdateEl = document.getElementById('lastUpdate');
                 if (lastUpdateEl) {
-                    lastUpdateEl.textContent = this.t('status.lastUpdate', 'Last update:') + ' ' + new Date(msg.timestamp).toLocaleTimeString();
+                    // `ts` is epoch seconds; `timestamp` is the server's local
+                    // time without a zone (read as the browser's — wrong
+                    // across zones), kept only for an older server
+                    const when = msg.ts ? new Date(msg.ts * 1000) : new Date(msg.timestamp);
+                    lastUpdateEl.textContent = this.t('status.lastUpdate', 'Last update:') + ' ' + when.toLocaleTimeString(this._loc());
                 }
             }
 
@@ -1128,12 +1505,12 @@ Object.assign(JanitzaMonitor.prototype, {
             status.classList.add('connected');
             status.classList.remove('disconnected');
             status.innerHTML = '<i class="bi bi-circle-fill" aria-hidden="true"></i> '
-                + this._esc(this.t('status.connected', 'Connected'));
+                + this._esc(this.t('status.connected', 'connected'));
         } else {
             status.classList.remove('connected');
             status.classList.add('disconnected');
             status.innerHTML = '<i class="bi bi-circle-fill" aria-hidden="true"></i> '
-                + this._esc(this.t('status.disconnected', 'Disconnected'));
+                + this._esc(this.t('status.disconnected', 'disconnected'));
         }
         // The dashboard keeps showing its last numbers after a disconnect with
         // nothing marking them stale — the page people actually watch. Dim it
@@ -1150,7 +1527,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 (grid?.parentElement || document.body).insertBefore(badge, grid || null);
             }
             badge.textContent = this.t('status.asOf', 'Live updates lost — values as of')
-                + ' ' + new Date().toLocaleTimeString();
+                + ' ' + new Date().toLocaleTimeString(this._loc());
         } else if (badge) {
             badge.remove();
         }

@@ -23,8 +23,6 @@ library error its internals. The contract:
    through verbatim — they are the operator's fix-it text;
  * internal service URLs in error strings go through redact_url (userinfo
    stripped) before leaving the process."""
-import pytest
-
 from tests.test_devices import write_config
 from tests.test_devices_api import needs_tc
 
@@ -71,14 +69,6 @@ def test_validation_error_text_still_passes_through(tmp_path):
                                                     "unit_id": 1}})
     assert r.status_code == 422
     assert "a-z 0-9" in str(r.json()["detail"])            # the exact rule text
-
-
-def test_esphome_error_redacts_userinfo_in_url():
-    from multibus.esphome_client import EsphomeDashboard, EsphomeError
-    with pytest.raises(EsphomeError) as ei:
-        EsphomeDashboard("ftp://user:hunter2@esphome.lan:6052")
-    assert "hunter2" not in str(ei.value)                  # password never echoed
-    assert "esphome.lan" in str(ei.value)                  # host stays diagnostic
 
 
 def test_bridge_unreachable_error_is_redacted(monkeypatch):

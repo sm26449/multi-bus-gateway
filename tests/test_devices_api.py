@@ -236,7 +236,7 @@ def test_template_save_upload_export_delete(tmp_path, monkeypatch):
            "connection": {"protocol": "tcp", "host": "192.0.2.9"}}
     assert client.post("/api/devices", json=dev).status_code == 200
     r = client.delete("/api/device-templates/cg_em24")
-    assert r.status_code == 422 and "in use" in json.dumps(r.json())
+    assert r.status_code == 409 and "em24-x" in json.dumps(r.json())      # used: refused, the device named
     assert client.delete("/api/devices/em24-x").status_code == 200
     assert client.delete("/api/device-templates/cg_em24").json()["status"] == "deleted"
     assert client.delete("/api/device-templates/janitza_umg512_pro").status_code == 422
@@ -740,6 +740,30 @@ def test_status_devices_carry_poll_rate(tmp_path):
     client = TestClient(app, raise_server_exceptions=False)
     dev = client.get("/api/status").json()["devices"][0]
     assert dev["poll_rate"] == 4.22
+
+
+def test_status_health_is_the_devices_page_word(tmp_path):
+    """data_health answers ok on a cold start; health, like the Devices page,
+    does not call a device that is not connected ok."""
+    from types import SimpleNamespace
+    from tests.test_devices import write_config
+    from multibus.api import create_api
+
+    class _Client(SimpleNamespace):
+        def get_stats(self):
+            return {"connected": self.connected, "poll_rate": 0.0}
+        def data_health(self, *a):
+            return {"status": "ok"}
+
+    cfg = write_config(tmp_path)
+    fake = _Client(publish_callback=None, connected=False)
+    app, _ = create_api(cfg, fake, None, None,
+                        devices=[(d, fake) for d in cfg.devices])
+    client = TestClient(app, raise_server_exceptions=False)
+    dev = client.get("/api/status").json()["devices"][0]
+    assert dev["data_health"] == "ok" and dev["health"] == "degraded"
+    fake.connected = True
+    assert client.get("/api/status").json()["devices"][0]["health"] == "ok"
 
 
 # ── P1: upsert_raw_device is transactional (rollback on failed edit) ──────────

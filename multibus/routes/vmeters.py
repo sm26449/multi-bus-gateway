@@ -28,6 +28,7 @@ keeps serving. Do not "modernize" these to async def (external audit).
 from __future__ import annotations
 
 from fastapi import APIRouter, Body, HTTPException, Query
+from ..payload import flag
 
 
 def build(ctx) -> APIRouter:
@@ -61,13 +62,15 @@ def build(ctx) -> APIRouter:
                 template_id=payload["template"], port=int(payload["port"]),
                 unit_id=int(payload.get("unit_id", 1)),
                 stale_after_s=float(payload.get("stale_after_s", 15)),
-                enabled=bool(payload.get("enabled", False)),
+                enabled=flag(payload, "enabled", False),
                 device=str(payload.get("device", "")),
                 device_fallback=str(payload.get("device_fallback", "")),
                 on_stale=str(payload.get("on_stale", "legacy")),
                 max_hold_s=float(payload.get("max_hold_s", 30)),
-                quality_block=bool(payload.get("quality_block", False)))
-        except (KeyError, ValueError) as e:
+                quality_block=bool(payload.get("quality_block", False)),
+                update_interval_s=payload.get("update_interval_s"),   # checked by the manager
+                ha_mode=(str(payload["ha_mode"]) if payload.get("ha_mode") is not None else None))
+        except (KeyError, ValueError, TypeError) as e:
             raise HTTPException(status_code=400, detail=f"bad payload: {e}")
         if "error" in res:
             raise HTTPException(status_code=400, detail=res["error"])
@@ -126,7 +129,8 @@ def build(ctx) -> APIRouter:
         if "error" in res:
             code = (404 if "unknown" in res["error"]
                     else 409 if "in use" in res["error"] else 400)
-            raise HTTPException(status_code=code, detail=res["error"])
+            raise HTTPException(status_code=code, detail=(
+                res["error"] if code == 404 else {"errors": [res["error"]]}))
         return res
 
     @r.post("/api/virtual-meters/templates/import")
@@ -200,7 +204,7 @@ def build(ctx) -> APIRouter:
     @r.patch("/api/virtual-meters/{template}")
     def edit_virtual_meter(template: str, payload: dict = Body(...)):
         """Edit an existing instance (port / unit_id / stale_after_s /
-        update_interval_s — partial). Restarts the meter live if running."""
+        update_interval_s, ha_mode failover|balanced — partial). Restarts the meter live if running."""
         mgr = _mgr()
         if mgr is None:
             raise HTTPException(status_code=503, detail="virtual meters not initialized")
@@ -213,7 +217,8 @@ def build(ctx) -> APIRouter:
             device_fallback=payload.get("device_fallback"),
             on_stale=payload.get("on_stale"),
             max_hold_s=payload.get("max_hold_s"),
-            quality_block=payload.get("quality_block"))
+            quality_block=payload.get("quality_block"),
+            ha_mode=payload.get("ha_mode"))
         if "error" in res:
             code = 404 if "no instance" in res["error"] else 400
             raise HTTPException(status_code=code, detail=res["error"])

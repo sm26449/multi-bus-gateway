@@ -1,0 +1,5169 @@
+{
+"attributes": [
+[
+"battery-bank-u1",
+"battery-bank",
+"battery",
+null
+],
+[
+"battery-bank-u2",
+"battery-bank",
+"battery",
+null
+],
+[
+"battery-bank-u3",
+"battery-bank",
+"battery",
+null
+],
+[
+"generic",
+"",
+null,
+null
+],
+[
+"odd-u1",
+"odd",
+"Inverter",
+null
+],
+[
+"odd-u2",
+"odd",
+"system",
+null
+],
+[
+"odd-u3",
+"odd",
+"heat_pump",
+null
+],
+[
+"odd-u4",
+"odd",
+"grid",
+null
+],
+[
+"plug",
+"",
+null,
+null
+],
+[
+"pv-u0",
+"pv",
+"site",
+null
+],
+[
+"pv-u1",
+"pv",
+"inverter",
+2
+],
+[
+"pv-u2",
+"pv",
+"inverter",
+2
+],
+[
+"pv-u240",
+"pv",
+"meter",
+null
+],
+[
+"pv-u3",
+"pv",
+"inverter",
+2
+],
+[
+"pv-u4",
+"pv",
+"inverter",
+2
+],
+[
+"samsung-dvm",
+"",
+null,
+null
+],
+[
+"umg512",
+"",
+"meter",
+null
+],
+[
+"vfd",
+"",
+null,
+null
+],
+[
+"victron-gx",
+"",
+"site",
+null
+],
+[
+"victron-gx-battery-279",
+"",
+"battery",
+null
+],
+[
+"victron-gx-battery-288",
+"",
+"battery",
+null
+],
+[
+"victron-gx-battery-512",
+"",
+"battery",
+null
+],
+[
+"victron-gx-temperature-22",
+"",
+"sensor",
+null
+],
+[
+"victron-gx-temperature-23",
+"",
+"sensor",
+null
+]
+],
+"devices": [
+{
+"commands": [],
+"commands_offered": [],
+"connected": false,
+"connection": {
+"baudrate": 9600,
+"bytesize": 8,
+"host": "192.168.1.207",
+"parity": "N",
+"port": 502,
+"protocol": "tcp",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "",
+"stopbits": 1,
+"timeout": 3,
+"unit_id": 1,
+"url": "",
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": true,
+"endpoint_id": "",
+"energy_fields": 0,
+"energy_meter": {},
+"ha_discovery_enabled": true,
+"host": "192.168.1.207",
+"http_output_enabled": false,
+"http_url": "",
+"id": "umg512",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "janitza_umg512",
+"influxdb_enabled": true,
+"mqtt_enabled": true,
+"mqtt_in_broker": "",
+"mqtt_in_topic": "",
+"mqtt_topic_prefix": "janitza/umg512",
+"name": "Janitza UMG 512-PRO",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 502,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": true,
+"primary": true,
+"protocol": "tcp",
+"publishing": {
+"editable": false,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"selected_registers": 1,
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/umg512"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "janitza/umg512"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": ""
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "janitza_umg512_pro",
+"template_notes": [],
+"unit_id": 1,
+"write_locked": true
+},
+{
+"commands": [],
+"commands_offered": [
+"ess_setpoint",
+"max_charge_current",
+"max_charge_power",
+"max_discharge_power",
+"max_feed_in",
+"min_soc"
+],
+"components": 5,
+"connected": false,
+"connection": {
+"baudrate": 9600,
+"broker": "192.0.2.10",
+"bytesize": 8,
+"host": "",
+"keepalive": null,
+"parity": "N",
+"password": "",
+"port": 1883,
+"protocol": "mqtt",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "",
+"stale_after_s": null,
+"stopbits": 1,
+"template_keepalive": {
+"every_s": 30,
+"first_payload": "",
+"payload": "{\"keepalive-options\": [\"suppress-republish\"]}",
+"topic": "R/{portal}/keepalive"
+},
+"timeout": 3,
+"tls": false,
+"tls_ca": "",
+"tls_insecure": false,
+"topic": "N/c0ffee000001/#",
+"unit_id": 1,
+"url": "",
+"username": "",
+"vars": {
+"portal": "c0ffee000001",
+"vebus": "274"
+},
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "",
+"energy_fields": 0,
+"energy_meter": {},
+"ha_discovery_enabled": true,
+"host": "",
+"http_output_enabled": false,
+"http_url": "",
+"id": "victron-gx",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "victron-gx",
+"influxdb_enabled": true,
+"mqtt_enabled": true,
+"mqtt_in_broker": "192.0.2.10",
+"mqtt_in_topic": "N/c0ffee000001/#",
+"mqtt_topic_prefix": "mbg/devices/victron-gx",
+"name": "Victron GX",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 1883,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "mqtt",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"selected_registers": 0,
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/victron-gx"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/victron-gx"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": ""
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "victron_gx_mqtt",
+"template_notes": [
+{
+"fields": [
+"ess_setpoint",
+"max_charge_current",
+"max_feed_in"
+],
+"level": "warning",
+"text": "The ESS settings are stored in the GX's flash and kept when the gateway stops. A rule that commands them must move in steps; the template spaces writes a minute apart. The commands carry no release value: a released rule leaves the setting as it is unless the device's command binding sets `safe` (a release value depends on the site)."
+},
+{
+"level": "info",
+"text": "The grid setpoint is followed in ESS modes 1 and 2; in mode 3 (external control) the GX ignores it, so the command refuses to write."
+}
+],
+"unit_id": 1,
+"write_locked": false
+},
+{
+"bridge": "ws",
+"bridge_port": 4196,
+"commands": [],
+"commands_offered": [
+"power",
+"mode",
+"water_out_set",
+"room_set",
+"dhw_power",
+"dhw_mode",
+"dhw_set",
+"quiet",
+"away",
+"compressor_limit"
+],
+"connected": false,
+"connection": {
+"baudrate": 9600,
+"bytesize": 8,
+"host": "192.0.2.60",
+"parity": "N",
+"port": 4196,
+"protocol": "rtu-tcp",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "",
+"stopbits": 1,
+"timeout": 3,
+"unit_id": 2,
+"url": "",
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "",
+"energy_fields": 0,
+"energy_meter": {},
+"ha_discovery_enabled": true,
+"host": "192.0.2.60",
+"http_output_enabled": false,
+"http_url": "",
+"id": "samsung-dvm",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "samsung-dvm",
+"influxdb_enabled": true,
+"mqtt_enabled": true,
+"mqtt_in_broker": "",
+"mqtt_in_topic": "",
+"mqtt_topic_prefix": "mbg/devices/samsung-dvm",
+"name": "Heat pump",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 4196,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "rtu-tcp",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"selected_registers": 0,
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/samsung-dvm"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/samsung-dvm"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": ""
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "samsung_mim_b19n",
+"template_notes": [
+{
+"fields": [
+"dc_link_voltage",
+"dhw_tank_temperature",
+"eva_in_temperature",
+"heat_output_test",
+"heat_total_test",
+"heater_out_temperature",
+"outdoor_energy_test",
+"outdoor_fan_speed",
+"outdoor_power_test",
+"room_sensor_temperature",
+"water_flow",
+"water_out_target",
+"water_pump_pwm"
+],
+"level": "warning",
+"link": "https://github.com/sm26449/heatpump",
+"text": "Read 0 on a DVM-S with an HE hydro kit (field-checked 2026-10-08), with the compressor running: water flow, pump PWM, room sensor, heater-out and tank temperatures, water-out target, DC link voltage, outdoor fan speed, EVA-in temperature (0x82DE is 'Eva In for EHS') and the experimental energy rows. Why: the HE kit has no flow sensor and switches its water pump on/off (DVM HT/HE installation manual DB68-03973A-06); and these NASA IDs are not in Samsung's list for HE/HT/EHS (MIM manual DB68-07538A-03, Table 3, which names only 0x4087, 0x42F1 and 0x4067) \u2014 they come from the community, tested on an EHS system. Each row's description says whether its ID is official or community. On an HE kit, leave these unselected rather than trust a 0; an EHS unit may fill them."
+},
+{
+"fields": [
+"quiet",
+"compressor_limit"
+],
+"level": "warning",
+"text": "Quiet mode and the compressor limit (FR control, NASA 0x42F1) have no effect on an HE hydro kit: the write is accepted and nothing changes. Samsung documents FR control for hydro units with an integrated tank only."
+},
+{
+"level": "info",
+"text": "The values at 4-28 and 82-96 appear only after the setup steps are written (at connect, with writes allowed on the device). A defrost (outdoor_defrost On, step 1-30) after a hard start in cold, humid air is normal."
+},
+{
+"fields": [
+"cop_estimated",
+"heat_output_estimated",
+"power_electric_estimated",
+"water_flow_assumed"
+],
+"level": "info",
+"text": "Heat output is ESTIMATED from the water \u0394T and an assumed constant flow, water_flow_assumed (l/min): set it to your circuit's measured flow in the device's Calculated tab (its expression is a plain number). Not the pump's maximum, not Samsung's minimum \u2014 an HE kit has no flow sensor and an on/off pump, so the flow is roughly constant while it runs. COP = heat output / electric power, taken from the meter named in Device \u2192 Edit \u2192 Electricity measured by (power_electric) when there is one, else estimated from the compressor current: \u221a3 \u00d7 400 V \u00d7 I \u00d7 0.95 (power_electric_estimated; edit the voltage or the power factor in its expression). The estimate leaves out the fans and the water pump. A heat meter and an electricity meter give the exact COP."
+}
+],
+"unit_id": 2,
+"write_locked": false
+},
+{
+"commands": [],
+"commands_offered": [
+"run",
+"stop",
+"run_forward",
+"run_reverse",
+"set_frequency",
+"run_at",
+"reset_fault"
+],
+"connected": false,
+"connection": {
+"baudrate": 9600,
+"bytesize": 8,
+"host": "192.0.2.80",
+"parity": "N",
+"port": 502,
+"protocol": "tcp",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "",
+"stopbits": 1,
+"timeout": 3,
+"unit_id": 1,
+"url": "",
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "",
+"energy_fields": 0,
+"energy_meter": {},
+"ha_discovery_enabled": true,
+"host": "192.0.2.80",
+"http_output_enabled": false,
+"http_url": "",
+"id": "vfd",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "vfd",
+"influxdb_enabled": true,
+"mqtt_enabled": true,
+"mqtt_in_broker": "",
+"mqtt_in_topic": "",
+"mqtt_topic_prefix": "mbg/devices/vfd",
+"name": "Drive",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 502,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "tcp",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"selected_registers": 0,
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/vfd"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/vfd"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": ""
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "delta_vfd_el",
+"template_notes": [
+{
+"fields": [
+"comm_fault_action",
+"comm_timeout",
+"command_source"
+],
+"level": "warning",
+"text": "Before any command: wire an emergency stop that cuts the drive's supply, keep the keypad STOP key active (Pr 02.01) and set Pr 09.02 = 1 with Pr 09.03 = 2.0 s, so the motor ramps to a stop by itself if the gateway, the bus or the cable goes away. MBG polls every 2 s, which keeps that time-out fed."
+},
+{
+"fields": [
+"command_word",
+"frequency_setpoint",
+"fault_control"
+],
+"level": "warning",
+"text": "Runtime control writes only 2000H-2002H. Do not write the drive's parameters (GGnnH) from rules or loops: parameters are stored in the drive's memory, and repeated writes wear it out."
+},
+{
+"fields": [
+"frequency_source",
+"command_source",
+"comm_fault_action",
+"comm_timeout"
+],
+"level": "info",
+"text": "Version 0.1.0 is written from the manual and not yet checked on a drive. If the drive answers a block read of 2100H-210AH (the manual allows up to 20 words for status), Max registers per read can go up to 20 for fewer requests, provided the parameter rows (0200H, 0201H, 0902H, 0903H) stay unselected, since a parameter is read one per request."
+},
+{
+"fields": [
+"frequency_source"
+],
+"level": "info",
+"text": "set_frequency refuses to write unless Pr 02.00 = 3 (frequency from RS-485): otherwise the drive would ignore it silently."
+}
+],
+"unit_id": 1,
+"write_locked": false
+},
+{
+"commands": [],
+"commands_offered": [],
+"connected": false,
+"connection": {
+"baudrate": 9600,
+"broker": "192.0.2.10",
+"bytesize": 8,
+"host": "",
+"keepalive": null,
+"parity": "N",
+"password": "",
+"port": 1883,
+"protocol": "mqtt",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "",
+"stale_after_s": null,
+"stopbits": 1,
+"template_keepalive": null,
+"timeout": 3,
+"tls": false,
+"tls_ca": "",
+"tls_insecure": false,
+"topic": "x/#",
+"unit_id": 1,
+"url": "",
+"username": "",
+"vars": {},
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "",
+"energy_fields": 0,
+"energy_meter": {},
+"ha_discovery_enabled": true,
+"host": "",
+"http_output_enabled": false,
+"http_url": "",
+"id": "generic",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "generic",
+"influxdb_enabled": true,
+"mqtt_enabled": true,
+"mqtt_in_broker": "192.0.2.10",
+"mqtt_in_topic": "x/#",
+"mqtt_topic_prefix": "mbg/devices/generic",
+"name": "Generic JSON",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 1883,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "mqtt",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"selected_registers": 0,
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/generic"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/generic"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": ""
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "mqtt_json_generic",
+"template_notes": [],
+"unit_id": 1,
+"write_locked": false
+},
+{
+"commands": [],
+"commands_offered": [],
+"connected": false,
+"connection": {
+"baudrate": 9600,
+"broker": "192.0.2.10",
+"bytesize": 8,
+"host": "",
+"keepalive": null,
+"parity": "N",
+"password": "",
+"port": 1883,
+"protocol": "mqtt",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "",
+"stale_after_s": null,
+"stopbits": 1,
+"template_keepalive": null,
+"timeout": 3,
+"tls": false,
+"tls_ca": "",
+"tls_insecure": false,
+"topic": "tele/plug/#",
+"unit_id": 1,
+"url": "",
+"username": "",
+"vars": {},
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "",
+"energy_fields": 0,
+"energy_meter": {},
+"ha_discovery_enabled": true,
+"host": "",
+"http_output_enabled": false,
+"http_url": "",
+"id": "plug",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "plug",
+"influxdb_enabled": true,
+"mqtt_enabled": true,
+"mqtt_in_broker": "192.0.2.10",
+"mqtt_in_topic": "tele/plug/#",
+"mqtt_topic_prefix": "mbg/devices/plug",
+"name": "Plug",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 1883,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "mqtt",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"selected_registers": 0,
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/plug"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/plug"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": ""
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "tasmota_generic",
+"template_notes": [],
+"unit_id": 1,
+"write_locked": false
+},
+{
+"commands": [],
+"commands_offered": [],
+"component_instance": "288",
+"component_of": "victron-gx",
+"component_type": "battery",
+"component_type_name": "Battery",
+"connected": false,
+"connection": {
+"baudrate": 9600,
+"broker": "192.0.2.10",
+"bytesize": 8,
+"host": "",
+"keepalive": null,
+"parity": "N",
+"password": "",
+"port": 1883,
+"protocol": "mqtt",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "",
+"stale_after_s": null,
+"stopbits": 1,
+"template_keepalive": {
+"every_s": 30,
+"first_payload": "",
+"payload": "{\"keepalive-options\": [\"suppress-republish\"]}",
+"topic": "R/{portal}/keepalive"
+},
+"timeout": 3,
+"tls": false,
+"tls_ca": "",
+"tls_insecure": false,
+"topic": "N/c0ffee000001/#",
+"unit_id": 1,
+"url": "",
+"username": "",
+"vars": {
+"instance": "288",
+"portal": "c0ffee000001",
+"vebus": "274"
+},
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "",
+"energy_fields": 0,
+"energy_meter": {},
+"ha_discovery_enabled": true,
+"host": "",
+"http_output_enabled": false,
+"http_url": "",
+"id": "victron-gx-battery-288",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "victron-gx-battery-288",
+"influxdb_enabled": true,
+"mqtt_enabled": true,
+"mqtt_in_broker": "192.0.2.10",
+"mqtt_in_topic": "N/c0ffee000001/#",
+"mqtt_topic_prefix": "mbg/devices/victron-gx-battery-288",
+"name": "SmartShunt",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 1883,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "mqtt",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"selected_registers": 0,
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/victron-gx-battery-288"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/victron-gx-battery-288"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": ""
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "victron_gx_mqtt:battery",
+"template_notes": [],
+"unit_id": 1,
+"write_locked": true
+},
+{
+"commands": [],
+"commands_offered": [],
+"component_instance": "512",
+"component_of": "victron-gx",
+"component_type": "battery",
+"component_type_name": "Battery",
+"connected": false,
+"connection": {
+"baudrate": 9600,
+"broker": "192.0.2.10",
+"bytesize": 8,
+"host": "",
+"keepalive": null,
+"parity": "N",
+"password": "",
+"port": 1883,
+"protocol": "mqtt",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "",
+"stale_after_s": null,
+"stopbits": 1,
+"template_keepalive": {
+"every_s": 30,
+"first_payload": "",
+"payload": "{\"keepalive-options\": [\"suppress-republish\"]}",
+"topic": "R/{portal}/keepalive"
+},
+"timeout": 3,
+"tls": false,
+"tls_ca": "",
+"tls_insecure": false,
+"topic": "N/c0ffee000001/#",
+"unit_id": 1,
+"url": "",
+"username": "",
+"vars": {
+"instance": "512",
+"portal": "c0ffee000001",
+"vebus": "274"
+},
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "",
+"energy_fields": 0,
+"energy_meter": {},
+"ha_discovery_enabled": true,
+"host": "",
+"http_output_enabled": false,
+"http_url": "",
+"id": "victron-gx-battery-512",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "victron-gx-battery-512",
+"influxdb_enabled": true,
+"mqtt_enabled": true,
+"mqtt_in_broker": "192.0.2.10",
+"mqtt_in_topic": "N/c0ffee000001/#",
+"mqtt_topic_prefix": "mbg/devices/victron-gx-battery-512",
+"name": "Victron GX battery 512",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 1883,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "mqtt",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"selected_registers": 0,
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/victron-gx-battery-512"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/victron-gx-battery-512"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": ""
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "victron_gx_mqtt:battery",
+"template_notes": [],
+"unit_id": 1,
+"write_locked": true
+},
+{
+"commands": [],
+"commands_offered": [],
+"component_instance": "279",
+"component_of": "victron-gx",
+"component_type": "battery",
+"component_type_name": "Battery",
+"connected": false,
+"connection": {
+"baudrate": 9600,
+"broker": "192.0.2.10",
+"bytesize": 8,
+"host": "",
+"keepalive": null,
+"parity": "N",
+"password": "",
+"port": 1883,
+"protocol": "mqtt",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "",
+"stale_after_s": null,
+"stopbits": 1,
+"template_keepalive": {
+"every_s": 30,
+"first_payload": "",
+"payload": "{\"keepalive-options\": [\"suppress-republish\"]}",
+"topic": "R/{portal}/keepalive"
+},
+"timeout": 3,
+"tls": false,
+"tls_ca": "",
+"tls_insecure": false,
+"topic": "N/c0ffee000001/#",
+"unit_id": 1,
+"url": "",
+"username": "",
+"vars": {
+"instance": "279",
+"portal": "c0ffee000001",
+"vebus": "274"
+},
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "",
+"energy_fields": 0,
+"energy_meter": {},
+"ha_discovery_enabled": true,
+"host": "",
+"http_output_enabled": false,
+"http_url": "",
+"id": "victron-gx-battery-279",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "victron-gx-battery-279",
+"influxdb_enabled": true,
+"mqtt_enabled": true,
+"mqtt_in_broker": "192.0.2.10",
+"mqtt_in_topic": "N/c0ffee000001/#",
+"mqtt_topic_prefix": "mbg/devices/victron-gx-battery-279",
+"name": "Victron GX battery 279",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 1883,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "mqtt",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"selected_registers": 0,
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/victron-gx-battery-279"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/victron-gx-battery-279"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": ""
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "victron_gx_mqtt:battery",
+"template_notes": [],
+"unit_id": 1,
+"write_locked": true
+},
+{
+"commands": [],
+"commands_offered": [],
+"component_instance": "22",
+"component_of": "victron-gx",
+"component_type": "temperature",
+"component_type_name": "Temperature sensor",
+"connected": false,
+"connection": {
+"baudrate": 9600,
+"broker": "192.0.2.10",
+"bytesize": 8,
+"host": "",
+"keepalive": null,
+"parity": "N",
+"password": "",
+"port": 1883,
+"protocol": "mqtt",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "",
+"stale_after_s": null,
+"stopbits": 1,
+"template_keepalive": {
+"every_s": 30,
+"first_payload": "",
+"payload": "{\"keepalive-options\": [\"suppress-republish\"]}",
+"topic": "R/{portal}/keepalive"
+},
+"timeout": 3,
+"tls": false,
+"tls_ca": "",
+"tls_insecure": false,
+"topic": "N/c0ffee000001/#",
+"unit_id": 1,
+"url": "",
+"username": "",
+"vars": {
+"instance": "22",
+"portal": "c0ffee000001",
+"vebus": "274"
+},
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "",
+"energy_fields": 0,
+"energy_meter": {},
+"ha_discovery_enabled": true,
+"host": "",
+"http_output_enabled": false,
+"http_url": "",
+"id": "victron-gx-temperature-22",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "victron-gx-temperature-22",
+"influxdb_enabled": true,
+"mqtt_enabled": true,
+"mqtt_in_broker": "192.0.2.10",
+"mqtt_in_topic": "N/c0ffee000001/#",
+"mqtt_topic_prefix": "mbg/devices/victron-gx-temperature-22",
+"name": "Victron GX temperature 22",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 1883,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "mqtt",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"selected_registers": 0,
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/victron-gx-temperature-22"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/victron-gx-temperature-22"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": ""
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "victron_gx_mqtt:temperature",
+"template_notes": [],
+"unit_id": 1,
+"write_locked": true
+},
+{
+"commands": [],
+"commands_offered": [],
+"component_instance": "23",
+"component_of": "victron-gx",
+"component_type": "temperature",
+"component_type_name": "Temperature sensor",
+"connected": false,
+"connection": {
+"baudrate": 9600,
+"broker": "192.0.2.10",
+"bytesize": 8,
+"host": "",
+"keepalive": null,
+"parity": "N",
+"password": "",
+"port": 1883,
+"protocol": "mqtt",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "",
+"stale_after_s": null,
+"stopbits": 1,
+"template_keepalive": {
+"every_s": 30,
+"first_payload": "",
+"payload": "{\"keepalive-options\": [\"suppress-republish\"]}",
+"topic": "R/{portal}/keepalive"
+},
+"timeout": 3,
+"tls": false,
+"tls_ca": "",
+"tls_insecure": false,
+"topic": "N/c0ffee000001/#",
+"unit_id": 1,
+"url": "",
+"username": "",
+"vars": {
+"instance": "23",
+"portal": "c0ffee000001",
+"vebus": "274"
+},
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "",
+"energy_fields": 0,
+"energy_meter": {},
+"ha_discovery_enabled": true,
+"host": "",
+"http_output_enabled": false,
+"http_url": "",
+"id": "victron-gx-temperature-23",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "victron-gx-temperature-23",
+"influxdb_enabled": true,
+"mqtt_enabled": true,
+"mqtt_in_broker": "192.0.2.10",
+"mqtt_in_topic": "N/c0ffee000001/#",
+"mqtt_topic_prefix": "mbg/devices/victron-gx-temperature-23",
+"name": "Victron GX temperature 23",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 1883,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "mqtt",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"selected_registers": 0,
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/victron-gx-temperature-23"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/victron-gx-temperature-23"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": ""
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "victron_gx_mqtt:temperature",
+"template_notes": [],
+"unit_id": 1,
+"write_locked": true
+},
+{
+"alarms": {
+"active": [],
+"danger": 0,
+"warning": 0
+},
+"commands": [],
+"commands_offered": [
+"power_limit",
+"restore"
+],
+"connected": false,
+"connection": {
+"baudrate": 9600,
+"bytesize": 8,
+"host": "",
+"parity": "N",
+"port": 502,
+"protocol": "tcp",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "",
+"stopbits": 1,
+"timeout": 3,
+"unit_id": 1,
+"url": "",
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "pv",
+"endpoint_name": "PV",
+"energy_fields": 0,
+"energy_meter": {},
+"fields": {
+"power_active_total": {
+"label": "Total active power",
+"measurement": "power_active",
+"topic": "power/active/total",
+"unit": "W"
+},
+"power_limit_pct": {
+"label": "Active power limit",
+"measurement": "controls",
+"topic": "controls/power_limit_pct",
+"unit": "%"
+},
+"voltage_dc": {
+"label": "DC bus voltage",
+"measurement": "dc",
+"topic": "dc/voltage",
+"unit": "V"
+},
+"voltage_ln_avg": {
+"label": "Average phase-to-neutral voltage",
+"measurement": "voltage",
+"topic": "voltage/ln_avg",
+"unit": "V"
+}
+},
+"glance": [
+"power_active_total",
+"voltage_ln_avg",
+"voltage_dc",
+"power_limit_pct"
+],
+"group_id": "inverters",
+"ha_discovery_enabled": false,
+"host": "",
+"http_output_enabled": false,
+"http_url": "",
+"id": "pv-u1",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "pv-u1",
+"influxdb_enabled": true,
+"live": {},
+"mqtt_enabled": true,
+"mqtt_in_broker": "",
+"mqtt_in_topic": "",
+"mqtt_topic_prefix": "mbg/devices/pv-u1",
+"name": "PV unit 1",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 502,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "tcp",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"read_via": [
+{
+"address": "http://192.0.2.40/solar_api/v1/GetInverterRealtimeData.cgi?DeviceId=1",
+"enabled": true,
+"fail_pct_5m": null,
+"failed_5m": 0,
+"id": "solar_api",
+"interval_s": null,
+"latency_ms": null,
+"protocol": "http",
+"provides": 0,
+"reads_5m": 0,
+"registers": 0,
+"stale_after_s": 0.0,
+"status": "idle",
+"template": "fronius_solar_api_inverter",
+"timeout_s": null
+},
+{
+"address": "192.0.2.40:502 \u00b7 unit 1",
+"enabled": true,
+"fail_pct_5m": null,
+"failed_5m": 0,
+"id": "sunspec",
+"interval_s": null,
+"latency_ms": null,
+"protocol": "tcp",
+"provides": 0,
+"reads_5m": 0,
+"registers": 0,
+"stale_after_s": 0.0,
+"status": "idle",
+"template": "fronius_sunspec_inverter",
+"timeout_s": 3
+}
+],
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"role": "inverter",
+"selected_registers": 0,
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/pv-u1"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/pv-u1"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": "inverters"
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "",
+"template_notes": [],
+"unit_id": 1,
+"write_locked": false
+},
+{
+"alarms": {
+"active": [],
+"danger": 0,
+"warning": 0
+},
+"commands": [],
+"commands_offered": [
+"power_limit",
+"restore"
+],
+"connected": false,
+"connection": {
+"baudrate": 9600,
+"bytesize": 8,
+"host": "",
+"parity": "N",
+"port": 502,
+"protocol": "tcp",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "",
+"stopbits": 1,
+"timeout": 3,
+"unit_id": 2,
+"url": "",
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "pv",
+"endpoint_name": "PV",
+"energy_fields": 0,
+"energy_meter": {},
+"fields": {
+"power_active_total": {
+"label": "Total active power",
+"measurement": "power_active",
+"topic": "power/active/total",
+"unit": "W"
+},
+"power_limit_pct": {
+"label": "Active power limit",
+"measurement": "controls",
+"topic": "controls/power_limit_pct",
+"unit": "%"
+},
+"voltage_dc": {
+"label": "DC bus voltage",
+"measurement": "dc",
+"topic": "dc/voltage",
+"unit": "V"
+},
+"voltage_ln_avg": {
+"label": "Average phase-to-neutral voltage",
+"measurement": "voltage",
+"topic": "voltage/ln_avg",
+"unit": "V"
+}
+},
+"glance": [
+"power_active_total",
+"voltage_ln_avg",
+"voltage_dc",
+"power_limit_pct"
+],
+"group_id": "inverters",
+"ha_discovery_enabled": false,
+"host": "",
+"http_output_enabled": false,
+"http_url": "",
+"id": "pv-u2",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "pv-u2",
+"influxdb_enabled": true,
+"live": {},
+"mqtt_enabled": true,
+"mqtt_in_broker": "",
+"mqtt_in_topic": "",
+"mqtt_topic_prefix": "mbg/devices/pv-u2",
+"name": "PV unit 2",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 502,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "tcp",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"read_via": [
+{
+"address": "http://192.0.2.40/solar_api/v1/GetInverterRealtimeData.cgi?DeviceId=2",
+"enabled": true,
+"fail_pct_5m": null,
+"failed_5m": 0,
+"id": "solar_api",
+"interval_s": null,
+"latency_ms": null,
+"protocol": "http",
+"provides": 0,
+"reads_5m": 0,
+"registers": 0,
+"stale_after_s": 0.0,
+"status": "idle",
+"template": "fronius_solar_api_inverter",
+"timeout_s": null
+},
+{
+"address": "192.0.2.40:502 \u00b7 unit 2",
+"enabled": true,
+"fail_pct_5m": null,
+"failed_5m": 0,
+"id": "sunspec",
+"interval_s": null,
+"latency_ms": null,
+"protocol": "tcp",
+"provides": 0,
+"reads_5m": 0,
+"registers": 0,
+"stale_after_s": 0.0,
+"status": "idle",
+"template": "fronius_sunspec_inverter",
+"timeout_s": 3
+}
+],
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"role": "inverter",
+"selected_registers": 0,
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/pv-u2"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/pv-u2"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": "inverters"
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "",
+"template_notes": [],
+"unit_id": 2,
+"write_locked": false
+},
+{
+"alarms": {
+"active": [],
+"danger": 0,
+"warning": 0
+},
+"commands": [],
+"commands_offered": [
+"power_limit",
+"restore"
+],
+"connected": false,
+"connection": {
+"baudrate": 9600,
+"bytesize": 8,
+"host": "",
+"parity": "N",
+"port": 502,
+"protocol": "tcp",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "",
+"stopbits": 1,
+"timeout": 3,
+"unit_id": 3,
+"url": "",
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "pv",
+"endpoint_name": "PV",
+"energy_fields": 0,
+"energy_meter": {},
+"fields": {
+"power_active_total": {
+"label": "Total active power",
+"measurement": "power_active",
+"topic": "power/active/total",
+"unit": "W"
+},
+"power_limit_pct": {
+"label": "Active power limit",
+"measurement": "controls",
+"topic": "controls/power_limit_pct",
+"unit": "%"
+},
+"voltage_dc": {
+"label": "DC bus voltage",
+"measurement": "dc",
+"topic": "dc/voltage",
+"unit": "V"
+},
+"voltage_ln_avg": {
+"label": "Average phase-to-neutral voltage",
+"measurement": "voltage",
+"topic": "voltage/ln_avg",
+"unit": "V"
+}
+},
+"glance": [
+"power_active_total",
+"voltage_ln_avg",
+"voltage_dc",
+"power_limit_pct"
+],
+"group_id": "inverters",
+"ha_discovery_enabled": false,
+"host": "",
+"http_output_enabled": false,
+"http_url": "",
+"id": "pv-u3",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "pv-u3",
+"influxdb_enabled": true,
+"live": {},
+"mqtt_enabled": true,
+"mqtt_in_broker": "",
+"mqtt_in_topic": "",
+"mqtt_topic_prefix": "mbg/devices/pv-u3",
+"name": "PV unit 3",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 502,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "tcp",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"read_via": [
+{
+"address": "http://192.0.2.40/solar_api/v1/GetInverterRealtimeData.cgi?DeviceId=3",
+"enabled": true,
+"fail_pct_5m": null,
+"failed_5m": 0,
+"id": "solar_api",
+"interval_s": null,
+"latency_ms": null,
+"protocol": "http",
+"provides": 0,
+"reads_5m": 0,
+"registers": 0,
+"stale_after_s": 0.0,
+"status": "idle",
+"template": "fronius_solar_api_inverter",
+"timeout_s": null
+},
+{
+"address": "192.0.2.40:502 \u00b7 unit 3",
+"enabled": true,
+"fail_pct_5m": null,
+"failed_5m": 0,
+"id": "sunspec",
+"interval_s": null,
+"latency_ms": null,
+"protocol": "tcp",
+"provides": 0,
+"reads_5m": 0,
+"registers": 0,
+"stale_after_s": 0.0,
+"status": "idle",
+"template": "fronius_sunspec_inverter",
+"timeout_s": 3
+}
+],
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"role": "inverter",
+"selected_registers": 0,
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/pv-u3"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/pv-u3"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": "inverters"
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "",
+"template_notes": [],
+"unit_id": 3,
+"write_locked": false
+},
+{
+"alarms": {
+"active": [],
+"danger": 0,
+"warning": 0
+},
+"commands": [],
+"commands_offered": [
+"power_limit",
+"restore"
+],
+"connected": false,
+"connection": {
+"baudrate": 9600,
+"bytesize": 8,
+"host": "",
+"parity": "N",
+"port": 502,
+"protocol": "tcp",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "",
+"stopbits": 1,
+"timeout": 3,
+"unit_id": 4,
+"url": "",
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "pv",
+"endpoint_name": "PV",
+"energy_fields": 0,
+"energy_meter": {},
+"fields": {
+"power_active_total": {
+"label": "Total active power",
+"measurement": "power_active",
+"topic": "power/active/total",
+"unit": "W"
+},
+"power_limit_pct": {
+"label": "Active power limit",
+"measurement": "controls",
+"topic": "controls/power_limit_pct",
+"unit": "%"
+},
+"voltage_dc": {
+"label": "DC bus voltage",
+"measurement": "dc",
+"topic": "dc/voltage",
+"unit": "V"
+},
+"voltage_ln_avg": {
+"label": "Average phase-to-neutral voltage",
+"measurement": "voltage",
+"topic": "voltage/ln_avg",
+"unit": "V"
+}
+},
+"glance": [
+"power_active_total",
+"voltage_ln_avg",
+"voltage_dc",
+"power_limit_pct"
+],
+"group_id": "inverters",
+"ha_discovery_enabled": false,
+"host": "",
+"http_output_enabled": false,
+"http_url": "",
+"id": "pv-u4",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "pv-u4",
+"influxdb_enabled": true,
+"live": {},
+"mqtt_enabled": true,
+"mqtt_in_broker": "",
+"mqtt_in_topic": "",
+"mqtt_topic_prefix": "mbg/devices/pv-u4",
+"name": "PV unit 4",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 502,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "tcp",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"read_via": [
+{
+"address": "http://192.0.2.40/solar_api/v1/GetInverterRealtimeData.cgi?DeviceId=4",
+"enabled": true,
+"fail_pct_5m": null,
+"failed_5m": 0,
+"id": "solar_api",
+"interval_s": null,
+"latency_ms": null,
+"protocol": "http",
+"provides": 0,
+"reads_5m": 0,
+"registers": 0,
+"stale_after_s": 0.0,
+"status": "idle",
+"template": "fronius_solar_api_inverter",
+"timeout_s": null
+},
+{
+"address": "192.0.2.40:502 \u00b7 unit 4",
+"enabled": true,
+"fail_pct_5m": null,
+"failed_5m": 0,
+"id": "sunspec",
+"interval_s": null,
+"latency_ms": null,
+"protocol": "tcp",
+"provides": 0,
+"reads_5m": 0,
+"registers": 0,
+"stale_after_s": 0.0,
+"status": "idle",
+"template": "fronius_sunspec_inverter",
+"timeout_s": 3
+}
+],
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"role": "inverter",
+"selected_registers": 0,
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/pv-u4"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/pv-u4"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": "inverters"
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "",
+"template_notes": [],
+"unit_id": 4,
+"write_locked": false
+},
+{
+"alarms": {
+"active": [],
+"danger": 0,
+"warning": 0
+},
+"commands": [],
+"commands_offered": [],
+"connected": false,
+"connection": {
+"baudrate": 9600,
+"bytesize": 8,
+"host": "",
+"parity": "N",
+"port": 502,
+"protocol": "tcp",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "",
+"stopbits": 1,
+"timeout": 3,
+"unit_id": 0,
+"url": "",
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "pv",
+"endpoint_name": "PV",
+"energy_fields": 0,
+"energy_meter": {},
+"fields": {
+"autonomy": {
+"label": "Share of the load covered without the grid",
+"measurement": "site",
+"topic": "autonomy",
+"unit": "%"
+},
+"energy_today": {
+"label": "Energy generated today",
+"measurement": "site",
+"topic": "energy/today",
+"unit": "Wh"
+},
+"power_grid": {
+"label": "Grid power (negative = exporting)",
+"measurement": "site",
+"topic": "power/grid",
+"unit": "W"
+},
+"power_load": {
+"label": "House load (negative = consuming)",
+"measurement": "site",
+"topic": "power/load",
+"unit": "W"
+},
+"power_pv": {
+"label": "Total PV generation across the installation",
+"measurement": "site",
+"topic": "power/pv",
+"unit": "W"
+},
+"self_consumption": {
+"label": "Share of generation consumed on site",
+"measurement": "site",
+"topic": "self_consumption",
+"unit": "%"
+}
+},
+"glance": [
+"power_pv",
+"power_load",
+"power_grid",
+"autonomy",
+"self_consumption",
+"energy_today"
+],
+"group_id": "site",
+"ha_discovery_enabled": false,
+"host": "",
+"http_output_enabled": false,
+"http_url": "",
+"id": "pv-u0",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "pv-u0",
+"influxdb_enabled": true,
+"live": {},
+"mqtt_enabled": true,
+"mqtt_in_broker": "",
+"mqtt_in_topic": "",
+"mqtt_topic_prefix": "mbg/devices/pv-u0",
+"name": "PV unit 0",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 502,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "tcp",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"read_via": [
+{
+"address": "http://192.0.2.40/solar_api/v1/GetPowerFlowRealtimeData.fcgi",
+"enabled": true,
+"fail_pct_5m": null,
+"failed_5m": 0,
+"id": "site_api",
+"interval_s": null,
+"latency_ms": null,
+"protocol": "http",
+"provides": 0,
+"reads_5m": 0,
+"registers": 0,
+"stale_after_s": 0.0,
+"status": "idle",
+"template": "fronius_solar_api_site",
+"timeout_s": null
+}
+],
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"role": "site",
+"selected_registers": 0,
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/pv-u0"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/pv-u0"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": "site"
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "",
+"template_notes": [],
+"unit_id": 0,
+"write_locked": false
+},
+{
+"alarms": {
+"active": [],
+"danger": 0,
+"warning": 0
+},
+"commands": [],
+"commands_offered": [],
+"connected": false,
+"connection": {
+"baudrate": 9600,
+"bytesize": 8,
+"host": "192.0.2.40",
+"parity": "N",
+"port": 502,
+"protocol": "tcp",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "",
+"stopbits": 1,
+"timeout": 3,
+"unit_id": 240,
+"url": "",
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "pv",
+"endpoint_name": "PV",
+"energy_fields": 0,
+"energy_meter": {},
+"fields": {
+"energy_active_export": {
+"label": "Total exported active energy",
+"measurement": "energy_active",
+"topic": "energy/active/export",
+"unit": "Wh"
+},
+"energy_active_import": {
+"label": "Total imported active energy",
+"measurement": "energy_active",
+"topic": "energy/active/import",
+"unit": "Wh"
+},
+"power_active_total": {
+"label": "Total active power",
+"measurement": "power_active",
+"topic": "power/active/total",
+"unit": "W"
+}
+},
+"glance": [
+"power_active_total",
+"energy_active_import",
+"energy_active_export"
+],
+"group_id": "grid",
+"ha_discovery_enabled": false,
+"host": "192.0.2.40",
+"http_output_enabled": false,
+"http_url": "",
+"id": "pv-u240",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "pv-u240",
+"influxdb_enabled": true,
+"live": {},
+"mqtt_enabled": true,
+"mqtt_in_broker": "",
+"mqtt_in_topic": "",
+"mqtt_topic_prefix": "mbg/devices/pv-u240",
+"name": "PV unit 240",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 502,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "tcp",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"read_via": [
+{
+"address": "192.0.2.40:502 \u00b7 unit 240",
+"enabled": true,
+"fail_pct_5m": null,
+"failed_5m": 0,
+"id": "default",
+"interval_s": null,
+"latency_ms": null,
+"protocol": "tcp",
+"provides": 0,
+"reads_5m": 0,
+"registers": 0,
+"stale_after_s": 0.0,
+"status": "idle",
+"template": "fronius_sunspec_meter",
+"timeout_s": 3
+}
+],
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"role": "meter",
+"selected_registers": 0,
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/pv-u240"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/pv-u240"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": "grid"
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "fronius_sunspec_meter",
+"template_notes": [],
+"unit_id": 240,
+"write_locked": false
+},
+{
+"alarms": {
+"active": [],
+"danger": 0,
+"warning": 0
+},
+"commands": [],
+"commands_offered": [],
+"connected": false,
+"connection": {
+"baudrate": 19200,
+"bytesize": 8,
+"host": "",
+"parity": "N",
+"port": 502,
+"protocol": "rtu_tap",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "/dev/ttyBANK",
+"stopbits": 1,
+"timeout": 3,
+"unit_id": 1,
+"url": "",
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "battery-bank",
+"endpoint_name": "Battery bank",
+"energy_fields": 0,
+"energy_meter": {},
+"fields": {
+"max_cell_temp": {
+"label": "Highest cell temperature",
+"measurement": "battery",
+"topic": "battery/cell_temp/max",
+"unit": "\u00b0C"
+},
+"pack_voltage": {
+"label": "Pack voltage",
+"measurement": "battery",
+"topic": "battery/voltage",
+"unit": "V"
+},
+"soc": {
+"label": "State of charge",
+"measurement": "battery",
+"topic": "battery/soc",
+"unit": "%"
+}
+},
+"glance": [
+"power",
+"soc",
+"pack_voltage",
+"max_cell_temp",
+"status"
+],
+"group_id": "units",
+"ha_discovery_enabled": true,
+"host": "",
+"http_output_enabled": false,
+"http_url": "",
+"id": "battery-bank-u1",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "battery-bank-u1",
+"influxdb_enabled": true,
+"live": {},
+"mqtt_enabled": true,
+"mqtt_in_broker": "",
+"mqtt_in_topic": "",
+"mqtt_topic_prefix": "mbg/devices/battery-bank-u1",
+"name": "Battery bank unit 1",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 502,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "rtu_tap",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"read_via": [
+{
+"address": "/dev/ttyBANK \u00b7 unit 1",
+"enabled": true,
+"fail_pct_5m": null,
+"failed_5m": 0,
+"id": "default",
+"interval_s": null,
+"latency_ms": null,
+"protocol": "rtu_tap",
+"provides": 0,
+"reads_5m": 0,
+"registers": 0,
+"stale_after_s": 60.0,
+"status": "idle",
+"template": "seplos_bms_v3_rtu_tap",
+"timeout_s": 3
+}
+],
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"role": "",
+"selected_registers": 0,
+"serial": {
+"baudrate": 19200,
+"serial_port": "/dev/ttyBANK"
+},
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/battery-bank-u1"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/battery-bank-u1"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": "units"
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "seplos_bms_v3_rtu_tap",
+"template_notes": [],
+"unit_id": 1,
+"write_locked": false
+},
+{
+"alarms": {
+"active": [],
+"danger": 0,
+"warning": 0
+},
+"commands": [],
+"commands_offered": [],
+"connected": false,
+"connection": {
+"baudrate": 19200,
+"bytesize": 8,
+"host": "",
+"parity": "N",
+"port": 502,
+"protocol": "rtu_tap",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "/dev/ttyBANK",
+"stopbits": 1,
+"timeout": 3,
+"unit_id": 2,
+"url": "",
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "battery-bank",
+"endpoint_name": "Battery bank",
+"energy_fields": 0,
+"energy_meter": {},
+"fields": {
+"max_cell_temp": {
+"label": "Highest cell temperature",
+"measurement": "battery",
+"topic": "battery/cell_temp/max",
+"unit": "\u00b0C"
+},
+"pack_voltage": {
+"label": "Pack voltage",
+"measurement": "battery",
+"topic": "battery/voltage",
+"unit": "V"
+},
+"soc": {
+"label": "State of charge",
+"measurement": "battery",
+"topic": "battery/soc",
+"unit": "%"
+}
+},
+"glance": [
+"power",
+"soc",
+"pack_voltage",
+"max_cell_temp",
+"status"
+],
+"group_id": "units",
+"ha_discovery_enabled": true,
+"host": "",
+"http_output_enabled": false,
+"http_url": "",
+"id": "battery-bank-u2",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "battery-bank-u2",
+"influxdb_enabled": true,
+"live": {},
+"mqtt_enabled": true,
+"mqtt_in_broker": "",
+"mqtt_in_topic": "",
+"mqtt_topic_prefix": "mbg/devices/battery-bank-u2",
+"name": "Battery bank unit 2",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 502,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "rtu_tap",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"read_via": [
+{
+"address": "/dev/ttyBANK \u00b7 unit 2",
+"enabled": true,
+"fail_pct_5m": null,
+"failed_5m": 0,
+"id": "default",
+"interval_s": null,
+"latency_ms": null,
+"protocol": "rtu_tap",
+"provides": 0,
+"reads_5m": 0,
+"registers": 0,
+"stale_after_s": 60.0,
+"status": "idle",
+"template": "seplos_bms_v3_rtu_tap",
+"timeout_s": 3
+}
+],
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"role": "",
+"selected_registers": 0,
+"serial": {
+"baudrate": 19200,
+"serial_port": "/dev/ttyBANK"
+},
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/battery-bank-u2"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/battery-bank-u2"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": "units"
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "seplos_bms_v3_rtu_tap",
+"template_notes": [],
+"unit_id": 2,
+"write_locked": false
+},
+{
+"alarms": {
+"active": [],
+"danger": 0,
+"warning": 0
+},
+"commands": [],
+"commands_offered": [],
+"connected": false,
+"connection": {
+"baudrate": 19200,
+"bytesize": 8,
+"host": "",
+"parity": "N",
+"port": 502,
+"protocol": "rtu_tap",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "/dev/ttyBANK",
+"stopbits": 1,
+"timeout": 3,
+"unit_id": 3,
+"url": "",
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "battery-bank",
+"endpoint_name": "Battery bank",
+"energy_fields": 0,
+"energy_meter": {},
+"fields": {
+"max_cell_temp": {
+"label": "Highest cell temperature",
+"measurement": "battery",
+"topic": "battery/cell_temp/max",
+"unit": "\u00b0C"
+},
+"pack_voltage": {
+"label": "Pack voltage",
+"measurement": "battery",
+"topic": "battery/voltage",
+"unit": "V"
+},
+"soc": {
+"label": "State of charge",
+"measurement": "battery",
+"topic": "battery/soc",
+"unit": "%"
+}
+},
+"glance": [
+"power",
+"soc",
+"pack_voltage",
+"max_cell_temp",
+"status"
+],
+"group_id": "units",
+"ha_discovery_enabled": true,
+"host": "",
+"http_output_enabled": false,
+"http_url": "",
+"id": "battery-bank-u3",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "battery-bank-u3",
+"influxdb_enabled": true,
+"live": {},
+"mqtt_enabled": true,
+"mqtt_in_broker": "",
+"mqtt_in_topic": "",
+"mqtt_topic_prefix": "mbg/devices/battery-bank-u3",
+"name": "Battery bank unit 3",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 502,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "rtu_tap",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"read_via": [
+{
+"address": "/dev/ttyBANK \u00b7 unit 3",
+"enabled": true,
+"fail_pct_5m": null,
+"failed_5m": 0,
+"id": "default",
+"interval_s": null,
+"latency_ms": null,
+"protocol": "rtu_tap",
+"provides": 0,
+"reads_5m": 0,
+"registers": 0,
+"stale_after_s": 60.0,
+"status": "idle",
+"template": "seplos_bms_v3_rtu_tap",
+"timeout_s": 3
+}
+],
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"role": "",
+"selected_registers": 0,
+"serial": {
+"baudrate": 19200,
+"serial_port": "/dev/ttyBANK"
+},
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/battery-bank-u3"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/battery-bank-u3"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": "units"
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "seplos_bms_v3_rtu_tap",
+"template_notes": [],
+"unit_id": 3,
+"write_locked": false
+},
+{
+"alarms": {
+"active": [],
+"danger": 0,
+"warning": 0
+},
+"commands": [],
+"commands_offered": [],
+"connected": false,
+"connection": {
+"baudrate": 9600,
+"bytesize": 8,
+"host": "192.0.2.70",
+"parity": "N",
+"port": 502,
+"protocol": "tcp",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "",
+"stopbits": 1,
+"timeout": 3,
+"unit_id": 1,
+"url": "",
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "odd",
+"endpoint_name": "Hand-edited roles",
+"energy_fields": 0,
+"energy_meter": {},
+"fields": {
+"power_active_total": {
+"label": "Total active power",
+"measurement": "power_active",
+"topic": "power/active/total",
+"unit": "W"
+}
+},
+"glance": [
+"power_active_total"
+],
+"group_id": "a",
+"ha_discovery_enabled": true,
+"host": "192.0.2.70",
+"http_output_enabled": false,
+"http_url": "",
+"id": "odd-u1",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "odd-u1",
+"influxdb_enabled": true,
+"live": {},
+"mqtt_enabled": true,
+"mqtt_in_broker": "",
+"mqtt_in_topic": "",
+"mqtt_topic_prefix": "mbg/devices/odd-u1",
+"name": "Hand-edited roles unit 1",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 502,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "tcp",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"read_via": [
+{
+"address": "192.0.2.70:502 \u00b7 unit 1",
+"enabled": true,
+"fail_pct_5m": null,
+"failed_5m": 0,
+"id": "default",
+"interval_s": null,
+"latency_ms": null,
+"protocol": "tcp",
+"provides": 0,
+"reads_5m": 0,
+"registers": 0,
+"stale_after_s": 0.0,
+"status": "idle",
+"template": "eastron_sdm630",
+"timeout_s": 3
+}
+],
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"role": "Inverter",
+"selected_registers": 0,
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/odd-u1"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/odd-u1"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": "a"
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "eastron_sdm630",
+"template_notes": [],
+"unit_id": 1,
+"write_locked": false
+},
+{
+"alarms": {
+"active": [],
+"danger": 0,
+"warning": 0
+},
+"commands": [],
+"commands_offered": [],
+"connected": false,
+"connection": {
+"baudrate": 9600,
+"bytesize": 8,
+"host": "192.0.2.70",
+"parity": "N",
+"port": 502,
+"protocol": "tcp",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "",
+"stopbits": 1,
+"timeout": 3,
+"unit_id": 2,
+"url": "",
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "odd",
+"endpoint_name": "Hand-edited roles",
+"energy_fields": 0,
+"energy_meter": {},
+"fields": {
+"power_active_total": {
+"label": "Total active power",
+"measurement": "power_active",
+"topic": "power/active/total",
+"unit": "W"
+}
+},
+"glance": [
+"power_active_total"
+],
+"group_id": "b",
+"ha_discovery_enabled": true,
+"host": "192.0.2.70",
+"http_output_enabled": false,
+"http_url": "",
+"id": "odd-u2",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "odd-u2",
+"influxdb_enabled": true,
+"live": {},
+"mqtt_enabled": true,
+"mqtt_in_broker": "",
+"mqtt_in_topic": "",
+"mqtt_topic_prefix": "mbg/devices/odd-u2",
+"name": "Hand-edited roles unit 2",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 502,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "tcp",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"read_via": [
+{
+"address": "192.0.2.70:502 \u00b7 unit 2",
+"enabled": true,
+"fail_pct_5m": null,
+"failed_5m": 0,
+"id": "default",
+"interval_s": null,
+"latency_ms": null,
+"protocol": "tcp",
+"provides": 0,
+"reads_5m": 0,
+"registers": 0,
+"stale_after_s": 0.0,
+"status": "idle",
+"template": "eastron_sdm630",
+"timeout_s": 3
+}
+],
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"role": "system",
+"selected_registers": 0,
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/odd-u2"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/odd-u2"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": "b"
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "eastron_sdm630",
+"template_notes": [],
+"unit_id": 2,
+"write_locked": false
+},
+{
+"alarms": {
+"active": [],
+"danger": 0,
+"warning": 0
+},
+"commands": [],
+"commands_offered": [],
+"connected": false,
+"connection": {
+"baudrate": 9600,
+"bytesize": 8,
+"host": "192.0.2.70",
+"parity": "N",
+"port": 502,
+"protocol": "tcp",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "",
+"stopbits": 1,
+"timeout": 3,
+"unit_id": 3,
+"url": "",
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "odd",
+"endpoint_name": "Hand-edited roles",
+"energy_fields": 0,
+"energy_meter": {},
+"fields": {
+"power_active_total": {
+"label": "Total active power",
+"measurement": "power_active",
+"topic": "power/active/total",
+"unit": "W"
+}
+},
+"glance": [
+"power_active_total"
+],
+"group_id": "c",
+"ha_discovery_enabled": true,
+"host": "192.0.2.70",
+"http_output_enabled": false,
+"http_url": "",
+"id": "odd-u3",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "odd-u3",
+"influxdb_enabled": true,
+"live": {},
+"mqtt_enabled": true,
+"mqtt_in_broker": "",
+"mqtt_in_topic": "",
+"mqtt_topic_prefix": "mbg/devices/odd-u3",
+"name": "Hand-edited roles unit 3",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 502,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "tcp",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"read_via": [
+{
+"address": "192.0.2.70:502 \u00b7 unit 3",
+"enabled": true,
+"fail_pct_5m": null,
+"failed_5m": 0,
+"id": "default",
+"interval_s": null,
+"latency_ms": null,
+"protocol": "tcp",
+"provides": 0,
+"reads_5m": 0,
+"registers": 0,
+"stale_after_s": 0.0,
+"status": "idle",
+"template": "eastron_sdm630",
+"timeout_s": 3
+}
+],
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"role": "heat_pump",
+"selected_registers": 0,
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/odd-u3"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/odd-u3"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": "c"
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "eastron_sdm630",
+"template_notes": [],
+"unit_id": 3,
+"write_locked": false
+},
+{
+"alarms": {
+"active": [],
+"danger": 0,
+"warning": 0
+},
+"commands": [],
+"commands_offered": [],
+"connected": false,
+"connection": {
+"baudrate": 9600,
+"bytesize": 8,
+"host": "192.0.2.70",
+"parity": "N",
+"port": 502,
+"protocol": "tcp",
+"retry_attempts": 3,
+"retry_delay": 1.0,
+"serial_port": "",
+"stopbits": 1,
+"timeout": 3,
+"unit_id": 4,
+"url": "",
+"verify_tls": true
+},
+"data_health": "idle",
+"enabled": false,
+"endpoint_id": "odd",
+"endpoint_name": "Hand-edited roles",
+"energy_fields": 0,
+"energy_meter": {},
+"fields": {
+"power_active_total": {
+"label": "Total active power",
+"measurement": "power_active",
+"topic": "power/active/total",
+"unit": "W"
+}
+},
+"glance": [
+"power_active_total"
+],
+"group_id": "d",
+"ha_discovery_enabled": true,
+"host": "192.0.2.70",
+"http_output_enabled": false,
+"http_url": "",
+"id": "odd-u4",
+"influxdb_bucket": "janitza",
+"influxdb_device_tag": "odd-u4",
+"influxdb_enabled": true,
+"live": {},
+"mqtt_enabled": true,
+"mqtt_in_broker": "",
+"mqtt_in_topic": "",
+"mqtt_topic_prefix": "mbg/devices/odd-u4",
+"name": "Hand-edited roles unit 4",
+"opcua_enabled": true,
+"opcua_fields": [],
+"port": 502,
+"pq_recorder": {},
+"pq_recorder_enabled": false,
+"pq_supported": false,
+"primary": false,
+"protocol": "tcp",
+"publishing": {
+"editable": true,
+"effective": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+},
+"own": {
+"influxdb": {
+"publish_mode": null,
+"write_interval": null
+},
+"mqtt": {
+"heartbeat_interval": null,
+"publish_mode": null
+}
+},
+"settings": {
+"influxdb": {
+"publish_mode": "changed",
+"write_interval": 5
+},
+"mqtt": {
+"heartbeat_interval": 0,
+"publish_mode": "changed"
+}
+}
+},
+"read_via": [
+{
+"address": "192.0.2.70:502 \u00b7 unit 4",
+"enabled": true,
+"fail_pct_5m": null,
+"failed_5m": 0,
+"id": "default",
+"interval_s": null,
+"latency_ms": null,
+"protocol": "tcp",
+"provides": 0,
+"reads_5m": 0,
+"registers": 0,
+"stale_after_s": 0.0,
+"status": "idle",
+"template": "eastron_sdm630",
+"timeout_s": 3
+}
+],
+"rest_push": {
+"last": {
+"code": null,
+"error": null,
+"ok": null,
+"ts": null
+}
+},
+"rest_push_enabled": false,
+"role": "grid",
+"selected_registers": 0,
+"sinks": {
+"http": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"path": "/api/meters/odd-u4"
+},
+"influxdb": {
+"active": false,
+"available": false,
+"bucket": "janitza",
+"connected": false,
+"enabled": true
+},
+"mqtt": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"topic_prefix": "mbg/devices/odd-u4"
+},
+"opcua": {
+"active": false,
+"available": false,
+"connected": false,
+"enabled": true,
+"endpoint": "",
+"fields": [],
+"shared_by": "d"
+},
+"rest": {
+"active": false,
+"available": true,
+"connected": true,
+"enabled": false,
+"url": ""
+}
+},
+"template": "eastron_sdm630",
+"template_notes": [],
+"unit_id": 4,
+"write_locked": false
+}
+],
+"meta": {
+"battery-bank-u1": {
+"attributes": {},
+"id": "battery-bank-u1",
+"kind": "battery",
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"battery-bank-u2": {
+"attributes": {},
+"id": "battery-bank-u2",
+"kind": "battery",
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"battery-bank-u3": {
+"attributes": {},
+"id": "battery-bank-u3",
+"kind": "battery",
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"generic": {
+"attributes": {},
+"id": "generic",
+"kind": null,
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"odd-u1": {
+"attributes": {},
+"id": "odd-u1",
+"kind": "Inverter",
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"odd-u2": {
+"attributes": {},
+"id": "odd-u2",
+"kind": "system",
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"odd-u3": {
+"attributes": {},
+"id": "odd-u3",
+"kind": "heat_pump",
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"odd-u4": {
+"attributes": {},
+"id": "odd-u4",
+"kind": "grid",
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"plug": {
+"attributes": {},
+"id": "plug",
+"kind": null,
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"pv-u0": {
+"attributes": {},
+"id": "pv-u0",
+"kind": "site",
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"pv-u1": {
+"attributes": {},
+"id": "pv-u1",
+"kind": "inverter",
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"pv-u2": {
+"attributes": {},
+"id": "pv-u2",
+"kind": "inverter",
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"pv-u240": {
+"attributes": {},
+"id": "pv-u240",
+"kind": "meter",
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"pv-u3": {
+"attributes": {},
+"id": "pv-u3",
+"kind": "inverter",
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"pv-u4": {
+"attributes": {},
+"id": "pv-u4",
+"kind": "inverter",
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"samsung-dvm": {
+"attributes": {},
+"id": "samsung-dvm",
+"kind": null,
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"umg512": {
+"attributes": {},
+"id": "umg512",
+"kind": "meter",
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"vfd": {
+"attributes": {},
+"id": "vfd",
+"kind": null,
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"victron-gx": {
+"attributes": {},
+"id": "victron-gx",
+"kind": "site",
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"victron-gx-battery-279": {
+"attributes": {},
+"id": "victron-gx-battery-279",
+"kind": "battery",
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"victron-gx-battery-288": {
+"attributes": {},
+"id": "victron-gx-battery-288",
+"kind": "battery",
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"victron-gx-battery-512": {
+"attributes": {},
+"id": "victron-gx-battery-512",
+"kind": "battery",
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"victron-gx-temperature-22": {
+"attributes": {},
+"id": "victron-gx-temperature-22",
+"kind": "sensor",
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+},
+"victron-gx-temperature-23": {
+"attributes": {},
+"id": "victron-gx-temperature-23",
+"kind": "sensor",
+"level": "device",
+"rev": "6bed118b28a2",
+"schema": 1
+}
+},
+"templates": [
+{
+"builtin": true,
+"categories": 0,
+"commands": [],
+"id": "fronius_solar_api_site",
+"kind": "site",
+"model": "",
+"name": "Fronius installation (Solar API site totals)",
+"notes": [],
+"pending_updates": [],
+"registers": 9,
+"rules": [],
+"transport": "http",
+"used_by": [
+"pv-u0"
+],
+"vendor": "",
+"version": "1.0.0"
+},
+{
+"builtin": true,
+"categories": 0,
+"commands": [],
+"id": "fronius_solar_api_inverter",
+"kind": "inverter",
+"model": "",
+"name": "Fronius inverter (Solar API / HTTP-JSON)",
+"notes": [],
+"pending_updates": [],
+"registers": 7,
+"rules": [],
+"transport": "http",
+"used_by": [
+"pv-u1",
+"pv-u2",
+"pv-u3",
+"pv-u4"
+],
+"vendor": "",
+"version": "1.0.0"
+},
+{
+"builtin": true,
+"categories": 0,
+"commands": [],
+"id": "fronius_solar_api_inverter_3p",
+"kind": "inverter",
+"model": "",
+"name": "Fronius inverter, per-phase AC (Solar API / HTTP-JSON)",
+"notes": [],
+"pending_updates": [],
+"registers": 6,
+"rules": [],
+"transport": "http",
+"used_by": [],
+"vendor": "",
+"version": "1.0.0"
+},
+{
+"builtin": true,
+"categories": 0,
+"commands": [],
+"id": "abb_b21",
+"kind": "meter",
+"model": "B21 (System pro M compact)",
+"name": "ABB B21 (single-phase)",
+"notes": [],
+"pending_updates": [],
+"registers": 10,
+"rules": [],
+"transport": "modbus",
+"used_by": [],
+"vendor": "ABB",
+"version": "1.0.0"
+},
+{
+"builtin": true,
+"categories": 0,
+"commands": [],
+"id": "abb_b23",
+"kind": "meter",
+"model": "B23 (System pro M compact)",
+"name": "ABB B23 (3-phase)",
+"notes": [],
+"pending_updates": [],
+"registers": 32,
+"rules": [],
+"transport": "modbus",
+"used_by": [],
+"vendor": "ABB",
+"version": "1.0.0"
+},
+{
+"builtin": true,
+"categories": 0,
+"commands": [],
+"id": "carlo_gavazzi_em24",
+"kind": "meter",
+"model": "EM24-DIN AV5(3)",
+"name": "Carlo Gavazzi EM24 (AV5/AV53, 3-phase)",
+"notes": [],
+"pending_updates": [],
+"registers": 17,
+"rules": [],
+"transport": "modbus",
+"used_by": [],
+"vendor": "Carlo Gavazzi",
+"version": "1.0.0"
+},
+{
+"builtin": true,
+"categories": 4,
+"commands": [
+"reset_fault",
+"run",
+"run_at",
+"run_forward",
+"run_reverse",
+"set_frequency",
+"stop"
+],
+"id": "delta_vfd_el",
+"kind": "",
+"model": "VFD-EL (e.g. VFD022EL43A)",
+"name": "Delta VFD-EL frequency drive",
+"notes": [
+{
+"fields": [
+"comm_fault_action",
+"comm_timeout",
+"command_source"
+],
+"level": "warning",
+"text": "Before any command: wire an emergency stop that cuts the drive's supply, keep the keypad STOP key active (Pr 02.01) and set Pr 09.02 = 1 with Pr 09.03 = 2.0 s, so the motor ramps to a stop by itself if the gateway, the bus or the cable goes away. MBG polls every 2 s, which keeps that time-out fed."
+},
+{
+"fields": [
+"command_word",
+"frequency_setpoint",
+"fault_control"
+],
+"level": "warning",
+"text": "Runtime control writes only 2000H-2002H. Do not write the drive's parameters (GGnnH) from rules or loops: parameters are stored in the drive's memory, and repeated writes wear it out."
+},
+{
+"fields": [
+"frequency_source",
+"command_source",
+"comm_fault_action",
+"comm_timeout"
+],
+"level": "info",
+"text": "Version 0.1.0 is written from the manual and not yet checked on a drive. If the drive answers a block read of 2100H-210AH (the manual allows up to 20 words for status), Max registers per read can go up to 20 for fewer requests, provided the parameter rows (0200H, 0201H, 0902H, 0903H) stay unselected, since a parameter is read one per request."
+},
+{
+"fields": [
+"frequency_source"
+],
+"level": "info",
+"text": "set_frequency refuses to write unless Pr 02.00 = 3 (frequency from RS-485): otherwise the drive would ignore it silently."
+}
+],
+"pending_updates": [],
+"registers": 16,
+"rules": [],
+"transport": "modbus",
+"used_by": [
+"vfd"
+],
+"vendor": "Delta Electronics",
+"version": "0.3.0"
+},
+{
+"builtin": true,
+"categories": 0,
+"commands": [],
+"id": "eastron_sdm120",
+"kind": "meter",
+"model": "SDM120 Modbus",
+"name": "Eastron SDM120 (single-phase)",
+"notes": [],
+"pending_updates": [],
+"registers": 10,
+"rules": [],
+"transport": "modbus",
+"used_by": [],
+"vendor": "Eastron",
+"version": "0.9.0"
+},
+{
+"builtin": true,
+"categories": 0,
+"commands": [],
+"id": "eastron_sdm630",
+"kind": "meter",
+"model": "SDM630 Modbus V2",
+"name": "Eastron SDM630 (3-phase)",
+"notes": [],
+"pending_updates": [],
+"registers": 29,
+"rules": [],
+"transport": "modbus",
+"used_by": [
+"odd-u1",
+"odd-u2",
+"odd-u3",
+"odd-u4"
+],
+"vendor": "Eastron",
+"version": "0.9.0"
+},
+{
+"builtin": true,
+"categories": 0,
+"commands": [],
+"id": "fronius_smart_meter_65a",
+"kind": "meter",
+"model": "Smart Meter 65A-3",
+"name": "Fronius Smart Meter 65A-3 (RTU)",
+"notes": [],
+"pending_updates": [],
+"registers": 30,
+"rules": [],
+"transport": "modbus",
+"used_by": [],
+"vendor": "Fronius",
+"version": "1.0.0"
+},
+{
+"builtin": true,
+"categories": 9,
+"commands": [
+"power_limit",
+"restore"
+],
+"id": "fronius_sunspec_inverter",
+"kind": "inverter",
+"model": "Symo / Primo / Eco (SunSpec 103)",
+"name": "Fronius SunSpec inverter (int+SF, via datalogger)",
+"notes": [],
+"pending_updates": [],
+"registers": 69,
+"rules": [],
+"transport": "modbus",
+"used_by": [
+"pv-u1",
+"pv-u2",
+"pv-u3",
+"pv-u4"
+],
+"vendor": "Fronius",
+"version": "2.3.0"
+},
+{
+"builtin": true,
+"categories": 8,
+"commands": [],
+"id": "fronius_sunspec_meter",
+"kind": "meter",
+"model": "Smart Meter 63A/50kA (SunSpec 203)",
+"name": "Fronius SunSpec meter (int+SF, via datalogger)",
+"notes": [],
+"pending_updates": [],
+"registers": 48,
+"rules": [],
+"transport": "modbus",
+"used_by": [
+"pv-u240"
+],
+"vendor": "Fronius",
+"version": "2.1.0"
+},
+{
+"builtin": true,
+"categories": 3,
+"commands": [],
+"id": "mqtt_json_generic",
+"kind": "",
+"model": "MQTT JSON source",
+"name": "Generic MQTT (JSON)",
+"notes": [],
+"pending_updates": [],
+"registers": 3,
+"rules": [],
+"transport": "mqtt",
+"used_by": [
+"generic"
+],
+"vendor": "Generic",
+"version": "1.0.0"
+},
+{
+"builtin": true,
+"categories": 29,
+"commands": [],
+"id": "janitza_umg512_pro",
+"kind": "meter",
+"model": "UMG 512-PRO",
+"name": "Janitza UMG 512-PRO",
+"notes": [],
+"pending_updates": [],
+"registers": 4126,
+"rules": [],
+"transport": "modbus",
+"used_by": [
+"umg512"
+],
+"vendor": "Janitza electronics GmbH",
+"version": "1.0.0"
+},
+{
+"builtin": true,
+"categories": 8,
+"commands": [
+"away",
+"compressor_limit",
+"dhw_mode",
+"dhw_power",
+"dhw_set",
+"mode",
+"power",
+"quiet",
+"room_set",
+"water_out_set"
+],
+"id": "samsung_mim_b19n",
+"kind": "",
+"model": "MIM-B19N / MIM-B19NT",
+"name": "Samsung MIM-B19N Modbus interface (DVM / EHS)",
+"notes": [
+{
+"fields": [
+"dc_link_voltage",
+"dhw_tank_temperature",
+"eva_in_temperature",
+"heat_output_test",
+"heat_total_test",
+"heater_out_temperature",
+"outdoor_energy_test",
+"outdoor_fan_speed",
+"outdoor_power_test",
+"room_sensor_temperature",
+"water_flow",
+"water_out_target",
+"water_pump_pwm"
+],
+"level": "warning",
+"link": "https://github.com/sm26449/heatpump",
+"text": "Read 0 on a DVM-S with an HE hydro kit (field-checked 2026-10-08), with the compressor running: water flow, pump PWM, room sensor, heater-out and tank temperatures, water-out target, DC link voltage, outdoor fan speed, EVA-in temperature (0x82DE is 'Eva In for EHS') and the experimental energy rows. Why: the HE kit has no flow sensor and switches its water pump on/off (DVM HT/HE installation manual DB68-03973A-06); and these NASA IDs are not in Samsung's list for HE/HT/EHS (MIM manual DB68-07538A-03, Table 3, which names only 0x4087, 0x42F1 and 0x4067) \u2014 they come from the community, tested on an EHS system. Each row's description says whether its ID is official or community. On an HE kit, leave these unselected rather than trust a 0; an EHS unit may fill them."
+},
+{
+"fields": [
+"quiet",
+"compressor_limit"
+],
+"level": "warning",
+"text": "Quiet mode and the compressor limit (FR control, NASA 0x42F1) have no effect on an HE hydro kit: the write is accepted and nothing changes. Samsung documents FR control for hydro units with an integrated tank only."
+},
+{
+"level": "info",
+"text": "The values at 4-28 and 82-96 appear only after the setup steps are written (at connect, with writes allowed on the device). A defrost (outdoor_defrost On, step 1-30) after a hard start in cold, humid air is normal."
+},
+{
+"fields": [
+"cop_estimated",
+"heat_output_estimated",
+"power_electric_estimated",
+"water_flow_assumed"
+],
+"level": "info",
+"text": "Heat output is ESTIMATED from the water \u0394T and an assumed constant flow, water_flow_assumed (l/min): set it to your circuit's measured flow in the device's Calculated tab (its expression is a plain number). Not the pump's maximum, not Samsung's minimum \u2014 an HE kit has no flow sensor and an on/off pump, so the flow is roughly constant while it runs. COP = heat output / electric power, taken from the meter named in Device \u2192 Edit \u2192 Electricity measured by (power_electric) when there is one, else estimated from the compressor current: \u221a3 \u00d7 400 V \u00d7 I \u00d7 0.95 (power_electric_estimated; edit the voltage or the power factor in its expression). The estimate leaves out the fans and the water pump. A heat meter and an electricity meter give the exact COP."
+}
+],
+"pending_updates": [],
+"registers": 60,
+"rules": [
+"buffer",
+"discharge-guard"
+],
+"transport": "modbus",
+"used_by": [
+"samsung-dvm"
+],
+"vendor": "Samsung",
+"version": "1.6.3"
+},
+{
+"builtin": true,
+"categories": 0,
+"commands": [],
+"id": "schneider_iem3000",
+"kind": "meter",
+"model": "iEM3155 / iEM3255 / iEM3455 / iEM3555",
+"name": "Schneider iEM3000 (3-phase)",
+"notes": [],
+"pending_updates": [],
+"registers": 22,
+"rules": [],
+"transport": "modbus",
+"used_by": [],
+"vendor": "Schneider Electric",
+"version": "1.0.0"
+},
+{
+"builtin": true,
+"categories": 5,
+"commands": [],
+"id": "seplos_bms_mqtt",
+"kind": "battery",
+"model": "BMS V3",
+"name": "Seplos BMS V3 (via seplos-bms-mqtt)",
+"notes": [],
+"pending_updates": [],
+"registers": 58,
+"rules": [],
+"transport": "mqtt",
+"used_by": [],
+"vendor": "Seplos",
+"version": "1.0"
+},
+{
+"builtin": true,
+"categories": 6,
+"commands": [],
+"id": "seplos_bms_bank_mqtt",
+"kind": "battery",
+"model": "BMS V3 bank",
+"name": "Seplos BMS V3 bank (via seplos-bms-mqtt)",
+"notes": [],
+"pending_updates": [],
+"registers": 28,
+"rules": [],
+"transport": "mqtt",
+"used_by": [],
+"vendor": "Seplos",
+"version": "1.0"
+},
+{
+"builtin": true,
+"categories": 5,
+"commands": [],
+"id": "seplos_bms_v3_rtu_tap",
+"kind": "battery",
+"model": "BMS V3",
+"name": "Seplos BMS V3 pack (RTU tap, listen-only)",
+"notes": [],
+"pending_updates": [],
+"registers": 84,
+"rules": [],
+"transport": "modbus",
+"used_by": [
+"battery-bank-u1",
+"battery-bank-u2",
+"battery-bank-u3"
+],
+"vendor": "Seplos",
+"version": "1.9.0"
+},
+{
+"builtin": true,
+"categories": 3,
+"commands": [],
+"id": "tasmota_generic",
+"kind": "",
+"model": "any Tasmota device",
+"name": "Tasmota device (relays, energy, Wi-Fi)",
+"notes": [],
+"pending_updates": [],
+"registers": 12,
+"rules": [],
+"transport": "mqtt",
+"used_by": [
+"plug"
+],
+"vendor": "Tasmota",
+"version": "1.0.0"
+},
+{
+"builtin": true,
+"categories": 3,
+"commands": [],
+"id": "ble_theengs_sensor",
+"kind": "sensor",
+"model": "BLE advertisement sensor",
+"name": "BLE sensor (Theengs / BTHome \u2192 MQTT)",
+"notes": [],
+"pending_updates": [],
+"registers": 5,
+"rules": [],
+"transport": "mqtt",
+"used_by": [],
+"vendor": "Theengs",
+"version": "1.0.0"
+},
+{
+"builtin": true,
+"categories": 7,
+"commands": [
+"ess_setpoint",
+"max_charge_current",
+"max_charge_power",
+"max_discharge_power",
+"max_feed_in",
+"min_soc"
+],
+"components": [
+{
+"kind": "battery",
+"name": "Battery",
+"type": "battery"
+},
+{
+"kind": "sensor",
+"name": "Temperature sensor",
+"type": "temperature"
+}
+],
+"id": "victron_gx_mqtt",
+"kind": "site",
+"model": "GX device (Cerbo, Ekrano, Venus GX)",
+"name": "Victron GX (Venus OS) over MQTT",
+"notes": [
+{
+"fields": [
+"ess_setpoint",
+"max_charge_current",
+"max_feed_in"
+],
+"level": "warning",
+"text": "The ESS settings are stored in the GX's flash and kept when the gateway stops. A rule that commands them must move in steps; the template spaces writes a minute apart. The commands carry no release value: a released rule leaves the setting as it is unless the device's command binding sets `safe` (a release value depends on the site)."
+},
+{
+"level": "info",
+"text": "The grid setpoint is followed in ESS modes 1 and 2; in mode 3 (external control) the GX ignores it, so the command refuses to write."
+}
+],
+"pending_updates": [],
+"registers": 38,
+"rules": [],
+"transport": "mqtt",
+"used_by": [
+"victron-gx",
+"victron-gx-battery-288",
+"victron-gx-battery-512",
+"victron-gx-battery-279",
+"victron-gx-temperature-22",
+"victron-gx-temperature-23"
+],
+"vendor": "Victron Energy",
+"version": "1.1"
+},
+{
+"builtin": true,
+"categories": 3,
+"commands": [],
+"id": "zigbee2mqtt_sensor",
+"kind": "sensor",
+"model": "climate / battery sensor",
+"name": "Zigbee sensor (zigbee2mqtt)",
+"notes": [],
+"pending_updates": [],
+"registers": 6,
+"rules": [],
+"transport": "mqtt",
+"used_by": [],
+"vendor": "Zigbee2MQTT",
+"version": "1.0.0"
+}
+]
+}

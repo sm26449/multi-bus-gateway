@@ -28,11 +28,78 @@ from pymodbus import FramerType
 from pymodbus.client import ModbusSerialClient, ModbusTcpClient, ModbusUdpClient
 
 from . import bus_trace
+from . import role as gateway_role
 from .config import (BUS_OVER_TCP_PROTOCOLS, SERIAL_PROTOCOLS, WIRE_FRAMING, ModbusConfig,
                      PollGroup, SelectedRegister, store_key)
 from .counter_filter import DailyCounterFilter, MonotonicFilter
 from .register_parser import RegisterParser
 from .value_decode import apply_corrections
+
+BUSY_WINDOW_S = 60.0     # occupancy is measured over the last minute
+BUSY_MIN_S = 5.0         # and said only once that much has been seen
+
+
+class _WireMeter:
+    """How long the wire was actually held in the last minute.
+
+    Each transaction adds the time it held the bus — from having the turn to
+    giving it back, so queue wait behind other slaves is never counted (a bus
+    summed per device's sweep time is counted ~N times: "1031 % busy", D21).
+    O(1) amortised: one append, one add, trimmed as it goes; the lock is held
+    for exactly that, and readers take it only to sum."""
+
+    __slots__ = ('_lock', '_held', '_sum', '_missed', '_born')
+
+    def __init__(self, now: Optional[float] = None):
+        self._lock = threading.Lock()
+        self._held = deque()          # (t_end_mono, held_s)
+        self._sum = 0.0
+        self._missed = deque()        # t_mono of each turn given up waiting
+        self._born = time.monotonic() if now is None else now
+
+    def _trim(self, now: float) -> None:
+        start = now - BUSY_WINDOW_S
+        held = self._held
+        while held and held[0][0] < start:
+            self._sum -= held.popleft()[1]
+        missed = self._missed
+        while missed and missed[0] < start:
+            missed.popleft()
+
+    def add(self, held_s: float, now: Optional[float] = None) -> None:
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            self._held.append((now, held_s))
+            self._sum += held_s
+            self._trim(now)
+
+    def miss(self, now: Optional[float] = None) -> None:
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            self._missed.append(now)
+            self._trim(now)
+
+    def snapshot(self, now: Optional[float] = None) -> Optional[Dict[str, float]]:
+        """{busy_s, window_s, missed} over the window, or None before
+        BUSY_MIN_S has been observed."""
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            self._trim(now)
+            window = min(BUSY_WINDOW_S, now - self._born)
+            if window < BUSY_MIN_S:
+                return None
+            busy = self._sum
+            if self._held:
+                # the oldest transaction may have started before the window
+                t_end, held = self._held[0]
+                busy -= max(0.0, (now - window) - (t_end - held))
+            return {'busy_s': max(0.0, busy), 'window_s': window,
+                    'missed': len(self._missed)}
+
+    def share(self, now: Optional[float] = None) -> Optional[float]:
+        snap = self.snapshot(now)
+        return None if snap is None else min(1.0, snap['busy_s'] / snap['window_s'])
+
 
 class _EndpointArbiter:
     """A FIFO turnstile for one TCP endpoint.
@@ -78,6 +145,9 @@ class _EndpointArbiter:
         # never assumed — a DataManager answers in ~0.4 s alone and ~3 s with
         # company, and no configuration file can know which you have.
         self.samples = deque(maxlen=200)
+        # what the lane's wire held in the last minute (one value per lane,
+        # whatever number of devices share it — D21)
+        self.wire = _WireMeter()
 
     def acquire(self, budget_s: float) -> None:
         """Wait for this caller's turn, or raise TimeoutError."""
@@ -93,6 +163,7 @@ class _EndpointArbiter:
                     except ValueError:  # pragma: no cover — already popped
                         pass
                     self.timeouts += 1
+                    self.wire.miss()
                     self._cv.notify_all()
                     raise TimeoutError("endpoint busy")
                 self._cv.wait(left)
@@ -124,6 +195,7 @@ class _EndpointArbiter:
                 self._free_at = time.monotonic() + self.min_gap
             if held_s is not None:
                 self.samples.append(held_s)
+                self.wire.add(held_s)
             self._cv.notify_all()
 
     def cost(self):
@@ -248,6 +320,33 @@ def endpoint_bus_stats(host: str, port: int) -> Dict[str, Any]:
     }
 
 
+def bus_occupancy(host: str, port: int) -> Optional[Dict[str, Any]]:
+    """How busy the bus behind host:port was in the last minute, measured on
+    the wire: Σ over its lanes of (held ÷ window), capped at 1 — lanes on a
+    gateway may overlap, the share never goes above the whole. None before
+    anything has been measured."""
+    prefix = f"{host}:{port}#"
+    with _ARBITERS_LOCK:
+        lanes = [a for k, a in _ARBITERS.items() if k.startswith(prefix)]
+    busy_s = share = 0.0
+    window = 0.0
+    missed = 0
+    seen = False
+    for a in lanes:
+        snap = a.wire.snapshot()
+        if snap is None:
+            continue
+        seen = True
+        busy_s += snap['busy_s']
+        window = max(window, snap['window_s'])
+        share += snap['busy_s'] / snap['window_s']
+        missed += snap['missed']
+    if not seen:
+        return None
+    return {'share': min(1.0, share), 'busy_s': round(busy_s, 3),
+            'window_s': round(window, 1), 'missed': missed, 'lanes': len(lanes)}
+
+
 def endpoint_arbiter(host: str, port: int, lane: int = 0,
                      min_gap: float = 0.0) -> _EndpointArbiter:
     """The turnstile for one LANE — the same object for every connection that
@@ -268,6 +367,7 @@ def endpoint_arbiter(host: str, port: int, lane: int = 0,
 
 # Suppress pymodbus exception logging
 logging.getLogger("pymodbus").setLevel(logging.CRITICAL)
+
 
 logger = logging.getLogger(__name__)
 
@@ -410,6 +510,9 @@ class ModbusConnection:
                          if getattr(config, 'serialize_endpoint', False)
                          and config.host else None)
         self._bus_busy_logged = False
+        # this connection's own wire time in the last minute: its share of
+        # the bus, whether it shares the bus or has it to itself
+        self._wire = _WireMeter()
         # Retired connections never touch the wire again (audit DP-5): after a
         # config reconnect swaps in a NEW ModbusConnection, an orphan poller
         # still finishing its cycle would otherwise REOPEN this one on demand —
@@ -449,7 +552,11 @@ class ModbusConnection:
         a device failure: the cycle is skipped, exactly as if it had not come
         round yet, so a busy gateway never masquerades as a dead one."""
         if self._arbiter is None:
-            yield True
+            _t0 = time.perf_counter()
+            try:
+                yield True
+            finally:
+                self._wire.add(time.perf_counter() - _t0)
             return
         try:
             self._arbiter.acquire(self.config.endpoint_wait_s)
@@ -461,7 +568,9 @@ class ModbusConnection:
         try:
             yield True
         finally:
-            self._arbiter.release(time.perf_counter() - _t0)
+            held = time.perf_counter() - _t0
+            self._arbiter.release(held)
+            self._wire.add(held)
 
     def _note_bus_busy(self) -> None:
         """One event per episode of endpoint congestion — the operator needs to
@@ -491,6 +600,11 @@ class ModbusConnection:
             self._reopen_logged = False       # the next outage announces itself
             self._bus_busy_logged = False
         logger.info("Modbus device recovered (%s)", _endpoint(self.config))
+        for hook in list(getattr(self, 'on_recovered', ()) or ()):
+            try:
+                hook()
+            except Exception:  # noqa: BLE001 — a hook never breaks the read path
+                logger.debug("recovery hook failed", exc_info=True)
         self.record_event("info", "recovered", "device reachable again")
 
     def _note_unreachable(self, reason: str) -> None:
@@ -510,6 +624,8 @@ class ModbusConnection:
         """Tally one failed attempt into the taxonomy. Never raises."""
         try:
             kind = _classify_error(obj)
+            self.last_error_kind = kind          # what the last failure was (diagnostics)
+            self._read_tl().kind = kind          # …and THIS thread's read, which the setup check reads
             with self._ev_lock:
                 self.error_counts[kind] = self.error_counts.get(kind, 0) + 1
         except Exception:  # noqa: BLE001
@@ -585,6 +701,9 @@ class ModbusConnection:
                         self.client.close()
                     except Exception:  # noqa: BLE001
                         pass
+                if not gateway_role.wire_allowed():       # a standby never opens a device's wire
+                    self.client, self.connected = None, False
+                    return False
                 self.client = self._new_client()
                 self.connected = self.client.connect()
                 if self.connected:
@@ -613,6 +732,18 @@ class ModbusConnection:
                 logger.debug("%sreleased the shared access point (%d user(s) left)",
                              self._tag_or_empty(), self._tp.users)
 
+    def _read_tl(self):
+        tl = self.__dict__.get('_tl')
+        if tl is None:
+            tl = self.__dict__.setdefault('_tl', threading.local())
+        return tl
+
+    def last_read_error(self) -> Optional[str]:
+        """Why THIS thread's last read failed: 'exception_2', …, or None (it
+        was not refused by the device — a busy turn, a stop, a retired
+        connection). Another poller's failure never leaks in."""
+        return getattr(self._read_tl(), 'kind', None)
+
     def read_registers(self, address: int, count: int,
                        register_type: str = "holding",
                        stop_event=None) -> Optional[List[int]]:
@@ -625,6 +756,7 @@ class ModbusConnection:
         transactions still never overlap (each is serialized by the lock); they
         just interleave between retries. Re-checking the socket at the top of
         every attempt makes this safe against a peer thread reconnecting."""
+        self._read_tl().kind = None
         for attempt in range(self.config.retry_attempts):
             # a retired connection (config reconnect swapped it out) or a
             # stopping poller must not spend the remaining retry budget on the
@@ -639,22 +771,17 @@ class ModbusConnection:
                 if not _turn:
                     return None
                 try:
-                    # Reconnect if needed — close the dead client first so its
-                    # socket FD is released now, not whenever GC gets to it.
-                    if not self.connected or not self.client.is_socket_open():
-                        if self.client:
-                            try:
-                                self.client.close()
-                            except Exception:  # noqa: BLE001
-                                pass
-                        self.client = self._new_client()
-                        self.connected = self.client.connect()
-                        if not self.connected:
-                            self._count_error("connect refused")
-                            # config-controlled, like every other failure path
-                            # (was a hardcoded 100 ms — hammered a down device
-                            # with connects at 10/s per group)
-                            retry_sleep = self.config.retry_delay
+                    # Reconnect if needed, through the one door every other
+                    # path uses — it closes a dead client first, and on a
+                    # standby it puts nothing on the wire
+                    if not self._ensure_connected():
+                        if not gateway_role.wire_allowed():
+                            return None
+                        self._count_error("connect refused")
+                        # config-controlled, like every other failure path
+                        # (was a hardcoded 100 ms — hammered a down device
+                        # with connects at 10/s per group)
+                        retry_sleep = self.config.retry_delay
 
                     if retry_sleep is None:
                         # Janitza uses 0-based addressing in documentation
@@ -742,7 +869,17 @@ class ModbusConnection:
         return None
 
     def _ensure_connected(self) -> bool:
-        """(Re)establish the socket; close a dead client first. Caller holds lock."""
+        """(Re)establish the socket; close a dead client first. Caller holds lock.
+        Every read, write, probe and scan comes through here: a standby
+        gateway closes the socket and puts nothing on the wire."""
+        if not gateway_role.wire_allowed():
+            if self.client:
+                try:
+                    self.client.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            self.client, self.connected = None, False
+            return False
         if not self.connected or not (self.client and self.client.is_socket_open()):
             if self.client:
                 try:
@@ -843,7 +980,35 @@ class ModbusConnection:
         These function codes are idempotent (writing the same value twice yields
         the same state), so a single reconnect-and-retry is safe. Returns
         (ok: bool, error: Optional[str]). Never writes input/discrete (read-only).
+        A standby gateway writes nothing: the one place every write passes.
         """
+        if not gateway_role.wire_allowed():
+            return False, gateway_role.STANDBY_WRITE
+        # a device that needs a breath between writes (its template's
+        # protocol.min_write_gap_s — an interface that relays them slowly):
+        # wait out the rest of the gap before taking the bus
+        gap = float(getattr(self, 'min_write_gap_s', 0) or 0)
+        if self._retired:
+            return False, "connection retired (reconfigured)"
+        if gap > 0:
+            # one write at a time on this device, and the gap measured from the
+            # END of the previous one: a setup write and a command arriving
+            # together must not go out back to back
+            with self.__dict__.setdefault('_write_gap_lock', threading.Lock()):
+                wait = getattr(self, '_last_write_mono', 0.0) + gap - time.monotonic()
+                if wait > 0:
+                    time.sleep(min(wait, gap))
+                try:
+                    return self._write_now(address, register_type=register_type, values=values,
+                                           coils=coils, prefer_fc6=prefer_fc6)
+                finally:
+                    self._last_write_mono = time.monotonic()
+        return self._write_now(address, register_type=register_type, values=values,
+                               coils=coils, prefer_fc6=prefer_fc6)
+
+    def _write_now(self, address: int, *, register_type: str = "holding",
+                   values: Optional[List[int]] = None, coils=None,
+                   prefer_fc6: bool = False):
         # a write queues on the shared endpoint like any read: a command that
         # barges in mid-sweep is exactly what makes a cheap gateway stumble
         with self._endpoint_gate() as _turn, self.lock:
@@ -863,7 +1028,16 @@ class ModbusConnection:
                             result = self.client.write_coil(address=address, value=bool(v), device_id=slave)
                     elif register_type == "holding":
                         vals = list(values or [])
-                        if len(vals) == 1 and prefer_fc6:
+                        if getattr(self, 'single_writes', False):
+                            # a device that knows no FC16 (its template's
+                            # protocol.single_register_writes): one FC6 per word,
+                            # in order, stopping at the first refusal
+                            result = None
+                            for i, v in enumerate(vals):
+                                result = self.client.write_register(address=address + i, value=v, device_id=slave)
+                                if hasattr(result, "isError") and result.isError():
+                                    break
+                        elif len(vals) == 1 and prefer_fc6:
                             result = self.client.write_register(address=address, value=vals[0], device_id=slave)
                         else:
                             result = self.client.write_registers(address=address, values=vals, device_id=slave)
@@ -893,7 +1067,12 @@ class RegisterPoller(threading.Thread):
                  publish_callback: Callable, device_id: str = "",
                  startup_jitter_s: float = 0.0,
                  sf_refs: Optional[set] = None,
-                 sf_last_good: Optional[Dict[str, float]] = None):
+                 sf_last_good: Optional[Dict[str, float]] = None,
+                 setup=None, max_read: int = 0):
+        # what the device must be told before some registers exist (device_setup.py)
+        self.setup = setup
+        # the template's protocol.max_registers_per_read (0 = the protocol's own)
+        self.max_read = int(max_read or 0)
         # Multi-device: tag the thread + logs with the device so several devices'
         # identically-named poll groups (realtime/normal/slow) are distinguishable.
         super().__init__(daemon=True,
@@ -1010,6 +1189,15 @@ class RegisterPoller(threading.Thread):
         # than that would ALWAYS fail (exception from the slave) and silently
         # never populate any register inside it — split instead.
         MAX_READ = 120   # small safety margin under the 125 protocol limit
+        if 0 < self.max_read < MAX_READ:
+            MAX_READ = self.max_read     # an interface that answers less per read
+        # a register a setup step provides exists only once the step is written:
+        # never batch it with one the device always answers, or a refusal (the
+        # setup not written yet, writes off, a power cut) loses both
+        _prov = [p for p in (self.setup.ranges() if self.setup else [])]
+
+        def _seg(addr):
+            return next((i for i, (lo, hi) in enumerate(_prov) if lo <= addr <= hi), -1)
         # How far apart two registers may sit and still share one batch read.
         # Default 10 (optimize contiguous maps); set modbus.max_gap=0 for strict
         # slaves that reject a read spanning unmapped addresses (exception 02).
@@ -1044,6 +1232,7 @@ class RegisterPoller(threading.Thread):
                     'registers': [reg]
                 }
             elif (reg_type == current_group['register_type']
+                  and _seg(reg.address) == _seg(current_group['start'])
                   and reg.address <= current_group['end'] + max_gap
                   and (max(current_group['end'], reg.address + reg_count)
                        - current_group['start']) <= MAX_READ
@@ -1115,6 +1304,11 @@ class RegisterPoller(threading.Thread):
 
             if raw_data is None:
                 logger.debug(f"{self._tag}Failed to read registers {group['start']}-{group['end']}")
+                # refused as an illegal address where a setup step provides the
+                # registers: the device forgot its setup (a power cut) — redo it
+                if (self.setup and self.connection.last_read_error() == 'exception_2'
+                        and self.setup.covers(group['start'], group['count'])):
+                    self.setup.invalidate(f"registers {group['start']}-{group['end']} refused")
                 continue
 
             # SunSpec dynamic-SF prescan: parse referenced *_SF registers
@@ -1254,6 +1448,8 @@ class RegisterPoller(threading.Thread):
             while not self._stop_event.is_set():
                 cycle_start = time.monotonic()
                 try:
+                    if self.setup:
+                        self.setup.ensure()          # cheap once written
                     data = self._poll_registers()
 
                     # a disconnect() during a slow read sets the event — don't
@@ -1350,7 +1546,10 @@ class ModbusClient:
 
     def __init__(self, config: ModbusConfig, registers: List[SelectedRegister],
                  poll_groups: Dict[str, PollGroup], publish_callback: Callable = None,
-                 byte_order: str = "big", device_id: str = ""):
+                 byte_order: str = "big", device_id: str = "",
+                 setup_steps: Optional[List[Dict]] = None, setup_gate: Optional[Callable] = None,
+                 min_write_gap_s: float = 0.0, max_read: int = 0,
+                 single_writes: bool = False):
         """
         Initialize Modbus client.
 
@@ -1373,6 +1572,14 @@ class ModbusClient:
         self.byte_order = byte_order
         self.parser = RegisterParser(byte_order)
         self.connection = ModbusConnection(config, trace_label=device_id)
+        self.min_write_gap_s = float(min_write_gap_s or 0)
+        self.single_writes = bool(single_writes)
+        self.max_read = int(max_read or 0)
+        # the template's setup writes; written before the first poll and again
+        # when the device returns from an outage (it may have rebooted)
+        from .device_setup import SetupRunner
+        self.setup = SetupRunner(self.connection, setup_steps or [], device_id, setup_gate) if setup_steps else None
+        self._wire_connection()
 
         self.pollers: List[RegisterPoller] = []
         self.connected = False
@@ -1454,6 +1661,8 @@ class ModbusClient:
                 startup_jitter_s=getattr(self.config, 'startup_jitter_s', 0.0),
                 sf_refs=device_sf_refs,
                 sf_last_good=device_sf_last_good,
+                setup=self.setup,
+                max_read=self.max_read,
             )
             poller.start()
             self.pollers.append(poller)
@@ -1626,6 +1835,18 @@ class ModbusClient:
         finally:
             self._lifecycle_lock.release()
 
+    def _wire_connection(self) -> None:
+        """What the template asks of THIS device's connection — the pause
+        between writes, FC6-only writes, the setup and its outage hook. Run again whenever the
+        connection is replaced (a reconnect), or the setup would keep writing
+        through the retired one."""
+        self.connection.min_write_gap_s = self.min_write_gap_s
+        self.connection.single_writes = self.single_writes
+        if self.setup:
+            self.setup.connection = self.connection
+            self.setup.invalidate("connection replaced", force=True)
+            self.connection.on_recovered = [lambda: self.setup.invalidate("device back after an outage", force=True)]
+
     def _reconnect_locked(self) -> bool:
         # Stop all pollers. With the stop event now checked between read-groups
         # AND between retry attempts (audit DP-5), a poller exits within one
@@ -1652,6 +1873,7 @@ class ModbusClient:
 
         # Create new connection with current config
         self.connection = ModbusConnection(self.config, trace_label=self.device_id)
+        self._wire_connection()
 
         # Reconnect. Start pollers UNCONDITIONALLY: they reconnect on demand
         # inside read_registers, so gating start_polling on the immediate
@@ -1681,6 +1903,11 @@ class ModbusClient:
             # unpolled forever.
             self.start_polling()
         logger.info("Modbus registers reloaded")
+
+    def _bus_occupancy(self) -> Optional[float]:
+        wire = getattr(getattr(self, 'connection', None), '_wire', None)
+        share = wire.share() if wire is not None else None
+        return None if share is None else round(share, 4)
 
     def get_stats(self) -> Dict:
         """Return client statistics."""
@@ -1729,6 +1956,11 @@ class ModbusClient:
             'staleness_age_s': (round(time.monotonic() - last_success_mono, 1)
                                 if last_success_mono else None),
             'poll_groups_detail': poll_groups_detail,
+            # this device's share of its bus in the last minute, measured on
+            # the wire (0..1, None before 5 s) — never its queue wait
+            'bus_occupancy': self._bus_occupancy(),
+            # the template's setup writes: done? how many runs, the last error
+            **({'setup': self.setup.stats()} if self.setup else {}),
             'events': self.connection.snapshot_events(),
         }
 

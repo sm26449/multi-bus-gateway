@@ -1,0 +1,68 @@
+rules:
+- id: ov-u1
+  label: Over-voltage protection · inverter 1
+  enabled: true
+  mode: armed
+  target: {device: pv-u1, command: power_limit}
+  kind: steps
+  signal: max(pv-u1.voltage_l1_n, pv-u1.voltage_l2_n, pv-u1.voltage_l3_n)
+  signal_valid: {min: 100, max: 350, max_step: 10}
+  stale_after_s: 90
+  steps:
+  - {at: 250.0, value: 80, label: Warning}
+  - {at: 253.0, value: 50, label: Emergency, fast: true}
+  release_below: 248.0
+  normal: {value: 100}
+  params: {revert_s: 0, ramp_s: 10}
+  layer: safety
+  timing: {every_s: 2, debounce: 3, min_interval_s: 30, reassert_s: 120}
+- id: ov-yield
+  label: Yields under the steps
+  enabled: true
+  mode: shadow
+  target: {device: pv-u2, command: power_limit}
+  kind: steps
+  signal: pv-u2.voltage_l1_n
+  steps:
+  - {at: 250, value: 70}
+  release_below: 248
+  normal: null
+  priority: 85
+  timing: {every_s: 2, debounce: 3, min_interval_s: 30, reassert_s: 120, for_s: 60}
+- id: night
+  label: Night limit
+  enabled: true
+  mode: shadow
+  target: {device: pv-u2, command: power_limit}
+  kind: schedule
+  schedule:
+  - {days: all, at: '06:00', params: {value: 40, revert_s: 0}, label: Morning}
+  - {days: Mon-Fri, at: '22:00', value: null, label: Night}
+  timing: {every_s: 2, debounce: 3, min_interval_s: 30, reassert_s: 120}
+- id: cond
+  label: Condition with release
+  enabled: true
+  mode: shadow
+  target: {device: pv-u1, command: power_limit}
+  kind: condition
+  when: pv-u1.voltage_l1_n > 255
+  release: pv-u1.voltage_l1_n < 245
+  then: {params: {value: 30}}
+  else: null
+  off_value: 100
+  timing: {every_s: 2, debounce: 3, min_interval_s: 30, reassert_s: 120}
+- id: trim
+  label: Trim with valid range
+  enabled: true
+  mode: shadow
+  target: {device: pv-u2, command: power_limit}
+  kind: trim
+  signal: pv-u2.voltage_l1_n
+  signal_valid: {min: 100, max: 350}
+  above: 250
+  below: 240
+  step: 2
+  min: 20
+  max: 100
+  start: 60
+  timing: {every_s: 2, debounce: 3, min_interval_s: 30, reassert_s: 120}

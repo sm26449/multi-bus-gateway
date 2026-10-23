@@ -12,10 +12,14 @@
  * read over solar_api (http) AND sunspec (tcp), on hosts that REFUSE.
  */
 import { chromium } from 'playwright';
+import { openDeviceTab } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://localhost:18087';
 const EP = process.env.ENDPOINT || 'sunfield';
 const UNIT = process.env.UNIT || 'sunfield-u1';
+// the sunspec source reads at its template's `normal` rhythm (the fixture
+// sets none): asked, never written down, so a template change cannot stale it
+const SS = (await (await fetch(BASE + '/api/device-templates/fronius_sunspec_inverter')).json()).device_template.poll_groups.normal.interval;
 const results = [];
 const check = (name, cond, extra = '') => {
   results.push({ name, ok: !!cond });
@@ -41,7 +45,7 @@ try {
   // ---- 1. the list row says how the unit is read, not the fallback ----------
   const row = page.locator(`.device-row[data-args*="${UNIT}"]`).first();
   const rowText = await row.innerText();
-  check('the unit row names its sources and rhythms', /solar_api HTTP 5 s/.test(rowText) && /sunspec Modbus TCP 20 s/.test(rowText), rowText.slice(0, 90));
+  check('the unit row names its sources and rhythms', /solar_api HTTP 5 s/.test(rowText) && new RegExp(`sunspec Modbus TCP ${SS} s`).test(rowText), rowText.slice(0, 90));
   check('the unit row does not describe a bare TCP :9', !/TCP · 127|:9 · unit/.test(rowText));
   const epRow = await page.locator('.endpoint-row').first().innerText();
   check('the installation row says what it holds and how it is read', /Inverters/.test(epRow) && /Read via/.test(epRow), epRow.slice(0, 90));
@@ -58,20 +62,20 @@ try {
 
   // ---- 3. Overview: truth about how it is read --------------------------------
   const ov = await page.locator('[data-dpanel="overview"]').innerText();
-  check('Overview states every source with protocol and rhythm', /solar_api[\s\S]*HTTP[\s\S]*every 5 s/.test(ov) && /sunspec[\s\S]*Modbus TCP 127\.0\.0\.1:9 · unit 1[\s\S]*every 20 s/.test(ov));
+  check('Overview states every source with protocol and rhythm', /solar_api[\s\S]*HTTP[\s\S]*every 5 s/.test(ov) && new RegExp(`sunspec[\\s\\S]*Modbus TCP 127\\.0\\.0\\.1:15502 · unit 1[\\s\\S]*every ${SS} s`).test(ov));
   check('Overview does not show a Modbus source with an empty host', !/—:502|Modbus TCP\s*\n?—/.test(ov));
   check('the footer states this unit\'s rhythm', /read every[\s\S]*solar_api/.test(await page.locator('#pollGroupsStatus').innerText()));
 
   // ---- 4. the Edit tab is "Read via": no form for a connection that is not -----
-  const tab = page.locator('#deviceWsTabs [data-dtab="edit"]');
+  const tab = page.locator('#deviceWsTabs [data-dtab="connection"]');
   check('the tab is named Read via', /Read via/.test(await tab.innerText()));
-  await tab.click(); await page.waitForTimeout(600);
-  const rv = page.locator('[data-dpanel="edit"]');
+  await openDeviceTab(page, 'connection'); await page.waitForTimeout(600);
+  const rv = page.locator('[data-dpanel="connection"]');
   check('no host / port / timeout fields', await rv.locator('#ddvHost, #ddvPort, #ddvTimeout, #ddvTemplate').count() === 0);
   check('no Save intervals, no Test connection', !/Save intervals|Test connection/.test(await rv.innerText()));
   check('both sources listed with template and interval',
         await rv.locator('[data-src-row="solar_api"]').count() === 1 && await rv.locator('[data-src-row="sunspec"]').count() === 1
-        && /fronius_solar_api_inverter/.test(await rv.innerText()) && /20 s/.test(await rv.innerText()));
+        && /fronius_solar_api_inverter/.test(await rv.innerText()) && new RegExp(`\\b${SS} s`).test(await rv.innerText()));
   check('the name is the one editable thing and has a label', await rv.locator('label[for="ddvName"]').count() === 1 && await rv.locator('#ddvName').count() === 1);
 
   // rename round-trip
@@ -84,7 +88,7 @@ try {
   check('the crumb shows the new name', (await h2.innerText()).includes('East inverter'));
 
   // ---- 5. Outputs point to the installation, not to a destructive dialog -------
-  await page.click('[data-dtab="outputs"]'); await page.waitForTimeout(600);
+  await openDeviceTab(page, 'outputs'); await page.waitForTimeout(600);
   const outs = page.locator('[data-dpanel="outputs"]');
   check('Outputs say routing is set on the installation', /set on its installation/.test(await outs.innerText()));
   check('and offer Open installation, not Edit endpoint', await outs.locator('button:has-text("Open installation")').count() === 1 && !/Edit endpoint/.test(await outs.innerText()));

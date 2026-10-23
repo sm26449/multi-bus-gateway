@@ -1,0 +1,19 @@
+# plant_groups_e2e: the same installation before it had an HTTP source or a
+# spare — `inverters` (units 1, 2) and `grid` (unit 240 under its own id).
+endpoints:
+  - id: sunfield
+    name: Sunfield PV
+    enabled: true
+    groups:
+      - id: inverters
+        role: inverter
+        template: fronius_sunspec_inverter
+        units: [1, 2]
+        sources: [{id: sunspec, protocol: tcp, host: 127.0.0.1, port: 15502, timeout: 1,
+                   template: fronius_sunspec_inverter}]
+        commands: [{name: power_limit}, {name: restore}]
+      - id: grid
+        role: meter
+        units: [{unit_id: 240, id: sunfield-meter-240, name: Grid meter}]
+        sources: [{id: sunspec, protocol: tcp, host: 127.0.0.1, port: 15502, timeout: 1,
+                   template: fronius_sunspec_meter}]

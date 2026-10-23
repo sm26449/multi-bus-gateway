@@ -84,7 +84,7 @@ Object.assign(JanitzaMonitor.prototype, {
             if (bsel) {
                 const want = this._diagBus || '';
                 bsel.innerHTML = `<option value="">${this._esc(this.t('diag.allBuses', 'All buses'))}</option>`
-                    + [...buses].map(([k, v]) => `<option value="${this._esc(k)}">${this._esc(v.label)} · ${this._esc(this.t('bridges.nDevices', '{n} device(s)', { n: v.n }))}</option>`).join('');
+                    + [...buses].map(([k, v]) => `<option value="${this._esc(k)}">${this._esc(v.label)} · ${this._esc(this.tn('bridges.nDevices', v.n, '{n} devices'))}</option>`).join('');
                 if (want && !buses.has(want)) bsel.insertAdjacentHTML('beforeend', `<option value="${this._esc(want)}">${this._esc(want)}</option>`);
                 bsel.value = want;
             }
@@ -100,6 +100,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 psel.innerHTML = opts;
                 if (cur) psel.value = cur;
             }
+            this._pickDevice('diagDeviceFilter');
+            this._pickDevice('probeDevice');
         } catch (_) { /* filter stays generic */ }
     },
 
@@ -178,7 +180,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="diag-table-wrap">
                 <table class="data-table probe-table">
                     <thead><tr>
-                        <th data-i18n="probe.colType">Type</th>
+                        <th>${this._esc(this.t('probe.colType', 'Type'))}</th>
                         <th class="mono">ABCD <small>big</small></th>
                         <th class="mono">CDAB <small>word swap</small></th>
                         <th class="mono">BADC <small>byte swap</small></th>
@@ -187,7 +189,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <tbody>${rows}</tbody>
                 </table>
             </div>
-            <p class="field-hint" data-i18n="probe.hint">The column that yields a plausible value is the device's word order — set it as byte_order in the device template.</p>
+            <p class="field-hint">${this._esc(this.t('probe.hint', 'The column that yields a plausible value is the device\'s word order — set it as byte_order in the device template.'))}</p>
             <div class="probe-apply">
                 <span class="field-hint">${this._esc(this.t('probe.applyLead', 'Use this order on the device\'s template:'))}</span>
                 ${[['big', 'ABCD'], ['little', 'CDAB'], ['badc', 'BADC'], ['dcba', 'DCBA']].map(([v, l]) =>
@@ -428,13 +430,13 @@ Object.assign(JanitzaMonitor.prototype, {
                 <table class="data-table probe-table">
                     <thead><tr>
                         <th>ID</th>
-                        <th data-i18n="ss.colModel">Model</th>
-                        <th data-i18n="ss.colAddr">Address</th>
-                        <th data-i18n="ss.colLen">Length</th>
+                        <th>${this._esc(this.t('ss.colModel', 'Model'))}</th>
+                        <th>${this._esc(this.t('ss.colAddr', 'Address'))}</th>
+                        <th>${this._esc(this.t('ss.colLen', 'Length'))}</th>
                     </tr></thead>
                     <tbody>${rows}</tbody>
                 </table>
             </div>
-            <p class="field-hint" data-i18n="ss.hint">Model addresses are live from the device — use them when building a template (the register block of a model starts at its address + 2).</p>`;
+            <p class="field-hint">${this._esc(this.t('ss.hint', 'Model addresses are live from the device — use them when building a template (the register block of a model starts at its address + 2).'))}</p>`;
     },
 });

@@ -8,12 +8,15 @@
  *   MBG_URL=http://localhost:18087 CHROMIUM_PATH=<chrome> node commands_e2e.mjs
  */
 import { chromium } from 'playwright';
+import { watchDialogs } from './lib/dialogs.mjs';
+import { openDeviceTab } from './lib/device-page.mjs';
 const BASE = process.env.MBG_URL || 'http://localhost:18087';
 const results = [];
 const check = (name, cond, extra = '') => { results.push({ name, ok: !!cond }); console.log(`${cond ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + extra : ''}`); };
 const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });
 page.setDefaultTimeout(20000);
+const dlg = await watchDialogs(page);
 // a 403 from a command is the expected answer on this fixture (writes off), not a page error
 const errs = []; page.on('console', m => { if (m.type() === 'error' && !/403|502/.test(m.text())) errs.push(m.text()); }); page.on('pageerror', e => errs.push(String(e)));
 try {
@@ -45,7 +48,7 @@ try {
   const dry = await m.locator('#cmdOut').innerText();
   check('a dry run answers in words for each unit', (dry.match(/failed|refused|would write/gi) || []).length >= 2, dry.slice(0, 120));
   // Run with writes off: the gate is said
-  page.once('dialog', d => d.accept());
+  dlg.answers.push(true);
   await m.locator('[data-endpoint-save]').click(); await page.waitForTimeout(3000);
   const fb = (await m.locator('#endpointFeedback').innerText()) + ' ' + (await m.locator('#cmdOut').innerText());
   check('with writes off the refusal is said in words', /disabled|refused|failed|write/i.test(fb), fb.slice(0, 120));
@@ -62,7 +65,7 @@ try {
   await page.locator(`[data-group-units="inverters"] tr button[data-action="openDeviceDetail"]`).first().click(); await page.waitForTimeout(2000);
   const tab = page.locator('#deviceWsTabs [data-dtab="commands"]');
   check('the unit page has a Commands tab', await tab.count() === 1);
-  await tab.click(); await page.waitForTimeout(1500);
+  await openDeviceTab(page, 'commands'); await page.waitForTimeout(1500);
   const panel = page.locator('#deviceDetailView [data-dpanel="commands"]');
   check('it lists both commands with Run and Test', await panel.locator('.cmd-card').count() === 2
         && await panel.locator('.cmd-card[data-cmd="power_limit"] button:has-text("Run")').count() === 1);

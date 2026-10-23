@@ -1,0 +1,27 @@
+# Shared by every variant: a gateway that reaches nothing real. Every address
+# is 127.0.0.1 INSIDE the container, where nothing listens, so each read and
+# each write is refused — the offline and refusal paths are the ones under
+# test, and nothing can ever reach a drive or an inverter.
+config_version: 3.91.0
+modbus:
+  host: 127.0.0.1
+  port: 15020
+  unit_id: 1
+  timeout: 1
+  retry_attempts: 1
+mqtt:
+  enabled: false
+  broker: none.invalid
+  default_topic_pattern: mbg/devices/{device}
+influxdb:
+  enabled: false
+  url: http://none.invalid:8086
+ui:
+  host: 0.0.0.0
+  port: 8080
+  timezone: Europe/Paris
+  auth:
+    enabled: false
+    username: admin
+security:
+  allow_writes: false

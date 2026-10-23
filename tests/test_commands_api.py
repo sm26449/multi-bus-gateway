@@ -548,3 +548,115 @@ def test_a_lease_revert_runs_even_after_writes_were_disabled(tmp_path):
     # a normal command still meets the gates
     r = client.post("/api/devices/pv-u1/commands/power_limit", json={"value": 40})
     assert r.status_code == 403
+
+
+@needs_tc
+def test_a_setting_the_device_forgets_is_written_again_until_the_safe_value(tmp_path, monkeypatch):
+    """refresh_s (a Samsung FR limit lasts one hour on the unit): after a run
+    the gateway writes the same parameters again every refresh_s; the safe
+    parameters end it. Declared in the template, nothing per vendor here."""
+    import threading as _th
+    timers = []
+
+    class _T:
+        def __init__(self, every, fn):
+            self.every, self.fn, self.cancelled, self.daemon = every, fn, False, True
+            timers.append(self)
+
+        def start(self):
+            pass
+
+        def cancel(self):
+            self.cancelled = True
+    monkeypatch.setattr(_th, "Timer", _T)
+    inv = _Inverter(sf=-2)
+    cfg, app, client = _app(tmp_path, {'pv-u1': inv})
+    tpl = app.state.template_registry.get('fronius_sunspec_inverter')
+    monkeypatch.setitem(tpl.commands['power_limit'], 'refresh_s', 1800)
+    r = client.post("/api/devices/pv-u1/commands/power_limit", json={"value": 60, "revert_s": 300})
+    assert r.status_code == 200 and len(inv.writes) == 1
+    cmd = next(c for c in client.get("/api/devices/pv-u1/commands").json()['commands'] if c['name'] == 'power_limit')
+    assert cmd['refreshing'] is True and cmd['refresh_s'] == 1800
+    refresh = [t for t in timers if t.every == 1800]
+    assert len(refresh) == 1
+    refresh[0].fn()                                        # the half hour has passed
+    assert len(inv.writes) == 2 and inv.writes[1] == inv.writes[0]
+    a = [x for x in _audit(tmp_path) if x.get('action') == 'command'][-1]
+    assert a['detail']['via'] == 'refresh'
+    # the safe value (100 %) ends it
+    r = client.post("/api/devices/pv-u1/commands/power_limit", json={"value": 100})
+    assert r.status_code == 200
+    cmd = next(c for c in client.get("/api/devices/pv-u1/commands").json()['commands'] if c['name'] == 'power_limit')
+    rearmed = [t for t in timers if t.every == 1800]
+    assert cmd['refreshing'] is False and len(rearmed) == 2 and rearmed[-1].cancelled
+
+
+def test_a_device_that_needs_a_breath_between_writes_gets_it(monkeypatch):
+    """protocol.min_write_gap_s: two writes to one device are spaced."""
+    from multibus import modbus_client as mc
+    from multibus.config import ModbusConfig
+    slept = []
+    clock = [100.0]
+    monkeypatch.setattr(mc.time, "sleep", lambda s: slept.append(round(s, 2)))
+    monkeypatch.setattr(mc.time, "monotonic", lambda: clock[0])
+    conn = mc.ModbusConnection(ModbusConfig(host="192.0.2.77", port=502, unit_id=1))
+
+    class _C:
+        def is_socket_open(self): return True
+        def connect(self): return True
+        def close(self): pass
+        def write_registers(self, address, values, device_id): return type('R', (), {'isError': lambda s: False})()
+    conn._new_client = _C
+    conn.min_write_gap_s = 2
+    conn.write(10, values=[1, 2])
+    clock[0] += 0.5
+    conn.write(12, values=[3])
+    assert slept and slept[-1] == 1.5                     # waited out the rest of the gap
+    mc._TRANSPORTS.clear()
+
+
+@needs_tc
+def test_a_device_of_its_own_enables_its_template_commands(tmp_path):
+    """Outside an installation there was no way to enable a command; now the
+    device's Commands tab does it (audited), an edit of the device keeps it,
+    and a dry run previews a command that is not enabled yet."""
+    from tests.test_devices_api import make_app
+    cfg, client = make_app(tmp_path)
+    cfg.security.allow_writes = True
+    assert client.post("/api/devices", json={"id": "inv9", "template": "fronius_sunspec_inverter", "enabled": False,
+                                             "connection": {"protocol": "tcp", "host": "192.0.2.9", "port": 502,
+                                                            "unit_id": 1}}).status_code == 200
+    en = lambda: {c['name']: c['enabled'] for c in client.get("/api/devices/inv9/commands").json()['commands']}  # noqa: E731
+    assert en() == {'power_limit': False, 'restore': False}
+    # not enabled: Run is refused, a dry run only reads (here: no driver → 409, not 403)
+    assert client.post("/api/devices/inv9/commands/power_limit", json={"value": 50}).status_code == 403
+    assert client.post("/api/devices/inv9/commands/power_limit/dry-run", json={"value": 50}).status_code == 409
+    r = client.put("/api/devices/inv9/commands/power_limit/enabled", json={"enabled": True})
+    assert r.status_code == 200 and en()['power_limit'] is True
+    # an edit from the wizard (no `commands` in it) keeps the binding
+    assert client.put("/api/devices/inv9", json={"id": "inv9", "template": "fronius_sunspec_inverter", "enabled": False,
+                                                 "connection": {"protocol": "tcp", "host": "192.0.2.10", "port": 502,
+                                                                "unit_id": 1}}).status_code == 200
+    assert en()['power_limit'] is True
+    assert client.put("/api/devices/inv9/commands/power_limit/enabled", json={"enabled": False}).status_code == 200
+    assert en()['power_limit'] is False
+    assert client.put("/api/devices/inv9/commands/nope/enabled", json={"enabled": True}).status_code == 404
+
+
+@needs_tc
+def test_a_lease_revert_runs_after_the_command_was_turned_off(tmp_path):
+    """API-A5: turning a command off while its lease runs used to refuse the
+    revert (403, retried for ever) — the device kept the commanded value."""
+    inv = _Inverter(sf=-2)
+    cfg, app, client = _app(tmp_path, {'pv-u1': inv})
+    r = client.post("/api/devices/pv-u1/commands/power_limit", json={"value": 40, "lease_s": 60})
+    assert r.status_code == 200 and inv.writes[-1][1][0] == 4000
+    # turned off (as the device page or the installation's group does): the
+    # binding stays, with enabled false
+    dev = app.state.registry.find('pv-u1')[1]
+    dev.commands = [dict(x, enabled=False) if x.get('name') == 'power_limit' else x for x in dev.commands]
+    app.state.lease_manager._leases[('pv-u1', 'command', 40232)]['revert'](lambda: True)
+    assert inv.writes[-1][1] == [10000, 0, 0, 0, 0]
+    # anything else still meets the gate
+    r = client.post("/api/devices/pv-u1/commands/power_limit", json={"value": 40})
+    assert r.status_code == 403

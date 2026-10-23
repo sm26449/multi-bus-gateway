@@ -8,6 +8,7 @@
     "version": "1.0.0",
     "author": "",
     "description": "Fronius Smart Meter 65A-3, 3-phase, wired DIRECTLY to your own RS-485 line (Modbus RTU, or an RTU-over-TCP serial bridge). Register map field-verified against the physical meter: INT32 low-word-first (CDAB), holding registers from address 0. Use this ONLY for a direct serial connection to the meter itself. If the meter hangs off a Fronius DataManager/datalogger (the usual PV-system wiring, meter at unit 240), use the separate 'Fronius SunSpec meter (int+SF, via datalogger)' template instead: same hardware, completely different register map.",
+    "kind": "meter",
     "source_document": "Field-verified against a physical Fronius Smart Meter 65A-3 over Modbus RTU (2026-08-11): |P|<=S per phase, S^2~=P^2+Q^2, PF=P/S, Freq=50Hz.",
     "protocol": {
       "byte_order": "little",

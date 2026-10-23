@@ -16,6 +16,7 @@
 #
 """Configuration loader for Multi-Bus Gateway."""
 
+import copy
 import os
 import shutil
 import re
@@ -28,6 +29,7 @@ from dataclasses import dataclass, field
 
 from . import __version__
 from .tombstone_store import TombstoneStore
+from . import meter_links as _meter_links
 
 
 # register spans (in 16-bit words) per data type — for overlap validation
@@ -226,6 +228,108 @@ def _serial_from_conn(c: Dict) -> Dict[str, Any]:
             ('serial_port', 'baudrate', 'parity', 'stopbits', 'bytesize') if k in c}
 
 
+_MODULE_ID = re.compile(r'^[a-z0-9][a-z0-9-]{0,39}$')
+_MODULE_ICON = re.compile(r'^[a-z0-9-]{1,40}$')
+
+
+def _modules(raw) -> List[Dict[str, str]]:
+    """`modules:` — separate services beside the gateway, listed in Settings →
+    Modules (the HA service, the ESP nodes service): {id, name, icon, url} and
+    optionally a description (what it is, how it is installed) and a health
+    path the page asks to show whether it answers. A wrong entry is skipped,
+    said."""
+    out: List[Dict[str, str]] = []
+    for m in raw if isinstance(raw, list) else []:
+        if not isinstance(m, dict):
+            continue
+        mid, name = str(m.get('id') or '').strip(), str(m.get('name') or '').strip()
+        url, icon = str(m.get('url') or '').strip(), str(m.get('icon') or 'puzzle').strip()
+        if not (_MODULE_ID.match(mid) and 0 < len(name) <= 40 and _MODULE_ICON.match(icon)
+                and re.match(r'^(/(?!/)|https?://)', url) and mid not in {x['id'] for x in out}):
+            logger.warning(f"modules: entry {m!r} skipped (id a-z0-9-, name 1..40, url /path or http(s)://)")
+            continue
+        entry = {'id': mid, 'name': name, 'icon': icon, 'url': url}
+        desc = str(m.get('description') or '').strip()
+        if desc:
+            entry['description'] = desc[:400]
+        health = str(m.get('health') or '').strip()
+        if health and re.match(r'^/(?!/)[\w./-]*$', health):
+            entry['health'] = health
+        out.append(entry)
+    return out
+
+
+PUBLISH_MODES = ('changed', 'all')
+
+
+def _publish_mode(raw, did: str) -> str:
+    """A device's own publish mode; "" = the gateway's."""
+    if raw in (None, ''):
+        return ''
+    if str(raw) in PUBLISH_MODES:
+        return str(raw)
+    logger.warning(f"devices[{did}]: publish_mode {raw!r} is not one of {PUBLISH_MODES}: the gateway's is used")
+    return ''
+
+
+def _seconds(raw, did: str, kind=float):
+    """A device's own heartbeat / write interval in seconds; None = the gateway's."""
+    if raw in (None, ''):
+        return None
+    try:
+        v = kind(raw)
+    except (TypeError, ValueError):
+        v = -1
+    if v < 0:
+        logger.warning(f"devices[{did}]: {raw!r} is not a number of seconds: the gateway's is used")
+        return None
+    return v
+
+
+def _block(raw, did: str, key: str, ignored: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """A device's own block (`energy_meter`, `rest_push`, …): a mapping, or
+    nothing. A hand-edited value of another shape drops the BLOCK — never the
+    device (a typo must not stop it polling) — and is noted in ``ignored``
+    (`device.key` -> why), which the status page and the event log show."""
+    if raw in (None, '', [], {}):
+        return {}
+    if isinstance(raw, dict):
+        return dict(raw)
+    why = f"{key} {raw!r} is not a mapping: ignored"
+    logger.warning(f"devices[{did}]: {why}")
+    if ignored is not None:
+        ignored[f"{did}.{key}"] = why
+    return {}
+
+
+def _kind_override(raw, did: str, ignored: Optional[Dict[str, str]] = None) -> str:
+    """A device's `kind:` override: one of the kinds, or nothing. Anything
+    else is dropped — never the device — and noted in ``ignored``."""
+    from .device_kind import OVERRIDABLE, normalize
+    if raw in (None, ''):
+        return ''
+    k = normalize(raw)
+    if k in OVERRIDABLE:
+        return k
+    why = f"kind {raw!r} is not one of {', '.join(OVERRIDABLE)}: ignored"
+    logger.warning(f"devices[{did}]: {why}")
+    if ignored is not None:
+        ignored[f"{did}.kind"] = why
+    return ''
+
+
+def _opcua_fields(raw) -> List[str]:
+    """`opcua.fields`: the value names a device serves on OPC UA; empty = all."""
+    if not isinstance(raw, (list, tuple)):
+        return []
+    out = []
+    for x in raw:
+        n = str(x or '').strip()
+        if n and n not in out:
+            out.append(n)
+    return out
+
+
 def _influx_tags(raw: Any, did: str) -> Dict[str, str]:
     """`influxdb.tags` as str->str; a malformed block is ignored, not fatal."""
     if raw in (None, {}):
@@ -247,9 +351,15 @@ def _mqtt_in_from_conn(c: Dict) -> Dict[str, Any]:
     # the broker replays on subscribe is dropped and a freshly-restarted
     # gateway shows '--' until each field happens to change. The client-side
     # flag existed but no config path could reach it (audit 2026-10-03).
+    # availability ({topic, online, offline}) and stale_after_s: how the
+    # source's health is judged (mqtt_input.py); a template may declare
+    # availability in protocol.availability, the connection overrides it.
+    # keepalive ({topic, payload, first_payload, every_s} or false): asking a
+    # source to keep publishing, the same way. tls_ca / tls_insecure: a
+    # device with its own certificate (a Victron GX on 8883).
     return {k: c[k] for k in
-            ('broker', 'port', 'username', 'password', 'tls', 'topic',
-             'accept_retained') if k in c}
+            ('broker', 'port', 'username', 'password', 'tls', 'tls_ca', 'tls_insecure', 'topic',
+             'accept_retained', 'availability', 'stale_after_s', 'vars', 'keepalive') if k in c}
 
 
 PRIMARY_DEVICE_ID = "umg512"
@@ -333,11 +443,33 @@ class DeviceConfig:
     ha_discovery_enabled: bool = True        # publish Home Assistant discovery for this device
     mqtt_enabled: bool = True                # route this device's values to MQTT
     influxdb_enabled: bool = True            # route this device's values to InfluxDB
+    # the device's own publishing; ""/None = the gateway's (Settings → MQTT /
+    # InfluxDB): mqtt.publish_mode + mqtt.heartbeat_interval, influxdb.publish_mode
+    # + influxdb.write_interval in its block
+    mqtt_publish_mode: str = ""
+    mqtt_heartbeat_s: Optional[int] = None
+    influxdb_publish_mode: str = ""
+    influxdb_write_interval_s: Optional[float] = None
     http_output_enabled: bool = False        # serve this device's live values as JSON (GET /api/meters/<id>)
+    # served on the OPC UA server (`opcua:`); [] = every value, else these names.
+    # A device without an `opcua:` block is on, as before the block existed;
+    # devices made since get an explicit `enabled: false`
+    opcua_enabled: bool = True
+    opcua_fields: List[str] = field(default_factory=list)
     rest_push: Dict[str, Any] = field(default_factory=dict)   # push values to a URL: {enabled,url,interval_s,headers,format,verify_tls,timeout}
     pq_recorder: Dict[str, Any] = field(default_factory=dict)  # Jasic PQ event recorder: {enabled,poll_s,archive_waveforms,base_url}
+    energy_meter: Dict[str, Any] = field(default_factory=dict)  # another device measures its electricity: {device, power, energy} (linked_meter.py)
+    meters: List[Dict[str, Any]] = field(default_factory=list)  # the meters that measure it, each in a role (meter_links.py)
+    meter_options: Dict[str, Any] = field(default_factory=dict)  # when its input/output values are honest: {min_load_w, tolerance_pct, max_skew_s} (meter_links.OPTION_DEFAULTS)
     endpoint_id: str = ""    # non-empty → materialized from a `endpoints:` entry
                           # (managed via the endpoint, not the device CRUD)
+    # non-empty → a component of that device (its `components:` list): read
+    # through the parent's connection, managed through the parent
+    component_of: str = ""
+    component_type: str = ""
+    component_instance: str = ""
+    # the kind of equipment an admin says it is (device_kind.py); '' = derived
+    kind: str = ""
     write_locked: bool = False   # per-device write lock (F3a): refuses every
                                  # write regardless of guards. The primary
                                  # defaults to locked (security.primary_write_locked).
@@ -347,10 +479,14 @@ class DeviceConfig:
             'id': self.id, 'name': self.name, 'template': self.template,
             'enabled': self.enabled, 'primary': self.primary,
             'endpoint_id': self.endpoint_id, 'write_locked': self.write_locked,
+            **({'component_of': self.component_of, 'component_type': self.component_type,
+                'component_instance': self.component_instance} if self.component_of else {}),
             'ha_discovery_enabled': self.ha_discovery_enabled,
             'mqtt_enabled': self.mqtt_enabled,
             'influxdb_enabled': self.influxdb_enabled,
             'http_output_enabled': self.http_output_enabled,
+            'opcua_enabled': self.opcua_enabled,
+            'opcua_fields': list(self.opcua_fields),
             'rest_push_enabled': bool(self.rest_push.get('enabled')),
             'pq_recorder_enabled': bool(self.pq_recorder.get('enabled')),
             'protocol': self.protocol,
@@ -469,6 +605,29 @@ class SecurityConfig:
     write_rate_limit_per_s: float = 10.0
 
 
+OPCUA_ENCRYPTION = ('required', 'optional', 'off')
+
+
+@dataclass
+class OpcUaConfig:
+    """The OPC UA server — the northbound face for SCADA and HMI panels.
+    Off by default: nothing is imported or opened until it is enabled."""
+    enabled: bool = False
+    host: str = "0.0.0.0"
+    port: int = 4840
+    # required: only Basic256Sha256 Sign&Encrypt; optional: also no security
+    # (some older HMIs need it — passwords then travel in clear on the LAN);
+    # off: no security at all
+    encryption: str = "required"
+    # anonymous clients (read-only); otherwise the gateway's own accounts
+    allow_anonymous: bool = False
+    update_s: float = 1.0                 # how often values are pushed into the address space
+    # behind a load balancer (a high-availability pair): the address clients
+    # are told, opc.tcp://<balancer>:<port>/<path>; the server still listens
+    # on host:port, and its certificate names the balancer's host
+    public_url: str = ""
+
+
 @dataclass
 class UIConfig:
     # SAFE default: loopback only (external audit B5 — ~120 routes used to be
@@ -497,6 +656,9 @@ class UIConfig:
     # IP stays reachable via ?local (client-side, so a down hostname can't lock
     # the operator out).
     canonical_url: str = ""
+    # Link to a companion service on the same host (the ESP nodes service,
+    # e.g. /nodes/). Empty = no link in the UI.
+    nodes_url: str = ""
     # login-failure lockout (per client IP)
     lockout_threshold: int = 5      # failed attempts before lockout
     lockout_minutes: int = 5        # lockout duration
@@ -611,6 +773,8 @@ class SelectedRegister:
     data_type: str
     poll_group: str
     description: str = ""  # Human-readable description from modbus_data.json
+    category: str = ""     # the template's section (outdoor, battery…) — also the
+                           # InfluxDB measurement of a field nothing else classifies
     json_path: str = ""   # HTTP/JSON + MQTT input: dot/bracket path into the JSON payload
     topic: str = ""       # MQTT input: the topic this register reads from (else device base topic)
     scale: float = 1.0    # Modbus input: engineering_value = raw / scale (SunSpec 10^-SF etc.)
@@ -661,6 +825,9 @@ class Config:
     def __init__(self, config_path: str = "config/config.yaml"):
         self.config_path = Path(config_path)
         self.registers_path = self.config_path.parent / "selected_registers.json"
+        # parsed register selections and the .good snapshots, per file version
+        self._regs_cache: Dict[Any, tuple] = {}
+        self._good_sigs: Dict[str, tuple] = {}
         self.all_registers_path = Path("docs/modbus_data.json")
         # soft-delete lifecycle lives in a collaborator (see tombstone_store.py)
         self._tombstones = TombstoneStore(self.config_path.parent / 'devices',
@@ -671,15 +838,22 @@ class Config:
         self.influxdb = InfluxDBConfig()
         self.ui = UIConfig()
         self.security = SecurityConfig()
+        self.opcua = OpcUaConfig()
         self.poll_groups: Dict[str, PollGroup] = {
             "realtime": PollGroup(interval=1, description="Real-time values"),
             "normal": PollGroup(interval=5, description="Standard measurements"),
             "slow": PollGroup(interval=60, description="Energy counters"),
         }
+        # the gateway's own groups (these + config.yaml polling.groups): what
+        # a group removed from a device falls back to
+        self.default_poll_groups: Dict[str, PollGroup] = {
+            n: PollGroup(interval=g.interval, description=g.description) for n, g in self.poll_groups.items()}
         self.selected_registers: List[SelectedRegister] = []
         self.all_registers: Dict = {}
         self.devices: List[DeviceConfig] = []
         self._raw_devices: List[Dict] = []
+        # `device.key` -> why a device's block was ignored at load (see _block)
+        self.ignored_blocks: Dict[str, str] = {}
         # Endpoints (one template + one endpoint + N unit ids → N materialized
         # devices). Raw yaml-shaped list; expanded in _build_devices().
         self._raw_endpoints: List[Dict] = []
@@ -688,6 +862,10 @@ class Config:
         # their own flag in the raw `devices[]` list). Off by default — the
         # /api/meters/<id> endpoint is opt-in per device.
         self.http_output_primary_enabled: bool = False
+        # the primary's OPC UA output (`opcua_output:`), like http_output
+        self.opcua_primary: Dict[str, Any] = {}
+        # companion services shown in the menu (`modules:`): [{id, name, icon, url}]
+        self.modules: List[Dict[str, str]] = []
         # Generic REST push for the PRIMARY device (non-primary carry their own in
         # the devices[] list). {enabled,url,interval_s,headers,format,verify_tls,timeout}.
         self.rest_push_primary: Dict[str, Any] = {}
@@ -701,10 +879,6 @@ class Config:
         # handlers in a threadpool) can't interleave their tmp/rename dance
         self._file_lock = __import__("threading").Lock()
         self.alerts: Dict = {}                # optional `alerts:` block (off by default)
-        # Optional `esphome:` block (off by default) — the Device Builder
-        # section talks to an external ESPHome dashboard over its HTTP/WS API.
-        # Kept as a raw dict: {enabled, url, username, password, timeout_s}.
-        self.esphome: Dict = {}
 
         self.load()
 
@@ -721,6 +895,7 @@ class Config:
         """Materialize the device list. Device #1 = the legacy flat config
         (invisible migration — routing identical to today); extra devices come
         from the optional ``devices:`` yaml list."""
+        self.ignored_blocks = {}               # judged afresh on every build
         devices: List[DeviceConfig] = [DeviceConfig(
             id=PRIMARY_DEVICE_ID,
             name="Janitza UMG 512-PRO",
@@ -736,6 +911,8 @@ class Config:
             mqtt_enabled=True,                           # device #1 always routes (locked in UI)
             influxdb_enabled=True,
             http_output_enabled=self.http_output_primary_enabled,
+            opcua_enabled=bool(self.opcua_primary.get('enabled', True)),
+            opcua_fields=_opcua_fields(self.opcua_primary.get('fields')),
             rest_push=dict(self.rest_push_primary or {}),
             pq_recorder=dict(self.pq_recorder_primary or {}),
             write_locked=self.security.primary_write_locked,
@@ -756,6 +933,20 @@ class Config:
                 continue
             dev = self._device_from_raw(d)
             if dev is not None:
+                devices.append(dev)
+        # Components: the things a device holds (a GX's batteries and
+        # sensors), each an ordinary device read through its parent's
+        # connection
+        for pid, c, d in self._expand_components():
+            did = d['id']
+            if did == PRIMARY_DEVICE_ID or any(x.id == did for x in devices):
+                logger.warning(f"devices[{pid}].components: id {did!r} collides with "
+                               f"an existing device — skipped")
+                continue
+            dev = self._device_from_raw(d)
+            if dev is not None:
+                dev.component_of, dev.component_type = pid, c['type']
+                dev.component_instance = c['instance']
                 devices.append(dev)
         # Endpoints: one template + one endpoint + N unit ids → N materialized
         # devices, each with its OWN socket. Deliberate: unit-switching on a
@@ -852,6 +1043,21 @@ class Config:
                 logger.warning("sources[]: skipping %r — invalid config: %s", sid, e)
         return out
 
+    def preview_devices(self, *, device: Optional[Dict] = None,
+                        endpoint: Optional[Dict] = None) -> List["DeviceConfig"]:
+        """The device(s) a raw definition would build — a standalone device or
+        an installation's units — without storing anything. What an edit
+        compares to decide whether anything a unit runs on changed."""
+        if device is not None:
+            built = self._device_from_raw(copy.deepcopy(device))
+            return [built] if built is not None else []
+        out = []
+        for pid, d in self._expand_endpoints([copy.deepcopy(endpoint)]):
+            built = self._device_from_raw(d, endpoint_id=pid)
+            if built is not None:
+                out.append(built)
+        return out
+
     def _device_from_raw(self, d: Dict, endpoint_id: str = "") -> Optional[DeviceConfig]:
         """Build ONE DeviceConfig from its raw yaml dict (a devices[] entry or
         an endpoint-materialized dict). Returns None (with a warning) on invalid
@@ -862,6 +1068,7 @@ class Config:
         mqtt_cfg = d.get('mqtt', {}) or {}
         influx_cfg = d.get('influxdb', {}) or {}
         http_out_cfg = d.get('http_output', {}) or {}
+        opcua_cfg = d.get('opcua', {}) or {}
         prefix = mqtt_cfg.get('topic_prefix', 'mbg/devices/${device_id}')
         prefix = prefix.replace('${device_id}', did).replace('${id}', did)
         sources = self._sources_from_raw(d)
@@ -897,9 +1104,20 @@ class Config:
                 ha_discovery_enabled=bool(mqtt_cfg.get('ha_discovery', True)),
                 mqtt_enabled=bool(mqtt_cfg.get('enabled', True)),
                 influxdb_enabled=bool(influx_cfg.get('enabled', True)),
+                mqtt_publish_mode=_publish_mode(mqtt_cfg.get('publish_mode'), did),
+                mqtt_heartbeat_s=_seconds(mqtt_cfg.get('heartbeat_interval'), did, int),
+                influxdb_publish_mode=_publish_mode(influx_cfg.get('publish_mode'), did),
+                influxdb_write_interval_s=_seconds(influx_cfg.get('write_interval'), did, float),
                 http_output_enabled=bool(http_out_cfg.get('enabled', False)),
-                rest_push=dict(d.get('rest_push', {}) or {}),
-                pq_recorder=dict(d.get('pq_recorder', {}) or {}),
+                opcua_enabled=bool(opcua_cfg.get('enabled', True)),
+                opcua_fields=_opcua_fields(opcua_cfg.get('fields')),
+                rest_push=_block(d.get('rest_push'), did, 'rest_push', self.__dict__.setdefault('ignored_blocks', {})),
+                pq_recorder=_block(d.get('pq_recorder'), did, 'pq_recorder', self.__dict__.setdefault('ignored_blocks', {})),
+                energy_meter=_block(d.get('energy_meter'), did, 'energy_meter', self.__dict__.setdefault('ignored_blocks', {})),
+                kind=_kind_override(d.get('kind'), did, self.__dict__.setdefault('ignored_blocks', {})),
+                meters=_meter_links.parse_device(d, did, self.__dict__.setdefault('ignored_blocks', {})),
+                meter_options=_meter_links.parse_options(d.get('meter_options'), did,
+                                                         self.__dict__.setdefault('ignored_blocks', {})),
             )
         except (ValueError, TypeError) as e:
             # A single malformed devices[] entry (e.g. port:"abc") must NOT
@@ -907,6 +1125,178 @@ class Config:
             # like the missing/duplicate-id skips above.
             logger.warning(f"devices[]: skipping {did!r} — invalid config: {e}")
             return None
+
+    # ── components ──────────────────────
+    COMPONENT_INSTANCE_RE = re.compile(r'^[A-Za-z0-9_.-]{1,32}$')
+    # what a component's own entry may say about its outputs; everything
+    # else is its parent's
+    _COMPONENT_OWN = ('http_output', 'rest_push', 'energy_meter', 'meters', 'meter_options', 'pq_recorder', 'kind')
+
+    @staticmethod
+    def component_id(parent_id: str, ctype: str, instance: str) -> str:
+        """The id a component gets when its entry names none."""
+        return re.sub(r'[^a-z0-9_-]', '-', f"{parent_id}-{ctype}-{instance}".lower())
+
+    def component_entries(self, p: Dict) -> List[Dict]:
+        """A device's ``components`` list, normalized: {type, instance, id,
+        name, enabled, entry}. A malformed or repeated entry is skipped with a
+        warning; an instance written as a number is read as text."""
+        pid = str(p.get('id', '')).strip()
+        out: List[Dict] = []
+        seen: set = set()
+        for i, c in enumerate(p.get('components') or []):
+            if not isinstance(c, dict):
+                logger.warning(f"devices[{pid}].components[{i}]: not a mapping — skipped")
+                continue
+            ctype = str(c.get('type', '') or '').strip()
+            inst = '' if c.get('instance') is None else str(c.get('instance')).strip()
+            if not ctype or not self.COMPONENT_INSTANCE_RE.match(inst):
+                logger.warning(f"devices[{pid}].components[{i}]: needs a type and an instance "
+                               f"(letters, digits, _ . -) — skipped")
+                continue
+            if (ctype, inst) in seen:
+                logger.warning(f"devices[{pid}].components: {ctype} {inst} twice — skipped")
+                continue
+            cid = str(c.get('id') or self.component_id(pid, ctype, inst)).strip()
+            if not re.match(r'^[a-z0-9][a-z0-9_-]{1,63}$', cid):
+                logger.warning(f"devices[{pid}].components[{i}]: id {cid!r} is not a device id — skipped")
+                continue
+            seen.add((ctype, inst))
+            out.append({'type': ctype, 'instance': inst,
+                        'id': cid,
+                        'name': str(c.get('name') or ''),
+                        'enabled': bool(c.get('enabled', True)), 'entry': c})
+        return out
+
+    @staticmethod
+    def _parent_mqtt_connection(p: Dict) -> Dict:
+        """The connection a component reads through: the parent's, or its
+        first MQTT source's."""
+        conn = dict(p.get('connection') or {})
+        if conn:
+            return conn
+        for sx in p.get('sources') or []:
+            if isinstance(sx, dict) and str(sx.get('protocol', '')).lower() == 'mqtt':
+                return {k: v for k, v in sx.items()
+                        if k not in ('id', 'template', 'enabled', 'poll_groups')}
+        return {}
+
+    def _expand_components(self) -> List[tuple]:
+        """Every device's components as (parent id, component, raw device dict),
+        shaped like a devices[] entry."""
+        out: List[tuple] = []
+        for p in self._raw_devices:
+            if not p.get('components'):
+                continue
+            pid = str(p.get('id', '')).strip()
+            pconn = self._parent_mqtt_connection(p)
+            if str(pconn.get('protocol', 'tcp')).lower() != 'mqtt':
+                logger.warning(f"devices[{pid}]: components are read over MQTT only — "
+                               "its components are not started")
+                continue
+            pm, pi = dict(p.get('mqtt') or {}), dict(p.get('influxdb') or {})
+            po = p.get('opcua') if isinstance(p.get('opcua'), dict) else {}
+            for c in self.component_entries(p):
+                e, cid = c['entry'], c['id']
+                conn = dict(pconn)
+                # the instance is the component's; nothing in an entry overrides it
+                conn['vars'] = {**dict(conn.get('vars') or {}), 'instance': c['instance']}
+                em, ei = dict(e.get('mqtt') or {}), dict(e.get('influxdb') or {})
+                mqtt = {'ha_discovery': pm.get('ha_discovery', True),
+                        'enabled': pm.get('enabled', True), **em,
+                        'topic_prefix': em.get('topic_prefix') or f"mbg/devices/{cid}"}
+                influx = {'enabled': pi.get('enabled', True),
+                          **({'bucket': pi['bucket']} if pi.get('bucket') else {}),
+                          **({'tags': dict(pi['tags'])} if isinstance(pi.get('tags'), dict) else {}),
+                          **ei, 'device_tag': ei.get('device_tag') or cid}
+                out.append((pid, c, {
+                    'id': cid,
+                    'name': c['name'] or f"{p.get('name') or pid} {c['type']} {c['instance']}",
+                    'template': f"{p.get('template', '')}:{c['type']}",
+                    'enabled': bool(p.get('enabled', True)) and c['enabled'],
+                    'connection': conn, 'mqtt': mqtt, 'influxdb': influx,
+                    'opcua': dict(e['opcua']) if isinstance(e.get('opcua'), dict)
+                    else {'enabled': bool(po.get('enabled', True))},
+                    # read-only: there is nothing to write through a component
+                    'write_locked': bool(e.get('write_locked', True)),
+                    **{k: e[k] for k in self._COMPONENT_OWN if k in e},
+                }))
+        return out
+
+    def component_devices(self, parent_id: str) -> List["DeviceConfig"]:
+        return [d for d in self.devices if d.component_of == parent_id]
+
+    def _component_entry(self, parent_id: str, component_id: str) -> Optional[Dict]:
+        p = next((d for d in self._raw_devices if d.get('id') == parent_id), None)
+        if p is None:
+            return None
+        return next((c['entry'] for c in self.component_entries(p)
+                     if c['id'] == component_id), None)
+
+    def _raw_device_entry(self, device_id: str) -> Optional[Dict]:
+        """The raw entry a device's own settings are written to: its
+        devices[] entry, or — for a component — its entry in its parent's
+        list. None for the primary and an installation's units."""
+        raw = next((d for d in self._raw_devices if d.get('id') == device_id), None)
+        if raw is not None:
+            return raw
+        dev = self.get_device(device_id)
+        if dev is not None and dev.component_of:
+            return self._component_entry(dev.component_of, device_id)
+        return None
+
+    def _mutate_raw_devices(self, fn) -> None:
+        """Apply ``fn`` to the raw devices, rebuild and save — or put
+        everything back as it was when any step fails."""
+        import copy as _copy
+        snap = _copy.deepcopy(self._raw_devices)
+        try:
+            fn()
+            self._build_devices()
+            self.save_yaml_config()
+        except Exception:
+            self._raw_devices = snap
+            self._build_devices()
+            raise
+
+    def add_component(self, parent_id: str, entry: Dict) -> "DeviceConfig":
+        """Add one component to a device and persist; the built device."""
+        p = next((d for d in self._raw_devices if d.get('id') == parent_id), None)
+        if p is None:
+            raise ValueError(f"device {parent_id!r} is not a configurable device")
+        cid = str(entry.get('id') or self.component_id(
+            parent_id, str(entry.get('type', '')), str(entry.get('instance', ''))))
+        self._mutate_raw_devices(lambda: p.setdefault('components', []).append(dict(entry, id=cid)))
+        dev = self.get_device(cid)
+        if dev is None or dev.component_of != parent_id:
+            self._mutate_raw_devices(lambda: p.__setitem__(
+                'components', [c for c in p['components'] if c.get('id') != cid]))
+            raise ValueError(f"component {cid!r} could not be built (see the log)")
+        return dev
+
+    def update_component(self, parent_id: str, component_id: str, changes: Dict) -> "DeviceConfig":
+        """Rename or switch a component; its type and instance never change."""
+        e = self._component_entry(parent_id, component_id)
+        if e is None:
+            raise ValueError(f"no component {component_id!r} on {parent_id!r}")
+
+        def go():
+            for k in ('name', 'enabled'):
+                if k in changes:
+                    e[k] = changes[k]
+        self._mutate_raw_devices(go)
+        return self.get_device(component_id)
+
+    def remove_component(self, parent_id: str, component_id: str) -> Dict:
+        """Remove a component and persist; its entry. Its register file stays,
+        so adding the same instance again resumes it."""
+        p = next((d for d in self._raw_devices if d.get('id') == parent_id), None)
+        e = self._component_entry(parent_id, component_id)
+        if p is None or e is None:
+            raise ValueError(f"no component {component_id!r} on {parent_id!r}")
+        self._mutate_raw_devices(lambda: p.__setitem__(
+            'components', [c for c in p['components'] if c is not e]))
+        return dict(e)
 
     @staticmethod
     def _endpoint_units(p: Dict, holder: Dict = None) -> List[Dict]:
@@ -973,13 +1363,14 @@ class Config:
             out.append({**g, 'id': gid})
         return out
 
-    def _expand_endpoints(self) -> List[tuple]:
+    def _expand_endpoints(self, endpoints: Optional[List[Dict]] = None) -> List[tuple]:
         """Expand ``endpoints:`` into (endpoint_id, raw-device-dict) pairs, shaped
         exactly like devices[] entries so both flow through _device_from_raw.
         ``${unit_id}`` / ``${endpoint_id}`` / ``${device_id}`` substitute in the
-        MQTT topic prefix, InfluxDB bucket, device tag and name."""
+        MQTT topic prefix, InfluxDB bucket, device tag and name. ``endpoints``
+        expands those instead of the stored ones (a preview, nothing kept)."""
         out: List[tuple] = []
-        for p in self._raw_endpoints:
+        for p in (self._raw_endpoints if endpoints is None else endpoints):
             pid = str(p.get('id', '')).strip()
             if not pid:
                 logger.warning("endpoints[]: entry without id skipped")
@@ -988,6 +1379,7 @@ class Config:
             # enabled=False propagates so no clients/pollers are started
             mqtt_cfg = dict(p.get('mqtt', {}) or {})
             influx_cfg = dict(p.get('influxdb', {}) or {})
+            opcua_cfg = dict(p.get('opcua', {}) or {})
             seen_units: set = set()
             # An installation is not one kind of thing. A PV plant holds
             # inverters AND the meter at its grid connection, and they differ in
@@ -1003,6 +1395,13 @@ class Config:
                 conn = dict(grp.get('connection', {}) or {})
                 srcs = [dict(x) for x in (grp.get('sources') or [])
                         if isinstance(x, dict)]
+                if not conn and not srcs:
+                    # a group that names no way of reaching its units uses the
+                    # installation's: turning a flat installation into groups
+                    # must not force anyone to restate (and mistype) its bus
+                    conn = dict(p.get('connection', {}) or {})
+                    srcs = [dict(x) for x in (p.get('sources') or [])
+                            if isinstance(x, dict)]
                 gid = str(grp.get('id', '') or 'units')
                 grole = str(grp.get('role', '') or '')
                 for u in self._endpoint_units(p, grp):
@@ -1026,6 +1425,8 @@ class Config:
                   if m.get('topic_prefix'):
                       m['topic_prefix'] = sub(m['topic_prefix'])
                   i = dict(influx_cfg, **(grp.get('influxdb') or {}))
+                  # OPC UA: the group's block wins (its template, its fields)
+                  o = dict(opcua_cfg, **(grp.get('opcua') or {}))
                   if i.get('bucket'):
                       i['bucket'] = sub(i['bucket'])
                   if i.get('device_tag'):
@@ -1071,6 +1472,7 @@ class Config:
                       **({'sources': unit_sources} if unit_sources else {}),
                       'mqtt': m,
                       'influxdb': i,
+                      **({'opcua': o} if o else {}),
                       # an endpoint is ONE endpoint: its sinks are declared once and
                       # apply to every unit, like the write lock above
                       **({'http_output': dict(p['http_output'])}
@@ -1083,7 +1485,7 @@ class Config:
     def default_topic_prefix(self, device_id: str) -> str:
         """Resolve the default MQTT topic prefix for a NEW device from the
         configured pattern ({device} = id)."""
-        pat = getattr(self.mqtt, 'default_topic_pattern', 'meters/{device}') or 'meters/{device}'
+        pat = getattr(self.mqtt, 'default_topic_pattern', '') or MQTTConfig.default_topic_pattern
         return pat.replace('{device}', device_id).replace('{device_id}', device_id)
 
     def default_bucket(self, device_id: str) -> str:
@@ -1111,6 +1513,9 @@ class Config:
         if _ex is not None and _ex.endpoint_id:
             raise ValueError(f"device {did!r} is materialized from endpoint "
                              f"{_ex.endpoint_id!r} — edit the endpoint instead")
+        if _ex is not None and _ex.component_of:
+            raise ValueError(f"device {did!r} is a component of {_ex.component_of!r} — "
+                             "manage it from that device")
         # Transactional: snapshot the raw list so a build/save failure restores
         # the PREVIOUS state exactly, instead of leaving the old entry deleted
         # (which a later unrelated save would then persist — the device would
@@ -1148,12 +1553,7 @@ class Config:
             else:
                 raise ValueError(f"endpoint {dev.endpoint_id!r} not found")
         else:
-            for d in self._raw_devices:
-                if d.get('id') == device_id:
-                    d['write_locked'] = bool(locked)
-                    break
-            else:
-                raise ValueError(f"device {device_id!r} is not a configurable device")
+            self._own_entry(device_id)['write_locked'] = bool(locked)
         self._build_devices()
         self.save_yaml_config()
 
@@ -1172,12 +1572,83 @@ class Config:
             self._endpoint_entry_for(dev.endpoint_id).setdefault(
                 'http_output', {})['enabled'] = bool(enabled)
         else:
-            for d in self._raw_devices:
-                if d.get('id') == device_id:
-                    d.setdefault('http_output', {})['enabled'] = bool(enabled)
-                    break
-            else:
-                raise ValueError(f"device {device_id!r} is not a configurable device")
+            self._own_entry(device_id).setdefault('http_output', {})['enabled'] = bool(enabled)
+        self._build_devices()
+        self.save_yaml_config()
+
+    def set_device_sinks(self, device_id: str, mqtt: Optional[bool] = None,
+                         influxdb: Optional[bool] = None, ha_discovery: Optional[bool] = None) -> None:
+        """Switch a device's MQTT / InfluxDB output or its Home Assistant
+        discovery, and persist; None leaves a flag alone. Only a devices[]
+        entry: the primary always routes, and an endpoint's units route as
+        their installation says."""
+        dev = self.get_device(device_id)
+        if dev is None:
+            raise ValueError(f"device {device_id!r} not found")
+        if dev.primary:
+            raise ValueError("the primary device always publishes to MQTT and InfluxDB")
+        if dev.endpoint_id:
+            raise ValueError(f"set on its installation ({dev.endpoint_id}): it applies to every unit")
+        raw = self._own_entry(device_id)
+        if mqtt is not None:
+            raw.setdefault('mqtt', {})['enabled'] = bool(mqtt)
+        if ha_discovery is not None:
+            raw.setdefault('mqtt', {})['ha_discovery'] = bool(ha_discovery)
+        if influxdb is not None:
+            raw.setdefault('influxdb', {})['enabled'] = bool(influxdb)
+        self._build_devices()
+        self.save_yaml_config()
+
+    def set_device_publishing(self, device_id: str, mqtt: Optional[Dict[str, Any]] = None,
+                              influxdb: Optional[Dict[str, Any]] = None) -> None:
+        """A device's own publishing: mqtt {publish_mode, heartbeat_interval},
+        influxdb {publish_mode, write_interval}; a key set to None goes back
+        to the gateway's (Settings), a key left out stays. Endpoint units →
+        their GROUP's block (one kind of device, one rhythm), or the
+        endpoint's. The primary is the gateway's own: it follows Settings."""
+        dev = self.get_device(device_id)
+        if dev is None:
+            raise ValueError(f"device {device_id!r} not found")
+        if dev.primary:
+            raise ValueError("the primary device follows Settings → MQTT / InfluxDB")
+        if dev.endpoint_id:
+            ep = self._endpoint_entry_for(dev.endpoint_id)
+            target = next((g for g in (ep.get('groups') or []) if isinstance(g, dict)
+                           and str(g.get('id', '')) == dev.group_id), None) or ep
+        else:
+            target = self._own_entry(device_id)
+        for sect, keys in (('mqtt', mqtt), ('influxdb', influxdb)):
+            for k, v in (keys or {}).items():
+                block = target.setdefault(sect, {})
+                if v is None:
+                    block.pop(k, None)
+                else:
+                    block[k] = v
+        self._build_devices()
+        self.save_yaml_config()
+
+    def set_opcua_output(self, device_id: str, enabled: bool, fields: Optional[List[str]] = None) -> None:
+        """Serve a device on the OPC UA server or not, and which of its values
+        ([] = every one), and persist. Primary → `opcua_output:`; devices[]
+        entries → their own block; endpoint units → their GROUP's block (a
+        group is one template, so one choice of values for all its units), or
+        the endpoint's when it has no groups."""
+        dev = self.get_device(device_id)
+        if dev is None:
+            raise ValueError(f"device {device_id!r} not found")
+        block = {'enabled': bool(enabled)}
+        names = _opcua_fields(fields)
+        if names:
+            block['fields'] = names
+        if dev.primary:
+            self.opcua_primary = block
+        elif dev.endpoint_id:
+            ep = self._endpoint_entry_for(dev.endpoint_id)
+            grp = next((g for g in (ep.get('groups') or []) if isinstance(g, dict)
+                        and str(g.get('id', '')) == dev.group_id), None)
+            (grp if grp is not None else ep)['opcua'] = block
+        else:
+            self._own_entry(device_id)['opcua'] = block
         self._build_devices()
         self.save_yaml_config()
 
@@ -1191,14 +1662,79 @@ class Config:
         if dev.primary:
             self.pq_recorder_primary = cfg
         else:
-            for d in self._raw_devices:
-                if d.get('id') == device_id:
-                    d['pq_recorder'] = cfg
-                    break
-            else:
-                raise ValueError(f"device {device_id!r} is not a configurable device")
+            self._own_entry(device_id)['pq_recorder'] = cfg
         self._build_devices()
         self.save_yaml_config()
+
+    def _own_entry(self, device_id: str) -> Dict:
+        """A device's own raw entry (a component's included), for a setter."""
+        raw = self._raw_device_entry(device_id)
+        if raw is None:
+            raise ValueError(f"device {device_id!r} is not a configurable device")
+        return raw
+
+    def set_device_kind(self, device_id: str, kind: Optional[str]) -> None:
+        """An admin's word on what kind of equipment a device is (None or ''
+        = derive it again), persisted on its own entry. Never restarts it:
+        the kind is not something it runs on."""
+        dev = self.get_device(device_id)
+        if dev is None:
+            raise ValueError(f"device {device_id!r} not found")
+        if dev.primary:
+            raise ValueError("the primary device's kind comes from its template")
+        if dev.endpoint_id:
+            raise ValueError(f"a unit's kind is its group's role on its installation ({dev.endpoint_id})")
+        raw = self._own_entry(device_id)
+
+        def go():
+            if kind:
+                raw['kind'] = kind
+            else:
+                raw.pop('kind', None)
+        self._mutate_raw_devices(go)
+
+    def set_energy_meter(self, device_id: str, link: Dict) -> None:
+        """The device that measures this one's electricity ({} = none)."""
+        dev = self.get_device(device_id)
+        if dev is None:
+            raise ValueError(f"device {device_id!r} not found")
+        if dev.endpoint_id:
+            raise ValueError(f"'{device_id}' belongs to an installation — not supported for its units yet")
+        raw = self._own_entry(device_id)
+
+        def go():
+            if link.get('device'):
+                raw['energy_meter'] = dict(link)
+            else:
+                raw.pop('energy_meter', None)
+        self._mutate_raw_devices(go)
+
+    def set_meters(self, device_id: str, links: List[Dict], options: Optional[Dict] = None) -> None:
+        """The meters that measure this device, each in a role ([] = none),
+        already validated (meter_links.validate). A single consumption link
+        is written as ``energy_meter``, as before ``meters`` existed.
+        ``options`` (meter_links.check_options): None keeps what is stored,
+        {} writes none (the defaults)."""
+        dev = self.get_device(device_id)
+        if dev is None:
+            raise ValueError(f"device {device_id!r} not found")
+        if dev.endpoint_id:
+            raise ValueError(f"'{device_id}' belongs to an installation — not supported for its units yet")
+        raw = self._own_entry(device_id)
+        legacy, listed = _meter_links.stored_form(links)
+
+        def go():
+            raw.pop('energy_meter', None)
+            raw.pop('meters', None)
+            if legacy:
+                raw['energy_meter'] = legacy
+            elif listed:
+                raw['meters'] = listed
+            if options is not None:
+                raw.pop('meter_options', None)
+                if options:
+                    raw['meter_options'] = dict(options)
+        self._mutate_raw_devices(go)
 
     def _endpoint_entry_for(self, endpoint_id: str) -> Dict:
         """The raw endpoints[] entry, for a setter that writes an endpoint-level flag."""
@@ -1220,12 +1756,7 @@ class Config:
         elif dev.endpoint_id:
             self._endpoint_entry_for(dev.endpoint_id)['rest_push'] = cfg
         else:
-            for d in self._raw_devices:
-                if d.get('id') == device_id:
-                    d['rest_push'] = cfg
-                    break
-            else:
-                raise ValueError(f"device {device_id!r} is not a configurable device")
+            self._own_entry(device_id)['rest_push'] = cfg
         self._build_devices()
         self.save_yaml_config()
 
@@ -1435,7 +1966,7 @@ class Config:
 
     def save_device_registers(self, device_id: str, registers: List[Dict],
                               poll_groups: Optional[Dict] = None,
-                              source_id: str = "") -> None:
+                              source_id: str = "", replace: bool = False) -> None:
         """Persist a device's register selection, or ONE SOURCE's.
 
         A source keeps its own file because it has its own template and address
@@ -1448,16 +1979,21 @@ class Config:
         path = (self.source_registers_path(device_id, source_id) if source_id
                 else self.device_registers_path(device_id))
         path.parent.mkdir(parents=True, exist_ok=True)
-        data = {
-            "version": "1.0",
-            "registers": registers,
-            "poll_groups": poll_groups or {
-                name: {"interval": g.interval, "description": g.description}
-                for name, g in self.poll_groups.items()
-            },
-        }
         tmp = path.with_suffix(path.suffix + '.tmp')   # atomic: crash-safe write
         with self._file_lock:
+            # ``replace``: a fresh map (a device seeded anew from a template) —
+            # nothing of what an earlier device at this id kept may survive
+            kept = {} if replace else self._kept_sections(path)
+            # no groups given: the device's own (tuned on its page) stay
+            data = {
+                **kept,
+                "version": "1.0",
+                "registers": registers,
+                "poll_groups": poll_groups or kept.get("poll_groups") or {
+                    name: {"interval": g.interval, "description": g.description}
+                    for name, g in self.poll_groups.items()
+                },
+            }
             with open(tmp, 'w') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
                 f.flush()
@@ -1496,14 +2032,22 @@ class Config:
                 / self._safe_device_id(device_id) / 'sources'
                 / self._safe_device_id(source_id) / 'selected_registers.json')
 
-    def save_device_poll_groups(self, device_id: str, groups: Dict[str, Dict]) -> None:
+    def save_device_poll_groups(self, device_id: str, groups: Dict[str, Dict]) -> Dict[str, Dict]:
         """Update just the poll-group intervals in a device's registers file
         (keeps the register selection). Works for any device — the primary uses
-        the legacy file and its in-memory groups are refreshed too."""
+        the legacy file and its in-memory groups are refreshed too.
+
+        Merged per group, as every save (save_merge.py): a group not sent keeps
+        its stored interval — a missing one would fall back to the global
+        default, and a fragile datalogger to a rhythm it cannot take; a key not
+        sent (a description) is kept; a group sent as None is removed (back to
+        the default). Returns the groups as stored."""
         # Reject a 0/negative interval up front with a clear error: it would
         # spin the poll loop with no pause and hammer the bus. Sub-second is
         # allowed (the ESS control loop needs 250 ms) but a real floor stands.
         for name, g in (groups or {}).items():
+            if g is None:
+                continue
             try:
                 iv = float(g.get("interval", 5))
             except (TypeError, ValueError):
@@ -1518,7 +2062,13 @@ class Config:
                     data = json.load(f)
             else:
                 data = {"version": "1.0", "registers": [], "poll_groups": {}}
-            data["poll_groups"] = groups
+            merged = {k: dict(v) for k, v in (data.get("poll_groups") or {}).items() if isinstance(v, dict)}
+            for name, g in (groups or {}).items():
+                if g is None:
+                    merged.pop(name, None)
+                else:
+                    merged[name] = {**merged.get(name, {}), **g}
+            data["poll_groups"] = merged
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_suffix(path.suffix + ".tmp")
             with open(tmp, "w") as f:
@@ -1527,10 +2077,20 @@ class Config:
                 os.fsync(f.fileno())           # durable before the rename
             os.replace(tmp, path)
         if device_id == PRIMARY_DEVICE_ID:
-            for name, g in groups.items():
+            for name, g in merged.items():
                 self.poll_groups[name] = PollGroup(interval=float(g.get("interval", 5)),
                                                    description=g.get("description", ""))
+            # a group removed goes back to the gateway's own rhythm in memory
+            # too — the running poller and GET must agree with the file
+            for name, g in (groups or {}).items():
+                if g is None and name not in merged:
+                    d = self.default_poll_groups.get(name)
+                    if d is not None:
+                        self.poll_groups[name] = PollGroup(interval=d.interval, description=d.description)
+                    else:
+                        self.poll_groups.pop(name, None)
         logger.info(f"device {device_id}: poll groups updated {list(groups.keys())}")
+        return merged
 
     def load_energy_fields(self, device_id: str) -> List[Dict]:
         """The device's saved Energy-tab field selection (the cumulative counters
@@ -1618,7 +2178,7 @@ class Config:
             os.replace(tmp, path)
         logger.info(f"device {device_id}: energy fields set ({len(fields)})")
 
-    def unit_registers(self, device: DeviceConfig) -> List[SelectedRegister]:
+    def unit_registers(self, device: DeviceConfig, *, shared: bool = False) -> List[SelectedRegister]:
         """Everything a unit reads, across its sources — the list a consumer of
         the unit (HA discovery, the device entry) sees. Each source keeps its
         own file; a name read by two sources (the arbiter picks the fresher
@@ -1626,11 +2186,11 @@ class Config:
         one MQTT topic never gets two discovery entries. A device without
         sources is its own single list."""
         if not (device.sources or []):
-            return self.load_device_registers(device)[0]
+            return self.load_device_registers(device, shared=shared)[0]
         seen: set = set()
         out: List[SelectedRegister] = []
         for src in device.sources:
-            for r in self.load_device_registers(device, source=src)[0]:
+            for r in self.load_device_registers(device, source=src, shared=shared)[0]:
                 key = r.name
                 if key in seen:
                     continue
@@ -1638,7 +2198,7 @@ class Config:
                 out.append(r)
         return out
 
-    def load_device_registers(self, device: DeviceConfig, source=None):
+    def load_device_registers(self, device: DeviceConfig, source=None, *, shared: bool = False):
         """Return (selected_registers, poll_groups) for a device, or for ONE of
         its sources.
 
@@ -1646,7 +2206,10 @@ class Config:
         applies, which is what makes a single-source device — every device
         written before sources existed — behave exactly as before. A source may
         also override the intervals: a fast partial source and a slow complete
-        one do not share a rhythm."""
+        one do not share a rhythm.
+
+        ``shared=True`` (a caller that only reads, such as the device list)
+        gets the cached register objects themselves, not copies."""
         if device.primary and source is None:
             return self.selected_registers, self.poll_groups
         path = None
@@ -1660,12 +2223,26 @@ class Config:
         if not path.exists():
             logger.info(f"device {device.id}: no selected registers yet ({path})")
             return [], dict(self.poll_groups)
-        data = self._load_json_with_heal(path, required_key='registers',
-                                         label=f"device {device.id} registers")
-        if data is None:
-            return [], dict(self.poll_groups)
+        # the device list asks for every device's selection on every call: a
+        # file not changed since it was last read is not read (nor snapshotted)
+        # again — its parsed registers come back as copies
+        sig = self._file_sig(path)
+        hit = self._regs_cache.get(path) if sig else None
+        if hit is not None and hit[0] == sig:
+            data, parsed = hit[1], hit[2]
+            regs = list(parsed) if shared else [copy.copy(r) for r in parsed]
+        else:
+            data = self._load_json_with_heal(path, required_key='registers',
+                                             label=f"device {device.id} registers")
+            if data is None:
+                return [], dict(self.poll_groups)
+            regs = None
         try:
-            regs = self._parse_selected_payload(data)
+            if regs is None:
+                parsed = self._parse_selected_payload(data)
+                if sig and self._file_sig(path) == sig:
+                    self._regs_cache[path] = (sig, data, parsed)
+                regs = list(parsed) if shared else [copy.copy(r) for r in parsed]
             groups = dict(self.poll_groups)
             for name, group in (data.get('poll_groups') or {}).items():
                 groups[name] = PollGroup(interval=group.get('interval', 5),
@@ -1822,6 +2399,7 @@ class Config:
                     operator_username=auth.get('operator_username', self.ui.operator_username),
                     operator_password=auth.get('operator_password', self.ui.operator_password),
                     canonical_url=u.get('canonical_url', self.ui.canonical_url),
+                    nodes_url=str(u.get('nodes_url', self.ui.nodes_url) or '').strip(),
                     lockout_threshold=auth.get('lockout_threshold', self.ui.lockout_threshold),
                     lockout_minutes=auth.get('lockout_minutes', self.ui.lockout_minutes),
                     tls_enabled=tls.get('enabled', self.ui.tls_enabled),
@@ -1844,10 +2422,28 @@ class Config:
                     write_rate_limit_per_s=float(s.get('write_rate_limit_per_s', 10.0)),
                 )
 
+            # OPC UA server
+            if 'opcua' in data:
+                o = data['opcua'] or {}
+                enc = str(o.get('encryption', 'required') or 'required')
+                self.opcua = OpcUaConfig(
+                    enabled=bool(o.get('enabled', False)),
+                    host=str(o.get('host', '0.0.0.0') or '0.0.0.0'),
+                    port=int(o.get('port', 4840) or 4840),
+                    encryption=enc if enc in OPCUA_ENCRYPTION else 'required',
+                    allow_anonymous=bool(o.get('allow_anonymous', False)),
+                    update_s=max(0.2, float(o.get('update_s', 1.0) or 1.0)),
+                    public_url=str(o.get('public_url', '') or ''),
+                )
+
             # Poll groups
             if 'polling' in data and 'groups' in data['polling']:
                 for name, group in data['polling']['groups'].items():
                     self.poll_groups[name] = PollGroup(
+                        interval=group.get('interval', 5),
+                        description=group.get('description', ''),
+                    )
+                    self.default_poll_groups[name] = PollGroup(
                         interval=group.get('interval', 5),
                         description=group.get('description', ''),
                     )
@@ -1859,6 +2455,10 @@ class Config:
                     (data['http_output'] or {}).get('enabled', False))
             if 'rest_push' in data:
                 self.rest_push_primary = dict(data['rest_push'] or {})
+            if 'modules' in data:
+                self.modules = _modules(data['modules'])
+            if 'opcua_output' in data:
+                self.opcua_primary = dict(data['opcua_output'] or {})
             if 'pq_recorder' in data:
                 self.pq_recorder_primary = dict(data['pq_recorder'] or {})
 
@@ -1883,9 +2483,12 @@ class Config:
             # the AlertManager reads it. See multibus/alerts.py.
             self.alerts = data.get('alerts', {}) or {}
 
-            # Optional ESPHome integration (Device Builder). Raw dict — the
-            # builder routes read it at request time. See multibus/esphome_client.py.
-            self.esphome = data.get('esphome', {}) or {}
+            # The Device Builder moved out to the multi-bus-gateway-esphome
+            # service: an `esphome:` block left from an older version is
+            # ignored (and dropped by the next save), never an error.
+            if data.get('esphome'):
+                logger.info("config: the `esphome:` block is ignored — ESP firmware "
+                            "now lives in the multi-bus-gateway-esphome service")
 
             logger.info(f"Loaded config from {self.config_path}")
             self._load_failed = False
@@ -1943,6 +2546,16 @@ class Config:
                 self._load_failed = True              # real file still broken → block saves
                 self._healed_from_snapshot = True
 
+    @staticmethod
+    def _file_sig(path):
+        """What says a file changed: inode, size, mtime (ns); None when it
+        cannot be read."""
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        return (st.st_ino, st.st_size, st.st_mtime_ns)
+
     def _load_json_with_heal(self, path, *, required_key: str, label: str):
         """Load a JSON config file with the same .good/.bad self-heal contract
         as config.yaml (external audit: selected_registers.json had NONE — a
@@ -1985,10 +2598,15 @@ class Config:
                 except Exception as e2:  # noqa: BLE001
                     logger.error(f"{label}: snapshot load also failed: {e2}")
             return None
-        try:
-            _copy_private(path, good)             # 0600 + atomic (F-39, 3.83.0)
-        except Exception:  # noqa: BLE001
-            pass
+        # the snapshot is refreshed once per version of the file, not on every read
+        sig = self._file_sig(path)
+        if sig is None or self._good_sigs.get(str(path)) != sig or not good.exists():
+            try:
+                _copy_private(path, good)         # 0600 + atomic (F-39, 3.83.0)
+                if sig is not None:
+                    self._good_sigs[str(path)] = sig
+            except Exception:  # noqa: BLE001
+                pass
         return data
 
     def _load_selected_registers(self):
@@ -2061,6 +2679,7 @@ class Config:
                 influxdb_enabled=influx.get('enabled', True),
                 influxdb_measurement=influx.get('measurement', ''),
                 influxdb_tags=influx.get('tags', {}),
+                category=str(reg.get('category', '') or ''),
                 ui_show_on_dashboard=ui.get('show_on_dashboard', True),
                 ui_widget=ui.get('widget', 'value'),
                 ui_config=ui,
@@ -2133,47 +2752,36 @@ class Config:
         if os.getenv('UI_HOST'):
             self.ui.host = os.getenv('UI_HOST')
 
-        # ESPHome / Device Builder. ESPHOME_URL doubles as the zero-config
-        # seed: on a FRESH deploy (no esphome: block in config.yaml yet) its
-        # presence enables the Builder outright — compose ships the esphome
-        # service and points us at it, so everything works out of the box.
-        # Once a block exists (any UI save), the user's enabled/disabled
-        # choice wins unless ESPHOME_ENABLED explicitly overrides it.
-        if any(os.getenv(k) for k in ('ESPHOME_URL', 'ESPHOME_ENABLED',
-                                      'ESPHOME_USERNAME', 'ESPHOME_PASSWORD')):
-            e = dict(self.esphome or {})
-            seeded = not e
-            if os.getenv('ESPHOME_URL'):
-                e['url'] = os.getenv('ESPHOME_URL')
-            if os.getenv('ESPHOME_USERNAME'):
-                e['username'] = os.getenv('ESPHOME_USERNAME')
-            if os.getenv('ESPHOME_PASSWORD'):
-                self._env_secret_shadow['esphome.password'] = str(
-                    e.get('password', '') or '')
-                e['password'] = os.getenv('ESPHOME_PASSWORD')
-            if os.getenv('ESPHOME_ENABLED'):
-                e['enabled'] = os.getenv('ESPHOME_ENABLED').lower() == 'true'
-            elif seeded and e.get('url'):
-                e['enabled'] = True
-            self.esphome = e
+    @staticmethod
+    def _kept_sections(path: Path) -> Dict:
+        """What else a register file holds besides the selection — calculated
+        fields, energy fields, whatever a later version adds. A rewrite of the
+        selection carries it over; dropping it lost a device's calculated
+        fields on every save from the Measurements page."""
+        try:
+            with open(path) as f:
+                old = json.load(f) or {}
+        except (OSError, ValueError):
+            return {}
+        return {k: v for k, v in old.items() if k not in ("version", "registers")}
 
     def save_selected_registers(self, registers: List[Dict]):
         """Save selected registers to file."""
         validate_register_identity(registers)      # audit DP-9
-        data = {
-            "version": "1.0",
-            "registers": registers,
-            "poll_groups": {
-                name: {"interval": group.interval, "description": group.description}
-                for name, group in self.poll_groups.items()
-            }
-        }
-
         # hold _file_lock like every other config writer: for the PRIMARY device
         # this file is shared with save_energy_fields/save_calculated/... which
         # take the lock; without it here a concurrent save could lose fields or
         # clobber the shared .tmp
         with self._file_lock:
+            data = {
+                **self._kept_sections(self.registers_path),
+                "version": "1.0",
+                "registers": registers,
+                "poll_groups": {
+                    name: {"interval": group.interval, "description": group.description}
+                    for name, group in self.poll_groups.items()
+                },
+            }
             tmp = self.registers_path.with_suffix(self.registers_path.suffix + '.tmp')
             with open(tmp, 'w') as f:                   # atomic: crash-safe write
                 json.dump(data, f, indent=2, ensure_ascii=False)
@@ -2265,16 +2873,12 @@ class Config:
             'UI_PORT': 'ui.port',
             'UI_HOST': 'ui.host',
             'MODBUS_STALE_AFTER_S': 'modbus.stale_after_s',
-            'ESPHOME_URL': 'esphome.url',
-            'ESPHOME_ENABLED': 'esphome.enabled',
-            'ESPHOME_USERNAME': 'esphome.username',
-            'ESPHOME_PASSWORD': 'esphome.password',
         }
         # Secret-bearing paths: report only that they are env-pinned, never the
         # value (this endpoint is readable without the API key). URL-valued
         # paths go through redact_url — an env URL can embed userinfo/tokens.
-        secret_paths = {'mqtt.password', 'influxdb.token', 'esphome.password'}
-        url_paths = {'influxdb.url', 'esphome.url'}
+        secret_paths = {'mqtt.password', 'influxdb.token'}
+        url_paths = {'influxdb.url'}
         for env_var, config_path in env_mappings.items():
             if os.getenv(env_var):
                 if config_path in secret_paths:
@@ -2301,6 +2905,9 @@ class Config:
             # NEWER than the running one (downgrade — a save would drop keys)
             "written_by": getattr(self, 'config_written_by', '') or None,
             "written_by_newer": bool(getattr(self, 'config_written_by_newer', False)),
+            # device blocks a hand edit left unreadable: ignored, the device kept
+            "ignored_blocks": [{"where": k, "why": v}
+                               for k, v in sorted(getattr(self, 'ignored_blocks', {}).items())],
         }
 
     def save_yaml_config(self):
@@ -2388,6 +2995,7 @@ class Config:
                 },
                 'trusted_proxies': self.ui.trusted_proxies,
                 'canonical_url': self.ui.canonical_url,
+                'nodes_url': self.ui.nodes_url,
             },
             'security': {
                 'allowlist': self.security.allowlist,
@@ -2395,6 +3003,11 @@ class Config:
                 'allow_writes': self.security.allow_writes,
                 'primary_write_locked': self.security.primary_write_locked,
                 'write_rate_limit_per_s': self.security.write_rate_limit_per_s,
+            },
+            'opcua': {
+                'enabled': self.opcua.enabled, 'host': self.opcua.host, 'port': self.opcua.port,
+                'encryption': self.opcua.encryption, 'allow_anonymous': self.opcua.allow_anonymous,
+                'update_s': self.opcua.update_s, 'public_url': self.opcua.public_url,
             },
             'polling': {
                 'groups': {
@@ -2408,6 +3021,14 @@ class Config:
         # clean file). Non-primary flags live inside their `devices[]` entry.
         if self.http_output_primary_enabled:
             data['http_output'] = {'enabled': True}
+
+        if self.modules:
+            data['modules'] = [dict(m) for m in self.modules]
+
+        # The primary's OPC UA output (write when not the default: on, every value).
+        if self.opcua_primary and (self.opcua_primary.get('enabled', True) is not True
+                                   or self.opcua_primary.get('fields')):
+            data['opcua_output'] = self.opcua_primary
 
         # Generic REST push for the primary (write when configured).
         if self.rest_push_primary.get('enabled') or self.rest_push_primary.get('url'):
@@ -2435,16 +3056,6 @@ class Config:
         # rewrite this file; without this a save would silently drop alerting).
         if self.alerts:
             data['alerts'] = self.alerts
-
-        # Preserve the optional esphome block for the same reason. The stored
-        # password is the config one — never an ESPHOME_PASSWORD env secret.
-        if self.esphome:
-            e = dict(self.esphome)
-            if 'esphome.password' in self._env_secret_shadow:
-                e['password'] = self._env_secret_shadow['esphome.password']
-                if not e['password']:
-                    e.pop('password', None)
-            data['esphome'] = e
 
         # Ensure config directory exists
         self.config_path.parent.mkdir(parents=True, exist_ok=True)

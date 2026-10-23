@@ -1,0 +1,82 @@
+bridges:
+  - {id: ws, name: Panel bridge, type: rtu_transparent, host: 127.0.0.1, ports: [{port: 15996}]}
+  - {id: gw, name: Meter gateway, type: modbus_gateway, host: 127.0.0.1, ports: [{port: 15997}, {port: 15998}]}
+devices:
+  - id: hp
+    name: Heat pump
+    template: samsung_mim_b19n
+    enabled: false
+    connection: {bridge: ws, bridge_port: 15996, unit_id: 2, timeout: 3, max_gap: 10}
+    mqtt: {topic_prefix: mbg/devices/hp, ha_discovery: false, publish_mode: all}
+    influxdb: {bucket: hp, device_tag: hp}
+    write_locked: true
+    pq_recorder: {enabled: false, poll_s: 30}
+  - id: rs
+    name: Serial meter
+    template: fronius_smart_meter_65a
+    enabled: false
+    connection: {protocol: rtu, serial_port: /dev/ttyFAKE1, baudrate: 19200, parity: E, stopbits: 2, unit_id: 1, startup_jitter_s: 6.0}
+  - id: asc
+    name: ASCII meter
+    template: fronius_smart_meter_65a
+    enabled: false
+    connection: {protocol: ascii, serial_port: /dev/ttyFAKE2, baudrate: 9600, unit_id: 1}
+  - id: udp
+    name: UDP meter
+    template: fronius_smart_meter_65a
+    enabled: false
+    connection: {protocol: udp, host: 127.0.0.1, port: 15995, unit_id: 1}
+  - id: gx
+    name: Victron GX
+    template: victron_gx_mqtt
+    enabled: false
+    connection: {protocol: mqtt, broker: none.invalid, port: 8883, tls: true, tls_insecure: true, username: u, password: secret,
+                 topic: 'N/c0ffee000001/#', vars: {portal: c0ffee000001, vebus: '274'}, stale_after_s: 120}
+    mqtt: {topic_prefix: mbg/devices/gx, ha_discovery: false}
+    influxdb: {bucket: gx, device_tag: gx}
+    components:
+      - {type: battery, instance: '288', name: Shunt}
+  - id: gwm
+    name: Gateway meter
+    template: fronius_smart_meter_65a
+    enabled: false
+    connection: {bridge: gw, bridge_port: 15997, unit_id: 3, timeout: 3}
+  - id: web
+    name: Web inverter
+    template: fronius_solar_api_inverter
+    enabled: false
+    connection: {protocol: http, url: 'http://127.0.0.1:15993/solar_api/v1/GetInverterRealtimeData.cgi', verify_tls: false}
+endpoints:
+  - id: pv
+    name: PV
+    enabled: false
+    connection: {protocol: tcp, host: 127.0.0.1, port: 15994}
+    aggregates: false
+    groups:
+      - id: inverters
+        role: inverter
+        template: fronius_sunspec_inverter
+        units: [1, 2]
+        commands:
+          - {name: power_limit}
+        sources:
+          - id: sunspec
+            protocol: tcp
+            host: 127.0.0.1
+            port: 15994
+            max_gap: 20
+            startup_jitter_s: 6.0
+            poll_groups: {realtime: {interval: 5}, static: {interval: 3600}, controls: {interval: 10}}
+      - id: site
+        role: meter
+        template: fronius_sunspec_meter
+        units: [240]
+  - id: bank
+    name: Bank
+    template: seplos_bms_v3_rtu_tap
+    enabled: false
+    connection: {protocol: rtu_tap, serial_port: /dev/ttyFAKEBANK, baudrate: 19200, parity: N, stale_after_s: 60}
+    groups:
+      - id: units
+        connection: {protocol: rtu_tap, serial_port: /dev/ttyFAKEBANK, baudrate: 19200, stale_after_s: 60}
+        units: [1, 2]

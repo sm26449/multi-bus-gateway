@@ -219,7 +219,7 @@ Object.assign(JanitzaMonitor.prototype, {
             } else {
                 pw = this._powerText(p.power_active_total);
             }
-            const ok = (p.units_total || 0) > 0 && p.units_online === p.units_total;
+            const ok = (p.units_total || 0) > 0 && (p.units_online + (p.units_asleep || 0)) === p.units_total;
             cards.push(`
                 <button type="button" class="site-card" data-endpoint="${this._esc(p.id)}">
                     <div class="site-card-label"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(p.name)}</div>
@@ -393,7 +393,9 @@ Object.assign(JanitzaMonitor.prototype, {
         const h = d.health || 'idle';
         if (h !== 'ok') {
             const age = this._fleetAge(d.staleness_age_s);
-            flags.push(`<span class="fleet-health">${this._esc(h)}${age ? ' ' + age : ''}</span>`);
+            // the same words the device pages use (one vocabulary)
+            const word = this._verdictWord({ enabled: d.enabled, data_health: h, protocol: d.protocol });
+            flags.push(`<span class="fleet-health">${this._esc(word)}${age ? ' · ' + age : ''}</span>`);
         }
         const pinned = this._overviewPins().includes(d.id);
         return `<button type="button" class="fleet-row ${sev}" data-id="${this._esc(d.id)}"
@@ -432,8 +434,8 @@ Object.assign(JanitzaMonitor.prototype, {
         const summary = document.getElementById('fleetSummary');
         if (summary) {
             summary.textContent = problems
-                ? this.t('fleet.summaryProblems', '{n} devices · {p} need attention', { n: total, p: problems })
-                : this.t('fleet.summaryOk', '{n} devices · all OK', { n: total });
+                ? this.tn('fleet.summaryProblems', total, '{n} devices · {p} need attention', { p: problems })
+                : this.tn('fleet.summaryOk', total, '{n} devices · all OK');
         }
 
         if (!devices.length) {

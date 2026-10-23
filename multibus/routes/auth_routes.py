@@ -26,15 +26,27 @@ import hmac
 from typing import Dict
 
 from fastapi import APIRouter, Body, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 from .. import auth as _auth
+
+
+_FORWARD_ROLES = ("viewer", "operator", "admin")
 
 
 def build(ctx) -> APIRouter:
     r = APIRouter(tags=["auth"])
     config, auth_state = ctx.config, ctx.auth_state
     audit = ctx.audit_log
+
+    def _modules_listed():
+        """modules:, plus the ESP nodes service when it is only set the old way
+        (ui.nodes_url) — it moved from the Devices page to the modules."""
+        mods = [dict(m) for m in config.modules]
+        nu = (config.ui.nodes_url or "").strip()
+        if nu and not any(m['url'] == nu for m in mods):
+            mods.append({'id': 'nodes', 'name': 'ESP nodes', 'icon': 'usb-plug', 'url': nu})
+        return mods
 
     @r.get("/api/auth/status")
     async def auth_status(request: Request):
@@ -46,7 +58,11 @@ def build(ctx) -> APIRouter:
         return {"enabled": auth_state.enabled, "role": role,
                 "has_viewer": bool(auth_state.viewer_user),
                 "has_operator": bool(auth_state.operator_user),
-                "has_passkeys": bool(pk and pk.count)}
+                "has_passkeys": bool(pk and pk.count),
+                # a link the UI shows once signed in (never before)
+                "nodes_url": (config.ui.nodes_url or "") if (role or not auth_state.enabled) else "",
+                # the modules (Settings → Modules), same rule
+                "modules": _modules_listed() if (role or not auth_state.enabled) else []}
 
     @r.post("/api/auth/login")
     def auth_login(request: Request, payload: Dict = Body(...)):
@@ -79,6 +95,83 @@ def build(ctx) -> APIRouter:
         resp.set_cookie(_auth.COOKIE_NAME, token, httponly=True, samesite="lax",
                         secure=secure, max_age=_auth.SESSION_TTL_S, path="/")
         return resp
+
+    @r.get("/api/auth/forward")
+    async def auth_forward(request: Request):
+        """Traefik forwardAuth: the gateway's login in front of a companion
+        service on the same host (the nodes service under /nodes). 200 with
+        the user and role in X-Mbg-User / X-Mbg-Role for a live session (the
+        proxy copies them onto the forwarded request, replacing whatever the
+        client sent); for a browser without one, a redirect to the gateway's
+        login page; 401 for an API call. Auth-open: it checks the session
+        itself.
+
+        ``?need=<role>`` (viewer | operator | admin) refuses a lower role with
+        403 — for a service that cannot read roles itself (ESPHome Device
+        Builder: whoever reaches it may change every node's firmware)."""
+        need = request.query_params.get("need", "viewer")
+        if need not in _FORWARD_ROLES:
+            return JSONResponse({"detail": f"need must be one of {', '.join(_FORWARD_ROLES)}"}, status_code=400)
+        if not auth_state.enabled:
+            return Response(status_code=200, headers={"X-Mbg-User": "admin", "X-Mbg-Role": "admin"})
+        tok = request.cookies.get(_auth.COOKIE_NAME, "")
+        role = auth_state.role_for(tok)
+        ident = auth_state.identity_for(tok) if role else None
+        if role and _FORWARD_ROLES.index(role) < _FORWARD_ROLES.index(need):
+            return JSONResponse({"detail": f"this needs the {need} role"}, status_code=403)
+        if role:
+            return Response(status_code=200, headers={
+                "X-Mbg-User": (ident[1] if ident else role) or role, "X-Mbg-Role": role,
+                "Cache-Control": "no-store"})
+        uri = request.headers.get("x-forwarded-uri", "")
+        if "/api/" in uri.split("?", 1)[0] or "text/html" not in request.headers.get("accept", ""):
+            return JSONResponse({"detail": "login required"}, status_code=401)
+        # absolute: the proxy resolves a relative Location against ITS view of
+        # this endpoint (http://multi-bus-gateway:8080/), not the browser's
+        proto = request.headers.get("x-forwarded-proto", "") or request.url.scheme
+        host = request.headers.get("x-forwarded-host", "") or request.headers.get("host", "")
+        return RedirectResponse(f"{proto}://{host}/" if host else "/", status_code=302)
+
+    # ── service tokens (programs) — an admin, signed in as a person ─────────
+    tokens = ctx.service_tokens
+
+    def _token_admin(request: Request) -> str:
+        if getattr(request.state, "service_token", None):
+            raise HTTPException(status_code=403, detail="a token cannot manage tokens")
+        if not auth_state.enabled:
+            return config.ui.auth_username or "admin"
+        if getattr(request.state, "role", None) != "admin":
+            raise HTTPException(status_code=403, detail="admin only")
+        return getattr(request.state, "user", None) or "admin"
+
+    @r.get("/api/auth/service-tokens")
+    async def list_service_tokens(request: Request):
+        _token_admin(request)
+        return {"tokens": tokens.list(), "auth_enabled": auth_state.enabled}
+
+    @r.post("/api/auth/service-tokens")
+    def create_service_token(request: Request, payload: Dict = Body(...)):
+        """Make a named token. The token is in this answer and nowhere else:
+        only its hash is kept."""
+        user = _token_admin(request)
+        try:
+            token = tokens.create(str(payload.get("name", "")), str(payload.get("role", "")))
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+        name = str(payload.get("name", "")).strip().lower()
+        audit.append(user=user, ip=request.client.host if request.client else "-",
+                     action="service token created", target=name, status="ok",
+                     detail={"role": payload.get("role")})
+        return {"status": "created", "name": name, "token": token}
+
+    @r.delete("/api/auth/service-tokens/{name}")
+    async def revoke_service_token(request: Request, name: str):
+        user = _token_admin(request)
+        if not tokens.revoke(name):
+            raise HTTPException(status_code=404, detail="unknown token")
+        audit.append(user=user, ip=request.client.host if request.client else "-",
+                     action="service token revoked", target=name, status="ok")
+        return {"status": "revoked"}
 
     @r.post("/api/auth/logout")
     async def auth_logout(request: Request):

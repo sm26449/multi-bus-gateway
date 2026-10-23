@@ -6,6 +6,7 @@
  *     CHROMIUM_PATH=<chrome> node device_logs_e2e.mjs
  */
 import { chromium } from 'playwright';
+import { openDeviceTab } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://localhost:18081';
 const DEVICE = process.env.DEVICE || 'sunfield-u1';
@@ -40,7 +41,7 @@ try {
 
   const tab = page.locator('#deviceWsTabs .config-main-tab[data-dtab="logs"]');
   check('the Logs tab exists', await tab.count() === 1);
-  await tab.click();
+  await openDeviceTab(page, 'logs');
   await page.waitForTimeout(2500);
 
   const panel = page.locator('[data-dpanel="logs"]');
@@ -68,7 +69,7 @@ try {
   check('the log refreshes live', after >= before, `${before} -> ${after}`);
 
   // switching away stops the tick (no stray timers)
-  await page.locator('#deviceWsTabs .config-main-tab[data-dtab="overview"]').click();
+  await openDeviceTab(page, 'overview');
   await page.waitForTimeout(800);
   check('leaving the tab hides the panel', !(await panel.isVisible()));
 

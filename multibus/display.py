@@ -44,7 +44,20 @@ def display_of(template_registry, dev) -> Dict[str, Any]:
     """The `display` block of a device's template — {} when it declares none."""
     tid = template_id_of(dev)
     tpl = template_registry.get(tid) if (template_registry and tid) else None
-    return dict(getattr(tpl, "display", None) or {})
+    out = dict(getattr(tpl, "display", None) or {})
+    if out.get("alarms"):
+        # an alarm field decoded by states reads its "nothing" as a word
+        # ("No error"): the state for 0 is that field's idle word
+        enums = {getattr(r, "name", ""): getattr(r, "enum", None) for r in getattr(tpl, "registers", None) or []}
+        alarms = []
+        for a in out["alarms"]:
+            if isinstance(a, dict) and isinstance(enums.get(a.get("field")), dict):
+                idle = enums[a["field"]].get("0", enums[a["field"]].get(0))
+                if idle is not None:
+                    a = {**a, "idle": str(idle)}
+            alarms.append(a)
+        out["alarms"] = alarms
+    return out
 
 
 def is_fresh(entry: Dict[str, Any], now: Optional[float] = None) -> bool:
@@ -58,14 +71,17 @@ def is_fresh(entry: Dict[str, Any], now: Optional[float] = None) -> bool:
     return (now - ts) <= max(4 * float(entry.get("interval") or 30), 60.0)
 
 
-def _active(value: Any) -> bool:
+def _active(value: Any, idle: Optional[str] = None) -> bool:
     """A declared alarm field is ACTIVE when it says something: a non-zero
-    number, a true flag, a non-empty word other than the usual "nothing"."""
+    number, a true flag, a non-empty word other than the usual "nothing" —
+    or than the field's own idle word (its state for 0)."""
     if value is None or isinstance(value, bool):
         return bool(value)
     if isinstance(value, (int, float)):
         return not math.isnan(value) and value != 0
     text = str(value).strip().lower()
+    if idle is not None and text == str(idle).strip().lower():
+        return False
     try:
         num = float(text)
         return not math.isnan(num) and num != 0     # "0.0" says nothing too
@@ -98,7 +114,7 @@ def active_alarms(display: Dict[str, Any], store_entries: Iterable[Dict[str, Any
             by_name[n] = e
     for a in decl:
         e = by_name.get(a["field"])
-        if e is None or not _active(e.get("value")):
+        if e is None or not _active(e.get("value"), a.get("idle")):
             continue
         sev = a.get("severity") if a.get("severity") in SEVERITIES else "warning"
         out[sev] += 1

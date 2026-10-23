@@ -37,6 +37,20 @@ normalize PF to a fraction, a unit's own ``power_factor/total`` is still the raw
 SunSpec ±100 while the endpoint's is a true ±1 — see
 the Fronius migration plan (operator notes), phase P3.)
 
+**Asleep, not missing** (docs/attributes.md). An inverter that is silent while
+the sun at its installation is below ``ASLEEP_BELOW_DEG`` is asleep, provided
+it went quiet with the sun already that low (or it is night, under −1°):
+- its power and current count as 0, and so does every total that sums them
+  (a template's or the operator's);
+- it is counted in ``units_asleep`` and does not make the installation
+  ``partial``.
+
+An inverter that stopped at 14:00 stays missing until night, even when dusk
+comes. At night, with every inverter asleep, the power reads 0 and
+``status`` is ``asleep``. Only units whose group role is ``inverter``, and
+only where the installation (or the plant) has a location; without one,
+nothing changes.
+
 ``units_online`` / ``units_total`` / ``status`` publish on EVERY cycle,
 including the one where nothing is fresh: an endpoint that never says ``offline``
 leaves its consumers unable to tell a dark endpoint from a dead gateway.
@@ -50,12 +64,42 @@ import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import role as gateway_role
 from .canonical_fields import mqtt_topic_for
 
 logger = logging.getLogger(__name__)
 
 # Monotonic counters — combined from last-known values, never freshness-gated.
 _COUNTER_PREFIXES = ("energy_",)
+ASLEEP_BELOW_DEG = 5.0
+NIGHT_BELOW_DEG = -1.0
+_sun_elevation = None        # (endpoint id) -> the sun's elevation there, or None
+_last_fresh_elev: Dict[str, float] = {}     # unit → the sun's elevation when it last answered
+# which units the last computation of an endpoint counted asleep, keyed by
+# (endpoint, group): the status page names them, the totals only count them
+_asleep_ids: Dict[Tuple[str, Optional[str]], frozenset] = {}
+
+
+# each installation's last totals (its first group), for formulas and rules
+# that read `battery-bank.pack_average_soc`: (totals, wall, monotonic, interval)
+_latest_totals: Dict[str, Tuple[Dict[str, Any], float, float, float]] = {}
+
+
+def latest_totals(endpoint_id: str):
+    """An installation's totals as the aggregator last computed them, or None."""
+    return _latest_totals.get(endpoint_id)
+
+
+def asleep_units(endpoint_id: str, group_id: Optional[str] = None) -> frozenset:
+    """The ids of the units the last computation counted asleep."""
+    return _asleep_ids.get((endpoint_id, group_id), frozenset())
+
+
+def set_sun_provider(fn) -> None:
+    """How the aggregator learns the sun's height at an installation (the
+    asset attributes' location). None: no asleep handling."""
+    global _sun_elevation
+    _sun_elevation = fn
 _SUM_PREFIXES = ("power_", "current_")
 # Site ratios (autonomy, self-consumption) are averaged rather than summed: two
 # installations that are each 100 % autonomous are not 200 % autonomous. A site
@@ -76,7 +120,7 @@ _SKIP_PREFIXES = ("operating_state", "vendor_state", "event_", "vendor_event_",
 
 # Census/status keys — not measurements: they bypass the canonical topic map and
 # (for the text one) the InfluxDB path.
-_META = ("units_online", "units_total", "status")
+_META = ("units_online", "units_total", "units_asleep", "status")
 
 
 def _rule_for(name: str) -> Optional[str]:
@@ -184,6 +228,14 @@ def compute_endpoint_aggregates(config, registry, endpoint_id: str,
         for src in t["from"]:
             feeds.setdefault(src, []).append((out_name, t["op"]))
     online = 0
+    asleep = 0
+    asleep_ids = []
+    elev = None
+    if _sun_elevation is not None and any(getattr(d, 'role', '') == 'inverter' for d in expected):
+        try:
+            elev = _sun_elevation(endpoint_id)
+        except Exception:  # noqa: BLE001 — no sun, no asleep handling
+            elev = None
     for dev in expected:
         store = registry.store_for(dev.id) or {}
         fresh_any = False
@@ -225,6 +277,31 @@ def compute_endpoint_aggregates(config, registry, endpoint_id: str,
                             float(val) if numeric else val)
         if fresh_any:
             online += 1
+            if elev is not None:
+                _last_fresh_elev[dev.id] = elev
+        elif (elev is not None and elev < ASLEEP_BELOW_DEG
+              and getattr(dev, 'role', '') == 'inverter'
+              and (elev < NIGHT_BELOW_DEG
+                   or _last_fresh_elev.get(dev.id, 90.0) < ASLEEP_BELOW_DEG)):
+            # asleep: what it sums is 0, not unknown — the same paths the
+            # fresh loop takes, so a declared or operator total gets its 0 too
+            asleep += 1
+            asleep_ids.append(dev.id)
+            for entry in list(store.values()):
+                name = entry.get("name") or ""
+                val = entry.get("value")
+                if not name or isinstance(val, bool) or not isinstance(val, (int, float)):
+                    continue
+                decl = entry.get("aggregates")
+                if isinstance(decl, dict):
+                    for out_name, op in decl.items():
+                        if op == "sum" and str(out_name) not in totals:
+                            declared.setdefault(str(out_name), (op, []))[1].append(0.0)
+                elif _rule_for(name) == "sum":
+                    fresh.setdefault(name, []).append(0.0)
+                for out_name, op in feeds.get(name, ()):
+                    if op == "sum":
+                        declared.setdefault(out_name, (op, []))[1].append(0.0)
 
     out: Dict[str, Any] = {}
     for name, vals in fresh.items():
@@ -253,10 +330,18 @@ def compute_endpoint_aggregates(config, registry, endpoint_id: str,
     pf = _derive_power_factor(out)
     if pf is not None:
         out["power_factor_total"] = pf
+    if expected and asleep == n_expected:
+        # all asleep, some never read since a restart: still 0 W, not unknown
+        out.setdefault("power_active_total", 0.0)
+    _asleep_ids[(endpoint_id, group_id)] = frozenset(asleep_ids)
     out["units_online"] = online
     out["units_total"] = n_expected
+    if elev is not None:
+        out["units_asleep"] = asleep
     if expected:
         out["status"] = ("online" if online == n_expected else
+                         "asleep" if online == 0 and asleep == n_expected else
+                         "online" if online + asleep == n_expected else
                          "offline" if online == 0 else "partial")
     return out
 
@@ -348,7 +433,8 @@ class EndpointAggregator(threading.Thread):
         n = 0
         while not self._stop.is_set():
             try:
-                self._publish_all(log=(n % 60 == 0))
+                if gateway_role.is_active():            # a standby publishes no totals
+                    self._publish_all(log=(n % 60 == 0))
             except Exception as e:  # noqa: BLE001 — the loop must survive anything
                 logger.warning("endpoint aggregator cycle failed: %s", e, exc_info=True)
             n += 1
@@ -372,6 +458,9 @@ class EndpointAggregator(threading.Thread):
             for gi, gid in enumerate(groups):
                 agg = compute_endpoint_aggregates(self._config, self._registry,
                                                   pid, group_id=gid)
+                if gi == 0:
+                    _latest_totals[pid] = (dict(agg), time.time(), time.monotonic(),
+                                           float(self._interval))
                 # The FIRST group keeps the bare endpoint path, so every topic
                 # and Influx series that existed before groups is byte-identical.
                 # The real group id always travels; whether the FIRST group is

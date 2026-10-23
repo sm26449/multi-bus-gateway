@@ -350,3 +350,43 @@
 
 /* History: warn colour when incompatible units share the Y axis */
 #histInfo.history-mixed-units { color: var(--warning-text) !important; }
+
+/* first-visit hint on the Monitor (app-monitor.js showMonitorOnboarding) */
+.hint-banner {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    background: var(--accent-tint);
+    border: 1px solid var(--accent-tint);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    font-size: 13px;
+}
+.hint-banner-icon {
+    flex: none;
+    color: var(--accent-text);
+    margin-top: 1px;
+}
+.hint-banner-text {
+    flex: 1;
+    color: var(--text-secondary);
+}
+.hint-banner-text strong { color: var(--text-primary); }
+.hint-banner-dismiss {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-tertiary);
+    cursor: pointer;
+}
+.hint-banner-dismiss:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}

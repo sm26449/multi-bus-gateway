@@ -8,6 +8,7 @@
     "version": "1.0.0",
     "author": "built-in",
     "description": "A Zigbee sensor bridged by zigbee2mqtt (Sonoff SNZB, Aqara, Tuya, Xiaomi…). Set the device connection topic to zigbee2mqtt/<friendly_name> — z2m publishes one JSON payload there and every row below reads a field from it (standard z2m exposes; field names per zigbee2mqtt.io). Rows are editable: remove what your sensor lacks, add plug fields (power/current/energy/state) or occupancy/contact for other device classes.",
+    "kind": "sensor",
     "source_document": "https://www.zigbee2mqtt.io/guide/usage/exposes.html",
     "protocol": { "transports": ["mqtt"] },
     "poll_groups": {

@@ -1,0 +1,1094 @@
+{
+ "untouched": {
+  "ascii": {},
+  "ascii-tcp": {},
+  "gx": {},
+  "gx-plain": {},
+  "http": {},
+  "mqtt-off": {},
+  "on-bridge": {},
+  "rtu": {},
+  "rtu-tcp": {},
+  "tap-bridge": {},
+  "tap-local": {},
+  "tcp": {},
+  "udp": {},
+  "umg512": {},
+  "via-gw": {}
+ },
+ "edits": [
+  {
+   "id": "tcp",
+   "label": "port",
+   "payload": {
+    "port": 1502,
+    "protocol": "tcp"
+   },
+   "body": {
+    "id": "tcp",
+    "name": "Modbus TCP, no timeout stored",
+    "template": "eastron_sdm630",
+    "enabled": false,
+    "connection": {
+     "port": 1502,
+     "protocol": "tcp"
+    },
+    "mqtt": {
+     "topic_prefix": "mbg/devices/tcp",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "tcp",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   }
+  },
+  {
+   "id": "udp",
+   "label": "unit",
+   "payload": {
+    "unit_id": 9,
+    "protocol": "udp"
+   },
+   "body": {
+    "id": "udp",
+    "name": "Modbus UDP",
+    "template": "eastron_sdm630",
+    "enabled": false,
+    "connection": {
+     "unit_id": 9,
+     "protocol": "udp"
+    },
+    "mqtt": {
+     "topic_prefix": "mbg/devices/udp",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "udp",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   }
+  },
+  {
+   "id": "via-gw",
+   "label": "unit on the gateway bus",
+   "payload": {
+    "unit_id": 5
+   },
+   "body": {
+    "id": "via-gw",
+    "name": "Through a Modbus TCP gateway",
+    "template": "eastron_sdm630",
+    "enabled": false,
+    "connection": {
+     "unit_id": 5
+    },
+    "mqtt": {
+     "topic_prefix": "mbg/devices/via-gw",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "via-gw",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   }
+  },
+  {
+   "id": "rtu",
+   "label": "baud",
+   "payload": {
+    "baudrate": 9600,
+    "protocol": "rtu"
+   },
+   "body": {
+    "id": "rtu",
+    "name": "Direct serial RTU",
+    "template": "eastron_sdm630",
+    "enabled": false,
+    "connection": {
+     "baudrate": 9600,
+     "protocol": "rtu"
+    },
+    "mqtt": {
+     "topic_prefix": "mbg/devices/rtu",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "rtu",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   }
+  },
+  {
+   "id": "ascii",
+   "label": "timeout",
+   "payload": {
+    "timeout": 6,
+    "protocol": "ascii"
+   },
+   "body": {
+    "id": "ascii",
+    "name": "Direct serial ASCII",
+    "template": "eastron_sdm630",
+    "enabled": false,
+    "connection": {
+     "timeout": 6,
+     "protocol": "ascii"
+    },
+    "mqtt": {
+     "topic_prefix": "mbg/devices/ascii",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "ascii",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   }
+  },
+  {
+   "id": "on-bridge",
+   "label": "unit on the bridge",
+   "payload": {
+    "unit_id": 3
+   },
+   "body": {
+    "id": "on-bridge",
+    "name": "Heat pump on a bridge (samsung-dvm shape)",
+    "template": "samsung_mim_b19n",
+    "enabled": false,
+    "connection": {
+     "unit_id": 3
+    },
+    "mqtt": {
+     "topic_prefix": "mbg/devices/on-bridge",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "on-bridge",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   }
+  },
+  {
+   "id": "rtu-tcp",
+   "label": "port",
+   "payload": {
+    "port": 4011,
+    "protocol": "rtu-tcp"
+   },
+   "body": {
+    "id": "rtu-tcp",
+    "name": "RTU over the network, typed address",
+    "template": "eastron_sdm630",
+    "enabled": false,
+    "connection": {
+     "port": 4011,
+     "protocol": "rtu-tcp"
+    },
+    "mqtt": {
+     "topic_prefix": "mbg/devices/rtu-tcp",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "rtu-tcp",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   }
+  },
+  {
+   "id": "ascii-tcp",
+   "label": "unit",
+   "payload": {
+    "unit_id": 8,
+    "protocol": "ascii-tcp"
+   },
+   "body": {
+    "id": "ascii-tcp",
+    "name": "ASCII over the network",
+    "template": "eastron_sdm630",
+    "enabled": false,
+    "connection": {
+     "unit_id": 8,
+     "protocol": "ascii-tcp"
+    },
+    "mqtt": {
+     "topic_prefix": "mbg/devices/ascii-tcp",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "ascii-tcp",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   }
+  },
+  {
+   "id": "tap-local",
+   "label": "baud",
+   "payload": {
+    "baudrate": 9600,
+    "protocol": "rtu_tap"
+   },
+   "body": {
+    "id": "tap-local",
+    "name": "Listening on a local port (seplos shape)",
+    "template": "seplos_bms_v3_rtu_tap",
+    "enabled": false,
+    "connection": {
+     "baudrate": 9600,
+     "protocol": "rtu_tap"
+    },
+    "mqtt": {
+     "topic_prefix": "mbg/devices/tap-local",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "tap-local",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   }
+  },
+  {
+   "id": "tap-bridge",
+   "label": "unit",
+   "payload": {
+    "unit_id": 10,
+    "protocol": "rtu_tap"
+   },
+   "body": {
+    "id": "tap-bridge",
+    "name": "Listening through a bridge",
+    "template": "seplos_bms_v3_rtu_tap",
+    "enabled": false,
+    "connection": {
+     "unit_id": 10,
+     "protocol": "rtu_tap"
+    },
+    "mqtt": {
+     "topic_prefix": "mbg/devices/tap-bridge",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "tap-bridge",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   }
+  },
+  {
+   "id": "http",
+   "label": "url",
+   "payload": {
+    "url": "http://192.0.2.40/solar_api/v1/GetInverterRealtimeData.cgi?DeviceId=2",
+    "protocol": "http"
+   },
+   "body": {
+    "id": "http",
+    "name": "HTTP JSON",
+    "template": "fronius_solar_api_inverter",
+    "enabled": false,
+    "connection": {
+     "url": "http://192.0.2.40/solar_api/v1/GetInverterRealtimeData.cgi?DeviceId=2",
+     "protocol": "http"
+    },
+    "mqtt": {
+     "topic_prefix": "mbg/devices/http",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "http",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   }
+  },
+  {
+   "id": "gx",
+   "label": "a topic variable",
+   "payload": {
+    "vars": {
+     "portal": "c0ffee000001",
+     "vebus": "274",
+     "extra": "1"
+    },
+    "protocol": "mqtt"
+   },
+   "body": {
+    "id": "gx",
+    "name": "GX, vars, own certificate, own keepalive",
+    "template": "victron_gx_mqtt",
+    "enabled": false,
+    "connection": {
+     "vars": {
+      "portal": "c0ffee000001",
+      "vebus": "274",
+      "extra": "1"
+     },
+     "protocol": "mqtt"
+    },
+    "mqtt": {
+     "topic_prefix": "mbg/devices/gx",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "gx",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   }
+  },
+  {
+   "id": "gx-plain",
+   "label": "TLS on",
+   "payload": {
+    "tls": true,
+    "protocol": "mqtt"
+   },
+   "body": {
+    "id": "gx-plain",
+    "name": "GX as prod stores it (no username, no tls)",
+    "template": "victron_gx_mqtt",
+    "enabled": false,
+    "connection": {
+     "tls": true,
+     "protocol": "mqtt"
+    },
+    "mqtt": {
+     "topic_prefix": "mbg/devices/gx-plain",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "gx-plain",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   }
+  },
+  {
+   "id": "mqtt-off",
+   "label": "keepalive back to the template",
+   "payload": {
+    "keepalive": null,
+    "protocol": "mqtt"
+   },
+   "body": {
+    "id": "mqtt-off",
+    "name": "MQTT, keepalive off",
+    "template": "mqtt_json_generic",
+    "enabled": false,
+    "connection": {
+     "keepalive": null,
+     "protocol": "mqtt"
+    },
+    "mqtt": {
+     "topic_prefix": "mbg/devices/mqtt-off",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "mqtt-off",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   }
+  },
+  {
+   "id": "umg512",
+   "label": "the primary timeout",
+   "payload": {
+    "protocol": "tcp",
+    "host": "192.168.1.207",
+    "port": 502,
+    "unit_id": 1,
+    "timeout": 5
+   },
+   "body": {
+    "id": "umg512",
+    "name": "Janitza UMG 512-PRO",
+    "template": "janitza_umg512_pro",
+    "enabled": true,
+    "connection": {
+     "protocol": "tcp",
+     "host": "192.168.1.207",
+     "port": 502,
+     "unit_id": 1,
+     "timeout": 5
+    },
+    "mqtt": {
+     "topic_prefix": "janitza/umg512",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "janitza_umg512",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   }
+  },
+  {
+   "id": "on-bridge",
+   "label": "off the bridge, onto direct serial",
+   "payload": {
+    "protocol": "rtu",
+    "serial_port": "/dev/ttyUSB7",
+    "baudrate": 9600,
+    "parity": "N",
+    "stopbits": 1,
+    "bytesize": 8,
+    "unit_id": 2,
+    "timeout": 3,
+    "bridge": null
+   },
+   "body": {
+    "id": "on-bridge",
+    "name": "Heat pump on a bridge (samsung-dvm shape)",
+    "template": "samsung_mim_b19n",
+    "enabled": false,
+    "connection": {
+     "protocol": "rtu",
+     "serial_port": "/dev/ttyUSB7",
+     "baudrate": 9600,
+     "parity": "N",
+     "stopbits": 1,
+     "bytesize": 8,
+     "unit_id": 2,
+     "timeout": 3,
+     "bridge": null
+    },
+    "mqtt": {
+     "topic_prefix": "mbg/devices/on-bridge",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "on-bridge",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   },
+   "stored_has": {
+    "protocol": "rtu",
+    "serial_port": "/dev/ttyUSB7",
+    "unit_id": 2
+   },
+   "stored_lacks": [
+    "bridge",
+    "bridge_port",
+    "host"
+   ]
+  },
+  {
+   "id": "udp",
+   "label": "UDP off",
+   "payload": {
+    "protocol": "tcp",
+    "host": "192.0.2.81",
+    "port": 502,
+    "unit_id": 3,
+    "timeout": 2
+   },
+   "body": {
+    "id": "udp",
+    "name": "Modbus UDP",
+    "template": "eastron_sdm630",
+    "enabled": false,
+    "connection": {
+     "protocol": "tcp",
+     "host": "192.0.2.81",
+     "port": 502,
+     "unit_id": 3,
+     "timeout": 2
+    },
+    "mqtt": {
+     "topic_prefix": "mbg/devices/udp",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "udp",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   },
+   "stored_has": {
+    "protocol": "tcp",
+    "host": "192.0.2.81",
+    "port": 502,
+    "unit_id": 3,
+    "timeout": 2
+   },
+   "stored_lacks": []
+  },
+  {
+   "id": "tcp",
+   "label": "onto a gateway bus",
+   "payload": {
+    "bridge": "gw",
+    "bridge_port": 502,
+    "unit_id": 1,
+    "timeout": 3,
+    "host": null,
+    "port": null,
+    "serial_port": null,
+    "baudrate": null,
+    "parity": null,
+    "stopbits": null,
+    "bytesize": null
+   },
+   "body": {
+    "id": "tcp",
+    "name": "Modbus TCP, no timeout stored",
+    "template": "eastron_sdm630",
+    "enabled": false,
+    "connection": {
+     "bridge": "gw",
+     "bridge_port": 502,
+     "unit_id": 1,
+     "timeout": 3,
+     "host": null,
+     "port": null,
+     "serial_port": null,
+     "baudrate": null,
+     "parity": null,
+     "stopbits": null,
+     "bytesize": null
+    },
+    "mqtt": {
+     "topic_prefix": "mbg/devices/tcp",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "tcp",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   },
+   "stored_has": {
+    "bridge": "gw",
+    "unit_id": 1
+   },
+   "stored_lacks": [
+    "host",
+    "port",
+    "serial_port"
+   ]
+  },
+  {
+   "id": "via-gw",
+   "label": "off the gateway bus, own address",
+   "payload": {
+    "protocol": "tcp",
+    "host": "192.0.2.90",
+    "port": 502,
+    "unit_id": 4,
+    "timeout": 3,
+    "bridge": null
+   },
+   "body": {
+    "id": "via-gw",
+    "name": "Through a Modbus TCP gateway",
+    "template": "eastron_sdm630",
+    "enabled": false,
+    "connection": {
+     "protocol": "tcp",
+     "host": "192.0.2.90",
+     "port": 502,
+     "unit_id": 4,
+     "timeout": 3,
+     "bridge": null
+    },
+    "mqtt": {
+     "topic_prefix": "mbg/devices/via-gw",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "via-gw",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   },
+   "stored_has": {
+    "host": "192.0.2.90",
+    "unit_id": 4
+   },
+   "stored_lacks": [
+    "bridge",
+    "bridge_port"
+   ]
+  },
+  {
+   "id": "tap-local",
+   "label": "onto a bridge",
+   "payload": {
+    "protocol": "rtu_tap",
+    "bridge": "ws",
+    "bridge_port": 4197,
+    "unit_id": 2,
+    "host": null,
+    "port": null,
+    "serial_port": null,
+    "baudrate": null,
+    "parity": null,
+    "stopbits": null,
+    "bytesize": null
+   },
+   "body": {
+    "id": "tap-local",
+    "name": "Listening on a local port (seplos shape)",
+    "template": "seplos_bms_v3_rtu_tap",
+    "enabled": false,
+    "connection": {
+     "protocol": "rtu_tap",
+     "bridge": "ws",
+     "bridge_port": 4197,
+     "unit_id": 2,
+     "host": null,
+     "port": null,
+     "serial_port": null,
+     "baudrate": null,
+     "parity": null,
+     "stopbits": null,
+     "bytesize": null
+    },
+    "mqtt": {
+     "topic_prefix": "mbg/devices/tap-local",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "tap-local",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   },
+   "stored_has": {
+    "protocol": "rtu_tap",
+    "bridge": "ws",
+    "bridge_port": 4197,
+    "unit_id": 2
+   },
+   "stored_lacks": [
+    "serial_port",
+    "baudrate",
+    "parity",
+    "stopbits",
+    "bytesize"
+   ]
+  }
+ ],
+ "wire": {
+  "ascii": {
+   "protocol": "ascii",
+   "serial_port": "/dev/ttyUSB8",
+   "baudrate": 9600,
+   "parity": "N",
+   "stopbits": 1,
+   "bytesize": 8,
+   "unit_id": 5,
+   "timeout": 4
+  },
+  "ascii-tcp": {
+   "protocol": "ascii-tcp",
+   "host": "192.0.2.91",
+   "port": 4002,
+   "unit_id": 7,
+   "timeout": 3
+  },
+  "gx": {
+   "protocol": "mqtt",
+   "broker": "192.0.2.10",
+   "port": 8883,
+   "topic": "N/c0ffee000001/#",
+   "username": "",
+   "password": "",
+   "tls": true,
+   "tls_insecure": true,
+   "vars": {
+    "portal": "c0ffee000001",
+    "vebus": "274"
+   },
+   "keepalive": {
+    "every_s": 30,
+    "payload": "",
+    "topic": "R/{portal}/keepalive"
+   }
+  },
+  "gx-plain": {
+   "protocol": "mqtt",
+   "broker": "192.0.2.10",
+   "port": 1883,
+   "topic": "N/c0ffee000002/#",
+   "username": "",
+   "password": "",
+   "tls": false,
+   "tls_insecure": false,
+   "vars": {
+    "portal": "c0ffee000002",
+    "vebus": "275"
+   },
+   "keepalive": null
+  },
+  "http": {
+   "protocol": "http",
+   "url": "http://192.0.2.40/solar_api/v1/GetInverterRealtimeData.cgi?DeviceId=1"
+  },
+  "mqtt-off": {
+   "protocol": "mqtt",
+   "broker": "192.0.2.10",
+   "port": 1883,
+   "topic": "x/#",
+   "username": "",
+   "password": "",
+   "tls": false,
+   "tls_insecure": false,
+   "vars": {},
+   "keepalive": false
+  },
+  "on-bridge": {
+   "bridge": "ws",
+   "bridge_port": 4196,
+   "unit_id": 2,
+   "timeout": 3
+  },
+  "rtu": {
+   "protocol": "rtu",
+   "serial_port": "/dev/ttyUSB9",
+   "baudrate": 19200,
+   "parity": "E",
+   "stopbits": 1,
+   "bytesize": 8,
+   "unit_id": 4,
+   "timeout": 3
+  },
+  "rtu-tcp": {
+   "protocol": "rtu-tcp",
+   "host": "192.0.2.90",
+   "port": 4001,
+   "unit_id": 6,
+   "timeout": 3
+  },
+  "tap-bridge": {
+   "protocol": "rtu_tap",
+   "bridge": "ws",
+   "bridge_port": 4197,
+   "unit_id": 9
+  },
+  "tap-local": {
+   "protocol": "rtu_tap",
+   "serial_port": "/dev/ttySEPLOS",
+   "baudrate": 19200,
+   "parity": "N",
+   "stopbits": 1,
+   "bytesize": 8,
+   "unit_id": 2
+  },
+  "tcp": {
+   "protocol": "tcp",
+   "host": "192.0.2.80",
+   "port": 502,
+   "unit_id": 1,
+   "timeout": 3
+  },
+  "udp": {
+   "protocol": "udp",
+   "host": "192.0.2.81",
+   "port": 502,
+   "unit_id": 3,
+   "timeout": 2
+  },
+  "umg512": {
+   "protocol": "tcp",
+   "host": "192.168.1.207",
+   "port": 502,
+   "unit_id": 1,
+   "timeout": 3
+  },
+  "via-gw": {
+   "bridge": "gw",
+   "bridge_port": 502,
+   "unit_id": 4,
+   "timeout": 3
+  }
+ },
+ "bodies": {
+  "ascii": {
+   "id": "ascii",
+   "name": "Direct serial ASCII",
+   "template": "eastron_sdm630",
+   "enabled": false,
+   "connection": {},
+   "mqtt": {
+    "topic_prefix": "mbg/devices/ascii",
+    "enabled": true
+   },
+   "influxdb": {
+    "bucket": "janitza",
+    "device_tag": "ascii",
+    "enabled": true
+   },
+   "ha_discovery_enabled": true
+  },
+  "ascii-tcp": {
+   "id": "ascii-tcp",
+   "name": "ASCII over the network",
+   "template": "eastron_sdm630",
+   "enabled": false,
+   "connection": {},
+   "mqtt": {
+    "topic_prefix": "mbg/devices/ascii-tcp",
+    "enabled": true
+   },
+   "influxdb": {
+    "bucket": "janitza",
+    "device_tag": "ascii-tcp",
+    "enabled": true
+   },
+   "ha_discovery_enabled": true
+  },
+  "gx": {
+   "id": "gx",
+   "name": "GX, vars, own certificate, own keepalive",
+   "template": "victron_gx_mqtt",
+   "enabled": false,
+   "connection": {},
+   "mqtt": {
+    "topic_prefix": "mbg/devices/gx",
+    "enabled": true
+   },
+   "influxdb": {
+    "bucket": "janitza",
+    "device_tag": "gx",
+    "enabled": true
+   },
+   "ha_discovery_enabled": true
+  },
+  "gx-plain": {
+   "id": "gx-plain",
+   "name": "GX as prod stores it (no username, no tls)",
+   "template": "victron_gx_mqtt",
+   "enabled": false,
+   "connection": {},
+   "mqtt": {
+    "topic_prefix": "mbg/devices/gx-plain",
+    "enabled": true
+   },
+   "influxdb": {
+    "bucket": "janitza",
+    "device_tag": "gx-plain",
+    "enabled": true
+   },
+   "ha_discovery_enabled": true
+  },
+  "http": {
+   "id": "http",
+   "name": "HTTP JSON",
+   "template": "fronius_solar_api_inverter",
+   "enabled": false,
+   "connection": {},
+   "mqtt": {
+    "topic_prefix": "mbg/devices/http",
+    "enabled": true
+   },
+   "influxdb": {
+    "bucket": "janitza",
+    "device_tag": "http",
+    "enabled": true
+   },
+   "ha_discovery_enabled": true
+  },
+  "mqtt-off": {
+   "id": "mqtt-off",
+   "name": "MQTT, keepalive off",
+   "template": "mqtt_json_generic",
+   "enabled": false,
+   "connection": {},
+   "mqtt": {
+    "topic_prefix": "mbg/devices/mqtt-off",
+    "enabled": true
+   },
+   "influxdb": {
+    "bucket": "janitza",
+    "device_tag": "mqtt-off",
+    "enabled": true
+   },
+   "ha_discovery_enabled": true
+  },
+  "on-bridge": {
+   "id": "on-bridge",
+   "name": "Heat pump on a bridge (samsung-dvm shape)",
+   "template": "samsung_mim_b19n",
+   "enabled": false,
+   "connection": {},
+   "mqtt": {
+    "topic_prefix": "mbg/devices/on-bridge",
+    "enabled": true
+   },
+   "influxdb": {
+    "bucket": "janitza",
+    "device_tag": "on-bridge",
+    "enabled": true
+   },
+   "ha_discovery_enabled": true
+  },
+  "rtu": {
+   "id": "rtu",
+   "name": "Direct serial RTU",
+   "template": "eastron_sdm630",
+   "enabled": false,
+   "connection": {},
+   "mqtt": {
+    "topic_prefix": "mbg/devices/rtu",
+    "enabled": true
+   },
+   "influxdb": {
+    "bucket": "janitza",
+    "device_tag": "rtu",
+    "enabled": true
+   },
+   "ha_discovery_enabled": true
+  },
+  "rtu-tcp": {
+   "id": "rtu-tcp",
+   "name": "RTU over the network, typed address",
+   "template": "eastron_sdm630",
+   "enabled": false,
+   "connection": {},
+   "mqtt": {
+    "topic_prefix": "mbg/devices/rtu-tcp",
+    "enabled": true
+   },
+   "influxdb": {
+    "bucket": "janitza",
+    "device_tag": "rtu-tcp",
+    "enabled": true
+   },
+   "ha_discovery_enabled": true
+  },
+  "tap-bridge": {
+   "id": "tap-bridge",
+   "name": "Listening through a bridge",
+   "template": "seplos_bms_v3_rtu_tap",
+   "enabled": false,
+   "connection": {},
+   "mqtt": {
+    "topic_prefix": "mbg/devices/tap-bridge",
+    "enabled": true
+   },
+   "influxdb": {
+    "bucket": "janitza",
+    "device_tag": "tap-bridge",
+    "enabled": true
+   },
+   "ha_discovery_enabled": true
+  },
+  "tap-local": {
+   "id": "tap-local",
+   "name": "Listening on a local port (seplos shape)",
+   "template": "seplos_bms_v3_rtu_tap",
+   "enabled": false,
+   "connection": {},
+   "mqtt": {
+    "topic_prefix": "mbg/devices/tap-local",
+    "enabled": true
+   },
+   "influxdb": {
+    "bucket": "janitza",
+    "device_tag": "tap-local",
+    "enabled": true
+   },
+   "ha_discovery_enabled": true
+  },
+  "tcp": {
+   "id": "tcp",
+   "name": "Modbus TCP, no timeout stored",
+   "template": "eastron_sdm630",
+   "enabled": false,
+   "connection": {},
+   "mqtt": {
+    "topic_prefix": "mbg/devices/tcp",
+    "enabled": true
+   },
+   "influxdb": {
+    "bucket": "janitza",
+    "device_tag": "tcp",
+    "enabled": true
+   },
+   "ha_discovery_enabled": true
+  },
+  "udp": {
+   "id": "udp",
+   "name": "Modbus UDP",
+   "template": "eastron_sdm630",
+   "enabled": false,
+   "connection": {},
+   "mqtt": {
+    "topic_prefix": "mbg/devices/udp",
+    "enabled": true
+   },
+   "influxdb": {
+    "bucket": "janitza",
+    "device_tag": "udp",
+    "enabled": true
+   },
+   "ha_discovery_enabled": true
+  },
+  "umg512": {
+   "id": "umg512",
+   "name": "Janitza UMG 512-PRO",
+   "template": "janitza_umg512_pro",
+   "enabled": true,
+   "connection": {},
+   "mqtt": {
+    "topic_prefix": "janitza/umg512",
+    "enabled": true
+   },
+   "influxdb": {
+    "bucket": "janitza",
+    "device_tag": "janitza_umg512",
+    "enabled": true
+   },
+   "ha_discovery_enabled": true
+  },
+  "via-gw": {
+   "id": "via-gw",
+   "name": "Through a Modbus TCP gateway",
+   "template": "eastron_sdm630",
+   "enabled": false,
+   "connection": {},
+   "mqtt": {
+    "topic_prefix": "mbg/devices/via-gw",
+    "enabled": true
+   },
+   "influxdb": {
+    "bucket": "janitza",
+    "device_tag": "via-gw",
+    "enabled": true
+   },
+   "ha_discovery_enabled": true
+  }
+ }
+}

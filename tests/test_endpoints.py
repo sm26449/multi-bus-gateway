@@ -998,3 +998,124 @@ def test_templates_page_names_waiting_updates_and_a_missing_template_is_said(tmp
     assert plan["missing_templates"] == ["seplos_bms_v3_rtu_tap"] and plan["pending"] is False
     assert client.get("/api/endpoints/bank").json()["template_update"]["missing_templates"] \
         == ["seplos_bms_v3_rtu_tap"]
+
+
+GROUP_ROUTING_YAML = """
+endpoints:
+  - id: plant
+    name: Plant
+    mqtt: { topic_prefix: "pv/units/${unit_id}" }
+    influxdb: { bucket: pv, device_tag: "unit_${unit_id}" }
+    groups:
+      - id: inverters
+        connection: { protocol: tcp, host: 192.0.2.9, port: 502 }
+        units: [1]
+        mqtt: { topic_prefix: "pv/inverters/${unit_id}" }
+        influxdb: { device_tag: "inverter_${unit_id}" }
+      - id: meter
+        connection: { protocol: tcp, host: 192.0.2.9, port: 502 }
+        units: [{unit_id: 240, id: grid-meter}]
+        mqtt: { topic_prefix: "pv/meter/grid" }
+"""
+
+
+@needs_tc
+def test_saving_the_groups_keeps_each_groups_own_routing(tmp_path):
+    """A group may route elsewhere than its endpoint (`pv/meter/grid`, not
+    `pv/units/240`). The group form does not edit that routing, so a save from
+    it must not drop it — it used to, and the meter's topics and series moved."""
+    _cfg, client = make_app(tmp_path, extra_yaml=GROUP_ROUTING_YAML)
+    conn = {"protocol": "tcp", "host": "192.0.2.9", "port": 502}
+    body = {"id": "plant", "name": "Plant renamed",
+            "groups": [{"id": "inverters", "connection": conn, "units": [1]},
+                       {"id": "meter", "connection": conn, "units": [{"unit_id": 240, "id": "grid-meter"}]}]}
+    r = client.put("/api/endpoints/plant", json=body)
+    assert r.status_code == 200, r.text
+    re = Config(str(tmp_path / "config.yaml"))
+    assert re.get_device("grid-meter").mqtt_topic_prefix == "pv/meter/grid"
+    assert re.get_device("plant-u1").mqtt_topic_prefix == "pv/inverters/1"
+    assert re.get_device("plant-u1").influxdb_device_tag == "inverter_1"
+    groups = {g["id"]: g for g in re.get_raw_endpoint("plant")["groups"]}
+    assert groups["meter"]["mqtt"] == {"topic_prefix": "pv/meter/grid"}
+
+
+def test_boot_seeding_for_a_device_of_its_own(tmp_path):
+    """A device written straight into config.yaml with a template gets its
+    registers at boot; a selection file that exists — even emptied — is kept."""
+    import json as _json
+
+    from multibus.device_seed import seed_devices_at_boot
+    from multibus.device_template import TemplateRegistry
+    cfg = write_config(tmp_path, extra_yaml="""
+devices:
+  - id: gx
+    template: victron_gx_mqtt
+    connection: { protocol: mqtt, broker: b, topic: "N/x/#" }
+  - id: meter2
+    template: eastron_sdm120
+    connection: { protocol: tcp, host: 192.0.2.9 }
+""")
+    emptied = tmp_path / "devices" / "meter2" / "selected_registers.json"
+    emptied.parent.mkdir(parents=True)
+    emptied.write_text(_json.dumps({"version": "1.0", "registers": []}))
+    seed_devices_at_boot(cfg, TemplateRegistry(user_dir=tmp_path / "device_templates"))
+    regs, _g = cfg.load_device_registers(cfg.get_device("gx"))
+    assert len(regs) == 38
+    assert _json.loads(emptied.read_text())["registers"] == []
+
+
+# ── 2026-10-20: a flat bank turned into one group lost its serial port ──
+# The editor wrote the inherited connection back as the group's own, with the
+# serial port as a TCP host and without the baud: the tap dialled
+# "/dev/ttySEPLOS:502" and eight batteries went dark.
+
+GROUPED_BANK_YAML = """
+endpoints:
+  - id: bank
+    name: Bank
+    template: seplos_bms_v3_rtu_tap
+    connection: { protocol: rtu_tap, serial_port: /dev/ttyTAP, baudrate: 19200 }
+    groups:
+      - id: units
+        role: battery
+        units: [1, 2]
+"""
+
+
+def test_a_group_without_a_connection_uses_the_installations(tmp_path):
+    cfg = write_config(tmp_path, extra_yaml=GROUPED_BANK_YAML)
+    for d in cfg.endpoint_devices("bank"):
+        c = d.sources[0].connection if d.sources else d.connection
+        assert (c.protocol, c.serial_port, c.baudrate, c.host) == ("rtu_tap", "/dev/ttyTAP", 19200, c.host)
+        assert c.serial_port and not str(c.host).startswith('/')
+
+
+@needs_tc
+def test_the_group_view_says_it_inherits_and_carries_the_serial_line(tmp_path):
+    from multibus.api import create_api
+    cfg = write_config(tmp_path, extra_yaml=GROUPED_BANK_YAML)
+    app, _ = create_api(cfg, None, None, None, devices=[(d, None) for d in cfg.devices])
+    client = TestClient(app, raise_server_exceptions=False)
+    g = client.get("/api/endpoints/bank").json()["groups"][0]
+    assert g["inherits"] is True
+    src = g["sources"][0]
+    assert (src["protocol"], src["address"], src["baudrate"]) == ("rtu_tap", "/dev/ttyTAP", 19200)
+
+
+@needs_tc
+def test_a_serial_port_is_refused_as_a_group_host(tmp_path):
+    from multibus.api import create_api
+    cfg = write_config(tmp_path, extra_yaml=GROUPED_BANK_YAML)
+    app, _ = create_api(cfg, None, None, None, devices=[(d, None) for d in cfg.devices])
+    client = TestClient(app, raise_server_exceptions=False)
+    body = {"name": "Bank", "enabled": True, "template": "seplos_bms_v3_rtu_tap",
+            "connection": {"protocol": "rtu_tap", "serial_port": "/dev/ttyTAP", "baudrate": 19200},
+            "groups": [{"id": "units", "role": "battery", "units": [1, 2],
+                        "connection": {"protocol": "rtu_tap", "host": "/dev/ttyTAP", "port": 502}}]}
+    r = client.put("/api/endpoints/bank", json=body)
+    assert r.status_code == 422 and "is a serial port" in r.text
+    body["groups"][0].pop("connection")                     # the group inherits: fine
+    assert client.put("/api/endpoints/bank", json=body).status_code == 200
+    d = cfg.endpoint_devices("bank")[0]
+    c = d.sources[0].connection if d.sources else d.connection
+    assert c.serial_port == "/dev/ttyTAP" and c.baudrate == 19200

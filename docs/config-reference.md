@@ -16,8 +16,8 @@ defaults track this document.
    (atomic write, file mode `0600` — it holds credentials).
 2. **Environment variables** — a small set of overrides applied **on every
    start, after** `config.yaml` is loaded. An env value therefore wins over the
-   file/UI on each boot. Secrets set via env (`MQTT_PASSWORD`, `INFLUXDB_TOKEN`,
-   `ESPHOME_PASSWORD`) are *shadowed*: a UI save writes the config-file value
+   file/UI on each boot. Secrets set via env (`MQTT_PASSWORD`, `INFLUXDB_TOKEN`)
+   are *shadowed*: a UI save writes the config-file value
    back to disk, never the env secret.
 3. **`config/selected_registers.json`** (primary device) and
    **`config/devices/<id>/selected_registers.json`** (every other device) — the
@@ -63,15 +63,6 @@ These map 1:1 onto `config.yaml` keys and override them at each boot.
 
 Active overrides are reported by `GET /api/config` (`env_overrides`), with
 secret values masked.
-
-### Device Builder (ESPHome) — seed + override
-
-| Variable | Behaviour |
-|----------|-----------|
-| `ESPHOME_URL` | Sets `esphome.url`. On a **fresh deploy** (no `esphome:` block in `config.yaml` yet) its presence also **enables** the Builder outright — zero-config with the bundled `esphome` compose service. Once a block exists (any UI save), the saved enabled/disabled choice wins. |
-| `ESPHOME_USERNAME` | Sets `esphome.username`. |
-| `ESPHOME_PASSWORD` | Sets `esphome.password` (secret — shadowed on save). |
-| `ESPHOME_ENABLED` | `true`/`false` — explicit override of the saved choice, every start. |
 
 ### Process-only variables (never stored in config.yaml)
 
@@ -209,6 +200,7 @@ its interval — the two numbers an interval is chosen from.
 | `auth.lockout_threshold` | `5` | failed logins per client IP before lockout |
 | `auth.lockout_minutes` | `5` | lockout duration |
 | `canonical_url` | `""` (off) | when set, browsers are steered to this canonical HTTPS URL (client-side; the local IP stays reachable via `?local`) |
+| `nodes_url` | `""` (no link) | address of the companion ESP nodes service (multi-bus-gateway-esphome), a path such as `/nodes/` or an `http(s)://` URL; when set, Devices shows an **ESP nodes** link to it (signed-in users only). Settings → Security |
 | `tls.enabled` | `false` (opt-in) | HTTPS for the UI (uvicorn TLS) |
 | `tls.cert` / `tls.key` | `""` | container-local paths |
 | `trusted_proxies` | `[]` (trust nobody) | reverse-proxy IPs whose `X-Forwarded-*` headers are trusted. Required when TLS terminates in a proxy in front — otherwise lockouts, the IP allowlist and the audit trail see the proxy's IP |
@@ -222,7 +214,7 @@ its interval — the two numbers an interval is chosen from.
 | `allowlist` | `[]` (open) | IPs/CIDRs allowed to reach the HTTP API/UI. Loopback and the docker gateway are always allowed. An entry that does not parse **denies every client** until it is fixed (3.83.0) — the API refuses such an entry, so this only happens to a hand-edited file. |
 | `allow_nonlan_http_devices` | `false` (opt-in) | SSRF guard: HTTP/JSON device URLs must point at a private LAN host unless this is true |
 | `allow_writes` | `false` (opt-in) | master **arming** switch for Modbus writes (FC5/6/15/16). When armed, any device that is not `write_locked` can be written — declared registers with their template encoding + whatever guards were declared; undeclared registers via the raw path (`unguarded: true` in the payload). Every write is authenticated, rate-limited and audited. |
-| `primary_write_locked` | `true` | per-device write LOCK for the primary. Read-only used to be hardcoded; it is now this flag, defaulting to locked so the historical behavior survives upgrades. Unlock deliberately. Non-primary devices carry `write_locked` in their `devices[]`/`endpoints:` entry (default unlocked) — toggle from the device's Outputs tab. |
+| `primary_write_locked` | `true` | per-device write LOCK for the primary. Read-only used to be hardcoded; it is now this flag, defaulting to locked so the historical behavior survives upgrades. Unlock deliberately. Non-primary devices carry `write_locked` in their `devices[]`/`endpoints:` entry (default unlocked) — toggle from the device's Commands tab (or Edit, when it has no commands). |
 | `write_rate_limit_per_s` | `10.0` | per-client-IP write rate limit on the write API; excess gets 429; `0` disables |
 
 ### `polling:`
@@ -238,6 +230,31 @@ polling:
 Groups above are the built-in defaults; per-device groups saved from the UI live
 in the device's registers file and override these. Intervals may be sub-second
 (floor: `0.05 s`).
+
+### `modules:` (Settings → Modules)
+
+Separate services beside the gateway, not part of the open-source gateway:
+
+```yaml
+modules:
+  - id: nodes
+    name: ESP nodes
+    icon: usb-plug
+    url: /nodes/
+    health: /nodes/api/health          # optional: the page shows whether it answers
+    description: Flash ESP boards from the browser and list the nodes.   # optional
+```
+
+Listed in Settings → Modules once signed in, each with whether it answers
+and an Open button; a wrong entry is skipped and logged. See
+[API.md](API.md#modules-settings--modules).
+
+### `opcua_output:` (primary device)
+
+Whether the primary device is served on the OPC UA server, and which values:
+`opcua_output: {enabled: true, fields: [frequency, power_active_total]}`.
+Absent = served, every value. Other devices carry an `opcua:` block; see
+[opcua.md](opcua.md#which-devices-and-values-are-served).
 
 ### `http_output:` and `rest_push:` (primary device)
 
@@ -323,17 +340,28 @@ devices:
       # mqtt (MQTT input): broker, port, username, password, tls, topic,
       #   accept_retained (true = ingest the broker's retained snapshot on
       #   subscribe — for collectors that retain + carry an LWT; a restart
-      #   then repopulates instantly instead of waiting for each change)
+      #   then repopulates instantly instead of waiting for each change),
+      #   availability {topic, online, offline}, stale_after_s, vars {name: value},
+      #   keepalive {topic, first_payload, payload, every_s} or false (overrides
+      #   the template's protocol.keepalive), tls_ca (CA file) / tls_insecure
     mqtt:
       topic_prefix: meters/${device_id}   # ${device_id} / ${id} substituted
       ha_discovery: true
       enabled: true              # route this device's values to MQTT
+      # its own publishing; absent = the gateway's (mqtt: above, Settings → MQTT)
+      # publish_mode: changed     # changed | all (every reading)
+      # heartbeat_interval: 30    # s; resend an unchanged value; 0 = never
     influxdb:
       bucket: sdm630_garage      # default: the global bucket
       device_tag: sdm630_garage  # default: the device id
       enabled: true
       tags: {}                   # static tags on every point (see endpoints: below)
+      # its own publishing; absent = the gateway's (influxdb: above)
+      # publish_mode: changed     # changed | all
+      # write_interval: 5         # s; at most one point per value this often
     http_output: {enabled: false}
+    opcua: {enabled: true}       # served on the OPC UA server; fields: [..] = only those values
+                                 # (absent = served, every value; a device made in the UI gets false)
     rest_push: {}                # same shape as the primary's block
     pq_recorder: {}              # same shape as the primary's block (Janitza only)
 ```
@@ -387,12 +415,14 @@ endpoints:
     write_locked: false          # applies to every unit (one endpoint, one lock)
     http_output: { enabled: false }        # applies to every unit
     rest_push:   { enabled: false, url: "" }   # applies to every unit
+    opcua:       { enabled: true }         # every unit; a group's own `opcua:` wins (its template, its fields)
 ```
 
 An endpoint is ONE endpoint, so the sinks that belong to the endpoint are declared
 once: `write_locked`, `http_output` and `rest_push` sit on the endpoint and are
 propagated to every materialized unit. They are edited from any unit's Outputs
-tab (the switch says it applies endpoint-wide) or from the endpoint page.
+tab (the panel says it applies endpoint-wide; the write lock from its Commands
+or Read via tab) or from the endpoint page.
 
 Editing an endpoint re-materializes its units only when something they are BUILT
 from changed (connection, template, unit membership, routing, the endpoint-level
@@ -520,6 +550,20 @@ socket state: a device counts as alive while its acquisition health is `ok` or
 `degraded`, and offline once it reads `down`. A transport flag survives a
 vanished endpoint; a freshness verdict does not.
 
+### `opcua:` — the OPC UA server (off by default)
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `enabled` | `false` | the `asyncua` library is imported only when true |
+| `host` / `port` | `0.0.0.0` / `4840` | publish the port in Docker (`OPCUA_PORT`) |
+| `encryption` | `required` | `required` (Basic256Sha256 sign & encrypt only), `optional` (also none — passwords in clear), `off` |
+| `allow_anonymous` | `false` | otherwise the gateway's accounts; 5 wrong passwords lock a name for 5 min |
+| `update_s` | `1.0` | how often values are pushed into the address space (0.2..60) |
+| `public_url` | `""` | behind a load balancer: `opc.tcp://<balancer>:<port>/<path>` — the path served and the host the certificate names; the server still listens on `host`/`port`. A standby takes its partner's certificate with the configuration copy |
+
+The self-signed server certificate and key live in `config/opcua/`. See
+[opcua.md](opcua.md).
+
 ### `alerts:` (opt-in)
 
 | Key | Default | Notes |
@@ -542,10 +586,14 @@ vanished endpoint; a freshness verdict does not.
 
 See [alerts-webhooks.md](alerts-webhooks.md) for payloads and examples.
 
-### `esphome:` (opt-in — Device Builder)
+### `esphome:` (removed)
 
-Raw block: `{enabled, url, username, password, timeout_s}`. Usually managed from
-the UI or seeded by `ESPHOME_URL` (see above).
+The Device Builder moved out to the separate **multi-bus-gateway-esphome**
+service (ESP flashing from the browser, the node list). An `esphome:` block
+left in `config.yaml` by an older version is ignored (one log line) and
+dropped by the next save; the `ESPHOME_*` variables are no longer read. Link
+to the service with `ui.nodes_url` (listed in Settings → Modules) or a
+`modules:` entry.
 
 ### `rules.yaml` — the rules engine
 
@@ -562,7 +610,7 @@ rules:
     enabled: true
     mode: shadow                       # shadow (decide, never write) | armed
     target: { device: pv-u1, command: power_limit }   # or {endpoint, group, command}
-    kind: steps                        # steps | condition
+    kind: steps                        # steps | condition | trim | schedule
     signal: max(pv-u1.voltage_l1_n, pv-u1.voltage_l2_n, pv-u1.voltage_l3_n)
     signal_valid: { min: 100, max: 350, max_step: 10 }  # outside min/max → ignored;
                                        # a change > max_step is held until the next sample confirms it
@@ -574,9 +622,46 @@ rules:
     normal: { value: 100 }             # what "no step" asks for
     params: { revert_s: 0, ramp_s: 10 }  # fixed params sent with every want
     timing: { every_s: 2, debounce: 3, min_interval_s: 30, reassert_s: 120 }
+    # optional timers: for_s (a change wanted this long), min_on_s, min_off_s,
+    # max_on_s (then a rest of min_off_s), max_starts_per_h — on/off against off_value
+    # (or a condition's else, a steps rule's normal); see rules.md §1
     on_stale: hold                     # hold | safe | <number> (fail closed to a value)
     on_disable: safe                   # safe | hold
 ```
+
+A `trim` rule (follow a signal into a band by nudging the value) carries
+`signal`, `above`, `below`, `step`, `min`, `max`, and optionally `gain`,
+`start`, `off_value` instead of `steps` / `release_below` / `normal`; see
+[rules.md §3.6](rules.md#36-a-drive-that-soaks-up-the-solar-surplus-trim).
+
+### `sequences.yaml` — commands in order
+
+Next to `rules.yaml`; edited from the Rules page (Sequences) or by hand; part
+of every snapshot directory. One list under `sequences:` — each
+`{id, label, params, max_duration_s, steps, on_abort}`; see
+[rules.md §3.10](rules.md#310-sequences-commands-in-order).
+
+### `attributes.yaml` — facts about the equipment
+
+Next to `config.yaml`; edited from Settings → Site, an installation's page, a
+device's Attributes tab, or the API. Written only through the config store
+(locked, atomic, 0600). Part of every snapshot, the HA mirror and the
+export. Coordinates are only in the export when it includes identity.
+
+```yaml
+schema: 1
+settings: {location_publish: coarse}        # coarse | exact | off
+site:         {location: {latitude_deg: 48.86, longitude_deg: 2.35}}
+installation: {pv: {}}
+device:
+  umg512: {grid_connection: {role: connection_point, max_import_kw: 10, max_export_kw: 8}}
+  pv-u1:  {pv_input: [{mppt: 1, modules: 24, module_wp: 450, kwp: 10.8, azimuth_deg: 180, tilt_deg: 30}]}
+```
+
+The catalog (categories, fields, limits) and its rules:
+[attributes.md](attributes.md). A device template may declare `kind:
+inverter | meter | battery | sensor | site`; the attributes that fit are
+offered first.
 
 ## Per-register options
 

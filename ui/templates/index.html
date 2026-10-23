@@ -18,6 +18,7 @@
     <link rel="stylesheet" href="/static/css/monitor.css?v=vm13">
     <link rel="stylesheet" href="/static/css/registers.css?v=vm10">
     <link rel="stylesheet" href="/static/css/config.css?v=vm12">
+    <link rel="stylesheet" href="/static/css/status.css?v=0">
 </head>
 <body>
     <!-- Keyboard users skip the 9-tab titlebar straight to the page content -->
@@ -38,7 +39,7 @@
             </div>
 
             <!-- Navigation Tabs -->
-            <nav class="nav-tabs" role="tablist" aria-label="Main navigation">
+            <nav class="nav-tabs" role="tablist" aria-label="Main navigation" data-i18n-aria="a11y.mainNav">
                 <button class="nav-tab active" data-page="dashboard" role="tab"
                         id="tab-dashboard" aria-controls="dashboardPage" aria-selected="true">
                     <i class="bi bi-grid-1x2-fill" aria-hidden="true"></i>
@@ -84,21 +85,21 @@
             <!-- Status Indicators -->
             <div class="titlebar-right">
                 <div class="status-indicators">
-                    <button class="status-item clickable" id="statusDevices" title="Devices online / total — click to open" data-i18n-title="status.devicesTip" aria-label="Devices online">
+                    <button class="status-item clickable" id="statusDevices" title="Devices online / total — click to open" data-i18n-title="status.devicesTip" aria-label="Devices online" data-i18n-aria="a11y.devicesOnline">
                         <span class="status-dot"></span>
-                        <span class="status-label"><span data-i18n="status.devices">Devices</span> <span id="devicesOnlineCount">0/0</span></span>
+                        <span class="status-label"><span class="status-word" data-i18n="status.devices">Devices</span><span class="status-abbr" data-i18n="status.devicesShort">Dev</span> <span id="devicesOnlineCount">0/0</span></span>
                     </button>
-                    <button class="status-item clickable" id="statusMqtt" title="MQTT — click for details" aria-label="MQTT status">
+                    <button class="status-item clickable" id="statusMqtt" title="MQTT — click for details" data-i18n-title="a11y.mqttTip" aria-label="MQTT status" data-i18n-aria="a11y.mqttStatus">
                         <span class="status-dot"></span>
                         <span class="status-label" data-i18n="status.mqtt">MQTT</span>
                     </button>
-                    <button class="status-item clickable" id="statusInflux" title="InfluxDB — click for details" aria-label="InfluxDB status">
+                    <button class="status-item clickable" id="statusInflux" title="InfluxDB — click for details" data-i18n-title="a11y.influxTip" aria-label="InfluxDB status" data-i18n-aria="a11y.influxStatus">
                         <span class="status-dot"></span>
-                        <span class="status-label" data-i18n="status.influxdb">InfluxDB</span>
+                        <span class="status-label"><span class="status-word" data-i18n="status.influxdb">InfluxDB</span><span class="status-abbr" data-i18n="status.influxShort">DB</span></span>
                     </button>
-                    <button class="status-item clickable" id="statusVmeter" title="Virtual meters online / total — click to open" hidden>
+                    <button class="status-item clickable" id="statusVmeter" title="Virtual meters online / total — click to open" data-i18n-title="a11y.vmetersTip" aria-label="Virtual meters" data-i18n-aria="status.vmeters" hidden>
                         <span class="status-dot"></span>
-                        <span class="status-label"><span data-i18n="status.vmeter">vMeter</span> <span id="vmeterCount">0/0</span></span>
+                        <span class="status-label"><span class="status-word" data-i18n="status.vmeter">vMeter</span><span class="status-abbr" data-i18n="status.vmeterShort">VM</span> <span id="vmeterCount">0/0</span></span>
                     </button>
                 </div>
                 <select class="lang-select" id="langSelect" title="Language" data-i18n-title="tip.language" aria-label="Language" data-i18n-aria="tip.language"></select>
@@ -113,6 +114,8 @@
 
         <!-- Content Area -->
         <main class="content" id="mainContent">
+            <div id="roleBanner" class="role-banner" role="status" hidden></div>
+            <div id="buildBanner" class="role-banner build-banner" role="status" hidden></div>
             <!-- Dashboard Page -->
             <div class="page active" id="dashboardPage" role="tabpanel" aria-labelledby="tab-dashboard" tabindex="0">
                 <!-- Site strip: the ENERGY story first — one card per
@@ -140,7 +143,7 @@
                             <input type="search" class="input input-sm" id="deviceSwitchSearch"
                                    data-i18n-placeholder="fleet.search" placeholder="Search devices...">
                             <div class="device-switch-list" id="deviceSwitchList" role="listbox"
-                                 aria-label="Devices"></div>
+                                 aria-label="Devices" data-i18n-aria="nav.devices"></div>
                         </div>
                     </div>
                     <h2><i aria-hidden="true" class="bi bi-speedometer2"></i> <span data-i18n="dashboard.liveValues">Live Values</span></h2>
@@ -148,7 +151,7 @@
                         <button class="btn btn-ghost btn-sm" id="dashboardDensityToggle" data-i18n-title="tip.toggleDensity" title="Compact density" aria-pressed="false">
                             <i aria-hidden="true" class="bi bi-arrows-collapse"></i>
                         </button>
-                        <button class="btn btn-ghost btn-sm" id="customizeDashBtn">
+                        <button data-admin class="btn btn-ghost btn-sm" id="customizeDashBtn">
                             <i aria-hidden="true" class="bi bi-sliders"></i> <span data-i18n="dashboard.customize">Customize</span>
                         </button>
                     </div>
@@ -156,8 +159,12 @@
 
                 <!-- Fleet overview (default face when several devices exist) -->
                 <div class="fleet-controls" id="fleetControls" hidden>
-                    <input type="search" class="input input-sm fleet-search" id="fleetSearch"
-                           data-i18n-placeholder="fleet.search" placeholder="Search devices...">
+                    <div class="find-search fleet-search" role="search">
+                        <i aria-hidden="true" class="bi bi-search"></i>
+                        <label class="sr-only" for="fleetSearch" data-i18n="fleet.search">Search devices...</label>
+                        <input type="search" id="fleetSearch" autocomplete="off" spellcheck="false"
+                               data-i18n-placeholder="fleet.search" placeholder="Search devices...">
+                    </div>
                     <button class="btn btn-ghost btn-sm" id="fleetProblemsBtn" aria-pressed="false">
                         <i aria-hidden="true" class="bi bi-exclamation-triangle"></i>
                         <span data-i18n="fleet.onlyProblems">Only problems</span>
@@ -185,7 +192,7 @@
                     <div class="monitor-panel monitor-sidebar">
                         <div class="panel-header" style="flex-wrap:wrap;gap:6px;">
                             <h3 data-i18n="mon.availableValues">Available Values</h3>
-                            <select id="monViewDevice" class="input input-sm view-device-sel" aria-label="Device" data-i18n-title="devices.selector" title="Device" style="display:none;"></select>
+                            <select id="monViewDevice" class="input input-sm view-device-sel" aria-label="Device" data-i18n-aria="a11y.device" data-i18n-title="devices.selector" title="Device" style="display:none;"></select>
                             <input type="text" id="monitorSearch" class="input input-sm" data-i18n-placeholder="ph.search" placeholder="Search...">
                         </div>
                         <div class="monitor-categories" id="monitorCategories" tabindex="0">
@@ -222,7 +229,7 @@
                                 </div>
                             </div>
                             <div class="graph-container" id="monitorDropzone">
-                                <canvas id="monitorCanvas" role="img" aria-label="Live measurement graph"></canvas>
+                                <canvas id="monitorCanvas" role="img" aria-label="Live measurement graph" data-i18n-aria="a11y.liveGraph"></canvas>
                             </div>
                             <div class="graph-legend" id="monitorLegend"></div>
                         </div>
@@ -269,7 +276,7 @@
                         <div class="monitor-main">
                             <div class="graph-toolbar">
                                 <div class="graph-controls" style="display:flex;gap:8px;align-items:center;">
-                                    <select id="histViewDevice" class="input input-sm view-device-sel" aria-label="Device" data-i18n-title="devices.selector" title="Device" style="display:none;"></select>
+                                    <select id="histViewDevice" class="input input-sm view-device-sel" aria-label="Device" data-i18n-aria="a11y.device" data-i18n-title="devices.selector" title="Device" style="display:none;"></select>
                                     <select id="histRange" class="input input-sm" data-i18n-title="tip.timeRange" title="Time range">
                                         <option value="-1h" data-i18n="time.1h">Last 1h</option>
                                         <option value="-6h" selected data-i18n="time.6h">Last 6h</option>
@@ -278,10 +285,10 @@
                                         <option value="-30d" data-i18n="time.30d">Last 30d</option>
                                     </select>
                                     <select id="histEvery" class="input input-sm" data-i18n-title="tip.resolution" title="Resolution">
-                                        <option value="1m">1 min</option>
-                                        <option value="5m" selected>5 min</option>
-                                        <option value="15m">15 min</option>
-                                        <option value="1h">1 hour</option>
+                                        <option value="1m" data-i18n="time.res1m">1 min</option>
+                                        <option value="5m" selected data-i18n="time.res5m">5 min</option>
+                                        <option value="15m" data-i18n="time.res15m">15 min</option>
+                                        <option value="1h" data-i18n="time.res1h">1 hour</option>
                                     </select>
                                 </div>
                                 <div class="graph-actions">
@@ -290,7 +297,7 @@
                                 </div>
                             </div>
                             <div class="graph-container" id="historyGraphContainer">
-                                <canvas id="historyCanvas" role="img" aria-label="Measurement history chart"></canvas>
+                                <canvas id="historyCanvas" role="img" aria-label="Measurement history chart" data-i18n-aria="a11y.historyChart"></canvas>
                             </div>
                             <div id="histLegend" class="graph-legend"></div>
                             <div id="histInfo" style="color:var(--text-secondary);font-size:11.5px;padding:2px 12px 8px;" data-i18n="history.pickIntro">Pick one or more measurements · hover the chart for values · min/max band shown for a single measurement.</div>
@@ -311,7 +318,7 @@
                                 <option value="-24h" data-i18n="time.24h">Last 24h</option>
                                 <option value="-7d" selected data-i18n="time.7d">Last 7d</option>
                                 <option value="-30d" data-i18n="time.30d">Last 30d</option>
-                                <option value="-90d">Last 90d</option>
+                                <option value="-90d" data-i18n="time.90d">Last 90d</option>
                             </select>
                         </div>
                         <div class="monitor-categories" id="pqEventList" tabindex="0"></div>
@@ -343,7 +350,7 @@
                             </div>
                             <div id="pqDetail" style="padding:2px 12px 6px;"></div>
                             <div class="graph-container" id="pqGraphContainer" style="position:relative;">
-                                <canvas id="pqCanvas" role="img" aria-label="PQ event waveform chart"></canvas>
+                                <canvas id="pqCanvas" role="img" aria-label="PQ event waveform chart" data-i18n-aria="a11y.pqChart"></canvas>
                                 <div id="pqOverlay" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--text-secondary);font-size:13px;text-align:center;padding:20px;"></div>
                             </div>
                             <div id="pqLegend" class="graph-legend"></div>
@@ -358,15 +365,15 @@
                 <div class="section-header">
                     <h2><i aria-hidden="true" class="bi bi-lightning-charge"></i> <span data-i18n="energy.title">Energy</span></h2>
                     <div class="header-actions energy-controls">
-                        <select id="energyViewDevice" class="input view-device-sel" aria-label="Device" data-i18n-title="devices.selector" title="Device" style="display:none;"></select>
-                        <input type="month" id="energyMonth" class="input" aria-label="Month" data-i18n-title="energy.month" title="Month">
-                        <button class="btn" id="energyFieldsBtn" data-action="openEnergyFields" data-i18n-title="energy.fieldsTip" title="Choose which counters to total"><i aria-hidden="true" class="bi bi-sliders"></i> <span data-i18n="energy.fields">Fields</span></button>
-                        <button class="btn" id="energyRefresh"><i aria-hidden="true" class="bi bi-arrow-clockwise"></i> <span data-i18n="common.refresh">Refresh</span></button>
+                        <select id="energyViewDevice" class="input view-device-sel" aria-label="Device" data-i18n-aria="a11y.device" data-i18n-title="devices.selector" title="Device" style="display:none;"></select>
+                        <input type="month" id="energyMonth" class="input" aria-label="Month" data-i18n-aria="energy.month" data-i18n-title="energy.month" title="Month">
+                        <button class="btn btn-ghost" id="energyFieldsBtn" data-action="openEnergyFields" data-i18n-title="energy.fieldsTip" title="Choose which counters to total"><i aria-hidden="true" class="bi bi-sliders"></i> <span data-i18n="energy.fields">Fields</span></button>
+                        <button class="btn btn-ghost" id="energyRefresh"><i aria-hidden="true" class="bi bi-arrow-clockwise"></i> <span data-i18n="common.refresh">Refresh</span></button>
                     </div>
                 </div>
                 <div id="energyInfo" style="color:var(--text-secondary);font-size:12.5px;margin:6px 0;"></div>
                 <div id="energyTotals" style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px;"></div>
-                <div class="graph-container" style="height:340px;"><canvas id="energyCanvas" role="img" aria-label="Daily energy import and export chart"></canvas></div>
+                <div class="graph-container" style="height:340px;"><canvas id="energyCanvas" role="img" aria-label="Daily energy import and export chart" data-i18n-aria="a11y.energyChart"></canvas></div>
                 <div style="color:var(--text-secondary);font-size:11.5px;margin-top:6px;" data-i18n="energy.footer">Daily import vs export (kWh) · totals are the month's counter delta · local time · read from InfluxDB.</div>
             </div>
 
@@ -376,15 +383,12 @@
             <div class="page" id="devicesPage" role="tabpanel" aria-labelledby="tab-devices" tabindex="0">
                     <!-- device list (default) -->
                     <div id="devicesListView">
-                        <div class="settings-card devices-card">
-                            <div class="settings-card-header">
-                                <h3><i aria-hidden="true" class="bi bi-cpu"></i> <span data-i18n="devices.title">Devices</span></h3>
-                                <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                                    <button data-admin class="btn btn-ghost btn-sm" data-action="openDiscoverModal" data-i18n-title="tip.scan" title="Scan the network for devices you can add">
+                        <div class="section-header page-head">
+                                <h2 tabindex="-1"><i aria-hidden="true" class="bi bi-cpu"></i> <span data-i18n="devices.title">Devices</span></h2>
+                                <div class="header-actions">
+                                    <button data-live class="btn btn-ghost btn-sm" data-action="openDiscoverModal" data-i18n-title="tip.scan" title="Scan the network for devices you can add">
                                         <i aria-hidden="true" class="bi bi-search"></i> <span data-i18n="devices.discover">Discover devices</span></button>
-                                    <button data-admin class="btn btn-ghost btn-sm" data-action="openBuilderDeploy" data-i18n-title="tip.deployNode" title="Build firmware for a remote ESP32/ESP8266 RS485 reader and adopt it as a device">
-                                        <i aria-hidden="true" class="bi bi-magic"></i> <span data-i18n="builder.deployNew">Deploy new device</span></button>
-                                    <button data-admin class="btn btn-ghost btn-sm" data-action="openBridgeModal" title="Add the box a serial bus is reached through: our serial bridge on a Raspberry Pi or server, or an RS-485-to-Ethernet converter">
+                                    <button data-admin class="btn btn-ghost btn-sm" data-action="openBridgeModal" title="Add the box a serial bus is reached through: our serial bridge on a Raspberry Pi or server, or an RS-485-to-Ethernet converter" data-i18n-title="a11y.addBridgeTip">
                                         <i aria-hidden="true" class="bi bi-hdd-network"></i> <span data-i18n="bridges.add">Add bridge</span></button>
                                     <button data-admin class="btn btn-ghost btn-sm" data-action="openPlantWizard" data-i18n-title="tip.addEndpoint" title="Add a whole installation: one master device fronting several units — inverters, the meter at its grid connection, a battery. Each kind is a group, totalled on its own.">
                                         <i aria-hidden="true" class="bi bi-diagram-3"></i> <span data-i18n="endpoints.add">Add Installation</span>
@@ -393,38 +397,28 @@
                                         <i aria-hidden="true" class="bi bi-plus-lg"></i> <span data-i18n="devices.add">Add Device</span>
                                     </button>
                                 </div>
-                            </div>
+                        </div>
+                        <div class="settings-card devices-card">
                             <div class="settings-card-body">
+                                <!-- search, filters, tree / list (app-find.js) -->
+                                <div id="devFind"></div>
                                 <div id="devicesList" class="devices-list"></div>
+                                <div id="devicesTable" hidden></div>
+                                <div id="devFindEmpty" class="find-empty" hidden></div>
                             </div>
                         </div>
 
+                        <!-- Devices announcing themselves over MQTT, to adopt (filled by JS) -->
+                        <div id="foundOnMqtt"></div>
                         <!-- Deleted-but-restorable devices (filled by JS) -->
                         <div id="restorableDevices"></div>
-
-                        <!-- Device Builder (ESPHome-backed node firmware) — lives with
-                             the devices it ultimately creates -->
-                        <div class="settings-card devices-card" id="builderCard" style="margin-top:16px;">
-                            <div class="settings-card-header">
-                                <h3><i aria-hidden="true" class="bi bi-magic"></i> <span data-i18n="builder.title">Device Builder</span></h3>
-                                <button class="btn btn-ghost btn-sm" id="builderRefreshBtn" data-i18n-title="common.refresh" title="Refresh" aria-label="Refresh" data-i18n-aria="common.refresh">
-                                    <i aria-hidden="true" class="bi bi-arrow-clockwise"></i></button>
-                            </div>
-                            <div class="settings-card-body">
-                                <p style="margin:0 0 12px;color:var(--text-secondary);font-size:12.5px;max-width:720px;" data-i18n="builder.subtitle">
-                                    Author, compile and flash ESP32/ESP8266 node firmware — remote RS485/BLE readers that publish
-                                    back to this gateway over MQTT. Compilation runs on your own ESPHome container; nothing
-                                    leaves your network.</p>
-                                <div id="builderContent"></div>
-                            </div>
-                        </div>
                     </div>
                     <!-- device detail (full-page, shown when a device is opened) -->
                     <div id="deviceDetailView" style="display:none;"></div>
                 <!-- Device registers editor (opened from a device's Registers section) -->
                 <div id="deviceRegistersView" style="display: none;">
                     <div class="section-header">
-                        <h2><button class="btn btn-ghost btn-sm" data-action="closeDeviceRegisters" aria-label="Back"><i aria-hidden="true" class="bi bi-arrow-left"></i></button>
+                        <h2><button class="btn btn-ghost btn-sm" data-action="closeDeviceRegisters" aria-label="Back" data-i18n-aria="common.back"><i aria-hidden="true" class="bi bi-arrow-left"></i></button>
                             <i aria-hidden="true" class="bi bi-list-check"></i> <span id="deviceRegistersTitle" data-i18n="registers.configured">Measurements</span></h2>
                         <div class="header-actions">
                             <!-- import / export / raw / write live behind one menu: five
@@ -441,7 +435,7 @@
                                         <i aria-hidden="true" class="bi bi-download"></i> <span data-i18n="registers.downloadMap">Download map</span></button>
                                     <button role="menuitem" class="btn btn-ghost btn-sm" id="rawConfigBtn">
                                         <i aria-hidden="true" class="bi bi-code-slash"></i> <span data-i18n="config.rawJson">Raw JSON</span></button>
-                                    <button role="menuitem" class="btn btn-ghost btn-sm" id="writeRegBtn" data-action="_regMenuPick" data-args='["openWriteModal"]' data-i18n-title="tip.write" title="Write a value to this device (Modbus FC5/FC6/FC16)">
+                                    <button data-live role="menuitem" class="btn btn-ghost btn-sm" id="writeRegBtn" data-action="_regMenuPick" data-args='["openWriteModal"]' data-i18n-title="tip.write" title="Write a value to this device (Modbus FC5/FC6/FC16)">
                                         <i aria-hidden="true" class="bi bi-pencil-square"></i> <span data-i18n="write.button">Write</span></button>
                                 </div>
                             </div>
@@ -465,7 +459,7 @@
                     <div class="reg-pane" data-regpane="available" style="display:none;">
                         <div class="config-toolbar">
                             <input type="text" id="registerSearch" class="input" data-i18n-placeholder="ph.searchMeasurements" placeholder="Search measurements...">
-                            <select id="categoryFilter" class="input" aria-label="Category filter">
+                            <select id="categoryFilter" class="input" aria-label="Category filter" data-i18n-aria="a11y.categoryFilter">
                                 <option value="" data-i18n="cat.all">All Categories</option>
                             </select>
                             <button class="btn btn-ghost btn-sm" id="queryRegisterBtn">
@@ -524,19 +518,19 @@
                 </div>
                 <p class="field-hint" data-i18n="diag.subtitle">Frame-level Modbus trace — the exact bytes on the wire, one row per transaction (every retry included). Runtime only: the buffer lives in memory and capture stops on restart.</p>
                 <div class="diag-toolbar">
-                    <button class="btn btn-primary btn-sm" id="diagToggleBtn" data-on="0">
+                    <button data-live class="btn btn-primary btn-sm" id="diagToggleBtn" data-on="0">
                         <i aria-hidden="true" class="bi bi-record-fill"></i> <span data-i18n="diag.start">Start capture</span>
                     </button>
                     <button class="btn btn-ghost btn-sm" id="diagPauseBtn" aria-pressed="false" title="Pause the live view (capture keeps running)" data-i18n-title="diag.pauseTip">
                         <i aria-hidden="true" class="bi bi-pause-fill"></i> <span data-i18n="diag.pause">Pause view</span>
                     </button>
-                    <button class="btn btn-ghost btn-sm" id="diagClearBtn">
+                    <button data-live class="btn btn-ghost btn-sm" id="diagClearBtn">
                         <i aria-hidden="true" class="bi bi-trash"></i> <span data-i18n="diag.clear">Clear</span>
                     </button>
-                    <select id="diagDeviceFilter" class="form-select diag-filter" aria-label="Filter by device">
+                    <select id="diagDeviceFilter" class="form-select diag-filter" aria-label="Filter by device" data-i18n-aria="a11y.filterDevice">
                         <option value="" data-i18n="diag.allDevices">All devices</option>
                     </select>
-                    <select id="diagBusFilter" class="form-select diag-filter" aria-label="Filter by bus">
+                    <select id="diagBusFilter" class="form-select diag-filter" aria-label="Filter by bus" data-i18n-aria="a11y.filterBus">
                         <option value="" data-i18n="diag.allBuses">All buses</option>
                     </select>
                 </div>
@@ -545,7 +539,7 @@
                         <thead><tr>
                             <th scope="col" data-i18n="diag.colTime">Time</th>
                             <th scope="col" data-i18n="diag.colDevice">Device</th>
-                            <th scope="col">Unit</th>
+                            <th scope="col" data-i18n="lbl.unit">Unit</th>
                             <th scope="col">FC</th>
                             <th scope="col" data-i18n="diag.colReq">Addr ×count</th>
                             <th scope="col" data-i18n="diag.colResult">Result</th>
@@ -561,24 +555,24 @@
                 </div>
                 <p class="field-hint" data-i18n="probe.subtitle">One-shot read on any Modbus device with every interpretation side by side — data type × word order (ABCD / CDAB / BADC / DCBA). Read-only. With the capture running, the probe's frames show up in the monitor above, exception replies included.</p>
                 <div class="diag-toolbar diag-probe-form">
-                    <select id="probeDevice" class="form-select diag-filter" aria-label="Device"></select>
+                    <select id="probeDevice" class="form-select diag-filter" aria-label="Device" data-i18n-aria="a11y.device"></select>
                     <input id="probeUnit" class="form-input diag-probe-addr" type="number" min="0" max="255"
-                           placeholder="Unit (its own)" data-i18n-placeholder="probe.unit" aria-label="Unit id"
+                           placeholder="Unit (its own)" data-i18n-placeholder="probe.unit" aria-label="Unit id" data-i18n-aria="lbl.unitIdLc"
                            title="Another slave on the same bus: asked through this device's connection, taking turns" data-i18n-title="probe.unitTip">
                     <input id="probeAddr" class="form-input diag-probe-addr" type="number" min="0" max="65535"
-                           placeholder="Address" data-i18n-placeholder="probe.addr" aria-label="Register address">
-                    <select id="probeType" class="form-select" aria-label="Register type">
-                        <option value="holding">Holding (FC3)</option>
-                        <option value="input">Input (FC4)</option>
-                        <option value="coil">Coil (FC1)</option>
-                        <option value="discrete">Discrete (FC2)</option>
+                           placeholder="Address" data-i18n-placeholder="probe.addr" aria-label="Register address" data-i18n-aria="a11y.regAddress">
+                    <select id="probeType" class="form-select" aria-label="Register type" data-i18n-aria="devtpl.aria.registerType">
+                        <option value="holding" data-i18n="reg.fc3">Holding (FC3)</option>
+                        <option value="input" data-i18n="reg.fc4">Input (FC4)</option>
+                        <option value="coil" data-i18n="reg.fc1">Coil (FC1)</option>
+                        <option value="discrete" data-i18n="reg.fc2">Discrete (FC2)</option>
                     </select>
-                    <select id="probeCount" class="form-select" aria-label="Word count">
-                        <option value="1">1 word</option>
-                        <option value="2" selected>2 words</option>
-                        <option value="4">4 words</option>
+                    <select id="probeCount" class="form-select" aria-label="Word count" data-i18n-aria="a11y.wordCount">
+                        <option value="1" data-i18n="reg.words1">1 word</option>
+                        <option value="2" selected data-i18n="reg.words2">2 words</option>
+                        <option value="4" data-i18n="reg.words4">4 words</option>
                     </select>
-                    <button class="btn btn-primary btn-sm" id="probeBtn">
+                    <button data-live class="btn btn-primary btn-sm" id="probeBtn">
                         <i aria-hidden="true" class="bi bi-lightning-charge"></i> <span data-i18n="probe.read">Read</span>
                     </button>
                 </div>
@@ -590,12 +584,12 @@
                 <p class="field-hint" data-i18n="ss.subtitle">Walks the SunSpec model chain (the SunS marker at 40000/50000/0, then every model the device declares) — identity, meters, MPPT, storage. Read-only; works on most Fronius / SMA / SolarEdge / Huawei / ABB inverters and SunSpec meters.</p>
                 <div class="diag-toolbar">
                     <input id="ssHost" class="form-input" type="text" placeholder="Host / IP"
-                           data-i18n-placeholder="ss.host" aria-label="Host" style="max-width:180px;">
+                           data-i18n-placeholder="ss.host" aria-label="Host" data-i18n-aria="lbl.host" style="max-width:180px;">
                     <input id="ssPort" class="form-input diag-probe-addr" type="number" value="502"
-                           min="1" max="65535" aria-label="Port">
+                           min="1" max="65535" aria-label="Port" data-i18n-aria="lbl.port">
                     <input id="ssUnit" class="form-input diag-probe-addr" type="number" value="1"
-                           min="1" max="247" aria-label="Unit ID" title="Unit ID">
-                    <button class="btn btn-primary btn-sm" id="ssBtn">
+                           min="1" max="247" aria-label="Unit ID" data-i18n-aria="lbl.unitId" title="Unit ID" data-i18n-title="lbl.unitId">
+                    <button data-live class="btn btn-primary btn-sm" id="ssBtn">
                         <i aria-hidden="true" class="bi bi-search"></i> <span data-i18n="ss.scan">Scan</span>
                     </button>
                 </div>
@@ -607,10 +601,18 @@
                 <div class="config-main-tabs" id="configSubtabs">
                     <button class="config-main-tab active" data-cfgtab="mqtt"><i aria-hidden="true" class="bi bi-broadcast"></i> MQTT</button>
                     <button class="config-main-tab" data-cfgtab="influxdb"><i aria-hidden="true" class="bi bi-database"></i> InfluxDB</button>
+                    <button class="config-main-tab" data-cfgtab="opcua"><i aria-hidden="true" class="bi bi-diagram-3"></i> OPC UA</button>
                     <button class="config-main-tab" data-cfgtab="backup"><i aria-hidden="true" class="bi bi-archive"></i> <span data-i18n="backup.title">Backup &amp; Restore</span></button>
                     <button class="config-main-tab" data-cfgtab="security"><i aria-hidden="true" class="bi bi-shield-lock"></i> <span data-i18n="security.title">Security</span></button>
                     <button class="config-main-tab" data-cfgtab="alerts"><i aria-hidden="true" class="bi bi-bell"></i> <span data-i18n="alerts.title">Alerts</span></button>
                     <button class="config-main-tab" data-cfgtab="general"><i aria-hidden="true" class="bi bi-sliders"></i> <span data-i18n="general.title">General</span></button>
+                    <button class="config-main-tab" data-cfgtab="plant"><i aria-hidden="true" class="bi bi-geo-alt"></i> <span data-i18n="attr.plant">Site</span></button>
+                    <button class="config-main-tab" data-cfgtab="modules" id="cfgTabModules" hidden><i aria-hidden="true" class="bi bi-puzzle"></i> <span data-i18n="modules.title">Modules</span></button>
+                </div>
+
+                <!-- ── Plant tab: the plant's location and attributes (docs/attributes.md) ── -->
+                <div class="config-tab-content cfg-panel" data-cfgpanel="plant" style="display:none;">
+                    <div id="plantAttrHost"></div>
                 </div>
 
                 <!-- ── General tab ── -->
@@ -663,7 +665,7 @@
                                     </div>
                                 </div>
                                 <div class="header-actions" style="gap:8px;margin-top:6px;">
-                                    <button class="btn btn-primary btn-sm" data-action="saveGeneralConfig" data-with-el>
+                                    <button data-admin class="btn btn-primary btn-sm" data-action="saveGeneralConfig" data-with-el>
                                         <i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
                                     <span class="save-feedback" id="generalSaveFeedback"></span>
                                 </div>
@@ -681,13 +683,13 @@
                             <div class="settings-card-body">
                                 <p class="field-hint" data-i18n="backup.intro" style="margin-bottom:10px;">Download a ZIP with all devices, measurement selections, device templates and virtual meters — or restore one. Secrets and network settings are excluded by default.</p>
                                 <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;">
-                                    <input type="checkbox" id="backupSecrets" aria-label="Include secrets">
+                                    <input type="checkbox" id="backupSecrets" aria-label="Include secrets" data-i18n-aria="a11y.includeSecrets">
                                     <span data-i18n="backup.includeSecrets">Include secrets (MQTT password, InfluxDB token)</span>
                                 </label>
                                 <div class="header-actions" style="gap:8px;margin-top:10px;flex-wrap:wrap;">
                                     <button class="btn btn-secondary btn-sm" data-action="exportConfig">
                                         <i aria-hidden="true" class="bi bi-download"></i> <span data-i18n="backup.export">Export backup</span></button>
-                                    <button class="btn btn-secondary btn-sm" data-action="importConfig">
+                                    <button data-admin class="btn btn-secondary btn-sm" data-action="importConfig">
                                         <i aria-hidden="true" class="bi bi-upload"></i> <span data-i18n="backup.import">Restore backup</span></button>
                                     <span class="save-feedback" id="backupFeedback"></span>
                                 </div>
@@ -699,7 +701,7 @@
                         <div class="settings-card devices-card" style="margin-top:14px;">
                             <div class="settings-card-header">
                                 <h3><i aria-hidden="true" class="bi bi-clock-history"></i> <span data-i18n="snap.title">Snapshots &amp; Rollback</span></h3>
-                                <button class="btn btn-secondary btn-sm" data-action="createSnapshot">
+                                <button data-admin class="btn btn-secondary btn-sm" data-action="createSnapshot">
                                     <i aria-hidden="true" class="bi bi-camera"></i> <span data-i18n="snap.create">Snapshot now</span></button>
                             </div>
                             <div class="settings-card-body">
@@ -728,7 +730,7 @@
                             <div class="settings-card-header">
                                 <h3><i aria-hidden="true" class="bi bi-broadcast"></i> MQTT</h3>
                                 <label class="toggle-switch">
-                                    <input type="checkbox" id="cfgMqttEnabled" aria-label="Enable MQTT">
+                                    <input type="checkbox" id="cfgMqttEnabled" aria-label="Enable MQTT" data-i18n-aria="a11y.enableMqtt">
                                     <span class="toggle-slider"></span>
                                 </label>
                             </div>
@@ -747,11 +749,11 @@
                                 <div class="form-row">
                                     <div class="form-group">
                                         <label class="form-label" data-i18n="lbl.username" for="cfgMqttUsername">Username</label>
-                                        <input type="text" id="cfgMqttUsername" class="input" placeholder="(optional)">
+                                        <input type="text" id="cfgMqttUsername" class="input" placeholder="(optional)" data-i18n-placeholder="common.phOptional">
                                     </div>
                                     <div class="form-group">
                                         <label class="form-label" data-i18n="lbl.password" for="cfgMqttPassword">Password</label>
-                                        <input type="password" id="cfgMqttPassword" class="input" placeholder="(optional)">
+                                        <input type="password" id="cfgMqttPassword" class="input" placeholder="(optional)" data-i18n-placeholder="common.phOptional">
                                     </div>
                                 </div>
                                 <div class="form-row">
@@ -762,7 +764,7 @@
                                     </div>
                                     <div class="form-group">
                                         <label class="form-label" data-i18n="mqtt.publishMode" for="cfgMqttPublishMode">Publish Mode</label>
-                                        <select id="cfgMqttPublishMode" class="input" aria-label="MQTT publish mode">
+                                        <select id="cfgMqttPublishMode" class="input" aria-label="MQTT publish mode" data-i18n-aria="a11y.mqttMode">
                                             <option value="changed" data-i18n="mqtt.onChange">On Change</option>
                                             <option value="all" data-i18n="lbl.all">All</option>
                                         </select>
@@ -771,10 +773,10 @@
                                 <div class="form-row">
                                     <div class="form-group">
                                         <label class="form-label" for="cfgMqttQos">QoS</label>
-                                        <select id="cfgMqttQos" class="input" aria-label="MQTT QoS">
-                                            <option value="0">0 - At most once</option>
-                                            <option value="1">1 - At least once</option>
-                                            <option value="2">2 - Exactly once</option>
+                                        <select id="cfgMqttQos" class="input" aria-label="MQTT QoS" data-i18n-aria="a11y.mqttQos">
+                                            <option value="0" data-i18n="mqtt.qos0">0 - At most once</option>
+                                            <option value="1" data-i18n="mqtt.qos1">1 - At least once</option>
+                                            <option value="2" data-i18n="mqtt.qos2">2 - Exactly once</option>
                                         </select>
                                     </div>
                                     <div class="form-group">
@@ -800,7 +802,7 @@
                                 <div class="settings-subsection">
                                     <h4 data-i18n="mqtt.tls.title">TLS / Encryption</h4>
                                     <label class="checkbox-label">
-                                        <input type="checkbox" id="cfgMqttTls" aria-label="Enable TLS">
+                                        <input type="checkbox" id="cfgMqttTls" aria-label="Enable TLS" data-i18n-aria="a11y.enableTls">
                                         <span data-i18n="mqtt.tls.enable">Enable TLS (use port 8883)</span>
                                     </label>
                                     <div id="mqttTlsFields" style="display:none;margin-top:8px;">
@@ -819,7 +821,7 @@
                                             </div>
                                         </div>
                                         <label class="checkbox-label">
-                                            <input type="checkbox" id="cfgMqttTlsInsecure" aria-label="Skip certificate verification">
+                                            <input type="checkbox" id="cfgMqttTlsInsecure" aria-label="Skip certificate verification" data-i18n-aria="a11y.skipCert">
                                             <span data-i18n="mqtt.tls.insecure">Skip certificate verification (test only)</span>
                                         </label>
                                         <p class="field-hint" data-i18n="mqtt.tls.hint">Certificate paths are inside the container (put files under config/). Leave client cert/key empty for server-only TLS.</p>
@@ -828,7 +830,7 @@
                             </div>
                             <div class="settings-card-footer">
                                 <span class="save-feedback" id="mqttSaveFeedback"></span>
-                                <button class="btn btn-primary btn-sm" data-action="saveAndApply" data-args='["mqtt"]' data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="settings.saveApply">Save &amp; Apply</span></button>
+                                <button class="btn btn-primary btn-sm" data-admin data-action="saveAndApply" data-args='["mqtt"]' data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="settings.saveApply">Save &amp; Apply</span></button>
                             </div>
                         </div>
                 </div>
@@ -840,7 +842,7 @@
                             <div class="settings-card-header">
                                 <h3><i aria-hidden="true" class="bi bi-database"></i> InfluxDB</h3>
                                 <label class="toggle-switch">
-                                    <input type="checkbox" id="cfgInfluxEnabled" aria-label="Enable InfluxDB">
+                                    <input type="checkbox" id="cfgInfluxEnabled" aria-label="Enable InfluxDB" data-i18n-aria="a11y.enableInflux">
                                     <span class="toggle-slider"></span>
                                 </label>
                             </div>
@@ -855,7 +857,7 @@
                                 <div class="form-row">
                                     <div class="form-group flex-3">
                                         <label class="form-label" data-i18n="lbl.token" for="cfgInfluxToken">Token</label>
-                                        <input type="password" id="cfgInfluxToken" class="input" placeholder="(required)">
+                                        <input type="password" id="cfgInfluxToken" class="input" placeholder="(required)" data-i18n-placeholder="common.phRequired">
                                     </div>
                                 </div>
                                 <div class="form-row">
@@ -878,7 +880,7 @@
                                     </div>
                                     <div class="form-group">
                                         <label class="form-label" data-i18n="mqtt.publishMode" for="cfgInfluxPublishMode">Publish Mode</label>
-                                        <select id="cfgInfluxPublishMode" class="input" aria-label="InfluxDB publish mode">
+                                        <select id="cfgInfluxPublishMode" class="input" aria-label="InfluxDB publish mode" data-i18n-aria="a11y.influxMode">
                                             <option value="changed" data-i18n="mqtt.onChange">On Change</option>
                                             <option value="all" data-i18n="lbl.all">All</option>
                                         </select>
@@ -887,22 +889,95 @@
                             </div>
                             <div class="settings-card-footer">
                                 <span class="save-feedback" id="influxSaveFeedback"></span>
-                                <button class="btn btn-primary btn-sm" data-action="saveAndApply" data-args='["influx"]' data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="settings.saveApply">Save &amp; Apply</span></button>
+                                <button class="btn btn-primary btn-sm" data-admin data-action="saveAndApply" data-args='["influx"]' data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="settings.saveApply">Save &amp; Apply</span></button>
+                            </div>
+                        </div>
+                </div>
+
+                <!-- ── OPC UA tab: the server SCADA and HMI panels read ── -->
+                <div class="config-tab-content cfg-panel" data-cfgpanel="modules" style="display:none;">
+                        <div class="settings-card">
+                            <div class="settings-card-header">
+                                <h3><i aria-hidden="true" class="bi bi-puzzle"></i> <span data-i18n="modules.heading">Modules</span></h3>
+                            </div>
+                            <div class="settings-card-body">
+                                <p class="modules-note"><i aria-hidden="true" class="bi bi-info-circle"></i> <span data-i18n="modules.note">Modules are separate services installed beside this gateway, each from its own image. They are not part of the open-source Multi-Bus Gateway. You sign in to them with this gateway's login.</span></p>
+                                <div id="modulesList" class="modules-list"></div>
+                            </div>
+                        </div>
+                </div>
+                <div class="config-tab-content cfg-panel" data-cfgpanel="opcua" style="display:none;">
+                        <div class="settings-card">
+                            <div class="settings-card-header">
+                                <h3><i aria-hidden="true" class="bi bi-diagram-3"></i> <span data-i18n="opcua.title">OPC UA server</span></h3>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="cfgOpcUaEnabled" aria-label="Enable the OPC UA server" data-i18n-aria="a11y.enableOpcua">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="settings-card-body">
+                                <p class="field-hint" style="margin-top:0;" data-i18n="opcua.intro">SCADA systems and HMI panels with an OPC UA client read every device and value of the gateway here, with its quality (Good / Uncertain) and the time it was read. Admin and operator accounts also run the devices' enabled commands (set points and methods). Off by default.</p>
+                                <div id="opcuaStatus" class="field-hint" role="status" aria-live="polite" style="margin-bottom:10px;"></div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label class="form-label" for="cfgOpcUaPort" data-i18n="opcua.port">Port</label>
+                                        <input type="number" id="cfgOpcUaPort" class="input" min="1" max="65535" placeholder="4840">
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label" for="cfgOpcUaHost" data-i18n="opcua.host">Listen on</label>
+                                        <input type="text" id="cfgOpcUaHost" class="input" placeholder="0.0.0.0">
+                                    </div>
+                                    <div class="form-group flex-2">
+                                        <label class="form-label" for="cfgOpcUaEncryption" data-i18n="opcua.encryption">Encryption</label>
+                                        <select id="cfgOpcUaEncryption" class="input">
+                                            <option value="required" data-i18n="opcua.encRequired">Required (Basic256Sha256, sign and encrypt)</option>
+                                            <option value="optional" data-i18n="opcua.encOptional">Optional (also without — older panels; passwords travel in clear)</option>
+                                            <option value="off" data-i18n="opcua.encOff">Off (only on an isolated network)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group flex-2">
+                                        <label class="checkbox-label"><input type="checkbox" id="cfgOpcUaAnonymous"> <span data-i18n="opcua.anonymous">Allow anonymous clients (read-only)</span></label>
+                                        <span class="field-hint" data-i18n="opcua.anonymousHint">Otherwise clients log in with the gateway's own accounts (admin, operator, viewer); five wrong passwords lock a name for five minutes.</span>
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label" for="cfgOpcUaUpdate" data-i18n="opcua.update">Update every (s)</label>
+                                        <input type="number" id="cfgOpcUaUpdate" class="input" min="0.2" max="60" step="0.1" placeholder="1">
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group flex-2">
+                                        <label class="form-label" for="cfgOpcUaPublic" data-i18n="opcua.public">Public address (behind a load balancer)</label>
+                                        <input type="text" id="cfgOpcUaPublic" class="input" placeholder="opc.tcp://scada-gw.lan:4840/mbg" spellcheck="false">
+                                        <span class="field-hint" data-i18n="opcua.publicHint">Empty for one gateway. For a high-availability pair behind HAProxy: the balancer's address, told to clients; the server still listens on its own port, and both gateways use one certificate (the standby takes it with the configuration).</span>
+                                    </div>
+                                </div>
+                                <p class="field-hint"><a href="/api/opcua/certificate" download data-i18n="opcua.cert">Download the server certificate</a> · <span data-i18n="opcua.certHint">for clients that check the server (UaExpert, Ignition, panels).</span> <a href="https://github.com/sm26449/multi-bus-gateway/blob/main/docs/opcua.md" target="_blank" rel="noopener" data-i18n="opcua.guide">Guide</a></p>
+                            </div>
+                            <div class="settings-card-footer">
+                                <span class="save-feedback" id="opcuaSaveFeedback"></span>
+                                <button class="btn btn-primary btn-sm" data-admin data-action="saveOpcUa"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="settings.saveApply">Save &amp; Apply</span></button>
                             </div>
                         </div>
                 </div>
 
                 <!-- ── Security tab ── -->
                 <div class="config-tab-content cfg-panel" data-cfgpanel="security" style="display:none;">
-                        <!-- Security (Tier 3) -->
-                        <div class="settings-card devices-card">
-                            <div class="settings-card-header">
-                                <h3><i aria-hidden="true" class="bi bi-shield-lock"></i> <span data-i18n="security.title">Security</span></h3>
-                            </div>
-                            <div class="settings-card-body">
-                                <p class="field-hint" data-i18n="security.intro" style="margin-bottom:12px;">Optional, off by default (this appliance is meant for a trusted LAN). Turn these on when it must be reachable from a wider network.</p>
-
-                                <div class="settings-subsection">
+                    <div id="secHead"></div>
+                    <div class="st-pills" id="secPills"></div>
+                    <section class="st-attn" id="secAttention" aria-label="Needs attention" data-i18n-aria="status.attention"></section>
+                    <div class="st-tabs" role="tablist" id="secTabs" aria-label="Security" data-i18n-aria="security.title">
+                        <button type="button" role="tab" class="st-tab" id="secTab-network" aria-controls="secPanel-network" aria-selected="false" tabindex="-1" data-action="securityTab" data-args="[&quot;network&quot;]"><i aria-hidden="true" class="bi bi-globe2"></i> <span data-i18n="security.tab.network">Network</span> <span class="st-tab-mark" id="secMark-network"></span></button>
+                        <button type="button" role="tab" class="st-tab" id="secTab-accounts" aria-controls="secPanel-accounts" aria-selected="false" tabindex="-1" data-action="securityTab" data-args="[&quot;accounts&quot;]"><i aria-hidden="true" class="bi bi-people"></i> <span data-i18n="security.tab.accounts">Accounts</span> <span class="st-tab-mark" id="secMark-accounts"></span></button>
+                        <button type="button" role="tab" class="st-tab" id="secTab-access" aria-controls="secPanel-access" aria-selected="false" tabindex="-1" data-action="securityTab" data-args="[&quot;access&quot;]"><i aria-hidden="true" class="bi bi-key"></i> <span data-i18n="security.tab.access">Passkeys &amp; tokens</span> <span class="st-tab-mark" id="secMark-access"></span></button>
+                        <button type="button" role="tab" class="st-tab" id="secTab-writes" aria-controls="secPanel-writes" aria-selected="false" tabindex="-1" data-action="securityTab" data-args="[&quot;writes&quot;]"><i aria-hidden="true" class="bi bi-pencil-square"></i> <span data-i18n="security.tab.writes">Writes</span> <span class="st-tab-mark" id="secMark-writes"></span></button>
+                        <button type="button" role="tab" class="st-tab" id="secTab-audit" aria-controls="secPanel-audit" aria-selected="false" tabindex="-1" data-action="securityTab" data-args="[&quot;audit&quot;]"><i aria-hidden="true" class="bi bi-journal-text"></i> <span data-i18n="audit.title">Audit Trail</span> <span class="st-tab-mark" id="secMark-audit"></span></button>
+                    </div>
+                    <div class="st-panel" role="tabpanel" id="secPanel-network" aria-labelledby="secTab-network" hidden>
+                      <div class="st-card sec-form">
+                        <p class="field-hint" data-i18n="security.intro" style="margin-bottom:12px;">Optional, off by default (this appliance is meant for a trusted LAN). Turn these on when it must be reachable from a wider network.</p>
+                        <div class="settings-subsection">
                                     <h4 data-i18n="security.allowlist.title">IP allowlist</h4>
                                     <p class="field-hint" data-i18n="security.allowlist.hint">Only these IPs/subnets may reach the UI/API. One per line (e.g. 192.168.1.0/24). Empty = open. Loopback is always allowed.</p>
                                     <textarea id="cfgAllowlist" class="input" rows="3" style="font-family:monospace;" placeholder="192.168.1.0/24&#10;10.0.0.5"></textarea>
@@ -910,15 +985,9 @@
                                 </div>
 
                                 <div class="settings-subsection">
-                                    <h4 data-i18n="security.canonical.title">Canonical address</h4>
-                                    <p class="field-hint" data-i18n="security.canonical.hint">When set, the browser is steered here by default (so TLS + passkeys are used). The local IP stays reachable — append <code>?local</code> to the address to bypass the redirect (e.g. if DNS/proxy is down). Empty = no redirect.</p>
-                                    <input type="text" id="cfgCanonicalUrl" class="input" placeholder="https://gateway.example.lan">
-                                </div>
-
-                                <div class="settings-subsection">
                                     <h4 data-i18n="security.https.title">HTTPS (web UI)</h4>
                                     <label class="checkbox-label">
-                                        <input type="checkbox" id="cfgUiTls" aria-label="Enable HTTPS">
+                                        <input type="checkbox" id="cfgUiTls" aria-label="Enable HTTPS" data-i18n-aria="a11y.enableHttps">
                                         <span data-i18n="security.https.enable">Serve the UI over HTTPS (restart required)</span>
                                     </label>
                                     <div id="uiTlsFields" style="display:none;margin-top:8px;">
@@ -937,47 +1006,88 @@
                                 </div>
 
                                 <div class="settings-subsection">
-                                    <h4 data-i18n="security.auth.title">Login</h4>
-                                    <label class="checkbox-label">
-                                        <input type="checkbox" id="cfgAuthEnabled" aria-label="Require login">
+                                    <h4 data-i18n="security.canonical.title">Canonical address</h4>
+                                    <p class="field-hint" data-i18n-html="security.canonical.hint">When set, the browser is steered here by default (so TLS + passkeys are used). The local IP stays reachable — append <code>?local</code> to the address to bypass the redirect (e.g. if DNS/proxy is down). Empty = no redirect.</p>
+                                    <input type="text" id="cfgCanonicalUrl" class="input" placeholder="https://gateway.example.lan">
+                                </div>
+
+                                <div class="settings-subsection">
+                                    <h4 data-i18n="security.nodes.title">ESP nodes service</h4>
+                                    <p class="field-hint" data-i18n="security.nodes.hint">Address of the separate ESP nodes service (multi-bus-gateway-esphome), e.g. /nodes/ on the same host. When set, it is listed in Settings → Modules. Empty = not listed.</p>
+                                    <input type="text" id="cfgNodesUrl" class="input" placeholder="/nodes/" aria-label="ESP nodes service address" data-i18n-aria="a11y.espAddress">
+                                </div>
+
+                                
+                      </div>
+                    </div>
+                    <div class="st-panel" role="tabpanel" id="secPanel-accounts" aria-labelledby="secTab-accounts" hidden>
+                      <div class="st-card sec-form">
+                        <div class="settings-subsection">
+                          <h4 data-i18n="security.auth.title">Login</h4>
+                          <label class="checkbox-label">
+                                        <input type="checkbox" id="cfgAuthEnabled" aria-label="Require login" data-i18n-aria="a11y.requireLogin">
                                         <span data-i18n="security.auth.enable">Require login to access the UI/API</span>
                                     </label>
-                                    <div id="authFields" style="display:none;margin-top:8px;">
-                                        <div class="form-row">
+                                    
+                          <div id="authFields" style="display:none;margin-top:8px;">
+                            <div class="form-row">
                                             <div class="form-group">
                                                 <label class="form-label" data-i18n="security.auth.admin" for="cfgAuthUser">Admin username</label>
                                                 <input type="text" id="cfgAuthUser" class="input" autocomplete="off" placeholder="admin">
                                             </div>
                                             <div class="form-group">
                                                 <label class="form-label" data-i18n="security.auth.adminPass" for="cfgAuthPass">Admin password</label>
-                                                <input type="password" id="cfgAuthPass" class="input" autocomplete="new-password" placeholder="(unchanged)">
+                                                <input type="password" id="cfgAuthPass" class="input" autocomplete="new-password" placeholder="(unchanged)" data-i18n-placeholder="common.phUnchanged">
                                             </div>
                                         </div>
                                         <div class="form-row">
                                             <div class="form-group">
                                                 <label class="form-label" data-i18n="security.auth.viewer" for="cfgViewerUser">Viewer username (read-only, optional)</label>
-                                                <input type="text" id="cfgViewerUser" class="input" autocomplete="off" placeholder="(none)">
+                                                <input type="text" id="cfgViewerUser" class="input" autocomplete="off" placeholder="(none)" data-i18n-placeholder="common.phNone">
                                             </div>
                                             <div class="form-group">
                                                 <label class="form-label" data-i18n="security.auth.viewerPass" for="cfgViewerPass">Viewer password</label>
-                                                <input type="password" id="cfgViewerPass" class="input" autocomplete="new-password" placeholder="(unchanged)">
+                                                <input type="password" id="cfgViewerPass" class="input" autocomplete="new-password" placeholder="(unchanged)" data-i18n-placeholder="common.phUnchanged">
                                             </div>
                                         </div>
                                         <div class="form-row">
                                             <div class="form-group">
                                                 <label class="form-label" data-i18n="security.auth.operator" for="cfgOperatorUser">Operator username (live actions, no config — optional)</label>
-                                                <input type="text" id="cfgOperatorUser" class="input" autocomplete="off" placeholder="(none)">
+                                                <input type="text" id="cfgOperatorUser" class="input" autocomplete="off" placeholder="(none)" data-i18n-placeholder="common.phNone">
                                             </div>
                                             <div class="form-group">
                                                 <label class="form-label" data-i18n="security.auth.operatorPass" for="cfgOperatorPass">Operator password</label>
-                                                <input type="password" id="cfgOperatorPass" class="input" autocomplete="new-password" placeholder="(unchanged)">
+                                                <input type="password" id="cfgOperatorPass" class="input" autocomplete="new-password" placeholder="(unchanged)" data-i18n-placeholder="common.phUnchanged">
                                             </div>
                                         </div>
                                         <p class="field-hint" data-i18n="security.auth.operatorHint" style="margin-top:2px;">The operator can use the commissioning tools (trace, probe, discovery) and write to devices within template bounds, but cannot change any configuration.</p>
-                                        <div class="settings-subsection" style="margin-top:14px;">
+                                        
+                          </div>
+                        </div>
+                        <div class="settings-subsection">
+                          <h4 data-i18n="security.lockout.title">Lockout</h4>
+                          <div class="form-row">
+                                            <div class="form-group">
+                                                <label class="form-label" data-i18n="security.auth.lockoutN" for="cfgLockoutN">Lockout after N failures</label>
+                                                <input type="number" id="cfgLockoutN" class="input" min="1" max="50" placeholder="5">
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label" data-i18n="security.auth.lockoutMin" for="cfgLockoutMin">Lockout minutes</label>
+                                                <input type="number" id="cfgLockoutMin" class="input" min="1" max="1440" placeholder="5">
+                                            </div>
+                                        </div>
+                                        <p class="field-hint" data-i18n="security.auth.hint">Passwords are stored hashed. Leave a password blank to keep the current one. Applies immediately.</p>
+
+                        </div>
+                      </div>
+                    </div>
+                    <div class="st-panel" role="tabpanel" id="secPanel-access" aria-labelledby="secTab-access" hidden>
+                      <div class="st-card sec-form">
+                        <p class="field-hint sec-note" id="secAccessNote" hidden data-i18n="security.accessNote">Login is off: passkeys and tokens take effect once it is on. You can set them up now.</p>
+                        <div class="settings-subsection">
                                             <h4 style="display:flex;justify-content:space-between;align-items:center;">
                                                 <span data-i18n="passkeys.title">Passkeys</span>
-                                                <button type="button" class="btn btn-secondary btn-sm" data-action="passkeyRegister">
+                                                <button data-live type="button" class="btn btn-secondary btn-sm" data-action="passkeyRegister">
                                                     <i aria-hidden="true" class="bi bi-fingerprint"></i> <span data-i18n="passkeys.add">Add passkey</span></button>
                                             </h4>
                                             <p class="field-hint" data-i18n="passkeys.hint">Password-less sign-in bound to this device (fingerprint, PIN, security key). Browsers require a secure context: register and sign in via localhost or an HTTPS hostname — a plain-HTTP IP address will not work. You can enroll now, before enabling login.</p>
@@ -994,70 +1104,97 @@
                                                 </table>
                                             </div>
                                         </div>
-                                        <div class="form-row">
-                                            <div class="form-group">
-                                                <label class="form-label" data-i18n="security.auth.lockoutN" for="cfgLockoutN">Lockout after N failures</label>
-                                                <input type="number" id="cfgLockoutN" class="input" min="1" max="50" placeholder="5">
+                                        <div class="settings-subsection">
+                                            <h4 data-i18n="tokens.title">Service tokens</h4>
+                                            <p class="field-hint" data-i18n="tokens.hint">For programs, not people: a companion service or a script signs in with a named token (sent as Authorization: Bearer). It has a role like a login, the audit log shows its name, and revoking it touches no one's password. The token is shown once, when it is made.</p>
+                                            <div class="form-row" style="align-items:flex-end;">
+                                                <div class="form-group">
+                                                    <label class="form-label" for="tokName" data-i18n="tokens.name">Name (who uses it)</label>
+                                                    <input type="text" id="tokName" class="input" maxlength="40" placeholder="mbg-esphome" autocomplete="off">
+                                                </div>
+                                                <div class="form-group">
+                                                    <label class="form-label" for="tokRole" data-i18n="tokens.role">Role</label>
+                                                    <select id="tokRole" class="input">
+                                                        <option value="viewer" data-i18n="tokens.roleViewer">viewer (reads)</option>
+                                                        <option value="operator" data-i18n="tokens.roleOperator">operator (live actions)</option>
+                                                        <option value="admin" data-i18n="tokens.roleAdmin">admin (configuration)</option>
+                                                        <option value="ha" data-i18n="tokens.roleHa">ha (high-availability service: sets the role)</option>
+                                                    </select>
+                                                </div>
+                                                <div class="form-group" style="flex:0 0 auto;">
+                                                    <button data-admin type="button" class="btn btn-secondary btn-sm" data-action="tokenCreate">
+                                                        <i aria-hidden="true" class="bi bi-key"></i> <span data-i18n="tokens.create">Make a token</span></button>
+                                                </div>
                                             </div>
-                                            <div class="form-group">
-                                                <label class="form-label" data-i18n="security.auth.lockoutMin" for="cfgLockoutMin">Lockout minutes</label>
-                                                <input type="number" id="cfgLockoutMin" class="input" min="1" max="1440" placeholder="5">
+                                            <div id="tokNew" class="field-hint" style="display:none;"></div>
+                                            <div class="diag-table-wrap">
+                                                <table class="data-table">
+                                                    <thead><tr>
+                                                        <th scope="col" data-i18n="tokens.colName">Name</th>
+                                                        <th scope="col" data-i18n="tokens.role">Role</th>
+                                                        <th scope="col" data-i18n="tokens.colCreated">Made</th>
+                                                        <th scope="col" data-i18n="tokens.colUsed">Last used</th>
+                                                        <th scope="col"></th>
+                                                    </tr></thead>
+                                                    <tbody id="tokenTableBody"></tbody>
+                                                </table>
                                             </div>
                                         </div>
-                                        <p class="field-hint" data-i18n="security.auth.hint">Passwords are stored hashed. Leave a password blank to keep the current one. Applies immediately.</p>
-                                    </div>
-                                </div>
-
-                                <div class="settings-subsection">
+                                        
+                      </div>
+                    </div>
+                    <div class="st-panel" role="tabpanel" id="secPanel-writes" aria-labelledby="secTab-writes" hidden>
+                      <div class="st-card sec-form">
+                        <div class="settings-subsection">
                                     <h4 data-i18n="security.writes.title">Modbus writes</h4>
                                     <p class="field-hint" data-i18n="security.writes.hint">Off by default — this is the master arming switch; writing to real hardware is irreversible. When on, any device that is not write-locked can be written: declared registers use their template encoding and enforce whatever guards you declared (min/max/allowed — each guard you declare buys enforcement and a better write dialog), and undeclared registers accept a raw write after an explicit unguarded acknowledgement. Every write is confirmed, authenticated, rate-limited and audited. The primary device ships write-locked.</p>
                                     <label class="checkbox-label">
-                                        <input type="checkbox" id="cfgAllowWrites" aria-label="Allow Modbus writes">
+                                        <input type="checkbox" id="cfgAllowWrites" aria-label="Allow Modbus writes" data-i18n-aria="a11y.allowWrites">
                                         <span data-i18n="security.writes.enable">Allow Modbus writes (FC5 / FC6 / FC16)</span>
                                     </label>
                                     <label class="checkbox-label" style="margin-top:6px;">
-                                        <input type="checkbox" id="cfgAllowNonlanHttp" aria-label="Allow non-LAN HTTP devices">
+                                        <input type="checkbox" id="cfgAllowNonlanHttp" aria-label="Allow non-LAN HTTP devices" data-i18n-aria="a11y.allowNonLan">
                                         <span data-i18n="security.nonlanHttp">Allow HTTP/JSON devices with a non-LAN URL (opens an SSRF path)</span>
                                     </label>
                                 </div>
-                            </div>
-                            <div class="settings-card-footer">
-                                <span class="save-feedback" id="securitySaveFeedback"></span>
-                                <button class="btn btn-primary btn-sm" data-action="saveSecurity" data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="settings.saveApply">Save &amp; Apply</span></button>
-                            </div>
-                        </div>
 
-                        <!-- Audit trail -->
-                        <div class="settings-card devices-card" style="margin-top:14px;">
-                            <div class="settings-card-header">
-                                <h3><i aria-hidden="true" class="bi bi-journal-text"></i> <span data-i18n="audit.title">Audit Trail</span></h3>
-                                <div style="display:flex;gap:8px;align-items:center;">
+                      </div>
+                    </div>
+                    <div class="sec-savebar" id="secSaveBar" hidden>
+                        <span class="sec-dirty" id="secDirty" hidden><span aria-hidden="true">●</span> <span data-i18n="security.unsaved">Unsaved changes</span></span>
+                        <span class="save-feedback" id="securitySaveFeedback"></span>
+                                <button class="btn btn-primary btn-sm" data-admin data-action="saveSecurity" data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="settings.saveApply">Save &amp; Apply</span></button>
+                    </div>
+                    <div class="st-panel" role="tabpanel" id="secPanel-audit" aria-labelledby="secTab-audit" hidden>
+                      <div class="st-toolbar">
+                        <input type="search" id="auditFilter" class="st-search" placeholder="Search…" data-i18n-placeholder="audit.filter" aria-label="Search" data-i18n-aria="audit.filter" data-action="_auditSearchInput" data-on="input">
+                        <select id="auditUser" class="st-search st-select" aria-label="User" data-i18n-aria="audit.colUser" data-action="_auditUserChange" data-on="change"><option value="" data-i18n="audit.allUsers">All users</option></select>
+                        <div class="st-seg" role="group" id="auditResult" aria-label="Status" data-i18n-aria="audit.colStatus">
+                          <button type="button" data-v="all" aria-pressed="true" data-action="auditResult" data-args="[&quot;all&quot;]"><span data-i18n="status.f.all">All</span> <span class="st-seg-n" id="auditN-all"></span></button><button type="button" data-v="ok" aria-pressed="false" data-action="auditResult" data-args="[&quot;ok&quot;]"><span data-i18n="audit.ok">OK</span> <span class="st-seg-n" id="auditN-ok"></span></button><button type="button" data-v="failed" aria-pressed="false" data-action="auditResult" data-args="[&quot;failed&quot;]"><span data-i18n="audit.failed">Failed</span> <span class="st-seg-n" id="auditN-failed"></span></button><button type="button" data-v="denied" aria-pressed="false" data-action="auditResult" data-args="[&quot;denied&quot;]"><span data-i18n="audit.denied">Denied</span> <span class="st-seg-n" id="auditN-denied"></span></button>
+                        </div>
+                        <span class="st-count" id="auditCount"></span>
+                        <div style="display:flex;gap:8px;align-items:center;">
                                     <a class="btn btn-ghost btn-sm" href="/api/audit/export.csv" download="audit.csv">
                                         <i aria-hidden="true" class="bi bi-filetype-csv"></i> CSV</a>
                                     <button class="btn btn-ghost btn-sm" data-action="loadAudit">
                                         <i aria-hidden="true" class="bi bi-arrow-repeat"></i> <span data-i18n="common.refresh">Refresh</span></button>
                                 </div>
-                            </div>
-                            <div class="settings-card-body">
-                                <p class="field-hint" data-i18n="audit.intro" style="margin-bottom:8px;">Every configuration change, login, device write and secret export — who, from which IP, when, with the payload redacted. With auth on, only the admin can read this.</p>
-                                <input type="text" id="auditFilter" class="input" style="max-width:280px;margin-bottom:8px;"
-                                       placeholder="Filter…" data-i18n-placeholder="audit.filter"
-                                      data-action="_auditSearchInput" data-on="input">
-                                <div class="diag-table-wrap">
-                                    <table class="data-table" id="auditTable">
-                                        <thead><tr>
-                                            <th scope="col" data-i18n="audit.colWhen">When</th>
-                                            <th scope="col" data-i18n="audit.colUser">User</th>
-                                            <th scope="col">IP</th>
-                                            <th scope="col" data-i18n="audit.colAction">Action</th>
-                                            <th scope="col" data-i18n="audit.colStatus">Status</th>
-                                            <th scope="col" data-i18n="audit.colDetail">Detail</th>
-                                        </tr></thead>
-                                        <tbody id="auditTableBody"></tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        </div>
+                      </div>
+                      <p class="field-hint" data-i18n="audit.intro" style="margin-bottom:8px;">Every configuration change, login, device write and secret export — who, from which IP, when, with the payload redacted. With auth on, only the admin can read this.</p>
+                      <div class="st-card st-evscroll" tabindex="0" aria-label="Audit Trail" data-i18n-aria="audit.title">
+                        <table class="st-table st-log" id="auditTable">
+                          <thead><tr>
+                            <th scope="col" data-i18n="audit.colWhen">When</th>
+                            <th scope="col" data-i18n="audit.colUser">User</th>
+                            <th scope="col" class="st-hide-sm">IP</th>
+                            <th scope="col" data-i18n="audit.colAction">Action</th>
+                            <th scope="col" data-i18n="audit.colStatus">Status</th>
+                            <th scope="col" class="st-hide-sm" data-i18n="audit.colDetail">Detail</th>
+                          </tr></thead>
+                          <tbody id="auditTableBody"></tbody>
+                        </table>
+                      </div>
+                    </div>
                 </div>
 
                 <!-- ── Alerts tab ── -->
@@ -1067,9 +1204,9 @@
                             <h3><i aria-hidden="true" class="bi bi-bell"></i> <span data-i18n="alerts.title">Alerts</span></h3>
                         </div>
                         <div class="settings-card-body">
-                            <p class="field-hint" data-i18n="alerts.intro" style="margin-bottom:12px;">Infrastructure-health alerts (a device or sink drops, latency spikes, the InfluxDB buffer backs up) delivered over MQTT and/or an HTTP webhook. Not value alerts. Applied live on save.</p>
+                            <p class="field-hint" data-i18n="alerts.intro" style="margin-bottom:12px;">Alerts delivered over MQTT and/or an HTTP webhook: infrastructure health (a device or sink drops, latency spikes, the InfluxDB buffer backs up), the alarms a device's template declares (an error code, a fault word), and optionally the per-register value thresholds. Applied live on save.</p>
                             <label class="checkbox-label" style="margin-bottom:10px;">
-                                <input type="checkbox" id="cfgAlertsEnabled" aria-label="Enable alerts">
+                                <input type="checkbox" id="cfgAlertsEnabled" aria-label="Enable alerts" data-i18n-aria="a11y.enableAlerts">
                                 <span data-i18n="alerts.enable">Enable alerting</span>
                             </label>
 
@@ -1080,6 +1217,8 @@
                                     <label class="checkbox-label"><input type="checkbox" id="cfgAlertSigSink"> <span data-i18n="alerts.sigSink">Sink disconnect / reconnect</span></label>
                                     <label class="checkbox-label"><input type="checkbox" id="cfgAlertSigLatency"> <span data-i18n="alerts.sigLatency">High read latency</span></label>
                                     <label class="checkbox-label"><input type="checkbox" id="cfgAlertSigBuffer"> <span data-i18n="alerts.sigBuffer">InfluxDB buffer backlog</span></label>
+                                    <label class="checkbox-label"><input type="checkbox" id="cfgAlertSigAlarm"> <span data-i18n="alerts.sigAlarm">Device alarms (declared by its template)</span></label>
+                                    <label class="checkbox-label"><input type="checkbox" id="cfgAlertSigThreshold"> <span data-i18n="alerts.sigThreshold">Value thresholds (warning / danger)</span></label>
                                 </div>
                                 <div class="form-row" style="margin-top:8px;">
                                     <div class="form-group"><label class="form-label" data-i18n="alerts.minInterval" for="cfgAlertMinInterval">Min interval (s)</label><input type="number" id="cfgAlertMinInterval" class="input" min="1" placeholder="300"></div>
@@ -1103,13 +1242,13 @@
                                         <textarea id="cfgAlertWebhookBody" class="input" rows="2" style="font-family:monospace;" placeholder='{"message": "{severity} {source}: {message}"}'></textarea>
                                         <p class="field-hint" data-i18n="alerts.webhookBodyHint">Placeholders: {severity} {source} {message} {key} {host} {ts}. Empty = raw alert JSON.</p></div>
                                 </div>
-                                <button class="btn btn-ghost btn-sm" data-action="testAlert" data-with-el style="margin-top:4px;"><i aria-hidden="true" class="bi bi-send"></i> <span data-i18n="status.testAlert">Test</span></button>
+                                <button data-live class="btn btn-ghost btn-sm" data-action="testAlert" data-with-el style="margin-top:4px;"><i aria-hidden="true" class="bi bi-send"></i> <span data-i18n="status.testAlert">Test</span></button>
                                 <span id="alertTestResult" style="font-size:12px;margin-left:8px;"></span>
                             </div>
                         </div>
                         <div class="settings-card-footer">
                             <span class="save-feedback" id="alertsSaveFeedback"></span>
-                            <button class="btn btn-primary btn-sm" data-action="saveAlerts" data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="settings.saveApply">Save &amp; Apply</span></button>
+                            <button class="btn btn-primary btn-sm" data-admin data-action="saveAlerts" data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="settings.saveApply">Save &amp; Apply</span></button>
                         </div>
                     </div>
                 </div>
@@ -1118,50 +1257,62 @@
 
             <!-- Virtual Meters page -->
             <div class="page" id="rulesPage" role="tabpanel" aria-labelledby="tab-rules" tabindex="0">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:16px 20px;gap:16px;flex-wrap:wrap;">
+                <div class="section-header page-head">
                     <div>
-                        <h2 style="margin:0;"><i aria-hidden="true" class="bi bi-sliders2"></i> <span data-i18n="nav.rules">Rules</span></h2>
-                        <p style="margin:6px 0 0;color:var(--text-secondary);font-size:13px;max-width:720px;" data-i18n="rules.intro">
+                        <h2 tabindex="-1"><i aria-hidden="true" class="bi bi-sliders2"></i> <span data-i18n="nav.rules">Rules</span></h2>
+                        <p class="page-lead" data-i18n="rules.intro">
                             A rule decides when a command runs: it watches live values, waits for them to settle, and asks a
                             device for what it wants. A new rule runs in shadow — it decides and says so, but writes nothing —
                             until you arm it.</p>
                     </div>
-                    <div style="display:flex;gap:8px;">
-                        <button class="btn btn-primary btn-sm" id="rulesAddBtn"><i aria-hidden="true" class="bi bi-plus-lg"></i> <span data-i18n="rules.add">Add rule</span></button>
-                        <a class="btn btn-sm" href="/api/rules/export" download id="rulesExportBtn"><i aria-hidden="true" class="bi bi-download"></i> <span data-i18n="rules.export">Export</span></a>
-                        <button data-admin class="btn btn-sm" id="rulesImportBtn"><i aria-hidden="true" class="bi bi-upload"></i> <span data-i18n="rules.import">Import</span></button>
-                        <button class="btn btn-sm" id="rulesRefreshBtn"><i aria-hidden="true" class="bi bi-arrow-clockwise"></i> <span data-i18n="common.refresh">Refresh</span></button>
+                    <div class="header-actions">
+                        <button data-admin class="btn btn-primary btn-sm" id="rulesAddBtn"><i aria-hidden="true" class="bi bi-plus-lg"></i> <span data-i18n="rules.add">Add rule</span></button>
+                        <a class="btn btn-ghost btn-sm" href="/api/rules/export" download id="rulesExportBtn"><i aria-hidden="true" class="bi bi-download"></i> <span data-i18n="rules.export">Export</span></a>
+                        <button data-admin class="btn btn-ghost btn-sm" id="rulesImportBtn"><i aria-hidden="true" class="bi bi-upload"></i> <span data-i18n="rules.import">Import</span></button>
+                        <button class="btn btn-ghost btn-sm" id="rulesRefreshBtn"><i aria-hidden="true" class="bi bi-arrow-clockwise"></i> <span data-i18n="common.refresh">Refresh</span></button>
                     </div>
                 </div>
-                <div id="rulesContent" style="padding:0 20px 24px;"></div>
+                <div id="rulesContent" style="padding-bottom:24px;"></div>
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:8px 0 12px;gap:16px;border-top:1px solid var(--border,#e5e7eb);">
+                    <div>
+                        <h3 style="margin:8px 0 0;"><i aria-hidden="true" class="bi bi-list-ol"></i> <span data-i18n="seq.title">Sequences</span></h3>
+                        <p style="margin:6px 0 0;color:var(--text-secondary);font-size:13px;max-width:720px;" data-i18n="seq.intro">
+                            Commands in order, with waits and checks — undone in reverse when a step fails or you cancel.
+                            Each command meets every gate of a command; a safety rule holding a device still stops it.</p>
+                    </div>
+                    <div style="display:flex;gap:8px;margin-top:8px;">
+                        <button data-admin class="btn btn-ghost btn-sm" id="seqAddBtn"><i aria-hidden="true" class="bi bi-plus-lg"></i> <span data-i18n="seq.add">Add sequence</span></button>
+                    </div>
+                </div>
+                <div id="sequencesContent" style="padding-bottom:24px;"></div>
             </div>
             <div class="page" id="vmetersPage" role="tabpanel" aria-labelledby="tab-vmeters" tabindex="0">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:16px 20px;gap:16px;">
+                <div class="section-header page-head">
                     <div>
-                        <h2 style="margin:0;"><i aria-hidden="true" class="bi bi-hdd-network"></i> <span data-i18n="vmeter.title">Virtual Meters</span></h2>
-                        <p style="margin:6px 0 0;color:var(--text-secondary);font-size:13px;max-width:680px;">
+                        <h2 tabindex="-1"><i aria-hidden="true" class="bi bi-hdd-network"></i> <span data-i18n="vmeter.title">Virtual Meters</span></h2>
+                        <p class="page-lead">
                             <span data-i18n="vmeter.pageIntro">Serve a device's live values as a standard Modbus meter so other systems read them natively
                             (EM24 → Victron grid meter, Fronius Smart Meter → DataManager).</span> <b data-i18n="vmeter.pageIntroBold">Enable only to validate in
                             parallel with the real meter</b> <span data-i18n="vmeter.pageIntro2">— this feeds a control-critical reference.</span></p>
                     </div>
-                    <button class="btn" id="vmRefreshBtn"><i aria-hidden="true" class="bi bi-arrow-clockwise"></i> <span data-i18n="common.refresh">Refresh</span></button>
+                    <div class="header-actions"><button class="btn btn-ghost btn-sm" id="vmRefreshBtn"><i aria-hidden="true" class="bi bi-arrow-clockwise"></i> <span data-i18n="common.refresh">Refresh</span></button></div>
                 </div>
-                <div id="vmetersContent" style="padding:0 20px 24px;"></div>
+                <div id="vmetersContent"></div>
             </div>
 
             <!-- Templates Page (device maps + meter emulations) -->
             <div class="page" id="templatesPage" role="tabpanel" aria-labelledby="tab-templates" tabindex="0">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:16px 20px;gap:16px;">
+                <div class="section-header page-head">
                     <div>
-                        <h2 style="margin:0;"><i aria-hidden="true" class="bi bi-collection"></i> <span data-i18n="templates.title">Templates</span></h2>
-                        <p style="margin:6px 0 0;color:var(--text-secondary);font-size:13px;max-width:720px;" data-i18n="templates.subtitle">
+                        <h2 tabindex="-1"><i aria-hidden="true" class="bi bi-collection"></i> <span data-i18n="templates.title">Templates</span></h2>
+                        <p class="page-lead" data-i18n-html="templates.subtitle">
                             The catalog behind your devices. <b>Device maps</b> tell the gateway how to read a real meter
                             (register addresses, function code, byte order). <b>Meter emulations</b> re-serve live values as a
                             standard Modbus meter. Bundle, upload, import from CSV, edit and share them here.</p>
                     </div>
-                    <button class="btn" id="tmRefreshBtn"><i aria-hidden="true" class="bi bi-arrow-clockwise"></i> <span data-i18n="common.refresh">Refresh</span></button>
+                    <div class="header-actions"><button class="btn btn-ghost btn-sm" id="tmRefreshBtn"><i aria-hidden="true" class="bi bi-arrow-clockwise"></i> <span data-i18n="common.refresh">Refresh</span></button></div>
                 </div>
-                <div id="templatesContent" style="padding:0 20px 24px;"></div>
+                <div id="templatesContent"></div>
             </div>
         </main>
 
@@ -1181,7 +1332,7 @@
             <div class="statusbar-right">
                 <span id="lastUpdate"><span data-i18n="status.lastUpdate">Last update:</span> --</span>
                 <span class="statusbar-divider"></span>
-                <span id="appVersion" title="gateway version"></span>
+                <span id="appVersion" title="gateway version" data-i18n-title="a11y.version"></span>
             </div>
         </div>
     </div>
@@ -1191,7 +1342,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-pencil"></i> <span data-i18n="registers.editMeasurement">Edit measurement</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeRegisterModal">&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeRegisterModal">&times;</button>
             </div>
             <div class="modal-body">
                 <input type="hidden" id="editAddress">
@@ -1202,7 +1353,7 @@
                 <div class="form-row">
                     <div class="form-group">
                         <label class="form-label" data-i18n="lbl.pollGroup" for="editPollGroup">Poll Group</label>
-                        <select id="editPollGroup" class="input" aria-label="Poll group">
+                        <select id="editPollGroup" class="input" aria-label="Poll group" data-i18n-aria="devtpl.colGroup">
                             <option value="realtime" data-i18n="pg.realtime">Realtime</option>
                             <option value="normal" data-i18n="pg.normal">Normal</option>
                             <option value="slow" data-i18n="pg.slow">Slow</option>
@@ -1210,7 +1361,7 @@
                     </div>
                     <div class="form-group">
                         <label class="form-label" data-i18n="reg.uiWidget" for="editWidget">UI Widget</label>
-                        <select id="editWidget" class="input" aria-label="Widget type">
+                        <select id="editWidget" class="input" aria-label="Widget type" data-i18n-aria="dash.widgetType">
                             <option value="value" data-i18n="lbl.value">Value</option>
                             <option value="gauge" data-i18n="lbl.gauge">Gauge</option>
                             <option value="chart" data-i18n="lbl.chart">Chart</option>
@@ -1218,15 +1369,15 @@
                     </div>
                 </div>
                 <div class="form-section gauge-options" id="editGaugeOptions" style="display: none;">
-                    <h4><i aria-hidden="true" class="bi bi-speedometer2"></i> Gauge Options</h4>
+                    <h4><i aria-hidden="true" class="bi bi-speedometer2"></i> <span data-i18n="reg.gaugeOptions">Gauge Options</span></h4>
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label" data-i18n="lbl.min" for="editGaugeMin">Min</label>
-                            <input type="number" id="editGaugeMin" class="input input-sm" step="any" placeholder="auto">
+                            <input type="number" id="editGaugeMin" class="input input-sm" step="any" placeholder="auto" data-i18n-placeholder="common.phAuto">
                         </div>
                         <div class="form-group">
                             <label class="form-label" data-i18n="lbl.max" for="editGaugeMax">Max</label>
-                            <input type="number" id="editGaugeMax" class="input input-sm" step="any" placeholder="auto">
+                            <input type="number" id="editGaugeMax" class="input input-sm" step="any" placeholder="auto" data-i18n-placeholder="common.phAuto">
                         </div>
                         <div class="form-group">
                             <label class="form-label" data-i18n="lbl.color" for="editGaugeColor">Color</label>
@@ -1263,7 +1414,7 @@
                     </div>
                 </div>
                 <div class="form-section">
-                    <h4><i aria-hidden="true" class="bi bi-palette"></i> Color Thresholds</h4>
+                    <h4><i aria-hidden="true" class="bi bi-palette"></i> <span data-i18n="reg.colorThresholds">Color Thresholds</span></h4>
                     <label class="checkbox-label">
                         <input type="checkbox" id="editThresholdEnabled">
                         <span data-i18n="dash.enableColor">Enable color coding</span>
@@ -1311,40 +1462,17 @@
     </div>
 
     <!-- Virtual Meter Template Editor Modal -->
-    <!-- Device Builder: node YAML editor -->
-    <div class="modal" id="builderEditorModal">
-        <div class="modal-content" style="max-width:960px;width:96%;">
-            <div class="modal-header">
-                <h3><i aria-hidden="true" class="bi bi-cpu"></i> <span id="builderEdTitle">Node</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["builderEditorModal"]'>&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label data-i18n="builder.filename" for="builderEdName">Filename</label>
-                    <input type="text" id="builderEdName" placeholder="my-node.yaml" style="width:280px;font-family:monospace;">
-                </div>
-                <textarea id="builderEdText" spellcheck="false" wrap="off"
-                          style="width:100%;height:52vh;font-family:monospace;font-size:13px;white-space:pre;"></textarea>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-ghost" data-action="closeModal" data-args='["builderEditorModal"]' data-i18n="common.cancel">Cancel</button>
-                <button class="btn" id="builderEdValidateBtn"><i aria-hidden="true" class="bi bi-check2-circle"></i> <span data-i18n="builder.saveValidate">Save &amp; validate</span></button>
-                <button class="btn btn-primary" id="builderEdSaveBtn"><i aria-hidden="true" class="bi bi-save"></i> <span data-i18n="common.save">Save</span></button>
-            </div>
-        </div>
-    </div>
-
     <!-- Enum / bitfield state builder (template register decode map) -->
     <div class="modal" id="enumBuilderModal">
         <div class="modal-content" style="max-width:640px;width:96%;">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-list-ol"></i> <span id="enumBuilderTitle">Decode states</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["enumBuilderModal"]'>&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["enumBuilderModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <p style="font-size:12.5px;color:var(--text-secondary);margin:0 0 10px;">
-                    <span data-i18n="enum.intro">Turn this register's raw number into text.</span> <b>Enum</b> <span data-i18n="enum.introEnum">= one state
-                    (value → label).</span> <b>Bitfield</b> <span data-i18n="enum.introBits">= flags (bit position → name).</span></p>
+                    <span data-i18n="enum.intro">Turn this register's raw number into text.</span> <b data-i18n="enum.kindEnum">Enum</b> <span data-i18n="enum.introEnum">= one state
+                    (value → label).</span> <b data-i18n="enum.kindBits">Bitfield</b> <span data-i18n="enum.introBits">= flags (bit position → name).</span></p>
                 <div style="display:flex;gap:18px;align-items:center;margin-bottom:12px;">
                     <label style="display:flex;gap:6px;align-items:center;cursor:pointer;">
                         <input type="radio" name="enumMode" value="enum" data-action="enumBuilderSetMode" data-args='["enum"]' data-on="change"> <span data-i18n="enum.modeEnum">Enum — one state</span></label>
@@ -1352,7 +1480,7 @@
                         <input type="radio" name="enumMode" value="bits" data-action="enumBuilderSetMode" data-args='["bits"]' data-on="change"> <span data-i18n="enum.modeBits">Bitfield — flags</span></label>
                 </div>
                 <table class="data-table"><thead><tr>
-                    <th scope="col" id="enumValCol" style="width:130px;">Value</th><th scope="col" data-i18n="lbl.label">Label</th><th scope="col" style="width:36px;"></th>
+                    <th scope="col" id="enumValCol" style="width:130px;" data-i18n="lbl.value">Value</th><th scope="col" data-i18n="lbl.label">Label</th><th scope="col" style="width:36px;"></th>
                 </tr></thead><tbody id="enumBuilderRows"></tbody></table>
                 <button class="btn btn-secondary btn-sm" style="margin-top:8px;" data-action="enumBuilderAddRow">
                     <i aria-hidden="true" class="bi bi-plus-lg"></i> <span data-i18n="enum.addState">Add state</span></button>
@@ -1370,133 +1498,8 @@
             </div>
             <div class="modal-footer">
                 <button class="btn btn-ghost" data-action="closeModal" data-args='["enumBuilderModal"]' data-i18n="common.cancel">Cancel</button>
-                <button class="btn" id="enumBuilderClearBtn" data-action="enumBuilderClear" data-i18n="common.clear" data-i18n-title="enum.clearTip" title="Remove the decode map from this register">Clear</button>
+                <button class="btn btn-ghost" id="enumBuilderClearBtn" data-action="enumBuilderClear" data-i18n="common.clear" data-i18n-title="enum.clearTip" title="Remove the decode map from this register">Clear</button>
                 <button class="btn btn-primary" data-action="enumBuilderApply"><i aria-hidden="true" class="bi bi-check2"></i> <span data-i18n="common.apply">Apply</span></button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Device Builder: live command console (compile / flash / logs) -->
-    <div class="modal" id="builderConsoleModal">
-        <div class="modal-content" style="max-width:960px;width:96%;">
-            <div class="modal-header">
-                <h3><i aria-hidden="true" class="bi bi-terminal"></i> <span id="builderConTitle">Console</span>
-                    <span id="builderConStatus" class="sink-pill" style="margin-left:10px;"></span></h3>
-                <button class="modal-close" aria-label="Close" data-action="_builderCloseModal" data-args='["builderConsoleModal"]'>&times;</button>
-            </div>
-            <div class="modal-body">
-                <pre id="builderConOut" style="height:56vh;overflow:auto;background:#101418;color:#d7dee6;
-                     padding:12px;border-radius:6px;font-size:12px;line-height:1.5;margin:0;"></pre>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-ghost" data-action="_builderCloseModal" data-args='["builderConsoleModal"]' data-i18n="common.close">Close</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Device Builder: template → node generator wizard -->
-    <div class="modal" id="builderGenModal">
-        <div class="modal-content" style="max-width:1060px;width:96%;">
-            <div class="modal-header">
-                <h3><i aria-hidden="true" class="bi bi-magic"></i> <span data-i18n="builder.generate">Generate from template</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["builderGenModal"]'>&times;</button>
-            </div>
-            <div class="modal-body" style="max-height:74vh;overflow:auto;">
-                <div style="display:flex;gap:18px;flex-wrap:wrap;">
-                    <div style="flex:1;min-width:320px;">
-                        <div class="form-group"><label data-i18n="builder.sourceTpl" for="bgTemplate">Source device template (Modbus)</label>
-                            <select id="bgTemplate" style="width:100%;"></select></div>
-                        <div class="form-group">
-                            <div style="display:flex;gap:8px;align-items:center;">
-                                <input type="text" id="bgRegFilter" data-i18n-placeholder="builder.filterRegs" placeholder="filter registers…" style="flex:1;">
-                                <button class="btn btn-sm" id="bgSelAll" data-i18n="common.all">All</button>
-                                <button class="btn btn-sm" id="bgSelNone" data-i18n="common.none">None</button>
-                            </div>
-                            <div id="bgRegList" style="max-height:300px;overflow:auto;border:1px solid var(--border-color);border-radius:6px;padding:8px;margin-top:6px;"></div>
-                        </div>
-                    </div>
-                    <div style="flex:1;min-width:320px;">
-                        <div style="display:flex;gap:10px;">
-                            <div class="form-group" style="flex:1;"><label data-i18n="builder.nodeName" for="bgName">Node name (mDNS)</label>
-                                <input type="text" id="bgName" placeholder="hall-meter" style="width:100%;font-family:monospace;"></div>
-                            <div class="form-group" style="flex:1;"><label data-i18n="builder.friendly" for="bgFriendly">Friendly name</label>
-                                <input type="text" id="bgFriendly" placeholder="Hall meter" style="width:100%;"></div>
-                        </div>
-                        <div style="display:flex;gap:10px;">
-                            <div class="form-group"><label for="bgPlatform">Platform</label>
-                                <select id="bgPlatform"><option value="esp32">ESP32</option><option value="esp8266">ESP8266</option></select></div>
-                            <div class="form-group" style="flex:1;"><label for="bgBoard">Board</label>
-                                <input type="text" id="bgBoard" placeholder="esp32dev" style="width:100%;font-family:monospace;"></div>
-                            <div class="form-group"><label data-i18n="builder.unitId" for="bgUnitId">Modbus unit ID</label>
-                                <input type="number" id="bgUnitId" value="1" min="1" max="247" style="width:80px;"></div>
-                        </div>
-                        <div class="form-group" style="display:flex;gap:8px;align-items:flex-end;">
-                            <div style="flex:1;"><label data-i18n="builder.hwProfile" for="bgProfile">Hardware profile</label>
-                                <select id="bgProfile" style="width:100%;"></select></div>
-                            <button class="btn btn-sm" id="bgProfileSave" title="Save the fields below as a reusable profile" data-i18n="builder.saveProfile">Save as profile</button>
-                        </div>
-                        <fieldset style="border:1px solid var(--border-color);border-radius:6px;padding:8px 12px;margin:0 0 10px;">
-                            <legend style="font-size:12px;padding:0 6px;">RS485 / UART</legend>
-                            <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                                <div class="form-group"><label for="bgTx">TX</label><input type="text" id="bgTx" value="GPIO17" style="width:90px;font-family:monospace;"></div>
-                                <div class="form-group"><label for="bgRx">RX</label><input type="text" id="bgRx" value="GPIO16" style="width:90px;font-family:monospace;"></div>
-                                <div class="form-group"><label for="bgFlow">DE/RE <span style="color:var(--text-secondary);" data-i18n="builder.optional">(optional)</span></label><input type="text" id="bgFlow" placeholder="GPIO4" style="width:90px;font-family:monospace;"></div>
-                                <div class="form-group"><label for="bgBaud">Baud</label>
-                                    <select id="bgBaud"><option>2400</option><option>4800</option><option selected>9600</option><option>19200</option><option>38400</option><option>57600</option><option>115200</option></select></div>
-                                <div class="form-group"><label for="bgParity">Parity</label>
-                                    <select id="bgParity"><option selected>NONE</option><option>EVEN</option><option>ODD</option></select></div>
-                                <div class="form-group"><label for="bgStop">Stop</label>
-                                    <select id="bgStop"><option selected>1</option><option>2</option></select></div>
-                            </div>
-                        </fieldset>
-                        <div style="display:flex;gap:10px;">
-                            <div class="form-group" style="flex:1;"><label for="bgBroker">MQTT broker <span style="color:var(--text-secondary);" data-i18n="builder.brokerInherit">(empty = this gateway's broker)</span></label>
-                                <input type="text" id="bgBroker" placeholder="" style="width:100%;"></div>
-                            <div class="form-group" style="flex:1;"><label data-i18n="builder.topicPrefix" for="bgPrefix">Topic prefix</label>
-                                <input type="text" id="bgPrefix" placeholder="esphome/<node>" style="width:100%;font-family:monospace;"></div>
-                        </div>
-                        <button class="btn btn-primary" id="bgGenerateBtn"><i aria-hidden="true" class="bi bi-magic"></i> <span data-i18n="builder.previewBtn">Generate preview</span></button>
-                        <span id="bgMsg" style="margin-left:8px;font-size:13px;"></span>
-                    </div>
-                </div>
-                <div id="bgPreviewWrap" style="display:none;margin-top:12px;">
-                    <div id="bgWarnings"></div>
-                    <textarea id="bgYaml" spellcheck="false" wrap="off" readonly
-                              style="width:100%;height:34vh;font-family:monospace;font-size:12px;white-space:pre;"></textarea>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-ghost" data-action="closeModal" data-args='["builderGenModal"]' data-i18n="common.cancel">Cancel</button>
-                <button class="btn" id="bgSaveBtn"><i aria-hidden="true" class="bi bi-save"></i> <span data-i18n="builder.saveOnly">Save YAML to ESPHome</span></button>
-                <button class="btn btn-primary" id="bgAdoptBtn"><i aria-hidden="true" class="bi bi-link-45deg"></i> <span data-i18n="builder.saveAdopt">Save + Adopt as device</span></button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Device Builder: USB web flasher (esp-web-tools, served locally) -->
-    <div class="modal" id="builderFlashModal">
-        <div class="modal-content" style="max-width:600px;">
-            <div class="modal-header">
-                <h3><i aria-hidden="true" class="bi bi-usb-plug"></i> <span data-i18n="builder.flashUsb">Flash via USB</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["builderFlashModal"]'>&times;</button>
-            </div>
-            <div class="modal-body" id="builderFlashBody"></div>
-            <div class="modal-footer">
-                <button class="btn btn-ghost" data-action="closeModal" data-args='["builderFlashModal"]' data-i18n="common.close">Close</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Device Builder: build artifacts -->
-    <div class="modal" id="builderDownloadsModal">
-        <div class="modal-content" style="max-width:640px;">
-            <div class="modal-header">
-                <h3><i aria-hidden="true" class="bi bi-download"></i> <span data-i18n="builder.binaries">Binaries</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["builderDownloadsModal"]'>&times;</button>
-            </div>
-            <div class="modal-body" id="builderDlBody"></div>
-            <div class="modal-footer">
-                <button class="btn btn-ghost" data-action="closeModal" data-args='["builderDownloadsModal"]' data-i18n="common.close">Close</button>
             </div>
         </div>
     </div>
@@ -1505,7 +1508,7 @@
         <div class="modal-content" style="max-width:960px;width:96%;">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-diagram-3"></i> <span id="vmTplTitle" data-i18n="templates.editorTitle">Template editor</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["vmTemplateModal"]'>&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["vmTemplateModal"]'>&times;</button>
             </div>
             <div class="modal-body" id="vmTplBody"></div>
             <div class="modal-footer">
@@ -1520,58 +1523,12 @@
         <div class="modal-content" style="max-width:480px;">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-sliders"></i> <span data-i18n="vmeter.editInstance">Edit instance</span> — <span id="vmEditInstName"></span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["vmEditInstanceModal"]'>&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["vmEditInstanceModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <input type="hidden" id="vmEditInstTemplate">
-                <div class="form-group">
-                    <label class="form-label" for="vmEditDevice" data-i18n="vmeter.sourceDevice">Source device</label>
-                    <select id="vmEditDevice" class="input" aria-label="Source device"></select>
-                    <small style="color:var(--text-secondary);" data-i18n="vmeter.whichDevice">Which device's live values this meter re-serves.</small>
-                </div>
-                <div class="form-group">
-                    <label class="form-label" for="vmEditFallback" data-i18n="vmeter.fallbackDevice">Secondary source device (failover)</label>
-                    <select id="vmEditFallback" class="input" aria-label="Secondary source device"></select>
-                    <small style="color:var(--text-secondary);" data-i18n="vmeter.fallbackHint">Optional. If the source device goes stale, each register transparently falls back to this twin device (same canonical field). Recovers to the source the moment it returns. Pick a device on a DIFFERENT physical path for real redundancy.</small>
-                </div>
-                <div class="form-group">
-                    <label class="form-label" data-i18n="lbl.port" for="vmEditPort">Port</label>
-                    <input type="number" id="vmEditPort" class="input">
-                    <small id="vmEditPortHint" style="color:var(--text-secondary);"></small>
-                </div>
-                <div class="form-group">
-                    <label class="form-label" data-i18n="lbl.unitId" for="vmEditUnit">Unit ID</label>
-                    <input type="number" id="vmEditUnit" class="input" min="0" max="255">
-                </div>
-                <div class="form-group">
-                    <label class="form-label" for="vmEditStale" data-i18n="vmeter.staleAfterLbl">Stale after (s) — source older than this stops the meter (fail-safe)</label>
-                    <input type="number" id="vmEditStale" class="input" min="1" step="1">
-                </div>
-                <div class="form-group">
-                    <label class="form-label" for="vmEditInterval" data-i18n="vmeter.refreshIntervalLbl">Refresh interval (s) — how often the meter re-samples the source (e.g. 0.25)</label>
-                    <input type="number" id="vmEditInterval" class="input" min="0.05" step="0.05">
-                </div>
-                <div class="form-group">
-                    <label class="form-label" for="vmEditOnStale" data-i18n="vmeter.onStale">Stale-source policy (composite)</label>
-                    <select id="vmEditOnStale" class="input" aria-label="Stale-source policy">
-                        <option value="legacy" data-i18n="vmeter.onStaleLegacy">legacy — one watchdog for the whole meter (single-source default)</option>
-                        <option value="fail" data-i18n="vmeter.onStaleFail">fail — refuse reads touching a stale register (Modbus exception)</option>
-                        <option value="sentinel" data-i18n="vmeter.onStaleSentinel">sentinel — serve SunSpec N/A (float NaN, int 0x8000…)</option>
-                        <option value="hold" data-i18n="vmeter.onStaleHold">hold — keep last value up to a cap, then fail</option>
-                    </select>
-                    <small style="color:var(--text-secondary);" data-i18n="vmeter.onStaleHint">For multi-source (device.register) maps choose fail or sentinel — absence is never served as 0.</small>
-                <div class="form-group">
-                    <label style="display:flex;align-items:center;gap:8px;">
-                        <input type="checkbox" id="vmEditQuality">
-                        <span data-i18n="vmeter.qualityBlock">In-band quality block (registers 61440–61447)</span>
-                    </label>
-                    <small style="color:var(--text-secondary);" data-i18n="vmeter.qualityBlockHint">Read-only block a Modbus consumer can poll to judge data quality: format version, state (1 ok / 2 degraded / 3 stale), fresh/stale/missing row counts, age of the newest fresh value (u32 s). All big-endian, no floats. Addresses between the meter map and 61440 still answer illegal-address.</small>
-                </div>
-                </div>
-                <div class="form-group" id="vmEditHoldWrap" style="display:none;">
-                    <label class="form-label" for="vmEditMaxHold" data-i18n="vmeter.maxHold">Max hold (s)</label>
-                    <input type="number" id="vmEditMaxHold" class="input" min="1" step="1" value="30">
-                </div>
+                <!-- the fields Add and Edit share: _vmInstanceFieldsHtml (app-vmeters.js) -->
+                <div id="vmEditFields"></div>
                 <p style="color:var(--warning-text,#c77700);font-size:12.5px;margin:6px 0 0;"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i>
                     <span data-i18n="vmeter.portWarn">Changing the port or unit restarts the meter and briefly drops connected consumers
                     (Victron / Fronius fall back to their own grid-loss fail-safe).</span></p>
@@ -1588,55 +1545,15 @@
         <div class="modal-content" style="max-width:520px;">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-plus-lg"></i> <span data-i18n="vmeter.addInstance">Add instance</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["vmAddInstanceModal"]'>&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["vmAddInstanceModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <div class="form-group">
-                    <label class="form-label" for="vmAddDevice" data-i18n="vmeter.sourceDevice">Source device</label>
-                    <select id="vmAddDevice" class="input" aria-label="Source device"></select>
-                    <small style="color:var(--text-secondary);" data-i18n="vmeter.whoseDevice">Whose live values this meter re-serves.</small>
-                </div>
-                <div class="form-group">
-                    <label class="form-label" for="vmAddFallback" data-i18n="vmeter.fallbackDevice">Secondary source device (failover)</label>
-                    <select id="vmAddFallback" class="input" aria-label="Secondary source device"></select>
-                    <small style="color:var(--text-secondary);" data-i18n="vmeter.fallbackHint">Optional. If the source device goes stale, each register transparently falls back to this twin device (same canonical field). Recovers to the source the moment it returns. Pick a device on a DIFFERENT physical path for real redundancy.</small>
-                </div>
-                <div class="form-group">
                     <label class="form-label" for="vmAddTemplate" data-i18n="lbl.template">Template</label>
-                    <select id="vmAddTemplate" class="input" aria-label="Template"></select>
+                    <select id="vmAddTemplate" class="input" aria-label="Template" data-i18n-aria="devices.wizard.template"></select>
                 </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label" for="vmAddPort" data-i18n="lbl.port">Port</label>
-                        <input type="number" id="vmAddPort" class="input" aria-label="Port">
-                        <small id="vmAddPortHint" style="color:var(--text-secondary);"></small>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label" for="vmAddUnit" data-i18n="lbl.unitId">Unit ID</label>
-                        <input type="number" id="vmAddUnit" class="input" aria-label="Unit ID" min="0" max="255" value="1">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label" for="vmAddOnStale" data-i18n="vmeter.onStale">Stale-source policy (composite)</label>
-                    <select id="vmAddOnStale" class="input" aria-label="Stale-source policy">
-                        <option value="legacy" data-i18n="vmeter.onStaleLegacy">legacy — one watchdog for the whole meter (single-source default)</option>
-                        <option value="fail" data-i18n="vmeter.onStaleFail">fail — refuse reads touching a stale register (Modbus exception)</option>
-                        <option value="sentinel" data-i18n="vmeter.onStaleSentinel">sentinel — serve SunSpec N/A (float NaN, int 0x8000…)</option>
-                        <option value="hold" data-i18n="vmeter.onStaleHold">hold — keep last value up to a cap, then fail</option>
-                    </select>
-                    <small style="color:var(--text-secondary);" data-i18n="vmeter.onStaleHint">For multi-source (device.register) maps choose fail or sentinel — absence is never served as 0.</small>
-                <div class="form-group">
-                    <label style="display:flex;align-items:center;gap:8px;">
-                        <input type="checkbox" id="vmAddQuality">
-                        <span data-i18n="vmeter.qualityBlock">In-band quality block (registers 61440–61447)</span>
-                    </label>
-                    <small style="color:var(--text-secondary);" data-i18n="vmeter.qualityBlockHint">Read-only block a Modbus consumer can poll to judge data quality: format version, state (1 ok / 2 degraded / 3 stale), fresh/stale/missing row counts, age of the newest fresh value (u32 s). All big-endian, no floats. Addresses between the meter map and 61440 still answer illegal-address.</small>
-                </div>
-                </div>
-                <div class="form-group" id="vmAddHoldWrap" style="display:none;">
-                    <label class="form-label" for="vmAddMaxHold" data-i18n="vmeter.maxHold">Max hold (s)</label>
-                    <input type="number" id="vmAddMaxHold" class="input" min="1" step="1" value="30">
-                </div>
+                <!-- the fields Add and Edit share: _vmInstanceFieldsHtml (app-vmeters.js) -->
+                <div id="vmAddFields"></div>
                 <p style="color:var(--text-secondary);font-size:12.5px;margin:6px 0 0;"><span data-i18n="vmeter.startsDisabled">The instance starts</span> <b data-i18n="vmeter.startsDisabledWord">disabled</b> <span data-i18n="vmeter.startsDisabled2">— enable it from its card when ready (control-critical: it can feed an ESS).</span></p>
             </div>
             <div class="modal-footer">
@@ -1647,24 +1564,41 @@
         </div>
     </div>
 
-    <!-- Delete virtual-meter instance (type DELETE to confirm) -->
-    <div class="modal" id="vmDeleteInstanceModal">
-        <div class="modal-content" style="max-width:460px;">
+    <!-- The page's own confirm / ask dialog (app-dialogs.js). Its buttons are
+         wired in JS, not data-action: role gating must never hide Cancel. -->
+    <div class="modal" id="appDialog">
+        <div class="modal-content app-dialog">
             <div class="modal-header">
-                <h3><i aria-hidden="true" class="bi bi-exclamation-triangle" style="color:var(--danger-text,#c0392b);"></i> <span data-i18n="vmeter.delete.title">Delete virtual meter</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["vmDeleteInstanceModal"]'>&times;</button>
+                <h3 id="appDialogTitle"></h3>
+                <button class="modal-close" id="appDialogClose" aria-label="Close" data-i18n-aria="common.close">&times;</button>
             </div>
             <div class="modal-body">
-                <p style="font-size:13.5px;"><span data-i18n="vmeter.delete.body">This stops and removes</span> <b id="vmDelName"></b>. <span data-i18n="vmeter.delete.body2">Any connected consumer (Victron / Fronius) drops to its own grid-loss fail-safe.</span></p>
-                <div class="form-group">
-                    <label class="form-label" for="vmDelConfirm" data-i18n="vmeter.delete.prompt">Type DELETE to confirm</label>
-                    <input type="text" id="vmDelConfirm" class="input" autocomplete="off" placeholder="DELETE"
-                          data-action="_vmDeleteConfirmInput" data-with-el data-on="input">
-                </div>
+                <p class="app-dialog-msg" id="appDialogMsg"></p>
+                <ul class="app-dialog-details" id="appDialogDetails" hidden></ul>
+                <div id="appDialogFields" hidden></div>
+                <div class="field-error" id="appDialogErr" role="alert" hidden></div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" data-action="closeModal" data-args='["vmDeleteInstanceModal"]' data-i18n="common.cancel">Cancel</button>
-                <button class="btn btn-danger" id="vmDelBtn" disabled data-action="confirmDeleteInstance"><i aria-hidden="true" class="bi bi-trash"></i> <span data-i18n="common.delete">Delete</span></button>
+                <button class="btn btn-ghost btn-sm" id="appDialogCancel" data-i18n="common.cancel">Cancel</button>
+                <button class="btn btn-primary btn-sm" id="appDialogOk" data-i18n="dialog.confirm">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- The API key, asked from inside a request (app-dialogs.js _askApiKey) -->
+    <div class="modal" id="appKeyDialog">
+        <div class="modal-content app-dialog">
+            <div class="modal-header">
+                <h3 id="appKeyTitle"><i aria-hidden="true" class="bi bi-key"></i> <span data-i18n="dialog.apiKeyTitle">API key</span></h3>
+                <button class="modal-close" id="appKeyClose" aria-label="Close" data-i18n-aria="common.close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <label class="form-label" for="appKeyInput" data-i18n="dialog.apiKeyAsk">This action needs the API key:</label>
+                <input type="password" id="appKeyInput" class="input" autocomplete="off">
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost btn-sm" id="appKeyCancel" data-i18n="common.cancel">Cancel</button>
+                <button class="btn btn-primary btn-sm" id="appKeyOk" data-i18n="dialog.send">Send</button>
             </div>
         </div>
     </div>
@@ -1674,11 +1608,11 @@
         <div class="modal-content" style="max-width:720px;">
             <div class="modal-header">
                 <h3 id="csvModalTitle"><i aria-hidden="true" class="bi bi-filetype-csv"></i> <span data-i18n="csv.title">Import register map from CSV</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["csvImportModal"]'>&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["csvImportModal"]'>&times;</button>
             </div>
             <div class="modal-body">
-                <p class="field-hint" id="csvIntroCsv" style="margin:0 0 10px;" data-i18n="csv.intro">A CSV register list from a vendor or the community becomes a device template. Columns are matched loosely — <b>address</b> and <b>name</b> are required; <b>label, unit, type, scale, category, json_path</b> are optional. Address accepts decimal or 0x hex.</p>
-                <p class="field-hint" id="csvIntroYaml" style="margin:0 0 10px;display:none;" data-i18n="csv.introYaml">A community/vendor YAML register map becomes a device template. Accepts a bare list, a <b>registers:</b> list, or a <b>device_template:</b> wrapper. Richer than CSV — per-register <b>enum, bits, thresholds</b> and the write envelope pass through untouched. Field names are matched loosely (reg/addr, type/datatype, factor/gain).</p>
+                <p class="field-hint" id="csvIntroCsv" style="margin:0 0 10px;" data-i18n-html="csv.intro">A CSV register list from a vendor or the community becomes a device template. Columns are matched loosely — <b>address</b> and <b>name</b> are required; <b>label, unit, type, scale, category, json_path</b> are optional. Address accepts decimal or 0x hex.</p>
+                <p class="field-hint" id="csvIntroYaml" style="margin:0 0 10px;display:none;" data-i18n-html="csv.introYaml">A community/vendor YAML register map becomes a device template. Accepts a bare list, a <b>registers:</b> list, or a <b>device_template:</b> wrapper. Richer than CSV — per-register <b>enum, bits, thresholds</b> and the write envelope pass through untouched. Field names are matched loosely (reg/addr, type/datatype, factor/gain).</p>
                 <div class="form-row">
                     <div class="form-group"><label class="form-label" data-i18n="csv.id" for="csvId">Template id</label>
                         <input type="text" id="csvId" class="input" placeholder="eastron_sdm630"></div>
@@ -1699,16 +1633,16 @@
                 <div class="form-row">
                     <div class="form-group"><label class="form-label" data-i18n="csv.transport" for="csvTransport">Read over</label>
                         <select id="csvTransport" class="input">
-                            <option value="">Modbus (TCP or RTU)</option>
-                            <option value="http">HTTP/JSON (rows by json_path)</option>
-                            <option value="mqtt">MQTT (rows by json_path / topic)</option></select></div>
+                            <option value="" data-i18n="csv.tr.modbus">Modbus (TCP or RTU)</option>
+                            <option value="http" data-i18n="csv.tr.http">HTTP/JSON (rows by json_path)</option>
+                            <option value="mqtt" data-i18n="csv.tr.mqtt">MQTT (rows by json_path / topic)</option></select></div>
                     <div class="form-group flex-2"><label class="form-label" data-i18n="csv.byteOrder" for="csvByteOrder">Word order of 32/64-bit values</label>
                         <select id="csvByteOrder" class="input">
-                            <option value="">ABCD · high word first (Modbus default, or what the YAML file says)</option>
-                            <option value="big">ABCD · force it</option>
-                            <option value="little">CDAB · low word first (word-swapped)</option>
-                            <option value="badc">BADC · bytes swapped</option>
-                            <option value="dcba">DCBA · fully little-endian</option></select>
+                            <option value="" data-i18n="csv.bo.default">ABCD · high word first (Modbus default, or what the YAML file says)</option>
+                            <option value="big" data-i18n="csv.bo.big">ABCD · force it</option>
+                            <option value="little" data-i18n="csv.bo.little">CDAB · low word first (word-swapped)</option>
+                            <option value="badc" data-i18n="csv.bo.badc">BADC · bytes swapped</option>
+                            <option value="dcba" data-i18n="csv.bo.dcba">DCBA · fully little-endian</option></select>
                         <div class="field-hint" data-i18n="csv.byteOrderHint">The manual says it as "word order", "swapped", "LSW first" or shows a float example. Unsure? Import with ABCD, then Diagnostics → Probe shows which order gives a sane value; change it in the template editor.</div></div>
                 </div>
                 <div class="form-group">
@@ -1719,12 +1653,12 @@
                     </div>
                     <textarea id="csvText" class="input" rows="8" style="font-family:monospace;font-size:12px;" placeholder="address,name,label,unit,type,scale&#10;0x0000,V_L1,Voltage L1-N,V,float,1"></textarea>
                 </div>
-                <div><button class="btn btn-secondary btn-sm" data-action="csvPreview" data-with-el><i aria-hidden="true" class="bi bi-search"></i> <span data-i18n="csv.preview">Preview</span></button></div>
+                <div><button data-admin class="btn btn-secondary btn-sm" data-action="csvPreview" data-with-el><i aria-hidden="true" class="bi bi-search"></i> <span data-i18n="csv.preview">Preview</span></button></div>
                 <div id="csvPreviewResult" style="margin-top:12px;"></div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-ghost" data-action="closeModal" data-args='["csvImportModal"]' data-i18n="common.cancel">Cancel</button>
-                <button class="btn btn-primary" id="csvImportBtn" data-action="csvImport" data-with-el disabled data-i18n="csv.import">Import &amp; assign</button>
+                <button data-admin class="btn btn-primary" id="csvImportBtn" data-action="csvImport" data-with-el disabled data-i18n="csv.import">Import &amp; assign</button>
             </div>
         </div>
     </div>
@@ -1734,13 +1668,13 @@
         <div class="modal-content" style="max-width:860px;">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-table"></i> <span id="tmViewTitle" data-i18n="templates.viewTitle">Device map</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["tmViewModal"]'>&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["tmViewModal"]'>&times;</button>
             </div>
             <div class="modal-body" id="tmViewBody" style="max-height:70vh;overflow:auto;"></div>
             <div class="modal-footer">
                 <button class="btn btn-ghost" data-action="closeModal" data-args='["tmViewModal"]' data-i18n="common.close">Close</button>
-                <button class="btn" id="tmViewExportBtn"><i aria-hidden="true" class="bi bi-download"></i> <span data-i18n="templates.exportJson">Export JSON</span></button>
-                <button class="btn btn-primary" id="tmViewDupBtn"><i aria-hidden="true" class="bi bi-files"></i> <span data-i18n="templates.duplicate">Duplicate</span></button>
+                <button class="btn btn-ghost" id="tmViewExportBtn"><i aria-hidden="true" class="bi bi-download"></i> <span data-i18n="templates.exportJson">Export JSON</span></button>
+                <button data-admin class="btn btn-primary" id="tmViewDupBtn"><i aria-hidden="true" class="bi bi-files"></i> <span data-i18n="templates.duplicate">Duplicate</span></button>
             </div>
         </div>
     </div>
@@ -1750,7 +1684,7 @@
         <div class="modal-content" style="max-width:560px;">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-pencil-square"></i> <span data-i18n="write.title">Write to device</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["writeModal"]'>&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["writeModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <div class="settings-card" style="border-left:3px solid #c0392b;padding:8px 12px;margin-bottom:12px;color:var(--danger-text,#c0392b);font-size:12.5px;">
@@ -1799,15 +1733,15 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-hdd-network"></i> <span data-i18n="devices.discover">Discover devices</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["discoverModal"]'>&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["discoverModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <div class="form-group">
                     <label class="form-label" for="discoverMethod" data-i18n="devices.discoverMethod">Discovery method</label>
                     <select id="discoverMethod" class="input" data-action="_syncDiscoverMethod" data-on="change">
-                        <option value="modbus">Modbus TCP scan</option>
-                        <option value="esphome">ESPHome nodes (native API)</option>
-                        <option value="fronius">Fronius Solar API (DataManager)</option>
+                        <option value="modbus" data-i18n="discover.modbus">Modbus TCP scan</option>
+                        <option value="esphome" data-i18n="discover.esphome">ESPHome nodes (native API)</option>
+                        <option value="fronius" data-i18n="discover.fronius">Fronius Solar API (DataManager)</option>
                     </select>
                 </div>
                 <div class="form-group" id="discoverHostGroup" style="display:none;">
@@ -1833,7 +1767,7 @@
                         <div class="form-group" style="max-width:100px"><label class="form-label" for="discoverEspPort" data-i18n="devices.discoverPort">Port</label>
                             <input type="number" id="discoverEspPort" class="input" value="6053"></div>
                     </div>
-                    <span class="field-hint" data-i18n="devices.discoverEsphomeHint">Sweeps the LAN for ESPHome devices on the native-API port and asks each for its identity. Works from inside Docker (mDNS does not) — nodes broadcasting an adoption package can be imported into the Builder directly.</span>
+                    <span class="field-hint" data-i18n="devices.discoverEsphomeHint">Sweeps the LAN for ESPHome devices on the native-API port and asks each for its identity. Works from inside Docker (mDNS does not).</span>
                 </div>
                 <div>
                     <button class="btn btn-secondary btn-sm" data-action="runDiscover" data-with-el>
@@ -1849,7 +1783,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-plus-circle"></i> <span id="addModalTitle" data-i18n="reg.addMeasurement">Add measurement</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeAddModal">&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeAddModal">&times;</button>
             </div>
             <div class="modal-body">
                 <input type="hidden" id="addAddress">
@@ -1864,7 +1798,7 @@
                         <strong id="addAddressDisplay"></strong>
                     </div>
                     <div class="info-row">
-                        <span>Measurement:</span>
+                        <span data-i18n="reg.measurementColon">Measurement:</span>
                         <strong id="addNameDisplay"></strong>
                     </div>
                 </div>
@@ -1880,8 +1814,8 @@
                         <div class="form-group" id="addRegTypeGroup">
                             <label class="form-label" for="addRegType" data-i18n="registers.custom.regType">Register type</label>
                             <select id="addRegType" class="input">
-                                <option value="holding">Holding (FC3)</option>
-                                <option value="input">Input (FC4)</option>
+                                <option value="holding" data-i18n="reg.fc3">Holding (FC3)</option>
+                                <option value="input" data-i18n="reg.fc4">Input (FC4)</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -1917,7 +1851,7 @@
                     </div>
                     <div class="form-group">
                         <label class="form-label" for="addDescInput" data-i18n="registers.custom.desc">Description</label>
-                        <input type="text" id="addDescInput" class="input" placeholder="My custom measurement">
+                        <input type="text" id="addDescInput" class="input" placeholder="My custom measurement" data-i18n-placeholder="a11y.phCustomMeasurement">
                     </div>
                     <div class="form-group" id="addTopicGroup" style="display:none;">
                         <label class="form-label" for="addTopicInput" data-i18n="registers.custom.topic">MQTT topic (subscribe)</label>
@@ -1938,7 +1872,7 @@
                                 <input type="text" id="jsonPathPickerFilter" class="input" style="margin-bottom:6px;"
                                        placeholder="Filter fields…" data-i18n-placeholder="registers.custom.pickFilter"
                                       data-action="_renderJsonPathPicker" data-on="input">
-                                <div class="mqtt-browse-list" id="jsonPathPickerList" role="listbox" aria-label="JSON fields"></div>
+                                <div class="mqtt-browse-list" id="jsonPathPickerList" role="listbox" aria-label="JSON fields" data-i18n-aria="a11y.jsonFields"></div>
                                 <span class="field-hint" id="jsonPathPickerHint"></span>
                             </div>
                         </div>
@@ -1952,12 +1886,12 @@
 
                 <div class="form-group">
                     <label class="form-label" data-i18n="lbl.label" for="addLabel">Label</label>
-                    <input type="text" id="addLabel" class="input" placeholder="Voltage L1-N">
+                    <input type="text" id="addLabel" class="input" placeholder="Voltage L1-N" data-i18n-placeholder="a11y.phVoltageL1N">
                 </div>
                 <div class="form-row">
                     <div class="form-group">
                         <label class="form-label" data-i18n="lbl.pollGroup" for="addPollGroup">Poll Group</label>
-                        <select id="addPollGroup" class="input" aria-label="Poll group">
+                        <select id="addPollGroup" class="input" aria-label="Poll group" data-i18n-aria="devtpl.colGroup">
                             <option value="realtime" data-i18n="pg.realtime">Realtime</option>
                             <option value="normal" selected data-i18n="pg.normal">Normal</option>
                             <option value="slow" data-i18n="pg.slow">Slow</option>
@@ -1965,7 +1899,7 @@
                     </div>
                     <div class="form-group">
                         <label class="form-label" for="addWidget" data-i18n="reg.uiWidget">UI Widget</label>
-                        <select id="addWidget" class="input" aria-label="UI Widget">
+                        <select id="addWidget" class="input" aria-label="UI Widget" data-i18n-aria="reg.uiWidget">
                             <option value="value" data-i18n="lbl.value">Value</option>
                             <option value="gauge" data-i18n="lbl.gauge">Gauge</option>
                             <option value="chart" data-i18n="lbl.chart">Chart</option>
@@ -1973,15 +1907,15 @@
                     </div>
                 </div>
                 <div class="form-section gauge-options" id="addGaugeOptions" style="display: none;">
-                    <h4><i aria-hidden="true" class="bi bi-speedometer2"></i> Gauge Options</h4>
+                    <h4><i aria-hidden="true" class="bi bi-speedometer2"></i> <span data-i18n="reg.gaugeOptions">Gauge Options</span></h4>
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label" data-i18n="lbl.min" for="addGaugeMin">Min</label>
-                            <input type="number" id="addGaugeMin" class="input input-sm" step="any" placeholder="auto">
+                            <input type="number" id="addGaugeMin" class="input input-sm" step="any" placeholder="auto" data-i18n-placeholder="common.phAuto">
                         </div>
                         <div class="form-group">
                             <label class="form-label" data-i18n="lbl.max" for="addGaugeMax">Max</label>
-                            <input type="number" id="addGaugeMax" class="input input-sm" step="any" placeholder="auto">
+                            <input type="number" id="addGaugeMax" class="input input-sm" step="any" placeholder="auto" data-i18n-placeholder="common.phAuto">
                         </div>
                         <div class="form-group">
                             <label class="form-label" data-i18n="lbl.color" for="addGaugeColor">Color</label>
@@ -2018,7 +1952,7 @@
                     </div>
                 </div>
                 <div class="form-section">
-                    <h4><i aria-hidden="true" class="bi bi-palette"></i> Color Thresholds</h4>
+                    <h4><i aria-hidden="true" class="bi bi-palette"></i> <span data-i18n="reg.colorThresholds">Color Thresholds</span></h4>
                     <label class="checkbox-label">
                         <input type="checkbox" id="addThresholdEnabled" checked>
                         <span data-i18n="dash.enableColor">Enable color coding</span>
@@ -2028,19 +1962,19 @@
                         <div class="form-row">
                             <div class="form-group">
                                 <label class="form-label" for="addThreshDangerLow" data-i18n="thr.dangerLow">Danger Low</label>
-                                <input type="number" id="addThreshDangerLow" class="input input-sm" step="any" aria-label="Danger Low threshold">
+                                <input type="number" id="addThreshDangerLow" class="input input-sm" step="any" aria-label="Danger Low threshold" data-i18n-aria="a11y.dangerLow">
                             </div>
                             <div class="form-group">
                                 <label class="form-label" for="addThreshWarningLow" data-i18n="thr.warnLow">Warning Low</label>
-                                <input type="number" id="addThreshWarningLow" class="input input-sm" step="any" aria-label="Warning Low threshold">
+                                <input type="number" id="addThreshWarningLow" class="input input-sm" step="any" aria-label="Warning Low threshold" data-i18n-aria="a11y.warnLow">
                             </div>
                             <div class="form-group">
                                 <label class="form-label" for="addThreshWarningHigh" data-i18n="thr.warnHigh">Warning High</label>
-                                <input type="number" id="addThreshWarningHigh" class="input input-sm" step="any" aria-label="Warning High threshold">
+                                <input type="number" id="addThreshWarningHigh" class="input input-sm" step="any" aria-label="Warning High threshold" data-i18n-aria="a11y.warnHigh">
                             </div>
                             <div class="form-group">
                                 <label class="form-label" for="addThreshDangerHigh" data-i18n="thr.dangerHigh">Danger High</label>
-                                <input type="number" id="addThreshDangerHigh" class="input input-sm" step="any" aria-label="Danger High threshold">
+                                <input type="number" id="addThreshDangerHigh" class="input input-sm" step="any" aria-label="Danger High threshold" data-i18n-aria="a11y.dangerHigh">
                             </div>
                         </div>
                         <div class="form-row" style="margin-top:8px;align-items:flex-end;">
@@ -2059,8 +1993,8 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" data-action="closeAddModal">Cancel</button>
-                <button class="btn btn-primary" id="addModalSave">Add measurement</button>
+                <button class="btn btn-ghost" data-action="closeAddModal" data-i18n="common.cancel">Cancel</button>
+                <button class="btn btn-primary" id="addModalSave" data-i18n="reg.addMeasurement">Add measurement</button>
             </div>
         </div>
     </div>
@@ -2070,7 +2004,7 @@
         <div class="modal-content modal-lg">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-code-slash"></i> <span data-i18n="config.rawTitle">Raw Configuration</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeRawConfigModal">&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeRawConfigModal">&times;</button>
             </div>
             <div class="modal-body">
                 <p class="hint-text" data-i18n="config.rawHint">Edit the JSON configuration directly. Be careful with syntax.</p>
@@ -2080,7 +2014,7 @@
             <div class="modal-footer">
                 <button class="btn btn-ghost" data-action="closeRawConfigModal" data-i18n="common.cancel">Cancel</button>
                 <button class="btn btn-ghost" id="rawConfigFormat" data-i18n="config.format">Format</button>
-                <button class="btn btn-primary" id="rawConfigSave" data-i18n="config.saveApply">Save & Apply</button>
+                <button data-admin class="btn btn-primary" id="rawConfigSave" data-i18n="config.saveApply">Save & Apply</button>
             </div>
         </div>
     </div>
@@ -2091,7 +2025,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-pin-angle"></i> <span id="siteCardModalTitle">Card</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeSiteCardModal">&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeSiteCardModal">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="form-group">
@@ -2119,7 +2053,7 @@
         <div class="modal-content modal-lg">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-sliders"></i> <span data-i18n="dash.customizeTitle">Customize Dashboard</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeCustomizeDashModal">&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeCustomizeDashModal">&times;</button>
             </div>
             <div class="modal-body">
                 <p class="hint-text" data-i18n="dash.customizeHint">Drag to reorder widgets. Configure visibility, type, and size.</p>
@@ -2129,7 +2063,7 @@
                 <button class="btn btn-ghost btn-sm" data-action="reapplyDefaultColors" data-with-el style="margin-right:auto;" data-i18n-title="dash.reapplyHint" title="Overwrite every dashboard widget's color with the convention defaults (phase/category) from Settings → General">
                     <i aria-hidden="true" class="bi bi-palette"></i> <span data-i18n="dash.reapplyColors">Reapply default colors</span></button>
                 <button class="btn btn-ghost" data-action="closeCustomizeDashModal" data-i18n="common.cancel">Cancel</button>
-                <button class="btn btn-primary" id="customizeDashSave" data-i18n="common.save">Save</button>
+                <button data-admin class="btn btn-primary" id="customizeDashSave" data-i18n="common.save">Save</button>
             </div>
         </div>
     </div>
@@ -2139,7 +2073,7 @@
         <div class="modal-content modal-sm">
             <div class="modal-header">
                 <h3 id="statusDetailTitle"><i aria-hidden="true" class="bi bi-info-circle"></i> Status</h3>
-                <button class="modal-close" aria-label="Close" data-action="closeStatusDetailModal">&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeStatusDetailModal">&times;</button>
             </div>
             <div class="modal-body" id="statusDetailBody">
                 <!-- Populated by JavaScript -->
@@ -2151,8 +2085,8 @@
     <div class="modal" id="queryModal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3><i aria-hidden="true" class="bi bi-search"></i> Query measurement</h3>
-                <button class="modal-close" aria-label="Close" data-action="closeQueryModal">&times;</button>
+                <h3><i aria-hidden="true" class="bi bi-search"></i> <span data-i18n="registers.queryTitle">Query measurement</span></h3>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeQueryModal">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="form-row">
@@ -2163,19 +2097,19 @@
                     <div class="form-group flex-1">
                         <label class="form-label" data-i18n="lbl.dataType" for="queryDataType">Data Type</label>
                         <select id="queryDataType" class="input">
-                            <option value="float">Float (32-bit)</option>
+                            <option value="float" data-i18n="reg.dt.float">Float (32-bit)</option>
                             <option value="int32">Int32</option>
                             <option value="uint32">UInt32</option>
                             <option value="int16">Int16</option>
                             <option value="uint16">UInt16</option>
-                            <option value="double">Double (64-bit)</option>
+                            <option value="double" data-i18n="reg.dt.double">Double (64-bit)</option>
                             <option value="int64">Int64</option>
                         </select>
                     </div>
                     <div class="form-group">
                         <span class="form-label" aria-hidden="true">&nbsp;</span>
                         <button class="btn btn-primary" id="queryBtn">
-                            <i aria-hidden="true" class="bi bi-play-fill"></i> Query
+                            <i aria-hidden="true" class="bi bi-play-fill"></i> <span data-i18n="registers.query">Query</span>
                         </button>
                     </div>
                 </div>
@@ -2192,10 +2126,10 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-hdd-network"></i> <span data-i18n="firstrun.title">Connect your first device</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="dismissFirstRun">&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="dismissFirstRun">&times;</button>
             </div>
             <div class="modal-body">
-                <p data-i18n="firstrun.body">No data yet. Open your device in Devices, set its address (IP / port) in the Edit tab, then Save &amp; Apply.</p>
+                <p data-i18n="firstrun.body">No data yet. Open your device in Devices, set its address (IP / port) in its Connection tab, then Save.</p>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-ghost" data-action="dismissFirstRun" data-i18n="firstrun.later">Later</button>
@@ -2209,7 +2143,7 @@
         <div class="modal-content modal-lg">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-graph-up"></i> <span id="valHistTitle" data-i18n="valhist.title">History</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["valueHistoryModal"]'>&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["valueHistoryModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <div class="graph-controls" style="display:flex;gap:6px;margin-bottom:8px;">
@@ -2217,7 +2151,7 @@
                     <button class="btn btn-ghost btn-sm vh-range" data-range="-3h">3h</button>
                     <button class="btn btn-ghost btn-sm vh-range" data-range="-6h">6h</button>
                 </div>
-                <div class="graph-container" style="height:300px;"><canvas id="valHistCanvas" role="img" aria-label="Value history chart"></canvas></div>
+                <div class="graph-container" style="height:300px;"><canvas id="valHistCanvas" role="img" aria-label="Value history chart" data-i18n-aria="a11y.valueChart"></canvas></div>
                 <div id="valHistLegend" class="graph-legend"></div>
                 <div id="valHistInfo" style="color:var(--text-secondary);font-size:11.5px;padding:4px 2px;"></div>
             </div>
@@ -2229,10 +2163,10 @@
         <div class="modal-content modal-lg">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-diagram-3"></i> <span id="plantWizTitle" data-i18n="plant.wizard.title">Add Installation</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["plantWizardModal"]'>&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["plantWizardModal"]'>&times;</button>
             </div>
             <div class="modal-body">
-                <div class="wizard-steps" id="plantWizSteps" aria-label="Wizard progress">
+                <div class="wizard-steps" id="plantWizSteps" aria-label="Wizard progress" data-i18n-aria="a11y.wizardProgress">
                     <div class="wizard-step active" data-step="1"><span class="wizard-step-num">1</span><span data-i18n="plant.wizard.step1">Installation</span></div>
                     <div class="wizard-step" data-step="2"><span class="wizard-step-num">2</span><span data-i18n="plant.wizard.step2">What it holds</span></div>
                     <div class="wizard-step" data-step="3"><span class="wizard-step-num">3</span><span data-i18n="plant.wizard.step3">How it is read</span></div>
@@ -2254,10 +2188,10 @@
         <div class="modal-content modal-lg">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-cpu"></i> <span id="devWizTitle" data-i18n="devices.wizard.titleAdd">Add Device</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["deviceWizardModal"]'>&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["deviceWizardModal"]'>&times;</button>
             </div>
             <div class="modal-body">
-                <div class="wizard-steps" id="devWizSteps" aria-label="Wizard progress">
+                <div class="wizard-steps" id="devWizSteps" aria-label="Wizard progress" data-i18n-aria="a11y.wizardProgress">
                     <div class="wizard-step active" data-step="1"><span class="wizard-step-num">1</span><span data-i18n="devices.wizard.step1">Connection</span></div>
                     <div class="wizard-step" data-step="2"><span class="wizard-step-num">2</span><span data-i18n="devices.wizard.step2">Template</span></div>
                     <div class="wizard-step" data-step="3"><span class="wizard-step-num">3</span><span data-i18n="devices.wizard.step3">Data routing</span></div>
@@ -2279,7 +2213,7 @@
         <div class="modal-content modal-lg">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-sliders2"></i> <span id="ruleModalTitle">Rule</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["ruleModal"]'>&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["ruleModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <div id="ruleModalBody"></div>
@@ -2296,7 +2230,7 @@
         <div class="modal-content modal-lg">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-diagram-3"></i> <span id="endpointModalTitle" data-i18n="endpoints.titleAdd">Add Endpoint</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["endpointModal"]'>&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["endpointModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <div id="endpointModalBody"></div>
@@ -2304,7 +2238,7 @@
             <div class="modal-footer">
                 <span class="save-feedback" id="endpointFeedback"></span>
                 <button class="btn btn-secondary btn-sm" data-action="closeModal" data-args='["endpointModal"]'><span data-i18n="common.cancel">Cancel</span></button>
-                <button class="btn btn-primary btn-sm" data-endpoint-save data-action="saveEndpoint"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
+                <button data-admin class="btn btn-primary btn-sm" data-endpoint-save data-action="saveEndpoint"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
             </div>
         </div>
     </div>
@@ -2314,7 +2248,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-lightning-charge"></i> <span data-i18n="energy.fieldsTitle">Energy fields</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["energyFieldsModal"]'>&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["energyFieldsModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <p class="field-hint" style="margin:0 0 12px;" data-i18n="energy.fieldsIntro">Pick which cumulative counters to total each month for this device — auto-detected from its energy registers (Wh / varh / VAh).</p>
@@ -2323,7 +2257,30 @@
             <div class="modal-footer">
                 <span class="save-feedback" id="energyFieldsFeedback"></span>
                 <button class="btn btn-secondary btn-sm" data-action="closeModal" data-args='["energyFieldsModal"]'><span data-i18n="common.cancel">Cancel</span></button>
-                <button class="btn btn-primary btn-sm" data-action="saveEnergyFields"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
+                <button data-admin class="btn btn-primary btn-sm" data-action="saveEnergyFields"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- A sequence, written as YAML -->
+    <div class="modal" id="seqModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i aria-hidden="true" class="bi bi-list-ol"></i> <span id="seqModalTitle" data-i18n="seq.title">Sequence</span></h3>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["seqModal"]'>&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="field-hint" style="margin-top:0;" data-i18n="seq.editHint">Steps: command {device, name, params}, wait_s, wait_until (with timeout_s), check (else: abort | continue). on_abort: commands that undo, run in order when a step fails or the run is cancelled.</p>
+                <p class="field-hint" style="margin-top:-6px;"><a href="https://github.com/sm26449/multi-bus-gateway/blob/main/docs/rules.md#310-sequences-commands-in-order" target="_blank" rel="noopener" data-i18n="seq.guide">The guide, with an example</a></p>
+                <div class="form-group">
+                    <label class="form-label" for="seqText">YAML</label>
+                    <textarea id="seqText" class="input" rows="18" spellcheck="false" style="font-family:var(--font-mono,monospace);font-size:12px;"></textarea>
+                </div>
+                <div id="seqFeedback" class="field-hint" role="alert" style="color:var(--danger,#c0392b);"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary btn-sm" data-action="closeModal" data-args='["seqModal"]'><span data-i18n="common.cancel">Cancel</span></button>
+                <button class="btn btn-primary btn-sm" data-admin data-action="saveSequence"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
             </div>
         </div>
     </div>
@@ -2333,7 +2290,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-upload"></i> <span data-i18n="rules.import.title">Import rules</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["rulesImportModal"]'>&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["rulesImportModal"]'>&times;</button>
             </div>
             <div class="modal-body">
                 <p class="field-hint" style="margin-top:0;" data-i18n="rules.import.intro">Paste a rules file exported from a gateway (Rules → Export) or written by hand. Each rule is checked against THIS installation first — its target device and command must exist here. Imported rules always arrive in shadow: they decide and say so, but write nothing until you arm them.</p>
@@ -2348,7 +2305,7 @@
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary btn-sm" data-action="rulesImportPreview"><i aria-hidden="true" class="bi bi-eye"></i> <span data-i18n="rules.import.check">Check</span></button>
-                <button class="btn btn-primary btn-sm" id="rulesImportApply" data-admin data-action="rulesImportApply" disabled>Import</button>
+                <button class="btn btn-primary btn-sm" id="rulesImportApply" data-admin data-action="rulesImportApply" disabled data-i18n="common.import">Import</button>
             </div>
         </div>
     </div>
@@ -2358,7 +2315,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-hdd-network"></i> <span id="bridgeTitle">Bridge</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["bridgeModal"]'>&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["bridgeModal"]'>&times;</button>
             </div>
             <div class="modal-body" id="bridgeBody"></div>
             <div class="modal-footer">
@@ -2372,7 +2329,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-hdd-network"></i> <span id="bridgeInfoTitle"></span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["bridgeInfoModal"]'>&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["bridgeInfoModal"]'>&times;</button>
             </div>
             <div class="modal-body" id="bridgeInfoBody"></div>
         </div>
@@ -2383,7 +2340,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-stars"></i> <span id="tplUpdateTitle" data-i18n="tplu.title">Template update</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["tplUpdateModal"]'>&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["tplUpdateModal"]'>&times;</button>
             </div>
             <div class="modal-body" id="tplUpdateBody"></div>
             <div class="modal-footer">
@@ -2400,7 +2357,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-sliders"></i> <span id="tplRowTitle"></span></h3>
-                <button class="modal-close" aria-label="Close" data-action="tplRowDone">&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="tplRowDone">&times;</button>
             </div>
             <div class="modal-body" id="tplRowBody"></div>
             <div class="modal-footer">
@@ -2413,13 +2370,13 @@
         <div class="modal-content modal-lg">
             <div class="modal-header">
                 <h3><i aria-hidden="true" class="bi bi-file-earmark-spreadsheet"></i> <span id="devTplTitle" data-i18n="devtpl.title">Device Template</span></h3>
-                <button class="modal-close" aria-label="Close" data-action="closeModal" data-args='["devTplModal"]'>&times;</button>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["devTplModal"]'>&times;</button>
             </div>
             <div class="modal-body" id="devTplBody"></div>
             <div class="modal-footer">
                 <span class="save-feedback" id="devTplFeedback"></span>
                 <button class="btn btn-secondary btn-sm" data-action="closeModal" data-args='["devTplModal"]' data-i18n="common.cancel">Cancel</button>
-                <button class="btn btn-primary btn-sm" id="devTplSaveBtn" data-action="tplSave">
+                <button data-admin class="btn btn-primary btn-sm" id="devTplSaveBtn" data-action="tplSave">
                     <i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
             </div>
         </div>
@@ -2430,20 +2387,29 @@
          (instantiates). All augment JanitzaMonitor.prototype. ?v= is rewritten
          from each file's mtime at serve time. -->
     <script src="/static/js/app-core.js?v=0"></script>
+    <script src="/static/js/app-dialogs.js?v=0"></script>
+    <script src="/static/js/app-usedby.js?v=0"></script>
     <script src="/static/js/app-auth.js?v=0"></script>
     <script src="/static/js/app-dashboard.js?v=0"></script>
     <script src="/static/js/app-fleet.js?v=0"></script>
+    <script src="/static/js/status-model.js?v=0"></script>
+    <script src="/static/js/security-model.js?v=0"></script>
     <script src="/static/js/app-status.js?v=0"></script>
     <script src="/static/js/app-registers.js?v=0"></script>
     <script src="/static/js/app-templates.js?v=0"></script>
     <script src="/static/js/app-tpl-advanced.js?v=0"></script>
     <script src="/static/js/app-vmeters.js?v=0"></script>
     <script src="/static/js/app-rules.js?v=0"></script>
-    <script src="/static/js/app-builder.js?v=0"></script>
+    <script src="/static/js/app-sequences.js?v=0"></script>
+    <script src="/static/js/app-attributes.js?v=0"></script>
     <script src="/static/js/app-history.js?v=0"></script>
     <script src="/static/js/app-powerquality.js?v=0"></script>
     <script src="/static/js/app-monitor.js?v=0"></script>
+    <script src="/static/js/connform-model.js?v=0"></script>
+    <script src="/static/js/app-connform.js?v=0"></script>
     <script src="/static/js/app-devices.js?v=0"></script>
+    <script src="/static/js/app-components.js?v=0"></script>
+    <script src="/static/js/app-outputs.js?v=0"></script>
     <script src="/static/js/app-endpoints.js?v=0"></script>
     <script src="/static/js/app-template-update.js?v=0"></script>
     <script src="/static/js/app-bridges.js?v=0"></script>
@@ -2452,6 +2418,10 @@
     <script src="/static/js/app-wizard.js?v=0"></script>
     <script src="/static/js/app-settings.js?v=0"></script>
     <script src="/static/js/app-diagnostics.js?v=0"></script>
+    <script src="/static/js/app-find.js?v=0"></script>
+    <script src="/static/js/app-pickers.js?v=0"></script>
+    <script src="/static/js/app-meters.js?v=0"></script>
+    <script src="/static/js/app-router.js?v=0"></script>
     <script src="/static/js/app-boot.js?v=0"></script>
     <datalist id="identityColors">
         <option value="#3b82f6"></option><option value="#12a3b2"></option>

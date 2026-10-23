@@ -42,3 +42,36 @@ def _stop_leaked_rules_runtimes():
                 pass
     except Exception:  # noqa: BLE001
         pass
+
+
+@pytest.fixture(autouse=True)
+def _forget_device_ids():
+    """create_api tells the expression engine which device ids exist (a
+    process-wide provider); one test's devices must not shape another's."""
+    yield
+    from multibus import expressions
+    expressions.set_device_ids_provider(None)
+
+
+@pytest.fixture(autouse=True)
+def _no_role_left_behind():
+    """create_api installs its gateway's role process-wide; one test that
+    leaves a standby installed would silence every later test's wire,
+    writes and announcements."""
+    yield
+    from multibus import role as gateway_role
+    gateway_role.install(None)
+
+
+@pytest.fixture(autouse=True)
+def _reset_attribute_providers():
+    """create_api installs process-wide providers (the plant's places and
+    attributes for formulas, the sun for the aggregator) bound to that app's
+    config: a later test must not read a dead app's files."""
+    yield
+    from multibus import endpoint_aggregator as _ea, expressions as _ex
+    _ex.set_place_provider(None, None)
+    _ex.set_attr_provider(None)
+    _ex._SUN_CACHE.clear()
+    _ea.set_sun_provider(None)
+    _ea._last_fresh_elev.clear()

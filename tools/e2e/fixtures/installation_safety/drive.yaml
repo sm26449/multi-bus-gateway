@@ -1,0 +1,13 @@
+# rules_trim/schedule/timers/layers_e2e, sequences_e2e: one drive, `vfd1`
+# (delta_vfd_el) with its run_at command, on a host that refuses — a rule's
+# or a sequence's write fails there, nothing reaches a motor.
+devices:
+  - id: vfd1
+    name: Pump drive
+    template: delta_vfd_el
+    enabled: true
+    connection: {protocol: tcp, host: 127.0.0.1, port: 15503, unit_id: 1, timeout: 1}
+    commands: [{name: run_at}]
+# role_e2e: a companion module in the menu (nothing answers at /ha/ here)
+modules:
+  - {id: ha, name: Redundancy, icon: shield-check, url: /ha/, health: /health}

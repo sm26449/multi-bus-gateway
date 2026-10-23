@@ -31,14 +31,14 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!s.pending) return '';
         const t = (k, d, p) => this.t(k, d, p);
         const parts = [];
-        if (s.new) parts.push(t('tplu.nNew', '{n} new field(s)', { n: s.new }));
-        if (s.changes) parts.push(t('tplu.nChanges', '{n} change(s)', { n: s.changes }));
+        if (s.new) parts.push(this.tn('tplu.nNew', s.new, '{n} new fields'));
+        if (s.changes) parts.push(this.tn('tplu.nChanges', s.changes, '{n} changes'));
         return `
         <div class="tpl-update-notice" role="status">
             <i aria-hidden="true" class="bi bi-stars"></i>
             <div class="tpl-update-text">
                 <b>${this._esc(t('tplu.noticeTitle', 'The template has been updated'))}</b>
-                <span>${this._esc(parts.join(' · '))}${s.units_affected ? ' · ' + this._esc(t('tplu.nUnits', '{n} unit(s) affected', { n: s.units_affected })) : ''}</span>
+                <span>${this._esc(parts.join(' · '))}${s.units_affected ? ' · ' + this._esc(this.tn('tplu.nUnits', s.units_affected, '{n} units affected')) : ''}</span>
                 <span class="tpl-update-viewer">${this._esc(t('tplu.adminApplies', 'An admin can review and apply it.'))}</span>
             </div>
             <button data-admin class="btn btn-primary btn-sm" ${this._act('openTemplateUpdate', [kind, id])}>

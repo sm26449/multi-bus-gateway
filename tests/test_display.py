@@ -116,6 +116,18 @@ def test_update_from_template_keeps_the_unit_of_a_rescaled_row():
     assert (theirs[0]["label"], theirs[0]["unit"]) == ("Power", "W")
 
 
+def test_update_from_template_carries_how_a_value_is_decoded():
+    from multibus.template_refresh import REGISTER_KEYS, _refresh_rows
+    t = NS(name="defrost", label="Defrost", unit="", description="", category="status",
+           scale=1, offset=0, aggregates=None, enum={0: "Off", 7: "On (step 7)"},
+           bits=None, mask=None, shift=None, nan=32767)
+    row = [{"name": "defrost", "enum": {"0": "Off"}}]
+    assert _refresh_rows(row, {"defrost": t}, REGISTER_KEYS) == 1
+    assert row[0]["enum"] == {0: "Off", 7: "On (step 7)"} and row[0]["nan"] == 32767
+    assert row[0]["enum"] is not t.enum                     # the template's map stays its own
+    assert _refresh_rows(row, {"defrost": t}, REGISTER_KEYS) == 0
+
+
 def test_update_from_template_adds_new_calculated_fields_only_when_asked(tmp_path):
     from multibus.template_refresh import refresh_file
     tpl = NS(registers=[], calculated=[
@@ -153,3 +165,30 @@ def test_filling_a_blank_section_or_description_is_no_reason_to_announce(tmp_pat
                                             "category": "other"}]}))
     keys = sorted(c["key"] for c in plan_file(f, tpl)["changes"])
     assert keys == ["category", "label"]                      # a real change still shows
+
+
+def test_an_alarm_decoded_by_states_reads_its_zero_state_as_nothing():
+    """A drive's fault code is decoded: 0 reads "No error". That word was
+    counted as an active danger alarm on every healthy drive."""
+    now = time.time()
+    tpl = NS(display={"alarms": [{"field": "error_code", "severity": "danger"}]},
+             registers=[NS(name="error_code", enum={"0": "No error", "1": "Over-current (oc)"})])
+    reg = NS(get=lambda tid: tpl if tid == "drive" else None)
+    disp = display_of(reg, NS(template="drive", sources=[]))
+    assert disp["alarms"][0]["idle"] == "No error"
+    ok = [{"name": "error_code", "value": "No error", "ts": now}]
+    bad = [{"name": "error_code", "value": "Over-current (oc)", "ts": now}]
+    assert active_alarms(disp, ok)["danger"] == 0
+    assert active_alarms(disp, bad)["danger"] == 1
+
+
+def test_every_bundled_alarm_names_a_field_the_template_has():
+    """An alarm on a plain measurement (a temperature) is active at any value
+    but zero; it must name a register or a calculated flag that exists."""
+    for f in sorted((Path(__file__).resolve().parent.parent / "multibus" / "device_templates").glob("*.json")):
+        t = json.loads(f.read_text())["device_template"]
+        names = {r["name"] for r in t.get("registers", [])} | {c["name"] for c in t.get("calculated", [])}
+        for a in (t.get("display") or {}).get("alarms") or []:
+            assert a["field"] in names, (f.name, a["field"])
+    drive = json.loads((Path(__file__).resolve().parent.parent / "multibus" / "device_templates" / "delta_vfd_el.json").read_text())
+    assert "igbt_temperature" not in {a["field"] for a in drive["device_template"]["display"]["alarms"]}

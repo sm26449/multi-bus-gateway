@@ -1,0 +1,92 @@
+# A configuration shaped like a real plant (fake addresses only), for the
+# device-kind golden tests: an installation of inverters read over the Solar
+# API and SunSpec, its site controller over HTTP only, its grid meter; a
+# listen-only battery bank; a GX with batteries and temperature sensors; a
+# heat pump on a bridge; a drive; generic MQTT devices; and an installation
+# whose roles were edited by hand.
+bridges:
+  - {id: ws, type: rtu_transparent, host: 192.0.2.60, ports: [{port: 4196}]}
+endpoints:
+  - id: pv
+    name: PV
+    enabled: false
+    connection: {protocol: tcp, host: 192.0.2.40, port: 502}
+    aggregates: false
+    mqtt: {ha_discovery: false}
+    groups:
+      - id: inverters
+        role: inverter
+        units: [1, 2, 3, 4]
+        sources:
+          - id: solar_api
+            protocol: http
+            url: "http://192.0.2.40/solar_api/v1/GetInverterRealtimeData.cgi?DeviceId=${unit_id}"
+            template: fronius_solar_api_inverter
+          - id: sunspec
+            protocol: tcp
+            host: 192.0.2.40
+            port: 502
+            template: fronius_sunspec_inverter
+      - id: site
+        role: site
+        units: [0]
+        sources:
+          - id: site_api
+            protocol: http
+            url: "http://192.0.2.40/solar_api/v1/GetPowerFlowRealtimeData.fcgi"
+            template: fronius_solar_api_site
+      - id: grid
+        role: meter
+        template: fronius_sunspec_meter
+        units: [240]
+  - id: battery-bank
+    name: Battery bank
+    template: seplos_bms_v3_rtu_tap
+    enabled: false
+    connection: {protocol: rtu_tap, serial_port: /dev/ttyBANK, baudrate: 19200, parity: N, stale_after_s: 60}
+    groups:
+      - id: units
+        connection: {protocol: rtu_tap, serial_port: /dev/ttyBANK, baudrate: 19200, stale_after_s: 60}
+        units: [1, 2, 3]
+  - id: odd
+    name: Hand-edited roles
+    enabled: false
+    connection: {protocol: tcp, host: 192.0.2.70, port: 502}
+    groups:
+      - {id: a, role: Inverter, template: eastron_sdm630, units: [1]}
+      - {id: b, role: system, template: eastron_sdm630, units: [2]}
+      - {id: c, role: heat_pump, template: eastron_sdm630, units: [3]}
+      - {id: d, role: grid, template: eastron_sdm630, units: [4]}
+devices:
+  - id: victron-gx
+    name: Victron GX
+    template: victron_gx_mqtt
+    enabled: false
+    connection: {protocol: mqtt, broker: 192.0.2.10, port: 1883, topic: 'N/c0ffee000001/#',
+                 vars: {portal: c0ffee000001, vebus: '274'}}
+    components:
+      - {type: battery, instance: '288', name: SmartShunt}
+      - {type: battery, instance: '512'}
+      - {type: battery, instance: '279'}
+      - {type: temperature, instance: '22'}
+      - {type: temperature, instance: '23'}
+  - id: samsung-dvm
+    name: Heat pump
+    template: samsung_mim_b19n
+    enabled: false
+    connection: {bridge: ws, bridge_port: 4196, unit_id: 2}
+  - id: vfd
+    name: Drive
+    template: delta_vfd_el
+    enabled: false
+    connection: {protocol: tcp, host: 192.0.2.80, port: 502, unit_id: 1}
+  - id: generic
+    name: Generic JSON
+    template: mqtt_json_generic
+    enabled: false
+    connection: {protocol: mqtt, broker: 192.0.2.10, port: 1883, topic: 'x/#'}
+  - id: plug
+    name: Plug
+    template: tasmota_generic
+    enabled: false
+    connection: {protocol: mqtt, broker: 192.0.2.10, port: 1883, topic: 'tele/plug/#'}

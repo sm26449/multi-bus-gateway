@@ -22,6 +22,7 @@
  * the script's wait.
  */
 import { chromium } from 'playwright';
+import { openDeviceTab } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://localhost:18080';
 const ENDPOINT = process.env.ENDPOINT || 'sunfield';
@@ -130,13 +131,17 @@ try {
   check('unit workspace opened',
         (await page.locator('#deviceDetailView .section-header h2').innerText())
           .includes(`${ENDPOINT}-u2`));
-  await page.click('[data-dtab="outputs"]');
+  await openDeviceTab(page, 'outputs');
   await page.waitForTimeout(600);
   const outs = await page.locator('[data-dpanel="outputs"]').innerText();
   check('HTTP output card is offered on an endpoint unit', outs.includes('HTTP / JSON output'));
   check('REST push card is offered on an endpoint unit', outs.includes('REST push'));
-  check('and both say they are endpoint-wide',
-        (outs.match(/Declared on the endpoint/g) || []).length === 2);
+  let wide = 0;
+  for (const key of ['http', 'rest']) {                 // each output's panel says its scope
+    await page.click(`#outTab-${key}`); await page.waitForTimeout(400);
+    wide += /Declared on the (endpoint|installation)/.test(await page.locator('#outDetail').innerText()) ? 1 : 0;
+  }
+  check('and both say they are endpoint-wide', wide === 2);
   check('no orphan Power Quality tab',
         await page.locator('#deviceDetailView [data-dtab="pq"]').count() === 0);
 

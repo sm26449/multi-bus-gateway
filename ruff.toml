@@ -5,6 +5,8 @@
 # F-rules (unused imports/variables/redefinitions) stay enforced — those are
 # real smells, not style.
 line-length = 100
+# private notes and one-off maintenance scripts, not part of the gateway
+extend-exclude = [".audit"]
 
 [lint]
 ignore = ["E702", "E731", "E741"]

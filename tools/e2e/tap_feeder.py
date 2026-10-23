@@ -56,6 +56,10 @@ def pic(unit):
     return req, resp
 
 
+# a stop flag is for the feeder running NOW: one left by an earlier run
+# (2026-10-08) ended every later feeder the moment it opened its PTY
+if os.path.exists('/tmp/feeder.stop'):
+    os.unlink('/tmp/feeder.stop')
 m, s = os.openpty()
 tty.setraw(s)
 link = '/tmp/ttyTAPE2E'

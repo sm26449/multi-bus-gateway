@@ -14,9 +14,13 @@
  * 1 and 2). It ticks and unticks one field and puts the selection back.
  */
 import { chromium } from 'playwright';
+import { openDeviceTab } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://localhost:18087';
 const UNIT = process.env.UNIT || 'sunfield-u1';
+// the sunspec source reads at its template's `normal` rhythm (the fixture
+// sets none): asked, never written down, so a template change cannot stale it
+const SS = (await (await fetch(BASE + '/api/device-templates/fronius_sunspec_inverter')).json()).device_template.poll_groups.normal.interval;
 const results = [];
 const check = (name, cond, extra = '') => {
   results.push({ name, ok: !!cond });
@@ -44,7 +48,7 @@ try {
   await page.waitForTimeout(1500);
   await page.locator(`[data-group-units] tr[data-unit="${UNIT}"] button[data-action="openDeviceDetail"]`).first().click();
   await page.waitForTimeout(1500);
-  await page.locator('#deviceWsTabs .config-main-tab[data-dtab="measurements"]').click();
+  await openDeviceTab(page, 'measurements');
   await page.waitForTimeout(3000);
 
   // ---- 1. what is read comes first, and the picker states the census ----------
@@ -53,7 +57,7 @@ try {
   await page.waitForFunction(() => /ticked/.test(document.getElementById('regSourceBar')?.innerText || ''), null, { timeout: 10000 });
   const bar = (await page.locator('#regSourceBar').innerText()).replace(/\s+/g, ' ');
   check('the picker says how each source reads and how much is ticked',
-        /solar_api · HTTP · every 5 s · \d+\/\d+ ticked/.test(bar) && /sunspec · Modbus TCP · every 20 s/.test(bar), bar.slice(0, 120));
+        /solar_api · HTTP · every 5 s · \d+\/\d+ ticked/.test(bar) && new RegExp(`sunspec · Modbus TCP · every ${SS} s`).test(bar), bar.slice(0, 120));
   const n = original.length;
   check('the Selected count matches the picker', (await page.locator('#regTabSelCount').innerText()) === `(${n})`,
         await page.locator('#regTabSelCount').innerText());

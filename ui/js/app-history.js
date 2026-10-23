@@ -91,11 +91,11 @@ Object.assign(JanitzaMonitor.prototype, {
                 }
                 return `<div class="settings-card" style="padding:14px 18px;min-width:160px;">
                     <div style="color:var(--text-secondary);font-size:12px;"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${EPAL[i % EPAL.length]};margin-right:5px;"></span>${this._esc(t.label)}</div>
-                    <div style="font-size:24px;font-weight:700;line-height:1.2;color:var(--text-primary);">${t.delta == null ? '—' : Number(t.delta).toLocaleString()}</div>
+                    <div style="font-size:24px;font-weight:700;line-height:1.2;color:var(--text-primary);">${t.delta == null ? '—' : Number(t.delta).toLocaleString(this._loc())}</div>
                     <div style="color:var(--text-secondary);font-size:12px;">${this._esc(t.unit)}</div>${trend}
                 </div>`;
             }).join('');
-            if (info) info.textContent = new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+            if (info) info.textContent = new Date(y, m - 1, 1).toLocaleDateString(this._loc(), { month: 'long', year: 'numeric' });
             this.drawEnergyBars(canvas, d);
         } catch (e) { if (info) info.textContent = this.t('history.queryFailed', 'Query failed'); }
     },
@@ -136,11 +136,11 @@ Object.assign(JanitzaMonitor.prototype, {
         list.innerHTML = rows.map((c, i) => `
             <div class="ef-row" data-efi="${i}">
                 <input type="checkbox" class="ef-check" ${c.checked ? 'checked' : ''} aria-label="Track ${this._esc(c.label)}">
-                <input type="text" class="ef-label input" value="${this._esc(c.label)}" placeholder="${this._esc(c.name)}" aria-label="Label">
+                <input type="text" class="ef-label input" value="${this._esc(c.label)}" placeholder="${this._esc(c.name)}" aria-label="${this._esc(this.t('history.seriesLabel', 'Label'))}">
                 <span class="ef-meta">${this._esc(c.name)} · ${this._esc(c.unit)}</span>
                 <span class="ef-move">
-                    <button type="button" class="ef-btn" title="${this.t('common.moveUp', 'Move up')}" ${i === 0 ? 'disabled' : ''} ${this._act('energyMoveField', [i, -1])}><i aria-hidden="true" class="bi bi-chevron-up"></i></button>
-                    <button type="button" class="ef-btn" title="${this.t('common.moveDown', 'Move down')}" ${i === rows.length - 1 ? 'disabled' : ''} ${this._act('energyMoveField', [i, 1])}><i aria-hidden="true" class="bi bi-chevron-down"></i></button>
+                    <button type="button" class="ef-btn" ${this._ib(this.t('common.moveUp', 'Move up'), c.label || c.name)} ${i === 0 ? 'disabled' : ''} ${this._act('energyMoveField', [i, -1])}><i aria-hidden="true" class="bi bi-chevron-up"></i></button>
+                    <button type="button" class="ef-btn" ${this._ib(this.t('common.moveDown', 'Move down'), c.label || c.name)} ${i === rows.length - 1 ? 'disabled' : ''} ${this._act('energyMoveField', [i, 1])}><i aria-hidden="true" class="bi bi-chevron-down"></i></button>
                 </span>
             </div>`).join('');
     },
@@ -328,7 +328,7 @@ Object.assign(JanitzaMonitor.prototype, {
         // toggling re-renders the list: keep the keyboard user's place
         const _foc = (document.activeElement && container.contains(document.activeElement))
             ? document.activeElement.dataset.name : null;
-        container.innerHTML = html || '<div style="padding:20px;color:var(--text-secondary);">No measurements match.</div>';
+        container.innerHTML = html || `<div style="padding:20px;color:var(--text-secondary);">${this._esc(this.t('history.noMatch', 'No measurements match.'))}</div>`;
         // keyboard-reachable like the Monitor page: Enter/Space activate — the
         // picker was mouse-only, so a keyboard user could not chart anything
         const act = (el, fn) => {
@@ -418,7 +418,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 } else {
                     info.classList.remove('history-mixed-units');
                 }
-                info.textContent = `${this.t('history.seriesPts', '{n} series · {pts} pts', { n: series.length, pts: total })}${res}${axisNote}`;
+                info.textContent = `${this.tn('history.seriesPts', series.length, '{n} series · {pts} pts', { pts: total })}${res}${axisNote}`;
             }
             this._renderHistory(this._histHoverX || null);
         } catch (e) {
@@ -474,7 +474,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const span = t1 - t0;
         for (let i = 0; i <= 4; i++) {
             const t = t0 + span * i / 4, x = px(t), dt = new Date(t);
-            const lbl = span > 2 * 864e5 ? dt.toLocaleDateString() : dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const lbl = span > 2 * 864e5 ? dt.toLocaleDateString(this._loc()) : dt.toLocaleTimeString(this._loc(), { hour: '2-digit', minute: '2-digit' });
             ctx.fillText(lbl, x, H - 8);
         }
         ctx.textAlign = 'left';
@@ -525,7 +525,7 @@ Object.assign(JanitzaMonitor.prototype, {
         }
         const tip = this._histTip;
         tip.style.display = 'block';
-        tip.innerHTML = `<div style="opacity:.7;margin-bottom:3px;">${new Date(anchor.t).toLocaleString()}</div>${rows.join('')}`;
+        tip.innerHTML = `<div style="opacity:.7;margin-bottom:3px;">${new Date(anchor.t).toLocaleString(this._loc())}</div>${rows.join('')}`;
         const cw = canvas.parentElement.clientWidth;
         const tw = tip.offsetWidth || 170;
         let left = x + 14; if (left + tw > cw) left = x - 14 - tw;

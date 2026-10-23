@@ -55,6 +55,11 @@ def build(ctx) -> APIRouter:
         if dev_cfg is None:
             return []
         regs, _g = config.load_device_registers(dev_cfg)
+        # a meter on the device's supply counts as the device's own counter
+        from types import SimpleNamespace
+        from ..linked_meter import linked_calcs
+        regs = list(regs) + [SimpleNamespace(**{k: c[k] for k in ('name', 'label', 'unit')})
+                             for c in linked_calcs(config, dev_cfg) if c['name'] == 'energy_electric']
         return [f for f in (_energy_field_from_reg(x) for x in regs) if f]
 
     def _energy_regs(device):

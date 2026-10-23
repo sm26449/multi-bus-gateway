@@ -296,29 +296,6 @@ ui:
         assert op.delete(f"/api/devices/restorable/{edge}").status_code == 403
 
 
-def test_esphome_client_closes_error_responses(monkeypatch):
-    # BEHAVIORAL (was an inspect.getsource assert): an HTTPError body must be
-    # closed, or each failed dashboard call leaks a socket until GC
-    import urllib.error
-    import urllib.request
-    from multibus import esphome_client
-    closed = []
-
-    class _Body:
-        def read(self): return b"boom"
-        def close(self): closed.append(True)
-
-    def _raise(*a, **k):
-        raise urllib.error.HTTPError("http://x", 500, "boom", None, _Body())
-    monkeypatch.setattr(esphome_client.EsphomeDashboard, "_open", lambda self, req: _raise())
-    dash = esphome_client.EsphomeDashboard("http://127.0.0.1:1")
-    try:
-        dash._request("GET", "/anything")
-    except Exception:  # noqa: BLE001
-        pass
-    assert closed, "HTTPError response body was not closed"
-
-
 def test_modbus_poller_no_publish_after_stop():
     # BEHAVIORAL (was an inspect.getsource assert): a stop() landing while a
     # poll cycle is mid-read must suppress the publish — since M1 (3.23.6)

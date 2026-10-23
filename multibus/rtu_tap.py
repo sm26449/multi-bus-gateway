@@ -192,6 +192,7 @@ class TapReader:
                                  self.parity, self.stopbits)
         # port-level observability (every client reports these)
         self.frames = 0
+        self.last_frame_mono: Optional[float] = None     # the bus is alive: someone talks on it
         self.crc_errors = 0
         self.orphans = 0
         self.exceptions = 0
@@ -286,6 +287,7 @@ class TapReader:
             self.crc_errors += 1
             return
         self.frames += 1
+        self.last_frame_mono = now
         unit, fc = frame[0], frame[1]
         if self.frames == 1:
             logger.info("rtu_tap %s: first valid frame (unit %d, fc %d, %d bytes)",
@@ -680,3 +682,15 @@ class RtuTapClient:
     def recent_frames(self, limit: int = 50) -> List[Dict]:
         """The port's last decoded frames, newest last — the debug view."""
         return list(self._reader.recent)[-limit:]
+
+
+def bus_activity() -> List[Dict[str, Any]]:
+    """Every bus this gateway listens to: when a valid frame was last heard
+    on it. On a standby that is its partner talking — the witness a take-over
+    asks first."""
+    now = time.monotonic()
+    with _READERS_LOCK:
+        readers = list(_READERS.values())
+    return [{'port': r.port, 'frames': r.frames,
+             'last_frame_age_s': None if r.last_frame_mono is None else round(now - r.last_frame_mono, 3),
+             'listening_units': sorted(r._clients), 'open_error': r.open_error} for r in readers]

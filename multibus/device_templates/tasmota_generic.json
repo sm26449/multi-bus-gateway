@@ -1,0 +1,60 @@
+{
+  "device_template": {
+    "schema_version": 1,
+    "id": "tasmota_generic",
+    "name": "Tasmota device (relays, energy, Wi-Fi)",
+    "vendor": "Tasmota",
+    "model": "any Tasmota device",
+    "version": "1.0.0",
+    "author": "built-in",
+    "description": "A device running Tasmota, read from its own MQTT topics: its relays (stat/<topic>/POWER, POWER1–4), its energy monitor if it has one (tele/<topic>/SENSOR ENERGY), Wi-Fi signal and uptime (tele/<topic>/STATE), and whether it is online (tele/<topic>/LWT). Found and adopted from Devices → Found on MQTT: the device's topics come from its discovery announcement as {stat} and {tele}. Rows the device does not have stay empty: remove them, or add its sensors (tele/<topic>/SENSOR, a JSON path per value). A relay's state arrives when it changes; set PowerRetain 1 on the device to have it at once after a restart.",
+    "source_document": "https://tasmota.github.io/docs/MQTT/",
+    "protocol": {
+      "transports": ["mqtt"],
+      "availability": {"topic": "{tele}/LWT", "online": "Online", "offline": "Offline"}
+    },
+    "poll_groups": {
+      "push": { "interval": 60, "description": "Tasmota publishes on change, and its STATE/SENSOR every TelePeriod (300 s by default)" }
+    },
+    "categories": {
+      "outputs": { "label": "Relays", "order": 1 },
+      "energy": { "label": "Energy", "order": 2 },
+      "diagnostics": { "label": "Diagnostics", "order": 3 }
+    },
+    "display": { "glance": ["power", "power1", "power2", "power_active_total"] },
+    "registers": [
+      { "address": 1, "name": "power", "label": "Relay", "data_type": "uint16", "enum": {"0": "OFF", "1": "ON"},
+        "topic": "{stat}/POWER", "poll_group": "push", "category": "outputs",
+        "description": "a one-relay device's relay (stat/<topic>/POWER)" },
+      { "address": 2, "name": "power1", "label": "Relay 1", "data_type": "uint16", "enum": {"0": "OFF", "1": "ON"},
+        "topic": "{stat}/POWER1", "poll_group": "push", "category": "outputs", "description": "stat/<topic>/POWER1" },
+      { "address": 3, "name": "power2", "label": "Relay 2", "data_type": "uint16", "enum": {"0": "OFF", "1": "ON"},
+        "topic": "{stat}/POWER2", "poll_group": "push", "category": "outputs", "description": "stat/<topic>/POWER2" },
+      { "address": 4, "name": "power3", "label": "Relay 3", "data_type": "uint16", "enum": {"0": "OFF", "1": "ON"},
+        "topic": "{stat}/POWER3", "poll_group": "push", "category": "outputs", "description": "stat/<topic>/POWER3" },
+      { "address": 5, "name": "power4", "label": "Relay 4", "data_type": "uint16", "enum": {"0": "OFF", "1": "ON"},
+        "topic": "{stat}/POWER4", "poll_group": "push", "category": "outputs", "description": "stat/<topic>/POWER4" },
+      { "address": 10, "name": "power_active_total", "label": "Power", "unit": "W", "data_type": "float",
+        "topic": "{tele}/SENSOR", "json_path": "ENERGY.Power", "poll_group": "push", "category": "energy",
+        "description": "the energy monitor's power (tele/<topic>/SENSOR ENERGY.Power)" },
+      { "address": 11, "name": "voltage", "label": "Voltage", "unit": "V", "data_type": "float",
+        "topic": "{tele}/SENSOR", "json_path": "ENERGY.Voltage", "poll_group": "push", "category": "energy",
+        "description": "ENERGY.Voltage" },
+      { "address": 12, "name": "current", "label": "Current", "unit": "A", "data_type": "float",
+        "topic": "{tele}/SENSOR", "json_path": "ENERGY.Current", "poll_group": "push", "category": "energy",
+        "description": "ENERGY.Current" },
+      { "address": 13, "name": "energy_active_total", "label": "Energy", "unit": "Wh", "data_type": "float",
+        "topic": "{tele}/SENSOR", "json_path": "ENERGY.Total", "scale": 0.001, "poll_group": "push", "category": "energy",
+        "monotonic": true, "description": "ENERGY.Total, the device's own counter (kWh on the wire, Wh here)" },
+      { "address": 14, "name": "energy_today", "label": "Energy today", "unit": "Wh", "data_type": "float",
+        "topic": "{tele}/SENSOR", "json_path": "ENERGY.Today", "scale": 0.001, "poll_group": "push", "category": "energy",
+        "daily": true, "description": "ENERGY.Today (kWh on the wire, Wh here)" },
+      { "address": 20, "name": "wifi_signal", "label": "Wi-Fi signal", "unit": "dBm", "data_type": "float",
+        "topic": "{tele}/STATE", "json_path": "Wifi.Signal", "poll_group": "push", "category": "diagnostics",
+        "description": "tele/<topic>/STATE Wifi.Signal" },
+      { "address": 21, "name": "uptime", "label": "Uptime", "unit": "s", "data_type": "float",
+        "topic": "{tele}/STATE", "json_path": "UptimeSec", "poll_group": "push", "category": "diagnostics",
+        "description": "tele/<topic>/STATE UptimeSec" }
+    ]
+  }
+}

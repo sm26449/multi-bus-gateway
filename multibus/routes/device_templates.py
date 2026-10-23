@@ -21,7 +21,7 @@ Moved verbatim from create_api().
 from __future__ import annotations
 
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import JSONResponse
@@ -36,13 +36,17 @@ def build(ctx) -> APIRouter:
     def _templates_in_use() -> Dict[str, List[str]]:
         """template id -> device ids using it (delete guard + UI badge) —
         the device's own template and every source's (an installation's unit
-        is often read through a source that names the map)."""
+        is often read through a source that names the map). Every configured
+        device, a disabled one too: it is not running yet still names it."""
         used: Dict[str, List[str]] = {}
-        for dev_cfg, _c in registry:
+        for dev_cfg in list(getattr(ctx.config, 'devices', None) or []):
             tids = {getattr(dev_cfg, "template", "") or ""} | {
                 getattr(sx, "template", "") or "" for sx in (getattr(dev_cfg, "sources", None) or [])}
             for tid in sorted(t for t in tids if t):
                 used.setdefault(tid, []).append(dev_cfg.id)
+                if ':' in tid:
+                    # a component's template is its parent's: in use with it
+                    used.setdefault(tid.split(':', 1)[0], []).append(dev_cfg.id)
         return used
 
     def _pending_updates() -> Dict[str, List[Dict]]:
@@ -60,7 +64,9 @@ def build(ctx) -> APIRouter:
             if not plan["pending"]:
                 return
             for t in plan["templates"]:
-                out.setdefault(t["id"], []).append({"kind": kind, "id": oid, "name": name})
+                # a component's update is its parent template's
+                out.setdefault(str(t["id"]).split(':', 1)[0], []).append(
+                    {"kind": kind, "id": oid, "name": name})
         for p in (getattr(config, "endpoints", None) or []):
             if p.get("id"):
                 note("endpoint", p["id"], p.get("name") or p["id"], config.endpoint_devices(p["id"]))
@@ -70,16 +76,33 @@ def build(ctx) -> APIRouter:
         return out
 
     @r.get("/api/device-templates")
-    def list_device_templates():
-        """Template library (built-ins + user uploads) for the wizard picker."""
+    def list_device_templates(q: Optional[str] = None, kind: Optional[str] = None,
+                              protocol: Optional[str] = None, origin: Optional[str] = None,
+                              sort: Optional[str] = None):
+        """Template library (built-ins + user uploads) for the wizard picker.
+        Optional: ``q`` (search), ``kind`` (the device kind), ``protocol``
+        (modbus/http/mqtt), ``origin`` (builtin/custom) — each a comma list —
+        and ``sort`` (name, id, vendor, kind, used_by; ``-`` for descending)."""
+        from ..device_kind import template_kind
         used = _templates_in_use()
         pending = _pending_updates()
-        out = []
+        rows = []
         for t in template_registry.list():
             s = t.summary()
             s['used_by'] = used.get(t.id, [])
+            s['used_by_count'] = len(s['used_by'])
             s['pending_updates'] = pending.get(t.id, [])
-            out.append(s)
+            # the kind of device it describes, as a device using it is filed
+            # (`kind` stays the template's own word — what the wizard groups by)
+            s['device_kind'], s['device_kind_source'] = template_kind(t, t.id)
+            rows.append((s, s['device_kind']))
+        out = [s for s, _k in rows]
+        if not all(v in (None, '') for v in (q, kind, protocol, origin, sort)):
+            from ..list_filters import FilterError, filter_templates
+            try:
+                out = filter_templates(rows, q=q, kind=kind, protocol=protocol, origin=origin, sort=sort)
+            except FilterError as err:
+                raise HTTPException(status_code=422, detail={"errors": [str(err)], "fields": err.fields})
         return {"templates": out, "load_errors": template_registry.load_errors,
                 "load_warnings": getattr(template_registry, "load_warnings", {})}
 
@@ -128,10 +151,15 @@ def build(ctx) -> APIRouter:
         regs = [r.get("name") for r in tpl.get("registers") or [] if isinstance(r, dict) and r.get("name")]
         calcs = [c.get("name") for c in tpl.get("calculated") or []
                  if isinstance(c, dict) and c.get("name") and c.get("name") != me]
-        ok, err, refs = expressions.validate_expression(expr)
+        # `battery-bank.x` with no battery-bank here would parse as a minus and
+        # be reported as "battery": read it as the device it names, and say so
+        dashed = expressions.dashed_unknown(expr)
+        ok, err, refs = expressions.validate_expression(expr, assume_ids=dashed)
         if not ok:
             return {"ok": False, "error": err, "refs": []}
-        known = set(regs) | set(calcs)
+        refs = [expressions.unprepare_ref(n, dashed) for n in refs]
+        from ..linked_meter import LINKED_FIELDS
+        known = set(regs) | set(calcs) | set(LINKED_FIELDS)    # a linked meter's fields
         base = lambda n: n.split("[", 1)[0]  # noqa: E731 — name[0] reads an array register
         unknown = [n for n in refs if n not in known and base(n) not in known and "." not in n]
         other_dev = [n for n in refs if "." in n]
@@ -140,9 +168,14 @@ def build(ctx) -> APIRouter:
         if unknown:
             return {"ok": False, "refs": refs, "unknown": unknown,
                     "error": "not a register or calculated field of this template: " + ", ".join(unknown)}
-        return {"ok": True, "refs": refs,
-                **({"warning": "reads another device (" + ", ".join(other_dev) + ") — every device made from "
-                               "this template would read that same device"} if other_dev else {})}
+        warn = []
+        if other_dev:
+            warn.append("reads another device (" + ", ".join(other_dev) + ") — every device made from "
+                        "this template would read that same device")
+        for tok in dashed:
+            warn.append(f"there is no '{tok}' on this gateway yet; until there is, the gateway reads it "
+                        f"as a subtraction ({tok.replace('-', ' − ')}.…)")
+        return {"ok": True, "refs": refs, **({"warning": "; ".join(warn)} if warn else {})}
 
     @r.post("/api/device-templates/identify-test")
     def identify_test(payload: Dict = Body(...)):
@@ -185,7 +218,15 @@ def build(ctx) -> APIRouter:
         errors = validate_template(payload)
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors})
-        old = template_registry.get(str((payload.get("device_template") or payload).get("id") or ""))
+        tid = str((payload.get("device_template") or payload).get("id") or "")
+        old = template_registry.get(tid)
+        if old and payload.get("create"):
+            # a NEW map (or a duplicate) that happens to carry an existing id
+            # must not replace it silently — the same answer as Upload
+            kind = "built-in" if old.builtin else "existing"
+            raise HTTPException(status_code=409, detail={
+                "errors": [f"a template with id '{tid}' already exists ({kind})"],
+                "conflict": tid, "builtin": old.builtin})
         old_proto = dict(getattr(old, "protocol", None) or {}) if old else None
         try:
             t = template_registry.save_user(payload)
@@ -195,20 +236,45 @@ def build(ctx) -> APIRouter:
         return {"status": "saved", "template": t.summary(),
                 "restarted": _apply_protocol_change(t, old_proto)}
 
-    @r.delete("/api/device-templates/{template_id}")
-    def delete_device_template(template_id: str):
-        """Delete a USER template. Blocked while any device uses it."""
-        used = _templates_in_use().get(template_id)
-        if used:
-            raise HTTPException(status_code=422, detail={"errors": [
-                f"template is in use by device(s): {', '.join(used)} — "
-                f"reassign or delete those devices first"]})
-        try:
-            template_registry.delete_user(template_id)
-        except KeyError:
+    @r.get("/api/device-templates/{template_id}/dependents")
+    def device_template_dependents(template_id: str):
+        """The devices and installations that read with this template."""
+        if template_registry.get(template_id) is None:
             raise HTTPException(status_code=404, detail="template not found")
-        except ValueError as e:
-            raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+        return ctx.dependents_of('template', template_id)
+
+    @r.delete("/api/device-templates/{template_id}")
+    def delete_device_template(template_id: str, dry_run: bool = False):
+        """Delete a USER template. A built-in one is read-only (422); a template
+        a device or an installation (enabled or not) reads with is refused
+        (409) until they use another. `?dry_run=true`: the same checks."""
+        from ..dependents import summary
+        t = template_registry.get(template_id)
+        if t is None:
+            raise HTTPException(status_code=404, detail="template not found")
+        if t.builtin or t.component_of:
+            raise HTTPException(status_code=422, detail={"errors": [
+                f"template {template_id!r} is built-in (read-only)" if t.builtin else
+                f"{template_id!r} is a component of {t.component_of!r} — edit that template"]})
+        def refuse_if_used():
+            deps = ctx.dependents_of('template', template_id)
+            if deps['blocking']:
+                raise HTTPException(status_code=409, detail={
+                    "errors": [summary(deps, f"template {template_id!r}")], "dependents": deps})
+            return deps
+        deps = refuse_if_used()
+        if dry_run:
+            return {"status": "valid", "would": "delete", "dependents": deps}
+        # under the device lock: a device created meanwhile with this
+        # template is either seen by the second look or created after
+        with ctx.mutation_lock:
+            refuse_if_used()
+            try:
+                template_registry.delete_user(template_id)
+            except KeyError:
+                raise HTTPException(status_code=404, detail="template not found")
+            except ValueError as e:
+                raise HTTPException(status_code=422, detail={"errors": [str(e)]})
         return {"status": "deleted"}
 
     def _own_fields_of(t) -> Dict[str, Dict]:
@@ -252,6 +318,9 @@ def build(ctx) -> APIRouter:
         t = template_registry.get(template_id)
         if t is None:
             raise HTTPException(status_code=404, detail="template not found")
+        if t.component_of:
+            raise HTTPException(status_code=422, detail={"errors": [
+                f"'{template_id}' is a component — export '{t.component_of}'"]})
         content = t.to_dict()
         own = _own_fields_of(t)
         if own:

@@ -7,6 +7,7 @@
   "model": "SDM630 Modbus V2",
   "version": "0.9.0",
   "description": "Eastron SDM630 3-phase energy meter. Measurements are 32-bit IEEE-754 floats in INPUT registers (FC4), big-endian. Community-sourced canonical map — verify against your unit's manual before relying on it for billing.",
+  "kind": "meter",
   "source_document": "Eastron SDM630 Modbus Protocol V2 (input registers, FC04, float32)",
   "protocol": {
    "byte_order": "big",

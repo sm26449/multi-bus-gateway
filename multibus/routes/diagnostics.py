@@ -28,6 +28,7 @@ import struct
 from typing import Dict, List
 
 from fastapi import APIRouter, Body, HTTPException, Query
+from ..payload import flag
 
 from ..bus_trace import trace
 from ..register_parser import RegisterParser
@@ -82,7 +83,7 @@ def build(ctx) -> APIRouter:
     async def set_bus_trace(payload: Dict = Body(...)):
         was = trace.enabled
         trace.configure(
-            enabled=bool(payload["enabled"]) if "enabled" in payload else None,
+            enabled=flag(payload, "enabled", None),
             capacity=payload.get("capacity"),
             clear=bool(payload.get("clear")),
         )

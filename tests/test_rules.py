@@ -89,6 +89,32 @@ def test_the_release_threshold_is_a_dead_band():
     assert d[2].action == 'run'
 
 
+def test_a_restart_in_the_dead_band_resumes_the_step_the_device_holds():
+    """2026-10-20: the gateway restarted while two inverters held 80 %
+    (Warning) at 249.6 V — between the release (248) and the first step
+    (250). A fresh rule took "normal" and wrote 100 %. It now resumes the
+    step whose value the device holds, until the signal is under release."""
+    st = RuleState(_rule(mode='armed'))                  # a fresh state: a restart
+    d = _run(st, [249.6] * 5, actual=80)
+    assert st.state == 'Warning' and st.want['value'] == 80
+    assert not [x for x in d if x.action in ('run', 'reassert')]   # the device holds it: nothing sent
+    d = _run(st, [247.9] * 3, t0=40.0, actual=80)       # under the release: normal, as always
+    assert st.state == 'normal' and st.want['value'] == 100 and d[2].action == 'run'
+
+
+def test_a_restart_in_the_dead_band_without_a_read_back_waits_for_a_threshold():
+    st = RuleState(_rule(mode='armed'))
+    d = _run(st, [249.6] * 5, actual=None)
+    assert st.want is None and not [x for x in d if x.action in ('run', 'reassert')]
+    d = _run(st, [250.4] * 3, t0=20.0, actual=None)     # a threshold: it decides
+    assert st.state == 'Warning' and d[-1].action == 'run'
+
+
+def test_a_restart_in_the_dead_band_with_the_device_at_full_power_is_normal():
+    st = RuleState(_rule(mode='armed'))
+    _run(st, [249.6] * 5, actual=100)
+    assert st.state == 'normal' and st.want['value'] == 100
+
 def test_the_fast_step_skips_the_debounce():
     st = RuleState(_rule(mode='armed'))
     d = st.evaluate(0.0, 253.4, 0.5)
@@ -196,6 +222,33 @@ def test_a_condition_runs_then_and_else():
     assert d[1].state == 'false' and d[1].want is None and d[1].action == 'idle'
 
 
+def test_a_condition_with_a_release_holds_through_the_dead_band():
+    """A heat pump buffer thermostat: on under 25 °C, off only over 35 °C.
+    Between the two the rule keeps what it has, whichever way the water is
+    heading — without `release`, `else` would follow at 25.1 °C."""
+    raw = {'id': 'buffer', 'mode': 'armed', 'kind': 'condition',
+           'target': {'device': 'hp', 'command': 'power'},
+           'when': 'hp.water_in < 25', 'release': 'hp.water_in > 35',
+           'then': {'params': {'value': 1}}, 'else': {'params': {'value': 0}},
+           'timing': {'debounce': 1, 'min_interval_s': 0}, 'stale_after_s': 30}
+    assert validate_rule_def(raw) == []
+    st = RuleState(parse_rule_def(raw))
+    # (when, release) as the runtime hands it: water 30 → 24 → 28 → 34 → 36 → 30 → 24
+    water = [30, 24, 28, 34, 36, 30, 24]
+    d = _run(st, [(w < 25, w > 35) for w in water])
+    # 30 °C at the start is in the dead band and the latch is not known yet:
+    # it waits for a threshold instead of guessing
+    assert [x.state for x in d] == ['normal', 'true', 'true', 'true', 'false', 'false', 'true']
+    assert d[1].want == {'value': 1} and d[4].want == {'value': 0}
+    assert parse_rule_def(raw).to_dict()['release'] == 'hp.water_in > 35'
+
+
+def test_a_bad_release_is_named():
+    raw = {'id': 'buffer', 'kind': 'condition', 'target': {'device': 'hp', 'command': 'power'},
+           'when': 'hp.t < 25', 'release': 'hp.t >', 'then': {'params': {'value': 1}}}
+    assert validate_rule_def(raw, validate_expr=lambda e: 'syntax' if e.endswith('>') else None) == ['release: syntax']
+
+
 # ── validation ────────────────────────────────────────────────────────────────
 
 def test_validation_speaks_in_words():
@@ -296,3 +349,84 @@ def test_rule_numbers_must_be_finite():
         errs = validate_rule_def(dict(OV, **bad))
         assert errs, bad
     assert validate_rule_def(dict(OV, on_stale=70)) == []
+
+
+def test_the_runtime_reads_the_release_with_the_same_inputs():
+    """_signal hands a condition with a release the pair (when, release),
+    aged by the oldest input of either expression."""
+    from multibus.rules_runtime import RulesRuntime
+    store = {"hp.water_in": (30.0, 100.0), "hp.water_out": (40.0, 90.0)}
+
+    def resolver_factory(_):
+        def resolve(name):
+            v = store.get(name)
+            if v is None:
+                return None
+            resolve.touched_mono.append(v[1])
+            return v[0]
+        resolve.touched_mono, resolve.touched_ts, resolve.touched_interval = [], [], []
+        return resolve
+
+    rt = RulesRuntime.__new__(RulesRuntime)
+    rt._resolver_factory = resolver_factory
+    rt._mono = lambda: 110.0
+    rule = parse_rule_def({'id': 'buffer', 'kind': 'condition', 'target': {'device': 'hp', 'command': 'power'},
+                           'when': 'hp.water_in < 25', 'release': 'hp.water_out > 35',
+                           'then': {'params': {'value': 1}}})
+    val, age, smono = rt._signal(rule, now=0.0)
+    assert val == (False, True) and smono == 90.0 and age == 20.0
+
+
+# ── a state register as the read-back (2026-10-09: "On" stopped every rule) ──
+
+def _power_rule():
+    raw = {'id': 'hp-on', 'mode': 'shadow', 'kind': 'condition', 'target': {'device': 'hp', 'command': 'power'},
+           'when': 'm.p < -10000', 'then': {'params': {'value': 1}}, 'else': {'params': {'value': 0}},
+           'timing': {'debounce': 1, 'min_interval_s': 0}, 'stale_after_s': 30}
+    return parse_rule_def(raw)
+
+
+def test_a_text_read_back_is_never_compared_as_a_number():
+    st = RuleState(_power_rule())
+    d = _run(st, [True, True, True], actual="On")       # an unmapped state text
+    assert all(x.action in ('hold', 'shadow', 'idle', 'sweep') for x in d)
+
+
+def test_the_runtime_maps_a_state_text_back_to_its_code():
+    from types import SimpleNamespace as NS
+    from multibus.rules_runtime import RulesRuntime
+    rt = RulesRuntime.__new__(RulesRuntime)
+    reg = NS(name='iu0_power', enum={'0': 'Off', '1': 'On'})
+    rt._find_device = lambda did: (0, None, NS(registers=[reg]))
+    cfg = NS(id='hp')
+    assert rt._code_of(cfg, 'iu0_power', 'On') == 1.0
+    assert rt._code_of(cfg, 'iu0_power', 'Heating') == 'Heating'          # unknown text stays text
+    # a device read several ways: the map is on its parts
+    rt._find_device = lambda did: (0, None, NS(parts=[(NS(id='default'), NS(registers=[reg]))]))
+    assert rt._code_of(cfg, 'iu0_power', 'Off') == 0.0
+    st = RuleState(_power_rule())
+    d = _run(st, [True], actual=rt._code_of(cfg, 'iu0_power', 'On'))
+    assert d[0].action == 'idle' and 'already matches' in d[0].reason
+
+
+def test_one_rule_that_fails_does_not_stop_the_others(caplog):
+    from multibus.rules_runtime import RulesRuntime
+    rt = RulesRuntime.__new__(RulesRuntime)
+    import threading
+    rt._lock = threading.Lock()
+    rt.errors = {}
+    rt._clock = lambda: 100.0
+    rt._mono = lambda: 100.0
+    rt.tick_errors, rt.alert_mgr = {}, None
+    a, b = _power_rule(), _power_rule()
+    a.id, b.id = 'bad', 'good'
+    rt.rules = {'bad': a, 'good': b}
+    ran = []
+
+    def fake(rule, now, mono):
+        if rule.id == 'bad':
+            raise ValueError("could not convert string to float: 'On'")
+        ran.append(rule.id)
+        return [{'rule': rule.id}]
+    rt._tick_rule = fake
+    assert rt.tick() == [{'rule': 'good'}] and ran == ['good']

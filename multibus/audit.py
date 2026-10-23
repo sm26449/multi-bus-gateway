@@ -62,6 +62,12 @@ def redact_obj(obj: Any, depth: int = 0) -> Any:
                 ks = str(k)
                 if _is_secret_key(ks):
                     out[k] = "***"
+                elif ks in ('latitude_deg', 'longitude_deg'):
+                    # coordinates are identity: coarse wherever a log or a
+                    # diff shows them (attribute_catalog, privacy)
+                    out[k] = round(float(v), 2) if isinstance(v, (int, float)) and not isinstance(v, bool) else "***"
+                elif ks == 'altitude_m':
+                    out[k] = "***"
                 elif _is_url_key(ks) and isinstance(v, str):
                     out[k] = redact_url(v)
                 else:

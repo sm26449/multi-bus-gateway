@@ -155,6 +155,20 @@ class WriteLeaseManager:
             if removed:
                 self._persist_locked()
 
+    def export_mirror(self) -> list:
+        """The leases with their records and the time left, for a standby
+        partner that may have to keep the dead-man going."""
+        now = time.monotonic()
+        with self._lock:
+            return [{**v['meta'], 'remaining_s': round(max(0.0, v['expiry'] - now), 3)}
+                    for v in self._leases.values() if v.get('meta')]
+
+    def drop_persisted(self) -> None:
+        """Forget the leases kept on disk without reverting them: the file then
+        holds only what this run armed (a standby gateway takes no lease)."""
+        with self._lock:
+            self._persist_locked()
+
     def snapshot(self) -> List[dict]:
         now = time.monotonic()
         with self._lock:

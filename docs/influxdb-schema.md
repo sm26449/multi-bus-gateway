@@ -61,7 +61,16 @@ named field only, without the `value` twin. Non-finite numbers are skipped.
    `energy_reactive`, `wh` → `energy_active`, `var` → `power_reactive`,
    `va` → `power_apparent`, `hz` → `frequency`, `w` → `power_active`, `v` →
    `voltage`, `a` → `current`, `%` → `percentage`;
-4. otherwise `janitza`.
+4. otherwise the row's **category** from its template (`outdoor`,
+   `hydro`, `battery`…; lower-cased, anything but `a-z 0-9 _` becomes `_`).
+   A template's calculated field has one too (Advanced → Calculated →
+   *Section*).
+   Without a category: `other`. Before 3.92 this fallback was `janitza`,
+   whatever the device was. A field that already has history keeps its
+   points under the old name: the gateway's History reads by field and
+   device, so the chart is continuous. A Flux query that filters on
+   `_measurement == "janitza"` for a device other than the UMG needs the
+   new name from 3.92 on.
 
 So `voltage_l1_n` from any device lands in measurement `voltage`, field
 `voltage_l1_n` (and `value`), tagged with that device's `device` tag — a

@@ -230,8 +230,11 @@ devices:
     create_api(cfg, None, pub, None, devices=[(d, None) for d in cfg.devices])
     # external audit: main.py's write-blind hooks used to own boot; now
     # create_api registers the write-aware set itself
-    assert len(pub.discovery_hooks) == 1
-    pub.discovery_hooks[0]()
+    # one discovery hook per device (here one), plus the asset attributes'
+    # publisher, which rides the same (re)connect
+    device_hooks = [h for h in pub.discovery_hooks if getattr(h, '__name__', '') != '_publish_attribute_meta']
+    assert len(device_hooks) == 1 and len(pub.discovery_hooks) == 2
+    device_hooks[0]()
     assert calls and "write_rules" in calls[0]
 
 

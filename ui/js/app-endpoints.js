@@ -12,26 +12,59 @@ Object.assign(JanitzaMonitor.prototype, {
     // ── endpoint workspace (full page, in place, like a device detail) ──────────
 
     async openEndpointDetail(id) {
-        if (this.currentPage !== 'devices') this.navigateTo('devices');
-        this._stopEndpointDetail();
+        const wasHere = this.currentPage === 'devices';
+        if (!wasHere) this.navigateTo('devices', { _opening: true });
         let p = null;
         try {
             const r = await fetch(`/api/endpoints/${encodeURIComponent(id)}`);
             if (r.ok) p = await r.json();
         } catch (e) { console.error(e); }
         if (!p || !p.id) {
-            this.showToast('error', this.t('endpoints.notFound', 'Endpoint not found'), id);
-            return;
+            // what was on screen stays as it was (its live tick too)
+            this.showToast('error', this.t('endpoints.notFound', 'Installation not found'), id);
+            if (!wasHere) { this._showDevicesList(); this.renderDevicesList(); }
+            return false;
         }
+        this._stopEndpointDetail();
+        if (this._leaveDeviceDetail) this._leaveDeviceDetail();
         this._endpointDetail = p;
         const list = document.getElementById('devicesListView');
         if (list) list.style.display = 'none';
         const view = document.getElementById('deviceDetailView');
         view.style.display = '';
         view.innerHTML = this._endpointDetailHtml(p);
+        this._plDrawn(view, p);
+        // its attributes (a location of its own, a battery bank's energy):
+        // loaded once, never redrawn by the tick
+        this._loadAttributes('installations', p.id, document.getElementById('plAttributes'));
+        this._loadEndpointUsedBy(p.id);
         // live totals are the point of the page; the tick self-heals if the
         // user navigated away without closing (no orphan timer, ever)
         this._endpointTimer = setInterval(() => this._refreshEndpointDetail(id), 5000);
+        this._view = { type: 'installation', id: p.id };
+        return true;
+    },
+
+    // A block the tick keeps in step (where it publishes, its totals, the
+    // InfluxDB extras) is redrawn only when its content changed — no flicker
+    // every 5 s — never while the operator works in it (focus inside), and a
+    // list the operator opened stays open. The html last drawn is kept on the
+    // element (innerHTML is normalised by the browser).
+    _plRedraw(el, html, force = false) {
+        if (!el || el._plHtml === html) return;
+        if (!force && el.contains(document.activeElement) && document.activeElement !== document.body) return;
+        const open = [...el.querySelectorAll('details')].map(d => d.open);
+        el._plHtml = html;
+        el.innerHTML = html;
+        el.querySelectorAll('details').forEach((d, i) => { if (open[i]) d.open = true; });
+    },
+
+    // what the page was drawn with, for _plRedraw's comparison
+    _plDrawn(view, p) {
+        const mark = (sel, html) => { const el = view.querySelector(sel); if (el) el._plHtml = html; };
+        mark('#plPublish', this._endpointPublishHtml(p));
+        mark('#plTotals', this._endpointTotalsHtml(p));
+        mark('#plInfluxExtras', this._endpointInfluxExtrasHtml(p));
     },
 
     _stopEndpointDetail() {
@@ -49,7 +82,9 @@ Object.assign(JanitzaMonitor.prototype, {
 
     async _refreshEndpointDetail(id) {
         const view = document.getElementById('deviceDetailView');
-        if (!view || view.style.display === 'none' || !view.querySelector('[data-endpoint-page]')) {
+        // another page, a closed or replaced page: the tick stops itself
+        if (this.currentPage !== 'devices' || !view || view.style.display === 'none'
+            || !view.querySelector('[data-endpoint-page]')) {
             this._stopEndpointDetail();
             return;
         }
@@ -64,6 +99,7 @@ Object.assign(JanitzaMonitor.prototype, {
             const el = view.querySelector(sel);
             if (el) el.innerHTML = html;
         };
+        const redraw = (sel, html) => this._plRedraw(view.querySelector(sel), html);
         const dot = view.querySelector('#plStatusDot');
         if (dot) dot.style.setProperty('--dot', this._endpointStatusColor(p));
         set('#plStatusWord', this._esc(this._endpointStatusWord(p)));
@@ -71,6 +107,11 @@ Object.assign(JanitzaMonitor.prototype, {
         set('#plHeadline', this._endpointHeadlineHtml(p));
         set('#plReadVia', this._endpointReadViaHtml(p));
         set('#plTplUpdate', this._tplUpdateNotice('endpoint', p.id, p.template_update));
+        // where it publishes, its totals and InfluxDB extras follow a group,
+        // a total or an output edited from a modal without reopening the page
+        redraw('#plPublish', this._endpointPublishHtml(p));
+        redraw('#plTotals', this._endpointTotalsHtml(p));
+        redraw('#plInfluxExtras', this._endpointInfluxExtrasHtml(p));
         // never redraw while a unit is being renamed or a source saved; and a
         // "How it is read" the operator opened stays open across the tick
         if (!view.querySelector('[data-renaming]')
@@ -265,7 +306,7 @@ Object.assign(JanitzaMonitor.prototype, {
             // the template's glance fields, else the role defaults
             const cols = (g.glance || []).length ? g.glance : (this._ROLE_LIVE[g.role] || ['power_active_total']);
             const colLabel = c => ((p.fields || {})[c] || {}).label || this._liveLabel(c);
-            const hasTotal = g.aggregates && Object.keys(g.aggregates).some(k => !['units_online', 'units_total', 'status'].includes(k));
+            const hasTotal = g.aggregates && Object.keys(g.aggregates).some(k => !['units_online', 'units_total', 'units_asleep', 'status'].includes(k));
             const modbusHere = (g.sources || []).some(sx => sx.protocol !== 'http' && sx.protocol !== 'mqtt');
             return `
             <div class="settings-card" data-group="${this._esc(g.id)}" ${off ? 'style="opacity:.62;"' : ''}>
@@ -280,7 +321,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <input data-admin type="checkbox" ${off ? '' : 'checked'}
                            ${this._act('toggleGroup', [p.id, g.id], {el: true, on: "change"})}>
                     <span>${t('endpoints.groupOn', 'Read')}</span></label>
-                  ${(g.commands || []).some(c => c.enabled) ? `<button data-admin class="btn btn-secondary btn-sm" ${this._act('openCommandModal', [p.id, g.id, '', ''])}
+                  ${(g.commands || []).some(c => c.enabled) ? `<button data-live class="btn btn-secondary btn-sm" ${this._act('openCommandModal', [p.id, g.id, '', ''])}
                           title="${t('commands.groupHint', 'Tell the units of this group something — a power limit, a restore. Every command is verified and audited.')}"><i aria-hidden="true" class="bi bi-send"></i> ${t('commands.button', 'Commands…')}</button>` : ''}
                   <button class="btn btn-ghost btn-sm" data-admin ${this._act('openSourceModal', [p.id, '', g.id])}
                           title="${t('endpoints.srcAdd', 'Add source')}" aria-label="${t('endpoints.srcAdd', 'Add source')}"><i aria-hidden="true" class="bi bi-plus-lg"></i></button>
@@ -296,7 +337,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div style="overflow-x:auto;"><table class="data-table" style="width:100%;">
                   <thead><tr>
                     <th>${t('endpoints.unitId', 'Unit')}</th>
-                    <th class="col-wide">${t('devices.wizard.name', 'Name')}</th>
+                    <th class="col-wide">${t('lbl.name', 'Name')}</th>
                     ${cols.map((c, i) => `<th style="text-align:right;" ${i > 1 ? 'class="col-wide"' : ''}>${this._esc(colLabel(c))}</th>`).join('')}
                     <th class="col-health">${t('endpoints.health', 'Health')}</th>
                     <th class="col-wide">${t('devices.overview.lastRead', 'Last read')}</th>
@@ -336,9 +377,12 @@ Object.assign(JanitzaMonitor.prototype, {
     async deleteGroup(endpointId, groupId) {
         const p = this._endpointDetail;
         if ((p.groups || []).length < 2) return;
-        if (!confirm(this.t('endpoints.groupDeleteAsk', 'Remove group') + ` "${groupId}"?\n\n`
-            + this.t('endpoints.groupDeleteNote',
-                'Its units stop being managed by this endpoint. Their register files stay on disk.'))) return;
+        if (!await this.confirmAction({
+            title: this.t('endpoints.groupDeleteTitle', 'Remove group {id}', { id: groupId }),
+            message: this.t('endpoints.groupDeleteNote',
+                'Its units stop being managed by this installation. Their register files stay on disk.'),
+            confirmLabel: this.t('components.remove', 'Remove'), danger: true,
+        }) || this._endpointDetail !== p) return;
         const rest = (p.groups || []).filter(g => g.id !== groupId)
             .map(g => this._rawGroup(p, g.id));
         await this._saveGroups(endpointId, rest);
@@ -351,26 +395,56 @@ Object.assign(JanitzaMonitor.prototype, {
         const out = {
             id: g.id, role: g.role || '',
             enabled: g.enabled !== false,
-            units: (g.units || []).map(u => ({ unit_id: u.unit_id, id: u.device_id,
-                                               ...(u.name ? { name: u.name } : {}) })),
+            units: (g.units || []).map(u => this._rawUnit(p, u)),
             ...over,
         };
-        if (g.template) out.template = g.template;
+        const own = this._groupOwnTemplate(g);
+        if (own) out.template = own;
         const cmds = (g.commands || []).filter(c => c.binding).map(c => c.binding);
         if (cmds.length) out.commands = cmds;
-        const srcs = (g.sources || []).map(s => this._rawSource({ sources: g.sources }, s.id));
-        if (srcs.length === 1 && srcs[0].id === 'default') {
-            const s = srcs[0];
-            out.connection = { protocol: s.protocol, ...(s.host ? { host: s.host, port: s.port } : {}),
-                               ...(s.url ? { url: s.url } : {}),
-                               ...(s.serial_port ? { serial_port: s.serial_port } : {}) };
-        } else if (srcs.length) {
-            out.sources = srcs;
-        }
+        // a group read the way the installation is says nothing of its own:
+        // writing the inherited bus back as the group's lost a serial port.
+        // The others go back in the shape they are stored in — a tap bus is a
+        // group connection, never a source.
+        const srcs = g.inherits ? [] : (g.sources || []).map(s => this._rawSource({ sources: g.sources }, s.id));
+        Object.assign(out, this._groupRoute(g, srcs));
         return out;
     },
 
-    async _saveGroups(endpointId, groups) {
+    // the template a group declares itself — '' when it takes the
+    // installation's. The view's `template` is the effective one; writing that
+    // back froze an inherited template into the group. (An older gateway
+    // sends no template_declared: its effective one is all there is.)
+    _groupOwnTemplate(g) {
+        return 'template_declared' in (g || {}) ? (g.template_declared || '') : ((g || {}).template || '');
+    },
+
+    // a unit with the derived id and name goes back as its bare number:
+    // writing the derived name down froze it (a later installation rename no
+    // longer reached it). Shared by every save of a group.
+    _rawUnit(p, u) {
+        const named = u.name && u.name !== `${p.name || p.id} unit ${u.unit_id}`;
+        if (!named && u.device_id === `${p.id}-u${u.unit_id}`) return u.unit_id;
+        return { unit_id: u.unit_id, id: u.device_id, ...(named ? { name: u.name } : {}) };
+    },
+
+    // a group's sources written back in its stored shape: a single "default"
+    // on a group declared by its connection is that connection again
+    _groupRoute(g, srcs) {
+        const route = g.route || (g.inherits ? 'inherit' : 'sources');
+        if (route === 'inherit' || !srcs.length) return {};
+        if (route === 'connection' && srcs.length === 1 && srcs[0].id === 'default') {
+            // the connection carries how often it reads and whether it does;
+            // the template is the group's (the editor does not offer it here)
+            const { id, template, ...conn } = srcs[0];
+            return { connection: conn };
+        }
+        return { sources: srcs };
+    },
+
+    // onRefused(errors): the caller says the refusal itself (at its fields);
+    // otherwise it is a toast
+    async _saveGroups(endpointId, groups, onRefused = null) {
         const host = document.querySelector('#plGroups');
         if (host) host.dataset.srcBusy = '1';
         try {
@@ -385,10 +459,13 @@ Object.assign(JanitzaMonitor.prototype, {
             });
             if (!rsp.ok) {
                 const d = await rsp.json().catch(() => ({}));
-                this.showToast((d.detail?.errors || [d.detail || rsp.statusText]).join('\n'), 'error');
+                const errs = d.detail?.errors || [d.detail || rsp.statusText || `HTTP ${rsp.status}`];
+                // 422: a field is wrong; 409: what the edit removes is still used
+                if (onRefused && (rsp.status === 422 || rsp.status === 409)) onRefused(errs);
+                else this.showToast('error', this.t('endpoints.saveFail', 'Save failed'), errs.join(' · '));
                 return false;
             }
-            this.showToast(this.t('endpoints.groupSaved', 'Groups updated'), 'success');
+            this.showToast('success', this.t('endpoints.groupSaved', 'Groups updated'), '');
             return true;
         } finally {
             if (host) delete host.dataset.srcBusy;
@@ -448,30 +525,30 @@ Object.assign(JanitzaMonitor.prototype, {
               <td style="padding:8px 0;white-space:nowrap;text-align:right;">
                 <button data-admin class="btn btn-ghost btn-sm" ${i === 0 ? 'disabled' : ''}
                         ${this._act('moveSource', [p.id, s.id, -1, groupId || ''])}
-                        title="${t('endpoints.srcUp', 'Raise precedence')}"><i aria-hidden="true" class="bi bi-arrow-up"></i></button>
+                        ${this._ib(t('endpoints.srcUp', 'Raise precedence'), s.id)}><i aria-hidden="true" class="bi bi-arrow-up"></i></button>
                 <button data-admin class="btn btn-ghost btn-sm" ${i === srcs.length - 1 ? 'disabled' : ''}
                         ${this._act('moveSource', [p.id, s.id, 1, groupId || ''])}
-                        title="${t('endpoints.srcDown', 'Lower precedence')}"><i aria-hidden="true" class="bi bi-arrow-down"></i></button>
-                <button data-admin class="btn btn-ghost btn-sm" ${this._act('openSourceModal', [p.id, s.id, groupId || ''])}><i aria-hidden="true" class="bi bi-pencil"></i></button>
+                        ${this._ib(t('endpoints.srcDown', 'Lower precedence'), s.id)}><i aria-hidden="true" class="bi bi-arrow-down"></i></button>
+                <button data-admin class="btn btn-ghost btn-sm" ${this._act('openSourceModal', [p.id, s.id, groupId || ''])} ${this._ib(t('common.edit', 'Edit'), s.id)}><i aria-hidden="true" class="bi bi-pencil"></i></button>
                 <button data-admin class="btn btn-ghost btn-sm" ${srcs.length < 2 ? 'disabled' : ''}
                         ${this._act('deleteSource', [p.id, s.id, groupId || ''])}
-                        title="${srcs.length < 2 ? t('endpoints.srcLast', 'A unit needs at least one source') : t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
+                        ${this._ib(srcs.length < 2 ? t('endpoints.srcLast', 'A unit needs at least one source') : t('common.delete', 'Delete'), s.id)}><i aria-hidden="true" class="bi bi-trash"></i></button>
               </td>
             </tr>`;
         }).join('');
         return `<div style="overflow-x:auto;"><table style="width:100%;font-size:13px;">
             <tr style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;">
               <td style="padding-right:10px;">${t('endpoints.srcName', 'source')}</td>
-              <td style="padding-right:10px;">${t('devices.wizard.protocol', 'protocol')}</td>
+              <td style="padding-right:10px;">${t('devices.wizard.protocol', 'Protocol')}</td>
               <td style="padding-right:10px;">${t('endpoints.srcAddress', 'address')}</td>
-              <td style="padding-right:10px;">${t('devices.wizard.template', 'template')}</td>
+              <td style="padding-right:10px;">${t('devices.wizard.template', 'Template')}</td>
               <td style="padding-right:10px;">${t('endpoints.srcGroups', 'intervals')}</td>
               <td style="padding-right:10px;">${t('endpoints.srcStale', 'stale after')}</td>
               <td style="padding-right:10px;">${t('endpoints.srcLive', 'live')}</td>
               <td style="padding-right:10px;">${t('endpoints.srcOwns', 'provides')}</td>
               <td style="text-align:right;"><button data-admin class="btn btn-ghost btn-sm"
                   ${this._act('openSourceModal', [p.id, '', groupId || ''])}
-                  title="${t('endpoints.srcAdd', 'Add source')}"><i aria-hidden="true" class="bi bi-plus-lg"></i></button></td></tr>
+                  ${this._ib(t('endpoints.srcAdd', 'Add source'))}><i aria-hidden="true" class="bi bi-plus-lg"></i></button></td></tr>
             ${rows}</table></div>`;
     },
 
@@ -496,9 +573,12 @@ Object.assign(JanitzaMonitor.prototype, {
         const p = this._endpointDetail;
         const g = this._group(p, groupId);
         if ((g.sources || []).length < 2) return;
-        if (!confirm(this.t('endpoints.srcDeleteAsk', 'Remove source') + ` "${sourceId}"?\n\n`
-                + this.t('endpoints.srcDeleteNote',
-                    'Its registers stay on disk. The fields it owned fall to the next source that offers them.'))) return;
+        if (!await this.confirmAction({
+            title: this.t('endpoints.srcDeleteTitle', 'Remove source {id}', { id: sourceId }),
+            message: this.t('endpoints.srcDeleteNote',
+                'Its registers stay on disk. The fields it owned fall to the next source that offers them.'),
+            confirmLabel: this.t('components.remove', 'Remove'), danger: true,
+        }) || this._endpointDetail !== p) return;
         await this._saveGroupSources(endpointId, groupId,
             (g.sources || []).filter(s => s.id !== sourceId)
                 .map(s => this._rawSource(g, s.id)));
@@ -513,7 +593,9 @@ Object.assign(JanitzaMonitor.prototype, {
             const raw = this._rawGroup(p, g.id);
             if (g.id !== groupId) return raw;
             delete raw.connection;
-            return { ...raw, sources };
+            delete raw.sources;
+            // a group that inherited and now edits a source gets its own sources
+            return { ...raw, ...this._groupRoute({ route: g.route === 'connection' ? 'connection' : 'sources' }, sources) };
         });
         return this._saveGroups(endpointId, groups);
     },
@@ -522,6 +604,9 @@ Object.assign(JanitzaMonitor.prototype, {
     // the declared half, or the live counters would be written into config.
     _rawSource(p, id) {
         const s = (p.sources || []).find(x => x.id === id) || {};
+        // what is stored, verbatim — tuning and line settings included; the
+        // rebuild below is only for an API that does not send it
+        if (s.declared) return JSON.parse(JSON.stringify(s.declared));
         const out = { id: s.id, protocol: s.protocol, enabled: s.enabled !== false };
         if (s.template) out.template = s.template;
         if (s.timeout != null) out.timeout = s.timeout;
@@ -532,9 +617,12 @@ Object.assign(JanitzaMonitor.prototype, {
         }
         const a = s.address || '';
         if (s.protocol === 'http') out.url = a;
-        else if (s.protocol === 'rtu') out.serial_port = a;
         else if (s.protocol === 'mqtt') out.topic = a;
-        else { const m = a.match(/^(.*):(\d+)$/); out.host = m ? m[1] : a; out.port = m ? +m[2] : 502; }
+        else if (['rtu', 'ascii', 'rtu_tap'].includes(s.protocol) && a.startsWith('/')) {
+            // a serial port here, with its line: the baud is not optional
+            out.serial_port = a;
+            for (const k of ['baudrate', 'parity', 'stopbits', 'bytesize']) if (s[k] != null) out[k] = s[k];
+        } else { const m = a.match(/^(.*):(\d+)$/); out.host = m ? m[1] : a; out.port = m ? +m[2] : 502; }
         return out;
     },
 
@@ -555,13 +643,25 @@ Object.assign(JanitzaMonitor.prototype, {
         catch (e) { console.error(e); }
         this._srcEditId = s ? s.id : '';
         const proto = s?.protocol || 'tcp';
+        // what is stored, verbatim: the form starts from it and sends back
+        // what it does not show (tuning, the rest of the line)
+        const dec = s?.declared || {};
+        this._srcDeclared = s ? JSON.parse(JSON.stringify(dec)) : null;
         const addr = s?.address || '';
         const hostPort = addr.match(/^(.*):(\d+)$/);
         const pg = s?.poll_groups || {};
         this._srcTemplates = templates;
         this._srcRole = g.role || '';
         const tplOpts = this._srcTplOptions(proto, s?.template || '');
-        const PROTO = { tcp: 'Modbus TCP', 'rtu-tcp': 'Modbus RTU over TCP', rtu: 'Modbus RTU', http: 'Solar API / HTTP JSON', mqtt: 'MQTT' };
+        // a group declared by its connection edits that connection as "default":
+        // it may be a tap or HTTP, which a source may not
+        const ctx = (g.route === 'connection' && (!s || s.id === 'default')) ? 'group' : 'source';
+        this._srcCtx = ctx;
+        const allowed = await this._protocolsFor(ctx);
+        const protoList = allowed.includes(proto) ? allowed : [...allowed, proto];
+        const PROTO = { ...this._PROTO_LABEL, rtu_tap: t('devices.wizard.rtuTapLabel', 'Modbus RTU tap (listen-only)'),
+                        http: t('endpoints.protoHttp', 'Solar API / HTTP JSON') };
+        const NET = this._NET_PROTOCOLS, SER = this._SERIAL_PROTOCOLS;
         const iv = (id, label, hint, val) => `<div class="form-group"><label class="form-label" for="${id}">${label}</label>
                     <div style="display:flex;align-items:center;gap:6px;"><input id="${id}" class="input" type="number" min="1" step="1" value="${val ?? ''}" placeholder="—" style="width:90px;"> s</div>
                     <div class="field-hint">${hint}</div></div>`;
@@ -571,31 +671,34 @@ Object.assign(JanitzaMonitor.prototype, {
             <p class="field-hint" style="margin:0 0 12px;">${t('endpoints.srcIntro',
                 'A source is one way of reaching the SAME units. Its position in the list is its precedence: the first source offering a field owns it.')}</p>
             <div class="form-row">
-                <div class="form-group"><label class="form-label" for="srcId">${t('endpoints.srcName', 'Source ID')}</label>
+                <div class="form-group"><label class="form-label" for="srcId">${t('endpoints.srcId', 'Source ID')}</label>
                     <input id="srcId" class="input" value="${this._esc(s?.id || '')}" ${s ? 'disabled' : ''} placeholder="solar_api"></div>
                 <div class="form-group"><label class="form-label" for="srcProto">${t('endpoints.srcWay', 'Read over')}</label>
                     <select id="srcProto" class="input" data-action="_srcProtoChanged" data-on="change">
-                        ${['tcp', 'rtu-tcp', 'rtu', 'http', 'mqtt'].map(x =>
-                            `<option value="${x}" ${proto === x ? 'selected' : ''}>${PROTO[x]}</option>`).join('')}
+                        ${protoList.map(x =>
+                            `<option value="${x}" ${proto === x ? 'selected' : ''}>${this._esc(PROTO[x] || x)}</option>`).join('')}
                     </select></div>
-                <div class="form-group flex-2"><label class="form-label" for="srcTpl">${t('devices.wizard.template', 'Template')}</label>
+                <div class="form-group flex-2" ${ctx === 'group' ? 'hidden' : ''}><label class="form-label" for="srcTpl">${t('devices.wizard.template', 'Template')}</label>
                     <select id="srcTpl" class="input">${tplOpts}</select>
-                    <div class="field-hint">${t('endpoints.srcTplHint', 'Only maps for this kind of unit and this way of reading.')}</div></div>
+                    <div class="field-hint">${t('endpoints.srcTplHint', 'Maps for this kind of unit and this way of reading come first; the others are under "Other kinds".')}</div></div>
             </div>
-            <div class="form-row" id="srcAddrTcp" ${proto === 'http' || proto === 'mqtt' || proto === 'rtu' ? 'hidden' : ''}>
+            <div class="form-row" id="srcAddrTcp" ${NET.includes(proto) ? '' : 'hidden'}>
                 <div class="form-group flex-2"><label class="form-label" for="srcHost">${t('endpoints.host', 'Host')}</label>
-                    <input id="srcHost" class="input" value="${this._esc(hostPort ? hostPort[1] : (proto === 'tcp' || proto === 'rtu-tcp' ? addr : ''))}" placeholder="192.168.1.50"></div>
+                    <input id="srcHost" class="input" value="${this._esc(dec.host ?? (hostPort ? hostPort[1] : ''))}" placeholder="192.168.1.50"></div>
                 <div class="form-group"><label class="form-label" for="srcPort">${t('endpoints.port', 'Port')}</label>
-                    <input id="srcPort" class="input" type="number" value="${hostPort ? hostPort[2] : 502}"></div>
+                    <input id="srcPort" class="input" type="number" value="${this._esc(String(dec.port ?? (hostPort ? hostPort[2] : 502)))}"></div>
             </div>
             <div class="form-row" id="srcAddrUrl" ${proto === 'http' ? '' : 'hidden'}>
                 <div class="form-group flex-2"><label class="form-label" for="srcUrl">URL</label>
                     <input id="srcUrl" class="input" value="${this._esc(proto === 'http' ? addr : '')}" placeholder="http://host/solar_api/v1/...DeviceId=\${unit_id}">
                     <div class="field-hint">${t('endpoints.srcUrlHint', 'Use ${unit_id} — an HTTP master addresses its units by URL, not by a unit id inside a frame.')}</div></div>
             </div>
-            <div class="form-row" id="srcAddrSerial" ${proto === 'rtu' ? '' : 'hidden'}>
-                <div class="form-group flex-2"><label class="form-label" for="srcSerial">${t('endpoints.srcSerial', 'Serial port')}</label>
-                    <input id="srcSerial" class="input" value="${this._esc(proto === 'rtu' ? addr : '')}" placeholder="/dev/ttyUSB0"></div>
+            <div id="srcAddrSerial" ${SER.includes(proto) ? '' : 'hidden'}>
+                <div class="form-row">
+                    <div class="form-group flex-2"><label class="form-label" for="srcSerial">${t('endpoints.srcSerial', 'Serial port')}</label>
+                        <input id="srcSerial" class="input" value="${this._esc(dec.serial_port ?? (SER.includes(proto) ? addr : ''))}" placeholder="/dev/ttyUSB0"></div>
+                </div>
+                ${this._serialLineHtml('src', dec)}
             </div>
             <div class="form-row" id="srcAddrTopic" ${proto === 'mqtt' ? '' : 'hidden'}>
                 <div class="form-group flex-2"><label class="form-label" for="srcTopic">${t('endpoints.srcTopic', 'Topic')}</label>
@@ -622,15 +725,17 @@ Object.assign(JanitzaMonitor.prototype, {
         const save = document.querySelector('#endpointModal [data-endpoint-save]')
             || document.querySelector('#endpointModal .btn-primary');
         if (save) { save.innerHTML = `<i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}`; this._setAction(save, 'saveSource', [endpointId]); }
+        this._pickTemplate('srcTpl', { kind: () => this._srcRole || '',
+            transport: () => this._tplTransportOf(document.getElementById('srcProto')?.value) });
         this.openModal('endpointModal');
     },
 
     _srcProtoChanged() {
         const v = document.getElementById('srcProto').value;
         const show = (id, on) => { const e = document.getElementById(id); if (e) e.hidden = !on; };
-        show('srcAddrTcp', v === 'tcp' || v === 'rtu-tcp');
+        show('srcAddrTcp', this._NET_PROTOCOLS.includes(v));
         show('srcAddrUrl', v === 'http');
-        show('srcAddrSerial', v === 'rtu');
+        show('srcAddrSerial', this._SERIAL_PROTOCOLS.includes(v));
         show('srcAddrTopic', v === 'mqtt');
         // the map must match the way of reading: a JSON-path map cannot be read
         // over Modbus, nor a register map over HTTP
@@ -642,13 +747,19 @@ Object.assign(JanitzaMonitor.prototype, {
     // when no template is known for the kind
     _tplTransportOf(proto) { return proto === 'http' ? 'http' : proto === 'mqtt' ? '' : 'modbus'; },
     _srcTplOptions(proto, selected, role) {
-        const transport = this._tplTransportOf(proto);
-        const all = (this._srcTemplates || []).filter(x => !transport || x.transport === transport);
-        const fit = this._pwTemplatesFor ? this._pwTemplatesFor(role ?? this._srcRole, transport, this._srcTemplates || []).filter(x => all.includes(x)) : all;
-        const list = fit.length ? fit : all;
-        if (selected && !list.some(x => x.id === selected)) list.push(...all.filter(x => x.id === selected));
-        return ['<option value="">—</option>'].concat(list.map(x =>
-            `<option value="${this._esc(x.id)}" ${selected === x.id ? 'selected' : ''}>${this._esc(x.name || x.id)}</option>`)).join('');
+        const pool = this._srcTemplates || [];
+        return this._tplOptionsHtml(this._pwTemplatesFor(role ?? this._srcRole, this._tplTransportOf(proto), pool),
+                                    selected, pool);
+    },
+
+    // the protocols an editor may offer here, from the API (one list with
+    // the validation, never two)
+    async _protocolsFor(ctx) {
+        if (!this._protocolLists) {
+            try { this._protocolLists = await (await fetch('/api/protocols')).json(); }
+            catch (e) { this._protocolLists = null; }
+        }
+        return (this._protocolLists || {})[ctx] || ['tcp', 'rtu-tcp', 'rtu', 'http', 'mqtt'];
     },
 
     async saveSource(endpointId) {
@@ -658,20 +769,36 @@ Object.assign(JanitzaMonitor.prototype, {
         const id = (this._srcEditId || v('srcId') || '').trim().toLowerCase();
         if (!id) { fb.textContent = this.t('endpoints.srcNeedId', 'Source ID is required.'); return; }
         const proto = v('srcProto');
-        const out = { id, protocol: proto, enabled: document.getElementById('srcEnabled').checked };
-        if (v('srcTpl')) out.template = v('srcTpl');
-        const st = parseFloat(v('srcStale')); if (st > 0) out.stale_after_s = st;
-        const to = parseInt(v('srcTimeout'), 10); if (to > 0) out.timeout = to;
+        // start from what is stored (same protocol): what the form does not
+        // show is sent back as it was; another protocol starts clean
+        const dec = this._srcDeclared && this._srcDeclared.protocol === proto ? this._srcDeclared : null;
+        const out = { ...(dec || {}), id, protocol: proto, enabled: document.getElementById('srcEnabled').checked };
+        out.template = v('srcTpl') || null;                    // null = the group's
+        const st = parseFloat(v('srcStale'));
+        out.stale_after_s = st > 0 ? st : 0;
+        const to = parseFloat(v('srcTimeout'));
+        out.timeout = to > 0 ? to : null;
+        for (const k of ['url', 'topic', 'host', 'port', 'serial_port']) delete out[k];
         if (proto === 'http') out.url = (v('srcUrl') || '').trim();
-        else if (proto === 'rtu') out.serial_port = (v('srcSerial') || '').trim();
         else if (proto === 'mqtt') out.topic = (v('srcTopic') || '').trim();
-        else { out.host = (v('srcHost') || '').trim(); out.port = parseInt(v('srcPort'), 10) || 502; }
-        const groups = {};
+        else if (this._SERIAL_PROTOCOLS.includes(proto)) {
+            out.serial_port = (v('srcSerial') || '').trim();
+            Object.assign(out, this._serialLineRead('src') || {});
+        } else { out.host = (v('srcHost') || '').trim(); out.port = parseInt(v('srcPort'), 10) || 502; }
+        // the rhythms it shows; the groups it does not (static, controls…) stay
+        const groups = { ...((dec || {}).poll_groups || {}) };
         for (const [name, id] of [['realtime', 'srcIvRealtime'], ['normal', 'srcIvNormal'], ['slow', 'srcIvSlow']]) {
             const n = parseFloat(v(id));
-            if (n > 0) groups[name] = { interval: n };
+            if (n > 0) groups[name] = { interval: n }; else delete groups[name];
         }
-        if (Object.keys(groups).length) out.poll_groups = groups;
+        out.poll_groups = Object.keys(groups).length ? groups : null;
+        // a default the stored source does not spell out stays unsaid: writing
+        // it down would change nothing but the file (and restart its units)
+        const DEFAULTS = { parity: 'N', stopbits: 1, bytesize: 8, timeout: 3, enabled: true, stale_after_s: 0 };
+        for (const [k, d] of Object.entries(DEFAULTS)) {
+            if (!(k in (dec || {})) && out[k] === d) delete out[k];
+        }
+        if (this._srcCtx === 'group') delete out.template;
 
         const g = this._group(p, this._srcGroupId);
         const cur = g.sources || [];
@@ -759,12 +886,15 @@ Object.assign(JanitzaMonitor.prototype, {
         const after = r.after || {}, before = r.before || {};
         const delta = Object.keys(after).filter(k => k in before).slice(0, 2)
             .map(k => `${this._esc(k)} ${before[k]} → ${after[k]}`).join(', ');
-        const frames = r.status === 'dry_run' && r.frames ? r.frames.map(f =>
-            `${t('commands.frame', 'registers')} ${f.address}…${f.address + f.words.length - 1} = [${f.words.join(', ')}]`).join('; ') : '';
+        // a Modbus frame (address, words) or an MQTT publish (topic, payload)
+        const frames = r.status === 'dry_run' && r.frames ? r.frames.map(f => f.topic
+            ? `${t('commands.publish', 'publish')} <code>${this._esc(f.payload)}</code> → <code>${this._esc(f.topic)}</code>`
+            : `${t('commands.frame', 'registers')} ${f.address}…${f.address + f.words.length - 1} = [${f.words.join(', ')}]`).join('; ') : '';
+        const already = r.already_set ? ` · ${t('commands.alreadySet', 'already set — nothing written')}` : '';
         return `<div class="cmd-result" style="display:flex;gap:8px;align-items:baseline;padding:2px 0;">
             <span class="status-dot" style="--dot:${this._cmdDot(r.status)}" aria-hidden="true"></span>
             ${withDevice && r.device ? `<span class="dev-chip">${this._esc(r.device)}</span>` : ''}
-            <span><b>${this._cmdVerdict(r.status)}</b>${delta ? ` · ${delta}` : ''}${frames ? ` · ${frames}` : ''}${r.ms != null ? ` · ${Math.round(r.ms)} ms` : ''}${r.reason ? ` · ${this._esc(r.reason)}` : ''}</span></div>`;
+            <span><b>${this._cmdVerdict(r.status)}</b>${delta ? ` · ${delta}` : ''}${frames ? ` · ${frames}` : ''}${already}${r.ms != null ? ` · ${Math.round(r.ms)} ms` : ''}${r.reason ? ` · ${this._esc(r.reason)}` : ''}</span></div>`;
     },
 
     async openCommandModal(endpointId, groupId, deviceId, name) {
@@ -787,7 +917,7 @@ Object.assign(JanitzaMonitor.prototype, {
                         `<option value="${this._esc(c.name)}" ${c.name === cmd.name ? 'selected' : ''}>${this._esc(c.label || c.name)}</option>`).join('')}</select></div>
                 <div class="form-group flex-2"><label class="form-label" for="cmdScope">${t('commands.scope', 'Apply to')}</label>
                     <select id="cmdScope" class="input">
-                        <option value="">${t('commands.everyUnit', 'every unit of the group')} (${units.length})</option>
+                        ${this._authEnabled && this._role !== 'admin' ? '' : `<option value="">${t('commands.everyUnit', 'every unit of the group')} (${units.length})</option>`}
                         ${units.map(u => `<option value="${this._esc(u.device_id)}" ${u.device_id === deviceId ? 'selected' : ''}>${this._esc(u.name || u.device_id)}</option>`).join('')}
                     </select></div>
             </div>
@@ -827,7 +957,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const targets = one ? [one] : (g.units || []).map(u => u.device_id);
         const said = Object.entries(read.params).map(([k, v]) => `${k} = ${v}`).join(', ') || '—';
         if (!dryRun && cmd.confirm !== false
-            && !confirm(`${t('commands.confirm', 'Run')} ${cmd.label || cmd.name} (${said}) ${t('commands.on', 'on')} ${one || t('commands.everyUnit', 'every unit of the group')}?`)) return;
+            && !await this._confirmCommand(cmd, said, one || t('commands.everyUnit', 'every unit of the group'))) return;
         fb.textContent = ''; out.innerHTML = t('common.loading', 'Loading…');
         const rows = [];
         if (dryRun || one) {
@@ -873,11 +1003,17 @@ Object.assign(JanitzaMonitor.prototype, {
         this._srcTemplates = templates;
         const role0 = g?.role || 'inverter';
         const proto0 = ((g?.sources || [])[0] || {}).protocol || (p.connection || {}).protocol || 'tcp';
-        const tplOpts = this._srcTplOptions(proto0, g?.template || '', role0);
+        const tplOpts = this._srcTplOptions(proto0, g ? this._groupOwnTemplate(g) : '', role0);
         const units = (g?.units || []).map(u => u.unit_id).join(', ');
         const roles = ['inverter', 'site', 'meter', 'battery', 'sensor'];
         const ROLE_LABEL = { inverter: 'Inverters', site: 'Site totals', meter: 'Grid meter', battery: 'Battery', sensor: 'Sensors' };
-        const PROTO = { tcp: 'Modbus TCP', 'rtu-tcp': 'Modbus RTU over TCP', http: 'Solar API / HTTP JSON' };
+        // the ways a group may be read, from the API (one list with the
+        // validation). A tap or a serial line has no field here: it goes on
+        // the installation, or on the group's "default" source afterwards
+        const serial = new Set(((await this._protocolsFor('group')) && (this._protocolLists || {}).serial) || this._SERIAL_PROTOCOLS);
+        const protos = (await this._protocolsFor('group')).filter(x => !serial.has(x));
+        const PROTO = { ...this._PROTO_LABEL, http: t('endpoints.protoHttp', 'Solar API / HTTP JSON') };
+        const host0 = (p.connection || {}).host || '';
         document.getElementById('endpointModalTitle').textContent = g
             ? t('endpoints.groupEditTitle', 'Edit group') : t('endpoints.groupAddTitle', 'Add group');
         document.getElementById('endpointModalBody').innerHTML = `
@@ -891,22 +1027,22 @@ Object.assign(JanitzaMonitor.prototype, {
                         `<option value="${r}" ${role0 === r ? 'selected' : ''}>${t('plant.role.' + r, ROLE_LABEL[r])}</option>`).join('')}</select></div>
                 <div class="form-group flex-2"><label class="form-label" for="grpTpl">${t('devices.wizard.template', 'Template')}</label>
                     <select id="grpTpl" class="input">${tplOpts}</select>
-                    <div class="field-hint">${t('endpoints.groupTplHint', 'The map for this kind of unit — used by any source of the group that declares none of its own.')}</div></div>
+                    <div class="field-hint">${t('endpoints.groupTplHint', 'The map for this kind of unit (offered first; other kinds are under "Other kinds") — used by any source of the group that declares none of its own.')}</div></div>
             </div>
             <div class="form-row">
                 <div class="form-group flex-2"><label class="form-label" for="grpUnits">${t('endpoints.unitsLabel', 'Unit IDs')}</label>
                     <input id="grpUnits" class="input" value="${this._esc(units)}" placeholder="1, 2, 3, 4">
                     <div class="field-hint">${t('endpoints.unitsHint', 'Comma-separated, ranges allowed (1-4).')}
-                        ${g ? t('endpoints.unitsKeep', 'Per-unit names are kept — rename a unit in its row.') : ''}</div></div>
+                        ${g ? t('endpoints.unitsKeepRow', 'Per-unit names are kept — rename a unit in its row.') : ''}</div></div>
             </div>
             ${g ? '' : `<div class="form-row">
                 <div class="form-group"><label class="form-label" for="grpProto">${t('endpoints.srcWay', 'Read over')}</label>
-                    <select id="grpProto" class="input" data-action="_grpKindChanged" data-on="change">${['tcp', 'rtu-tcp', 'http'].map(x =>
-                        `<option value="${x}" ${proto0 === x ? 'selected' : ''}>${PROTO[x]}</option>`).join('')}</select></div>
-                <div class="form-group flex-2"><label class="form-label" for="grpAddr">${t('endpoints.srcAddress', 'Address')}</label>
-                    <input id="grpAddr" class="input" value="${this._esc((p.connection || {}).host || '')}" placeholder="192.168.1.50">
-                    <div class="field-hint">${t('endpoints.groupAddrHint', 'Host for Modbus, or a URL with ${unit_id} for HTTP. You can add more sources afterwards.')}</div></div>
-                <div class="form-group"><label class="form-label" for="grpPort">${t('endpoints.port', 'Port')}</label>
+                    <select id="grpProto" class="input" data-action="_grpKindChanged" data-on="change">${protos.map(x =>
+                        `<option value="${this._esc(x)}" ${proto0 === x ? 'selected' : ''}>${this._esc(PROTO[x] || x)}</option>`).join('')}</select></div>
+                <div class="form-group flex-2"><label class="form-label" for="grpAddr" id="grpAddrLabel">${t('endpoints.srcHost', 'Host')}</label>
+                    <input id="grpAddr" class="input" value="${this._esc(host0)}" data-host="${this._esc(host0)}" placeholder="192.168.1.50">
+                    <div class="field-hint" id="grpAddrHint">${t('endpoints.groupHostHint', 'The Modbus host. A serial port or a tap goes on the installation. You can add more sources afterwards.')}</div></div>
+                <div class="form-group" id="grpPortWrap"><label class="form-label" for="grpPort">${t('endpoints.port', 'Port')}</label>
                     <input id="grpPort" class="input" type="number" value="${(p.connection || {}).port || 502}"></div>
             </div>`}
             <label class="form-label" style="display:flex;align-items:center;gap:8px;">
@@ -914,7 +1050,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 ${t('endpoints.groupOnLong', 'Read this group')}</label>
             ${g && (g.commands || []).length ? `<fieldset class="form-group" style="margin-top:12px;border:0;padding:0;">
                 <legend class="form-label">${t('commands.groupAccepts', 'Commands this group accepts')}</legend>
-                <div class="field-hint" style="margin:0 0 6px;">${t('commands.groupAcceptsHint', 'Offered by the template of the Modbus source. A ticked command can be run from this page, over MQTT and from Home Assistant; an unticked one is refused everywhere.')}</div>
+                <div class="field-hint" style="margin:0 0 6px;">${t('commands.groupAcceptsHint', 'Offered by the template of the source that writes (Modbus, else MQTT). A ticked command can be run from this page, over MQTT and from Home Assistant; an unticked one is refused everywhere.')}</div>
                 ${g.commands.map(c => `<label class="form-label" style="display:flex;align-items:center;gap:8px;font-weight:normal;">
                     <input type="checkbox" data-grp-cmd="${this._esc(c.name)}" ${c.enabled ? 'checked' : ''}>
                     ${this._esc(c.label || c.name)} <span class="dev-chip">${this._esc(c.name)}</span></label>`).join('')}
@@ -922,7 +1058,43 @@ Object.assign(JanitzaMonitor.prototype, {
         document.getElementById('endpointFeedback').textContent = '';
         const save = document.querySelector('#endpointModal [data-endpoint-save]');
         if (save) { save.innerHTML = `<i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}`; this._setAction(save, 'saveGroup', [endpointId]); }
+        // the address and the template list follow the way actually selected
+        // (the installation's own may be one a group does not offer, a tap)
+        if (!g) this._grpKindChanged();
+        else this._grpInheritLabel();
+        this._pickTemplate('grpTpl', { kind: () => document.getElementById('grpRole')?.value || '',
+            transport: () => this._tplTransportOf(document.getElementById('grpProto')?.value
+                || (((this._endpointDetail?.groups || []).find(x => x.id === this._grpEditId) || {}).sources || [])[0]?.protocol || 'tcp') });
         this.openModal('endpointModal');
+    },
+
+    // the address field says what the way of reading needs: a URL for HTTP
+    // (never the installation's Modbus host), a host and a port for Modbus
+    _grpAddrFor(proto) {
+        const addr = document.getElementById('grpAddr');
+        if (!addr) return;
+        const http = proto === 'http';
+        const host = addr.dataset.host || '';
+        const t = (k, d) => this.t(k, d);
+        document.getElementById('grpAddrLabel').textContent = http ? t('endpoints.srcUrl', 'URL') : t('endpoints.srcHost', 'Host');
+        document.getElementById('grpAddrHint').textContent = http
+            ? t('endpoints.groupUrlHint', 'The full URL, with ${unit_id} where the unit goes. You can add more sources afterwards.')
+            : t('endpoints.groupHostHint', 'The Modbus host. A serial port or a tap goes on the installation. You can add more sources afterwards.');
+        addr.placeholder = http ? `http://${host || 'host'}/solar_api/v1/...DeviceId=\${unit_id}` : '192.168.1.50';
+        if (http && addr.value === host) addr.value = '';
+        if (!http && !addr.value) addr.value = host;
+        const port = document.getElementById('grpPortWrap');
+        if (port) port.hidden = http;
+    },
+
+    // what the address field holds that the way of reading cannot use
+    _grpAddrError(proto, addr) {
+        const t = (k, d) => this.t(k, d);
+        if (!addr) return t('dialog.required', 'Required');
+        if (proto === 'http') return /^https?:\/\/\S+$/i.test(addr) ? '' : t('endpoints.groupNeedUrl', 'An http:// or https:// URL — a Modbus host goes with a Modbus way of reading.');
+        if (addr.includes('://')) return t('endpoints.groupNoUrl', 'A host name or address, not a URL.');
+        if (addr.startsWith('/')) return t('endpoints.groupNoSerial', 'A serial port goes on the installation, not on a group.');
+        return '';
     },
 
     // the template list follows the kind of unit and the way it is read
@@ -932,6 +1104,15 @@ Object.assign(JanitzaMonitor.prototype, {
             || (((this._endpointDetail?.groups || []).find(x => x.id === this._grpEditId) || {}).sources || [])[0]?.protocol || 'tcp';
         const tpl = document.getElementById('grpTpl');
         if (tpl) tpl.innerHTML = this._srcTplOptions(proto, tpl.value, role);
+        this._grpInheritLabel();
+        if (document.getElementById('grpProto')) this._grpAddrFor(proto);
+    },
+
+    // the group's empty template choice says what it takes instead
+    _grpInheritLabel() {
+        const none = document.querySelector('#grpTpl option[value=""]');
+        const inst = this._endpointDetail?.template;
+        if (none && inst) none.textContent = this.t('endpoints.tplInherits', "— the installation's: {tpl}", { tpl: inst });
     },
 
     async saveGroup(endpointId) {
@@ -950,7 +1131,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const out = {
             id, role: v('grpRole') || '',
             enabled: document.getElementById('grpEnabled').checked,
-            units: this._mergeUnitIds(prev, units),
+            units: this._mergeUnitIds(p, prev, units),
         };
         if (v('grpTpl')) out.template = v('grpTpl');
         if (prev) {
@@ -968,6 +1149,14 @@ Object.assign(JanitzaMonitor.prototype, {
         } else {
             const proto = v('grpProto') || 'tcp';
             const addr = (v('grpAddr') || '').trim();
+            const bad = {};
+            const addrErr = this._grpAddrError(proto, addr);
+            if (addrErr) bad['connection.address'] = addrErr;
+            if (!out.template && !p.template) bad.template = this.t('endpoints.groupNeedTpl', 'A template: the group has none, and the installation gives none.');
+            if (Object.keys(bad).length) {
+                fb.textContent = this._placeFieldErrors(document.getElementById('endpointModalBody'), bad, this._grpFieldId).join(' · ');
+                return;
+            }
             out.connection = proto === 'http'
                 ? { protocol: 'http', url: addr }
                 : { protocol: proto, host: addr, port: parseInt(v('grpPort'), 10) || 502 };
@@ -975,25 +1164,43 @@ Object.assign(JanitzaMonitor.prototype, {
         const list = prev
             ? (p.groups || []).map(x => x.id === id ? out : this._rawGroup(p, x.id))
             : (p.groups || []).map(x => this._rawGroup(p, x.id)).concat([out]);
-        if (await this._saveGroups(endpointId, list)) this.closeModal('endpointModal');
+        // a refusal about this group is said at its field, the rest in the line
+        const at = list.indexOf(out);
+        const ok = await this._saveGroups(endpointId, list, errs => {
+            const fields = {}, rest = [];
+            for (const e of errs) {
+                const m = new RegExp(`^groups\\[${at}\\]\\.(\\S+?):\\s*(.*)$`).exec(e);
+                if (m) fields[m[1]] = m[2]; else rest.push(e);
+            }
+            const left = this._placeFieldErrors(document.getElementById('endpointModalBody'), fields, this._grpFieldId);
+            fb.textContent = rest.concat(left).join(' · ');
+        });
+        if (ok) this.closeModal('endpointModal');
+    },
+
+    // a group's error path → its input in the group modal
+    _grpFieldId(path) {
+        if (/^connection\.(url|host|address)$/.test(path)) return 'grpAddr';
+        if (path === 'connection.port') return 'grpPort';
+        if (path === 'template') return 'grpTpl';
+        if (path === 'units' || path.startsWith('units[')) return 'grpUnits';
+        if (path === 'id') return 'grpId';
+        return '';
     },
 
     // keep a unit's hand-written id and name when the operator only edits the
     // id list — otherwise editing a group would rename its devices and orphan
     // their history
-    _mergeUnitIds(prevGroup, unitIds) {
+    _mergeUnitIds(p, prevGroup, unitIds) {
         const byId = {};
         for (const u of (prevGroup?.units || [])) byId[u.unit_id] = u;
-        return unitIds.map(uid => {
-            const o = byId[uid];
-            return o ? { unit_id: uid, id: o.device_id, ...(o.name ? { name: o.name } : {}) }
-                     : uid;
-        });
+        return unitIds.map(uid => (byId[uid] ? this._rawUnit(p, byId[uid]) : uid));
     },
 
     _endpointStatusColor(p) {
         if (p.enabled === false) return 'var(--text-secondary,#8a94a0)';
         return { online: 'var(--success,#22c55e)', partial: 'var(--warning,#f59e0b)',
+                 asleep: 'var(--text-secondary,#8a94a0)',
                  offline: 'var(--danger,#ef4444)' }[p.status] || 'var(--text-secondary,#8a94a0)';
     },
 
@@ -1001,6 +1208,7 @@ Object.assign(JanitzaMonitor.prototype, {
         if (p.enabled === false) return this.t('devices.disabled', 'disabled');
         return { online: this.t('endpoints.status.online', 'online'),
                  partial: this.t('endpoints.status.partial', 'partial'),
+                 asleep: this.t('endpoints.status.asleep', 'asleep (the sun is down)'),
                  offline: this.t('endpoints.status.offline', 'offline') }[p.status]
             || this.t('endpoints.status.unknown', 'unknown');
     },
@@ -1024,7 +1232,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
     _endpointAggGridHtml(p) {
         const meta = p.aggregate_fields || {};
-        const skip = new Set(['units_online', 'units_total', 'status']);
+        const skip = new Set(['units_online', 'units_total', 'units_asleep', 'status']);
         const present = Object.keys(p.aggregates || {}).filter(n => !skip.has(n));
         // the order the template declares them (its headline totals first);
         // anything else alphabetically after
@@ -1106,10 +1314,13 @@ Object.assign(JanitzaMonitor.prototype, {
                 <i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(p.name || p.id)}
                 <span class="dev-chip">${this._esc(p.id)}</span></h2>
             <div class="header-actions">
-                <button data-admin class="btn btn-secondary btn-sm" ${this._act('testEndpointUi', [p.id], { el: true })}
+                <button data-live class="btn btn-secondary btn-sm" ${this._act('testEndpointUi', [p.id], { el: true })}
                         title="${t('endpoints.testHint', 'Asks every unit over every way it is read — the Solar API by URL, Modbus by one read on its own connection. A Modbus probe opens one more client on the datalogger; they serve only a few at once.')}"><i aria-hidden="true" class="bi bi-activity"></i> ${t('endpoints.test', 'Test units')}</button>
                 <button data-admin class="btn btn-secondary btn-sm" ${this._act('openEndpointModal', [p.id])}><i aria-hidden="true" class="bi bi-pencil-square"></i> ${t('common.edit', 'Edit')}</button>
-                <button data-admin class="btn btn-ghost btn-sm" ${this._act('deleteEndpointUi', [p.id])}><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="plUsedByBadge" hidden ${this._act('usedByOpen', ['installation', p.id, 'usedby'])}><i aria-hidden="true" class="bi bi-diagram-2"></i> <span></span></button>
+                <button data-admin type="button" class="btn btn-secondary btn-sm" id="plDisableInstead" hidden ${this._act('ubDisableInstead', ['installation', p.id])}><i aria-hidden="true" class="bi bi-pause-circle"></i> ${t('usedby.disableInstead', 'Disable instead')}</button>
+                <button data-admin type="button" class="btn btn-ghost btn-sm" id="plDeleteBtn" aria-describedby="plDeleteWhy" ${this._act('deleteEndpointUi', [p.id])}><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>
+                <span id="plDeleteWhy" class="sr-only"></span>
             </div>
         </div>
         <div id="plTplUpdate">${this._tplUpdateNotice('endpoint', p.id, p.template_update)}</div>
@@ -1140,6 +1351,8 @@ Object.assign(JanitzaMonitor.prototype, {
             </div>
         </div>
         <div id="plGroups">${this._endpointGroupsHtml(p)}</div>
+        <div id="plAttributes"></div>
+        <section id="plUsedBy"></section>
 
         <div class="settings-card">
             <div class="settings-card-header">
@@ -1155,13 +1368,13 @@ Object.assign(JanitzaMonitor.prototype, {
                     <tr style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;">
                         <td style="padding-right:14px;">${t('endpoints.group', 'Group')}</td>
                         <td style="padding-right:14px;">${t('endpoints.unitTopics', 'Unit topics')}</td>
-                        <td style="padding-right:14px;">InfluxDB · ${t('devices.wizard.deviceTag', 'device tag')}</td>
+                        <td style="padding-right:14px;">InfluxDB · ${t('devices.wizard.deviceTag', 'Influx device tag')}</td>
                         <td>${t('endpoints.totalsTopic', 'Totals')}</td>
                     </tr>
                     ${outRows}
                 </table></div>
                 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px 24px;margin-top:14px;">
-                    ${fact(t('endpoints.haDiscovery', 'Home Assistant discovery'), mq.ha_discovery ? t('common.on', 'on') : t('common.off', 'off'))}
+                    ${fact(t('endpoints.haDiscovery', 'Home Assistant discovery'), mq.ha_discovery !== false ? t('common.on', 'on') : t('common.off', 'off'))}
                     ${fact(t('devices.sink.httpTitle', 'HTTP / JSON output'), p.http_output_enabled ? t('common.on', 'on') : t('common.off', 'off'))}
                     ${fact(t('devices.sink.restTitle', 'REST push'), (p.rest_push || {}).enabled ? t('common.on', 'on') : t('common.off', 'off'))}
                 </div>
@@ -1238,7 +1451,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;">
                     <span style="color:var(--text-secondary);font-size:12px;">${t('endpoints.influx.tags', 'Tags on every unit’s points')}</span>
                     ${tags.length ? tags.map(([k, v]) => `<code style="font-size:11.5px;">${this._esc(k)}=${this._esc(v)}</code>`).join(' ')
-                                  : `<span class="field-hint">${t('common.none', 'none')}</span>`}
+                                  : `<span class="field-hint">${t('common.none', 'None')}</span>`}
                     <button data-admin class="btn btn-ghost btn-sm" ${this._act('openInfluxTagsModal', [p.id])}><i aria-hidden="true" class="bi bi-pencil"></i> ${t('common.edit', 'Edit')}</button>
                 </div>
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;">
@@ -1257,7 +1470,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
     // a small key=value / multi-row editor reused by the three dialogs below
     _kvRowsHtml(id, rows, cols) {
-        const row = (r = {}) => `<div class="form-row" data-kv-row style="align-items:flex-end;margin-bottom:4px;">
+        const row = (r = {}) => `<div class="form-row align-end" data-kv-row style="margin-bottom:4px;">
             ${cols.map(c => c.options
                 ? `<div class="form-group ${c.wide ? 'flex-2' : ''}" style="margin-bottom:0;"><select class="input" data-k="${c.key}" aria-label="${this._esc(c.label)}">
                     ${c.options.map(o => `<option ${String(o) === String(r[c.key] ?? '') ? 'selected' : ''}>${this._esc(o)}</option>`).join('')}</select></div>`
@@ -1312,17 +1525,15 @@ Object.assign(JanitzaMonitor.prototype, {
             return false;
         }
         this.closeModal('endpointModal');
-        this.showToast('success', this.t('endpoints.saved', 'Endpoint saved'), '');
+        this.showToast('success', this.t('endpoints.saved', 'Installation saved'), '');
         const r = await fetch(`/api/endpoints/${encodeURIComponent(id)}`);
         if (r.ok) {
             const np = await r.json();
             this._endpointDetail = np;
-            const a = document.getElementById('plTotals'), b = document.getElementById('plInfluxExtras');
-            // the operator was working in the totals list: keep it open
-            const wasOpen = !!(a && a.querySelector('details[open]'));
-            if (a) a.innerHTML = this._endpointTotalsHtml(np);
-            if (wasOpen) a.querySelector('details')?.setAttribute('open', '');
-            if (b) b.innerHTML = this._endpointInfluxExtrasHtml(np);
+            // what the modal saved, drawn now; the totals list the operator
+            // was working in stays open
+            this._plRedraw(document.getElementById('plTotals'), this._endpointTotalsHtml(np), true);
+            this._plRedraw(document.getElementById('plInfluxExtras'), this._endpointInfluxExtrasHtml(np), true);
         }
         return true;
     },
@@ -1358,7 +1569,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <select id="totOp" class="input">${['sum', 'avg', 'min', 'max', 'spread', 'mode'].map(o => `<option ${o === d.op ? 'selected' : ''}>${o}</option>`).join('')}</select></div>
             </div>
             <div class="form-group"><label class="form-label" for="totFilter">${t('endpoints.totals.from', 'From the units’ fields')}</label>
-                <input id="totFilter" class="input" placeholder="${this._esc(t('common.search', 'Search'))}" style="margin-bottom:6px;">
+                <input id="totFilter" class="input" placeholder="${this._esc(t('common.search', 'Search…'))}" style="margin-bottom:6px;">
                 <div id="totFrom" style="max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px 10px;columns:2;">
                     ${fields.map(f => `<label style="display:flex;gap:6px;align-items:center;font-size:12.5px;" data-f="${this._esc(f)}">
                         <input type="checkbox" value="${this._esc(f)}" ${from.has(f) ? 'checked' : ''}> <code style="font-size:11.5px;">${this._esc(f)}</code></label>`).join('')}
@@ -1390,7 +1601,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const o = (ix.outputs || []).find(x => x.id === oid) || { enabled: true, mode: 'changed', fields: [], tags: {} };
         const sources = [...new Set([...Object.keys(p.aggregates || {}),
             ...Object.keys(p.totals || {}), ...Object.keys(p.totals_declared || {}),
-            'units_online', 'units_total'])].sort();
+            'units_online', 'units_total', 'units_asleep'])].sort();
         const groups = (p.groups || []).map(g => g.id);
         this._endpointModalOpen(oid ? t('endpoints.outputs.edit', 'Edit InfluxDB output') : t('endpoints.outputs.add', 'Add output'), `
             <datalist id="outSources">${sources.map(s => `<option value="${this._esc(s)}">`).join('')}</datalist>
@@ -1421,7 +1632,7 @@ Object.assign(JanitzaMonitor.prototype, {
             ${this._kvRowsHtml('outTagRows', Object.entries(o.tags || {}).map(([k, v]) => ({ k, v })), [
                 { key: 'k', label: t('endpoints.influx.tagName', 'Tag') },
                 { key: 'v', label: t('endpoints.influx.tagValue', 'Value'), wide: true }])}
-            <p class="field-hint">${t('endpoints.outputs.hint', 'One point per cycle with every field whose total exists. ${endpoint_id} is substituted in the bucket and tag values. Empty bucket = the endpoint’s.')}</p>`,
+            <p class="field-hint">${t('endpoints.outputs.hint', 'One point per cycle with every field whose total exists. ${endpoint_id} is substituted in the bucket and tag values. Empty bucket = the installation’s.')}</p>`,
             'saveInfluxOutput', [id, oid]);
     },
 
@@ -1446,7 +1657,11 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     async removeInfluxOutput(id, oid) {
-        if (!confirm(this.t('endpoints.outputs.confirmDelete', 'Stop writing this output? Its history stays in InfluxDB.'))) return;
+        if (!await this.confirmAction({
+            title: this.t('endpoints.outputs.deleteTitle', 'Stop output {id}', { id: oid }),
+            message: this.t('endpoints.outputs.confirmDelete', 'Nothing more is written to it. Its history stays in InfluxDB.'),
+            confirmLabel: this.t('endpoints.outputs.stop', 'Stop writing'), danger: true,
+        })) return;
         const ix = this._endpointDetail.influxdb || {};
         const send = { ...ix, outputs: (ix.outputs || []).filter(x => x.id !== oid) };
         delete send.tags;
@@ -1471,7 +1686,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 Array.isArray(errs) ? errs.join(' · ') : String(errs));
             return;
         }
-        this.showToast('success', this.t('endpoints.saved', 'Endpoint saved'),
+        this.showToast('success', this.t('endpoints.saved', 'Installation saved'),
             el.checked ? this.t('endpoints.aggOn', 'Group totals are published')
                        : this.t('endpoints.aggOff', 'Group totals are off'));
         this._refreshEndpointDetail(id);
@@ -1502,8 +1717,8 @@ Object.assign(JanitzaMonitor.prototype, {
         row.setAttribute('data-renaming', '1');
         cell.innerHTML = `<div style="display:flex;gap:6px;">
             <input class="input" id="plUnitName" style="min-width:140px;" value="${this._esc(cur?.name || '')}">
-            <button class="btn btn-primary btn-sm" ${this._act('saveEndpointUnitName', [deviceId])}><i aria-hidden="true" class="bi bi-check-lg"></i></button>
-            <button class="btn btn-ghost btn-sm" ${this._act('cancelEndpointUnitName', [deviceId])}><i aria-hidden="true" class="bi bi-x-lg"></i></button>
+            <button class="btn btn-primary btn-sm" ${this._act('saveEndpointUnitName', [deviceId])} ${this._ib(this.t('common.save', 'Save'), cur?.name || deviceId)}><i aria-hidden="true" class="bi bi-check-lg"></i></button>
+            <button class="btn btn-ghost btn-sm" ${this._act('cancelEndpointUnitName', [deviceId])} ${this._ib(this.t('common.cancel', 'Cancel'), cur?.name || deviceId)}><i aria-hidden="true" class="bi bi-x-lg"></i></button>
         </div>`;
         cell.querySelector('input')?.focus();
     },
@@ -1535,7 +1750,7 @@ Object.assign(JanitzaMonitor.prototype, {
             this.showToast('error', this.t('endpoints.saveFail', 'Save failed'),
                 Array.isArray(errs) ? errs.join(' · ') : String(errs));
         } else {
-            this.showToast('success', this.t('endpoints.saved', 'Endpoint saved'), deviceId);
+            this.showToast('success', this.t('endpoints.saved', 'Installation saved'), deviceId);
         }
         this._refreshEndpointDetail(p.id);
     },
@@ -1580,7 +1795,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 </div>`).join('')}
             </div>`;
         }).join('');
-        const when = new Date().toLocaleTimeString();
+        const when = new Date().toLocaleTimeString(this._loc());
         out.innerHTML = `<div class="settings-card" role="status" aria-live="polite"><div class="settings-card-body">
             <h3 style="margin:0 0 10px;font-size:14px;"><i aria-hidden="true" class="bi bi-activity"></i>
                 ${this.t('endpoints.testResult', 'Test result')} <span style="font-weight:400;color:var(--text-secondary);">· ${when}</span></h3>
@@ -1604,6 +1819,7 @@ Object.assign(JanitzaMonitor.prototype, {
         // every other one an operator put in config.yaml (timeouts, retry
         // budgets, illegal-register lists) on the first unrelated edit.
         this._endpointEditConn = { ...conn };
+        const epProtos = await this._protocolsFor('endpoint');
         // A grouped installation keeps its units, its ways of being read and
         // its topics on the group cards. This dialog then owns the name and the
         // output switches — the flat form, sent as-is, once flattened a plant
@@ -1616,7 +1832,7 @@ Object.assign(JanitzaMonitor.prototype, {
             `<option value="${this._esc(t.id)}" ${p?.template === t.id ? 'selected' : ''}>${this._esc(t.name || t.id)}</option>`)).join('');
         document.getElementById('endpointModalTitle').textContent = grouped
             ? this.t('endpoints.titleEditInstallation', 'Edit installation')
-            : editId ? this.t('endpoints.titleEdit', 'Edit Endpoint') : this.t('endpoints.titleAdd', 'Add Endpoint');
+            : editId ? this.t('endpoints.titleEdit', 'Edit installation') : this.t('endpoints.titleAdd', 'Add installation');
         const sinkToggles = `
             <div class="form-row" style="gap:20px;flex-wrap:wrap;">
                 <label class="form-label" style="display:flex;align-items:center;gap:8px;">
@@ -1626,11 +1842,11 @@ Object.assign(JanitzaMonitor.prototype, {
                     <input type="checkbox" id="plInfluxEnabled" ${p ? ((p.influxdb || {}).enabled !== false ? 'checked' : '') : 'checked'}>
                     ${this.t('endpoints.influxEnabled', 'Write units to InfluxDB')}</label>
                 <label class="form-label" style="display:flex;align-items:center;gap:8px;">
-                    <input type="checkbox" id="plHaDisc" ${p ? ((p.mqtt || {}).ha_discovery ? 'checked' : '') : ''}>
+                    <input type="checkbox" id="plHaDisc" ${p ? ((p.mqtt || {}).ha_discovery !== false ? 'checked' : '') : ''}>
                     ${this.t('devices.wizard.haDiscovery', 'Publish Home Assistant MQTT discovery for this device')}</label>
                 <label class="form-label" style="display:flex;align-items:center;gap:8px;">
                     <input type="checkbox" id="plAggregates" ${p ? (p.aggregates_enabled !== false ? 'checked' : '') : 'checked'}>
-                    ${this.t('endpoints.aggEnable', 'Publish endpoint totals')}</label>
+                    ${this.t('endpoints.aggEnable', 'Publish group totals')}</label>
             </div>
             <label class="form-label" style="display:flex;align-items:center;gap:8px;">
                 <input type="checkbox" id="plEnabled" ${p ? (p.enabled ? 'checked' : '') : 'checked'}>
@@ -1641,7 +1857,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <p class="field-hint" style="margin:0 0 12px;">${this.t('endpoints.groupedIntro',
                 'The name and the outputs of the whole installation. Its units, how they are read and where they publish are edited on each group card.')}</p>
             <div class="form-row">
-                <div class="form-group"><label class="form-label" for="plId">${this.t('endpoints.id', 'Endpoint ID')}</label>
+                <div class="form-group"><label class="form-label" for="plId">${this.t('endpoints.id', 'Installation ID')}</label>
                     <input id="plId" class="input" value="${this._esc(p.id)}" disabled></div>
                 <div class="form-group flex-2"><label class="form-label" for="plName">${this.t('endpoints.name', 'Name')}</label>
                     <input id="plName" class="input" value="${this._esc(p.name || '')}" placeholder="${this._esc(p.id)}"></div>
@@ -1657,7 +1873,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <p class="field-hint" style="margin:0 0 12px;">${this.t('endpoints.intro',
                 'One template + one endpoint + several unit IDs. Each unit becomes its own device (own socket, independent failure) named <endpoint>-u<unit>.')}</p>
             <div class="form-row">
-                <div class="form-group"><label class="form-label" for="plId">${this.t('endpoints.id', 'Endpoint ID')}</label>
+                <div class="form-group"><label class="form-label" for="plId">${this.t('endpoints.id', 'Installation ID')}</label>
                     <input id="plId" class="input" value="${this._esc(p?.id || '')}" ${editId ? 'disabled' : ''} placeholder="fronius"></div>
                 <div class="form-group flex-2"><label class="form-label" for="plName">${this.t('endpoints.name', 'Name')}</label>
                     <input id="plName" class="input" value="${this._esc(p?.name || '')}" placeholder="Fronius PV"></div>
@@ -1665,9 +1881,10 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="form-row">
                 <div class="form-group"><label class="form-label" for="plProto">${this.t('devices.wizard.protocol', 'Protocol')}</label>
                     <select id="plProto" class="input">
-                        <option value="tcp" ${(conn.protocol || 'tcp') === 'tcp' ? 'selected' : ''}>Modbus TCP</option>
-                        <option value="rtu-tcp" ${conn.protocol === 'rtu-tcp' ? 'selected' : ''}>Modbus RTU over TCP</option>
-                        <option value="rtu_tap" ${conn.protocol === 'rtu_tap' ? 'selected' : ''}>${this.t('endpoints.protoTap', 'Modbus RTU tap (listen-only)')}</option>
+                        ${(() => { const cur = conn.protocol || 'tcp';
+                                   const list = epProtos.includes(cur) ? epProtos : [...epProtos, cur];
+                                   return list.map(x => `<option value="${x}" ${cur === x ? 'selected' : ''}>${this._esc(x === 'rtu_tap'
+                                       ? this.t('endpoints.protoTap', 'Modbus RTU tap (listen-only)') : (this._PROTO_LABEL[x] || x))}</option>`).join(''); })()}
                     </select></div>
                 <div class="form-group flex-2" data-net-only><label class="form-label" for="plHost">${this.t('endpoints.host', 'Host')}</label>
                     <input id="plHost" class="input" value="${this._esc(conn.host || '')}" placeholder="192.168.1.50"></div>
@@ -1687,7 +1904,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="form-group flex-2"><label class="form-label" for="plUnits">${this.t('endpoints.unitsLabel', 'Unit IDs')}</label>
                     <input id="plUnits" class="input" value="${this._esc(units)}" placeholder="1, 2, 3, 4">
                     <div class="field-hint">${this.t('endpoints.unitsHint', 'Comma-separated, ranges allowed (1-4).')}
-                        ${editId ? this.t('endpoints.unitsKeep', 'Per-unit names are kept — rename a unit on the endpoint page.') : ''}</div></div>
+                        ${editId ? this.t('endpoints.unitsKeep', 'Per-unit names are kept — rename a unit on the installation page.') : ''}</div></div>
                 <div class="form-group flex-2"><label class="form-label" for="plTemplate">${this.t('devices.wizard.template', 'Template')}</label>
                     <select id="plTemplate" class="input" ${lock}>${tplOptions}</select></div>
             </div>
@@ -1718,6 +1935,8 @@ Object.assign(JanitzaMonitor.prototype, {
         // button — reclaim it, or Save would still be saving a source
         const _save = document.querySelector('#endpointModal [data-endpoint-save]');
         if (_save) { this._setAction(_save, 'saveEndpoint'); _save.innerHTML = `<i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}`; }
+        if (document.getElementById('plTemplate')?.tagName === 'SELECT')
+            this._pickTemplate('plTemplate', { transport: () => this._tplTransportOf(document.getElementById('plProto')?.value) });
         this.openModal('endpointModal');
     },
 
@@ -1819,7 +2038,7 @@ Object.assign(JanitzaMonitor.prototype, {
             return;
         }
         this.closeModal('endpointModal');
-        this.showToast('success', this.t('endpoints.saved', 'Endpoint saved'),
+        this.showToast('success', this.t('endpoints.saved', 'Installation saved'),
             (d.devices || []).map(x => x.id).join(', '));
         if (this._endpointDetail && this._endpointDetail.id === body.id
             && document.querySelector('[data-endpoint-page]')) {
@@ -1829,18 +2048,47 @@ Object.assign(JanitzaMonitor.prototype, {
         }
     },
 
+    // what uses this installation or its units: the section, the header's
+    // count, and Delete held back (with the reason said) while anything does
+    async _loadEndpointUsedBy(id) {
+        const deps = await this._ubMount('installation', id, document.getElementById('plUsedBy'), 'installation');
+        if (deps) this._applyEndpointUsedBy(id, deps);
+    },
+
+    _applyEndpointUsedBy(id, deps) {
+        if (this._endpointDetail?.id !== id) return;
+        this._endpointUsedBy = { id, deps };      // survives the 5 s tick's new detail
+        this._endpointDetail.usedBy = deps;
+        const n = this._ubCount(deps);
+        const badge = document.getElementById('plUsedByBadge');
+        if (badge) {
+            badge.hidden = !n;
+            badge.querySelector('span').textContent = this.tn('usedby.badgeInst', n, 'used by {n}');
+            badge.setAttribute('aria-label', this.tn('usedby.badgeAriaInst', n, 'Used by {n}: show what uses it'));
+        }
+        this._ubHold(document.getElementById('plDeleteBtn'), n, document.getElementById('plDeleteWhy'));
+        const dis = document.getElementById('plDisableInstead');
+        if (dis) dis.hidden = !n || this._endpointDetail.enabled === false;
+    },
+
     async deleteEndpointUi(id) {
-        if (!confirm(this.t('endpoints.deleteConfirm',
-                'Delete this endpoint and stop all its units? Register selections are kept on disk.') + `\n${id}`)) return;
-        const rsp = await fetch(`/api/endpoints/${encodeURIComponent(id)}`, { method: 'DELETE' });
-        const d = await rsp.json().catch(() => ({}));
-        if (!rsp.ok) {
-            const errs = d.detail?.errors || [d.detail || rsp.statusText];
-            this.showToast('error', this.t('endpoints.deleteFail', 'Delete failed'),
-                Array.isArray(errs) ? errs.join(' · ') : String(errs));
+        const onPage = this._endpointDetail?.id === id && !!document.querySelector('[data-endpoint-page]');
+        const known = this._endpointUsedBy?.id === id ? this._endpointUsedBy.deps : null;
+        if (onPage && this._ubCount(known)
+            && !await this._ubRecheck('installation', id, document.getElementById('plUsedBy'), deps => this._applyEndpointUsedBy(id, deps))) return;
+        const ask = {
+            kind: 'installation', id, typed: id,
+            host: onPage ? document.getElementById('plUsedBy') : null,
+            title: this.t('endpoints.deleteTitle', 'Delete installation {id}', { id }),
+            message: this.t('endpoints.deleteConfirm',
+                'All its units stop and leave the configuration. Register selections are kept on disk.'),
+        };
+        if (!await this._ubDelete(ask)) {
+            if (onPage && ask.refused) this._applyEndpointUsedBy(id, ask.refused);
             return;
         }
-        this.showToast('success', this.t('endpoints.deleted', 'Endpoint deleted'),
+        const d = ask.result || {};
+        this.showToast('success', this.t('endpoints.deleted', 'Installation deleted'),
             (d.removed_devices || []).join(', '));
         if (document.querySelector('[data-endpoint-page]')) this.closeEndpointDetail();
         else await this.renderDevicesList();

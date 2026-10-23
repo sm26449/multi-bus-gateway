@@ -136,6 +136,15 @@ Built-in templates are read-only. **Duplicate** one to start from it.
    - **Default unit ID** and **Max registers per read**. Lower it to 40 or so
      if the device rejects long reads with an *illegal data address*
      exception.
+   - **Pause between writes (s)** (`min_write_gap_s`): for an interface that
+     relays writes slowly and stalls on a burst. The Samsung MIM-B19N waits
+     for gaps on its own bus, so its map asks for 2 s. Two writes to the
+     device are then at least that far apart.
+   - **Single-register writes only (FC6)** (`single_register_writes`): for
+     a device that refuses FC16. Every write to holding registers, from a
+     command, a setup step or a raw write, goes out as one FC6 per
+     register, in order, and stops at the first refusal. The Delta VFD-EL
+     answers only FC3, FC6 and FC8 ([delta-vfd-el.md](delta-vfd-el.md)).
    - **Poll groups:** how often each group is read, in seconds. Rows say which
      group they are in. Use the fast group for power, the slow one for energy
      counters and identity.
@@ -164,7 +173,9 @@ Standard names (`voltage_l1_n`, `power_active_total`, `energy_active_import`,
 `soc`…) make every device of the same quantity look alike to Grafana, Node-RED,
 the dashboards and virtual meters. Each one also comes with a **unit
 contract**: an `energy_*` name promises Wh, and the editor flags a mismatch
-in amber. The list covers the grid, PV, batteries, the environment,
+in amber, with a **→ Wh** button. Picking a canonical name fills the row's
+empty Unit and Category (`voltage_l1_n` → V, `voltage`); what you typed
+stays — a native kWh is fixed in the scale, not just in the label. The list covers the grid, PV, batteries, the environment,
 water/gas/heat metering, EV charging and tanks:
 [canonical-fields.md](canonical-fields.md).
 
@@ -286,6 +297,65 @@ registers:
 When adding the device, give the broker, port, credentials and the
 **subscribe topic** (e.g. `battery/1/#`). **Discover → MQTT topic browse**
 shows what a broker is publishing, so you can pick rather than type.
+
+**Is the device alive?** A device that publishes only when something
+changes (an ESPHome node, a Shelly, a Zigbee contact) can be silent for
+hours and still be fine. If it has a **birth and last will** (a topic that
+says `online`, and `offline` when it drops off the broker), declare it once
+in the template, and the gateway believes that instead of the age of the
+last message:
+
+```json
+"protocol": {"transports": ["mqtt"],
+             "availability": {"topic": "~/status", "online": "online", "offline": "offline"}}
+```
+
+- **online:** the device is healthy however old its values, and the broker's
+  retained values are its current state (taken at once after a restart);
+- **offline:** the device is down at once, and its retained values are
+  dropped;
+- **nothing said yet:** retained values wait for the first word (the last
+  one per topic).
+
+Without it, a device is **down** when nothing arrived for `stale_after_s`
+seconds (connection, default 30). A device's connection may set its own
+`availability`, which wins over the template's.
+
+**Topic variables:** a row's topic may contain `{name}`, filled per device from its connection's `vars`:
+`{stat}/POWER` with `vars: {stat: stat/plug1}`. One template then serves devices whose topics differ before the
+device's name (Tasmota). A value is never a wildcard ([mqtt-discovery.md](mqtt-discovery.md#topic-variables-any-mqtt-device)).
+
+**Asked to keep publishing (keepalive).** Some devices publish only while
+someone asks. A Victron GX sends nothing until it gets
+`R/<portal>/keepalive`. The template declares the request once:
+
+```json
+"protocol": {"transports": ["mqtt"],
+             "keepalive": {"topic": "R/{portal}/keepalive", "first_payload": "",
+                           "payload": "{\"keepalive-options\": [\"suppress-republish\"]}",
+                           "every_s": 30}}
+```
+
+- `first_payload` goes out on connect. For a GX, empty means "send me
+  everything".
+- `payload` goes out every `every_s` seconds (5–3600) after that.
+- A device's connection may set its own `keepalive`, or `keepalive: false`
+  to turn it off (when something else already asks). In the device's
+  **Configure → Connection** tab: *Keepalive*: as the template says, its own (every 5–3600 s),
+  or off.
+- A standby gateway sends it too: it is a read request.
+
+**Written over MQTT.** A row with a `write_topic` can be written by a
+command; its `write_payload` shapes the text. See
+[Commands over MQTT](templates-advanced.md#commands-over-mqtt).
+
+**TLS to a device with its own certificate** (a GX on 8883): the connection
+takes `tls_ca` (a CA file) or `tls_insecure: true` (encrypted, but the
+certificate is not checked).
+
+**The gateway's own broker:** a device on the broker the gateway publishes
+to can use `broker: "@gateway"`. It then takes the gateway's host, port,
+credentials and TLS, so no copy of the password sits in the device.
 
 ## 6. Test it on the real device
 
@@ -419,6 +489,8 @@ A minimal complete template:
 | `writable`, `write_min`, `write_max`, `write_allowed`, `write_safe` | — | the write envelope ([MANUAL §14](MANUAL.md#14-modbus-writes--dead-man-leases)) |
 | `json_path` | — | HTTP/MQTT: where the value is in the payload |
 | `topic` | — | MQTT: the row's own topic; `~/leaf` is relative to the device's |
+| `write_topic` | — | MQTT: where a command publishes the row's new value ([Commands over MQTT](templates-advanced.md#commands-over-mqtt)) |
+| `write_payload` | `${value}` | MQTT: the text published; `${value}`, `${label}`, or a fixed text |
 | `description` | — | free text, shown as a tooltip |
 
 Template-level fields (`protocol`, `poll_groups`, `categories`, …) and the

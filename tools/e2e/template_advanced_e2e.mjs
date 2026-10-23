@@ -93,7 +93,7 @@ try {
   await page.click(`[data-tm-edit="${TPL}"]`);
   await page.waitForSelector('#devTplModal.active');
   await page.click('#tplAdv > summary');
-  check('the editor has an Advanced section with six tabs', await page.locator('.tpl-adv-tab').count() === 6);
+  check('the editor has an Advanced section with nine tabs', await page.locator('.tpl-adv-tab').count() === 9);
 
   // ═══ 1. a calculated field, checked against THIS map as it is typed ═════
   await page.click(`${adv} [data-action="_advAddCalc"]`);
@@ -117,7 +117,7 @@ try {
   // ═══ 2. a command ═══════════════════════════════════════════════════════
   await tab('commands');
   await page.click(`${adv} [data-action="_advAddKey"]`);
-  await fill(`${adv} input[aria-label="command name"]`, 'power_limit');
+  await fill(`${adv} input[aria-label="Command name"]`, 'power_limit');
   await fill(`${adv} input[aria-label="label"]`, 'Power limit');
   await fill(`${adv} input[aria-label="min"]`, 0);
   await fill(`${adv} input[aria-label="max"]`, 100);
@@ -164,11 +164,23 @@ try {
   check('…and a wrong value does not match', /does not match/.test(await page.textContent('#advIdfResult')));
   await fill(`${adv} input[aria-label="equals"]`, 6666);
 
+  // ═══ 4b. setup at connect ══════════════════════════════════════════════
+  await tab('setup');
+  await page.click(`${adv} [data-action="_advAdd"]`);
+  await fill(`${adv} input[aria-label="setup name"]`, 'extra_values');
+  await fill(`${adv} input[aria-label="setup address"]`, 6000);
+  await fill(`${adv} textarea[aria-label="Setup values"]`, '0x8238, 33284');
+  await fill(`${adv} input[aria-label="provides from"]`, 4);
+  await fill(`${adv} input[aria-label="provides to"]`, 5);
+  cb = await checkBox();
+  check('a setup step from the UI checks clean', /No problems/.test(cb), cb);
+
   // ═══ 5. details & categories ═══════════════════════════════════════════
   await tab('details');
   await fill(`${adv} input[aria-label="version"]`, '1.1.0');
   await fill(`${adv} input[aria-label="source document"]`, 'E2E manual p. 3');
-  await fill(`${adv} input[aria-label="category id"]`, 'power_meas');
+  // (the calculated power_active_total brought its own canonical section)
+  await fill(`${adv} input[aria-label="Category ID"][value="power"]`, 'power_meas');
   const rowCat = await page.locator('#devTplBody tbody tr').first().locator('[data-f="category"]').inputValue();
   check('renaming a category renames it on its rows', rowCat === 'power_meas', rowCat);
   await page.click('#tplAdv > summary').catch(() => {});
@@ -180,7 +192,7 @@ try {
   await fill('#tplRowBody input[aria-label="nan"]', 'true');
   await page.locator('#tplRowBody label:has-text("Counter that only grows") input').check();
   await page.click('#tplRowBody [data-action="_advAddKey"]');
-  await fill('#tplRowBody input[aria-label="output name"]', 'site_power_l1');
+  await fill('#tplRowBody input[aria-label="Output name"]', 'site_power_l1');
   await page.locator('#tplRowBody select[aria-label="state class"]').selectOption('measurement');
   await page.click('#tplRowModal .modal-footer [data-action="tplRowDone"]');
   await page.waitForSelector('#tplRowModal', { state: 'hidden' });
@@ -218,10 +230,14 @@ try {
     && pl.verify?.[0]?.read === 'limit_pct' && pl.readback_group === 'controls', JSON.stringify(pl));
   check('saved: display', t.display?.unit_label === 'meter' && (t.display?.glance || []).join() === 'power_active_total,power_l1'
     && t.display?.alarms?.[0]?.severity === 'danger', JSON.stringify(t.display));
+  check('saved: the setup step (hex kept readable)', JSON.stringify(t.setup) === JSON.stringify([{ name: 'extra_values', address: 6000,
+    values: ['0x8238', 33284], provides: { from: 4, to: 5 } }]), JSON.stringify(t.setup));
   check('saved: identify', t.identify?.registers?.[0]?.address === 1 && t.identify?.registers?.[0]?.equals === 6666, JSON.stringify(t.identify));
   check('saved: the row details (nan, growing counter, a total, HA state class)',
     r0.nan === true && r0.monotonic === true && r0.aggregates?.site_power_l1 === 'sum' && r0.state_class === 'measurement', JSON.stringify(r0));
   check('saved: categories renamed on the map', !!t.categories?.power_meas && r0.category === 'power_meas', JSON.stringify(t.categories));
+  check('saved: the calculated field\'s canonical section is declared', !!t.categories?.power_active
+    && (t.calculated || []).some(c => c.name === 'power_active_total' && c.category === 'power_active'), JSON.stringify(t.categories));
 
   // ═══ 9. phone width: the Advanced section fits ═════════════════════════
   await page.setViewportSize({ width: 390, height: 844 });

@@ -98,7 +98,7 @@ Jasic family member and the InfluxDB output is on): archived event list with
 decoded causes, click-through to the recorded waveform, lifetime counters in
 the footer.
 
-Device workspace → **Outputs** tab → "PQ event recorder" card: enable
+Device workspace → **Power Quality** tab → "PQ event recorder" card: enable
 toggle, poll interval, waveform archiving, base-URL override, live recorder
 status — the full configuration without touching config.yaml.
 

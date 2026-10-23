@@ -5,7 +5,7 @@
             "address": 19000,
             "name": "_G_ULN[0]",
             "description": "",
-            "label": "Tensiune L1-N",
+            "label": "Voltage L1-N",
             "unit": "V",
             "data_type": "float",
             "poll_group": "realtime",
@@ -46,7 +46,7 @@
             "address": 19002,
             "name": "_G_ULN[1]",
             "description": "",
-            "label": "Tensiune L2-N",
+            "label": "Voltage L2-N",
             "unit": "V",
             "data_type": "float",
             "poll_group": "realtime",
@@ -87,7 +87,7 @@
             "address": 19004,
             "name": "_G_ULN[2]",
             "description": "",
-            "label": "Tensiune L3-N",
+            "label": "Voltage L3-N",
             "unit": "V",
             "data_type": "float",
             "poll_group": "realtime",
@@ -717,7 +717,7 @@
                 "dashboard_order": 21
             },
             "thresholds": {
-                "enabled": true,
+                "enabled": false,
                 "dangerLow": null,
                 "warningLow": null,
                 "warningHigh": 90.0,
@@ -756,7 +756,7 @@
                 "dashboard_order": 22
             },
             "thresholds": {
-                "enabled": true,
+                "enabled": false,
                 "dangerLow": null,
                 "warningLow": null,
                 "warningHigh": 90.0,
@@ -795,7 +795,7 @@
                 "dashboard_order": 23
             },
             "thresholds": {
-                "enabled": true,
+                "enabled": false,
                 "dangerLow": null,
                 "warningLow": null,
                 "warningHigh": 90.0,
@@ -1119,7 +1119,7 @@
             "address": 19110,
             "name": "_G_THD_ULN[0]",
             "description": "THD voltage L1",
-            "label": "THD Tensiune L1",
+            "label": "Harmonic, THD,U L1-N",
             "unit": "%",
             "data_type": "float",
             "poll_group": "normal",
@@ -1159,7 +1159,7 @@
             "address": 19112,
             "name": "_G_THD_ULN[1]",
             "description": "THD voltage L2",
-            "label": "THD Tensiune L2",
+            "label": "Harmonic, THD,U L2-N",
             "unit": "%",
             "data_type": "float",
             "poll_group": "normal",
@@ -1199,7 +1199,7 @@
             "address": 19114,
             "name": "_G_THD_ULN[2]",
             "description": "THD voltage L3",
-            "label": "THD Tensiune L3",
+            "label": "Harmonic, THD,U L3-N",
             "unit": "%",
             "data_type": "float",
             "poll_group": "normal",
@@ -2250,8 +2250,8 @@
         {
             "address": 4549,
             "name": "_ULN_MIN[0]",
-            "description": "Tensiune L1-N Min (drag)",
-            "label": "Tensiune L1-N Min (drag)",
+            "description": "Min. value, voltage L1-N",
+            "label": "Min. value, voltage L1-N",
             "unit": "V",
             "data_type": "float",
             "poll_group": "slow",
@@ -2290,8 +2290,8 @@
         {
             "address": 4551,
             "name": "_ULN_MIN[1]",
-            "description": "Tensiune L2-N Min (drag)",
-            "label": "Tensiune L2-N Min (drag)",
+            "description": "Min. value, voltage L2-N",
+            "label": "Min. value, voltage L2-N",
             "unit": "V",
             "data_type": "float",
             "poll_group": "slow",
@@ -2330,8 +2330,8 @@
         {
             "address": 4553,
             "name": "_ULN_MIN[2]",
-            "description": "Tensiune L3-N Min (drag)",
-            "label": "Tensiune L3-N Min (drag)",
+            "description": "Min. value, voltage L3-N",
+            "label": "Min. value, voltage L3-N",
             "unit": "V",
             "data_type": "float",
             "poll_group": "slow",
@@ -2473,15 +2473,15 @@
     "poll_groups": {
         "realtime": {
             "interval": 0.25,
-            "description": "Valori real-time (tensiune, curent, putere)"
+            "description": "Real-time values (voltage, current, power)"
         },
         "normal": {
             "interval": 5,
-            "description": "Masuratori standard"
+            "description": "Standard measurements"
         },
         "slow": {
             "interval": 60,
-            "description": "Contoare energie, statistici"
+            "description": "Energy counters, statistics"
         }
     }
 }

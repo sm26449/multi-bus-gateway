@@ -109,6 +109,9 @@ Object.assign(JanitzaMonitor.prototype, {
             return { value, unit, decimals: 1 };
         }
 
+        // a percentage and a temperature read best with one decimal
+        if (unit === '%' || unit === '°C' || unit === '°F') return { value, unit, decimals: 1 };
+
         return { value, unit, decimals: 2 };
     },
 
@@ -380,7 +383,7 @@ Object.assign(JanitzaMonitor.prototype, {
             // Render next frame so the now-visible canvas has a measured width.
             requestAnimationFrame(() => this._renderHistory(null, { canvas, series, legendId: 'valHistLegend' }));
         } catch (e) {
-            if (info) info.textContent = this.t('settings.saveFailed', 'Failed');
+            if (info) info.textContent = this.t('settings.saveFailed', 'Save failed');
         }
     },
 
@@ -565,7 +568,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 </div>
                 <div class="widget-header-right">
                     ${pollBadge}
-                    <button class="widget-edit-btn" title="${this._esc(this.t('dash.editWidget', 'Edit widget'))}" aria-label="${this._esc(this.t('dash.editWidget', 'Edit widget'))}">
+                    <button data-admin class="widget-edit-btn" title="${this._esc(this.t('dash.editWidget', 'Edit widget'))}" aria-label="${this._esc(this.t('dash.editWidget', 'Edit widget'))}">
                         <i aria-hidden="true" class="bi bi-pencil"></i>
                     </button>
                 </div>
@@ -1103,8 +1106,12 @@ Object.assign(JanitzaMonitor.prototype, {
     // the explicit, user-triggered path (defaults otherwise apply only to NEW
     // widgets). Uses the same save pipeline as Customize.
     async reapplyDefaultColors(btn) {
-        if (!confirm(this.t('dash.reapplyConfirm',
-                'Overwrite ALL dashboard widget colors with the defaults from Settings → General?'))) return;
+        if (!await this.confirmAction({
+            title: this.t('dash.reapplyColors', 'Reapply default colors'),
+            message: this.t('dash.reapplyConfirm',
+                'Overwrite ALL dashboard widget colors with the defaults from Settings → General?'),
+            confirmLabel: this.t('dash.reapplyGo', 'Overwrite'), danger: true,
+        })) return;
         if (btn) btn.disabled = true;
         try {
             this._dashRegs().forEach(reg => {
@@ -1117,7 +1124,7 @@ Object.assign(JanitzaMonitor.prototype, {
             this.showToast('success', this.t('dash.reapplyColors', 'Reapply default colors'),
                            this.t('toast.done', 'done'));
         } catch (e) {
-            this.showToast('error', this.t('toast.saveFailed', 'Save failed'), this._errMsg(e));
+            this.showToast('error', this.t('toast.saveFailed', 'Save Failed'), this._errMsg(e));
         } finally { if (btn) btn.disabled = false; }
     },
 
@@ -1157,29 +1164,50 @@ Object.assign(JanitzaMonitor.prototype, {
     _renderDeviceSwitchList(devices, health, active) {
         const list = document.getElementById('deviceSwitchList');
         if (!list) return;
-        const row = (d, label) => `
-            <button type="button" class="dsw-row ${d.id === active ? 'active' : ''}"
-                    role="option" aria-selected="${d.id === active}" data-id="${this._esc(d.id)}"
-                    data-search="${this._esc(((d.name || '') + ' ' + d.id).toLowerCase())}">
-                <span class="dot" style="background:${this._healthDot(health[d.id])}"></span>
-                <span class="dsw-name">${this._esc(label)}</span>
-                ${(health[d.id] && health[d.id] !== 'ok')
-                    ? `<span class="dsw-health">${this._esc(health[d.id])}</span>` : ''}
+        const epName = id => (devices.find(d => d.endpoint_id === id && d.endpoint_name) || {}).endpoint_name || id;
+        // found the way the Devices page finds them: name, id, kind (either
+        // language), installation; case and diacritics never matter
+        const words = d => this._fold([d.name, d.id, d.template, this._kindLabel(d.kind),
+            (this._KIND_WORDS || {})[d.kind], d.endpoint_id ? epName(d.endpoint_id) : ''].filter(Boolean).join(' '));
+        // a disabled device is there to be found, not to be opened: nothing
+        // of it is live
+        const row = (d, label, depth = 0) => {
+            const off = d.enabled === false;
+            const h = off ? '' : health[d.id];
+            return `
+            <button type="button" class="dsw-row ${d.id === active ? 'active' : ''}${off ? ' dsw-off' : ''}${depth ? ' dsw-sub' : ''}"
+                    role="option" aria-selected="${d.id === active}" data-id="${this._esc(d.id)}"${off ? ` aria-disabled="true" title="${this._esc(this.t('pick.disabledNothing', 'Disabled — nothing live to show'))}"` : ''}
+                   ${depth > 1 ? ` style="padding-left:${12 + depth * 14}px"` : ''}
+                    data-search="${this._esc(words(d))}">
+                <span class="dot" style="background:${off ? 'transparent' : this._healthDot(h)}"></span>
+                ${this._kindIconHtml(d.kind)}<span class="dsw-name">${this._esc(label)}</span>
+                ${off ? `<span class="dsw-health">${this._esc(this.t('pick.disabled', 'disabled'))}</span>`
+                    : (h && h !== 'ok') ? `<span class="dsw-health">${this._esc(h)}</span>` : ''}
             </button>`;
-        const live = devices.filter(d => d.enabled !== false);
-        const standalone = live.filter(d => !d.endpoint_id);
+        };
+        // a device's parts under it; disabled ones there too, greyed
+        const kids = new Map();
+        devices.filter(d => d.component_of).forEach(d => {
+            if (!kids.has(d.component_of)) kids.set(d.component_of, []);
+            kids.get(d.component_of).push(d);
+        });
+        const withKids = (d, depth = 0, seen = new Set()) => {
+            if (seen.has(d.id)) return '';
+            seen.add(d.id);
+            return row(d, d.name || d.id, depth) + (kids.get(d.id) || []).map(k => withKids(k, depth + 1, seen)).join('');
+        };
+        // a part whose device is not listed is still listed, on its own
+        const ids = new Set(devices.map(d => d.id));
+        const standalone = devices.filter(d => !d.endpoint_id && (!d.component_of || !ids.has(d.component_of)));
         const byEp = new Map();
-        live.filter(d => d.endpoint_id).forEach(d => {
+        devices.filter(d => d.endpoint_id).forEach(d => {
             if (!byEp.has(d.endpoint_id)) byEp.set(d.endpoint_id, []);
             byEp.get(d.endpoint_id).push(d);
         });
-        list.innerHTML = standalone.map(d => row(d, d.name || d.id)).join('')
-            + [...byEp.entries()].map(([pid, units]) => {
-                const epName = units[0].endpoint_name || pid;
-                return `<div class="dsw-group" data-group>
-                    <div class="dsw-group-name"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(epName)}</div>
-                    ${units.map(d => row(d, d.name || d.id)).join('')}</div>`;
-            }).join('');
+        list.innerHTML = standalone.map(d => withKids(d)).join('')
+            + [...byEp.entries()].map(([pid, units]) => `<div class="dsw-group" data-group role="group" aria-label="${this._esc(epName(pid))}">
+                    <div class="dsw-group-name" aria-hidden="true"><i class="bi bi-diagram-3"></i> ${this._esc(epName(pid))}</div>
+                    ${units.map(d => withKids(d)).join('')}</div>`).join('');
     },
 
     _deviceSwitchOpen(open) {
@@ -1197,9 +1225,9 @@ Object.assign(JanitzaMonitor.prototype, {
     _filterDeviceSwitch(q) {
         const list = document.getElementById('deviceSwitchList');
         if (!list) return;
-        const needle = q.trim().toLowerCase();
+        const ws = this._findWords(q);
         list.querySelectorAll('.dsw-row').forEach(r => {
-            r.hidden = !!needle && !(r.dataset.search || '').includes(needle);
+            r.hidden = !ws.every(w => this._findWordHit(r.dataset.search || '', w));
         });
         // a group header with every unit filtered out disappears with them
         list.querySelectorAll('[data-group]').forEach(g => {
@@ -1219,7 +1247,7 @@ Object.assign(JanitzaMonitor.prototype, {
             this._filterDeviceSwitch(search.value));
         if (panel) panel.addEventListener('click', (e) => {
             const r = e.target.closest('.dsw-row');
-            if (!r) return;
+            if (!r || r.getAttribute('aria-disabled') === 'true') return;
             this._deviceSwitchOpen(false);
             this.switchDashDevice(r.dataset.id);
         });
@@ -1230,7 +1258,20 @@ Object.assign(JanitzaMonitor.prototype, {
             if (e.key === 'Escape' && panel && !panel.hidden) {
                 this._deviceSwitchOpen(false);
                 if (btn) btn.focus();
+                return;
             }
+            // arrows walk the rows shown (from the search box too), Home/End
+            // jump; Enter on a row is its own button
+            if (!panel || panel.hidden || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+            const rows = [...panel.querySelectorAll('.dsw-row')].filter(r => !r.hidden && !r.closest('[hidden]'));
+            if (!rows.length) return;
+            const i = rows.indexOf(document.activeElement);
+            if ((e.key === 'Home' || e.key === 'End') && i < 0) return;      // the caret's, in the search box
+            e.preventDefault();
+            const next = e.key === 'Home' ? 0 : e.key === 'End' ? rows.length - 1
+                : e.key === 'ArrowDown' ? Math.min(rows.length - 1, i + 1) : i <= 0 ? -1 : i - 1;
+            if (next < 0) { search?.focus(); return; }
+            rows[next].focus();
         });
     },
 
@@ -1285,7 +1326,7 @@ Object.assign(JanitzaMonitor.prototype, {
                             <option value="gauge" ${widgetType === 'gauge' ? 'selected' : ''}>${this.t('lbl.gauge', "Gauge")}</option>
                             <option value="chart" ${widgetType === 'chart' ? 'selected' : ''}>${this.t('lbl.chart', "Chart")}</option>
                         </select>
-                        <button class="customize-size-toggle ${isWide}" data-address="${this._rk(reg)}" title="Wide widget" aria-pressed="${isWide ? 'true' : 'false'}">
+                        <button class="customize-size-toggle ${isWide}" data-address="${this._rk(reg)}" title="${this._esc(this.t('dash.wideWidget', 'Wide widget'))}" aria-pressed="${isWide ? 'true' : 'false'}">
                             <i aria-hidden="true" class="bi bi-arrows-expand"></i> Wide
                         </button>
                         <button class="btn-action customize-move" data-dir="-1" title="${this._esc(this.t('dash.moveUp', 'Move up'))}" aria-label="${this._esc(this.t('dash.moveUp', 'Move up'))} — ${this._esc(reg.label || reg.name)}"><i aria-hidden="true" class="bi bi-chevron-up"></i></button>

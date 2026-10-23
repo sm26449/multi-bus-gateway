@@ -14,6 +14,7 @@ import { chromium } from 'playwright';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openDeviceTab } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const CTR = process.env.CTR || 'mbg-ui-sandbox';
@@ -133,7 +134,7 @@ try {
   // in the UI: the device's Measurements list has four rows; unticking
   // input 0 removes input 0 only
   await page.evaluate(id => window.app.openDeviceDetail(id), DEV);
-  await page.click('#deviceDetailView [data-dtab="measurements"]');
+  await openDeviceTab(page, 'measurements');
   const list = page.locator('#deviceRegistersView');
   await list.locator('#selectedRegistersList tr[data-address="100000"]').waitFor();
   const keysShown = await list.locator('#selectedRegistersList tr[data-address]').evaluateAll(trs => trs.map(t => t.dataset.address).sort());

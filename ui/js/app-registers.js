@@ -165,7 +165,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <td class="value num" data-reg-name="${this._esc(reg.name)}">${this._regValueHtml(reg.name)}</td>
                 <td class="reg-interval">${isConfigured ? this._regIntervalText(configuredReg) : `<span style="color:var(--text-tertiary,#8a94a0);">${this.t('registers.notRead', 'not read')}</span>`}</td>
                 <td class="actions-cell">${queryBtnHtml}
-                    <button class="btn-action edit" data-address="${this._rk(reg)}" title="${isConfigured ? this.t('registers.editConfig', 'Edit how it is published') : this.t('registers.configureAdd', 'Configure & read')}"
+                    <button data-admin class="btn-action edit" data-address="${this._rk(reg)}" title="${isConfigured ? this.t('registers.editConfig', 'Edit how it is published') : this.t('registers.configureAdd', 'Configure & read')}"
                             aria-label="${isConfigured ? this.t('registers.editConfig', 'Edit how it is published') : this.t('registers.configureAdd', 'Configure & read')}">&#9998;</button>
                 </td>`;
             tr.querySelector('input[type=checkbox]').addEventListener('change', (ev) => {
@@ -603,8 +603,8 @@ Object.assign(JanitzaMonitor.prototype, {
                     return `<option value="${this._esc(n)}">${this._esc(f.description || '')}</option>`;
                 }).join('');
             }
-            // once the user edits topic/measurement by hand, stop auto-filling it
-            ['addMqttTopic', 'addInfluxMeasurement'].forEach(id => {
+            // once the user edits topic/measurement/unit/category by hand, stop auto-filling it
+            ['addMqttTopic', 'addInfluxMeasurement', 'addUnitInput', 'addCategoryInput'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el && !el._canonWired) {
                     el.addEventListener('input', () => { el.dataset.canonAuto = ''; });
@@ -666,14 +666,16 @@ Object.assign(JanitzaMonitor.prototype, {
             hint.className = 'field-hint canon-ok';
             hint.textContent = '✓ ' + this.t('registers.canon.ok', 'Canonical field') +
                 (f.description ? ' — ' + f.description : '');
-            // auto-fill topic/measurement unless the user typed their own
-            if (topicEl && (!topicEl.value || topicEl.dataset.canonAuto === '1')) {
-                topicEl.value = f.mqtt_topic; topicEl.dataset.canonAuto = '1';
-            }
-            if (measEl && (!measEl.value || measEl.dataset.canonAuto === '1')) {
-                measEl.value = f.measurement; measEl.dataset.canonAuto = '1';
-            }
+            // auto-fill what the name promises — topic, measurement, unit,
+            // category — unless the user typed their own
+            this._canonFill(topicEl, f.mqtt_topic);
+            this._canonFill(measEl, f.measurement);
+            this._canonFill(document.getElementById('addUnitInput'), f.unit);
+            this._canonFill(document.getElementById('addCategoryInput'), f.measurement);
         } else {
+            // a unit or category filled for an earlier canonical name no longer applies
+            this._canonUnfill(document.getElementById('addUnitInput'));
+            this._canonUnfill(document.getElementById('addCategoryInput'));
             const s = this._canonicalSuggest(name);
             hint.className = 'field-hint canon-warn';
             if (s) {
@@ -685,6 +687,18 @@ Object.assign(JanitzaMonitor.prototype, {
                     ' — ' + this.t('registers.canon.pickFromList', 'pick a canonical name from the list for uniform output.');
             }
         }
+    },
+
+    // An input the canonical dictionary may fill: only while it is empty or
+    // still holds what the dictionary put there (dataset.canonAuto).
+    _canonFill(el, value) {
+        if (!el || !value || (el.value && el.dataset.canonAuto !== '1')) return;
+        el.value = value;
+        el.dataset.canonAuto = '1';
+    },
+
+    _canonUnfill(el) {
+        if (el && el.dataset.canonAuto === '1') { el.value = ''; el.dataset.canonAuto = ''; }
     },
 
     _applyCanonicalSuggestion(name) {
@@ -711,7 +725,7 @@ Object.assign(JanitzaMonitor.prototype, {
         // reset canonical guidance for a fresh custom register
         const _ch = document.getElementById('canonicalNameHint');
         if (_ch) { _ch.textContent = ''; _ch.className = 'field-hint'; }
-        ['addMqttTopic', 'addInfluxMeasurement'].forEach(id => {
+        ['addMqttTopic', 'addInfluxMeasurement', 'addUnitInput', 'addCategoryInput'].forEach(id => {
             const e = document.getElementById(id); if (e) e.dataset.canonAuto = '';
         });
         const _jpp = document.getElementById('jsonPathPicker');
@@ -974,7 +988,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
         // Show the result container
         resultContainer.style.display = 'block';
-        resultDiv.innerHTML = '<div class="loading"><i aria-hidden="true" class="bi bi-arrow-repeat spin"></i> Querying…</div>';
+        resultDiv.innerHTML = `<div class="loading"><i aria-hidden="true" class="bi bi-arrow-repeat spin"></i> ${this._esc(this.t('registers.querying', 'Querying…'))}</div>`;
 
         // Look up register info from our database
         const allRegs = this.flattenRegisters();
@@ -1031,16 +1045,16 @@ Object.assign(JanitzaMonitor.prototype, {
                         </div>
                         <div class="detail-row">
                             <span class="detail-label">${this.t('lbl.timestamp', "Timestamp")}</span>
-                            <span class="detail-value">${new Date(data.timestamp).toLocaleString()}</span>
+                            <span class="detail-value">${(data.ts ? new Date(data.ts * 1000) : new Date(data.timestamp)).toLocaleString(this._loc())}</span>
                         </div>
                     </div>
                     <div class="result-actions">
                         ${isConfigured
-                            ? '<span class="badge configured"><i aria-hidden="true" class="bi bi-check-circle"></i> Monitored</span>'
+                            ? `<span class="badge configured"><i aria-hidden="true" class="bi bi-check-circle"></i> ${this._esc(this.t('registers.monitored', 'Monitored'))}</span>`
                             : `<button class="btn btn-primary btn-sm" id="queryConfigureBtn">
                                 <i aria-hidden="true" class="bi bi-plus-circle"></i> Add to Monitoring
                                </button>
-                               <button class="btn btn-ghost btn-sm" id="queryQuickAddBtn">
+                               <button data-admin class="btn btn-ghost btn-sm" id="queryQuickAddBtn">
                                 <i aria-hidden="true" class="bi bi-lightning"></i> Quick Add
                                </button>`
                         }
@@ -1059,7 +1073,7 @@ Object.assign(JanitzaMonitor.prototype, {
                         </div>
                         <div class="detail-row">
                             <span class="detail-label">${this.t('lbl.timestamp', "Timestamp")}</span>
-                            <span class="detail-value">${new Date(data.timestamp).toLocaleString()}</span>
+                            <span class="detail-value">${(data.ts ? new Date(data.ts * 1000) : new Date(data.timestamp)).toLocaleString(this._loc())}</span>
                         </div>
                         <div class="result-note">
                             <i aria-hidden="true" class="bi bi-info-circle"></i> This address is not in the known measurements database.
@@ -1162,9 +1176,9 @@ Object.assign(JanitzaMonitor.prototype, {
                 <td class="center"><span class="status-icon ${reg.mqtt_enabled ? 'active' : ''}" title="${this._esc(mqttTooltip)}">${reg.mqtt_enabled ? '&#10003;' : '&#10005;'}</span></td>
                 <td class="center"><span class="status-icon ${reg.influxdb_enabled ? 'active' : ''}" title="${this._esc(influxTooltip)}">${reg.influxdb_enabled ? '&#10003;' : '&#10005;'}</span></td>
                 <td class="actions-cell">
-                    <button class="btn-action edit" title="${t('registers.editConfig', 'Edit how it is published')}" aria-label="${t('registers.editConfig', 'Edit how it is published')}">&#9998;</button>
+                    <button data-admin class="btn-action edit" title="${t('registers.editConfig', 'Edit how it is published')}" aria-label="${t('registers.editConfig', 'Edit how it is published')}">&#9998;</button>
                     ${custom
-                        ? `<button class="btn-action remove" title="${t('common.delete', 'Delete')}" aria-label="${t('common.delete', 'Delete')}">&#10006;</button>`
+                        ? `<button data-admin class="btn-action remove" title="${t('common.delete', 'Delete')}" aria-label="${t('common.delete', 'Delete')}">&#10006;</button>`
                         : `<span class="reg-lock" title="${t('registers.fromTemplate', 'From the template — untick it instead of deleting')}" aria-label="${t('registers.fromTemplate', 'From the template — untick it instead of deleting')}"><i aria-hidden="true" class="bi bi-lock"></i></span>`}
                 </td>`;
             tr.querySelector('input[type=checkbox]').addEventListener('change', () => this.removeRegisterFromTable(this._rk(reg)));
@@ -1513,9 +1527,9 @@ Object.assign(JanitzaMonitor.prototype, {
                 body: JSON.stringify({ template: data, overwrite }),
             });
             const res = await r.json();
-            if (r.status === 409 && !res.builtin) {
-                if (confirm(this.t('devtpl.overwriteConfirm',
-                    'A template with this id already exists.\n\nYes: overwrite it with the uploaded file.\nNo: cancel the upload.')))
+            // (the 409 says builtin inside detail: a built-in id is never overwritten)
+            if (r.status === 409 && !res.detail?.builtin) {
+                if (await this._tplOverwriteAsk(data?.device_template?.id || data?.id))
                     return this._uploadMapAndAssign(data, deviceId, true);
                 return;
             }
@@ -1652,7 +1666,7 @@ Object.assign(JanitzaMonitor.prototype, {
               ${guardTxt}
               <div style="margin-top:8px;display:flex;gap:8px;">
                 <button class="btn btn-ghost btn-sm" data-action="_cancelWrite">${this.t('common.cancel', 'Cancel')}</button>
-                <button class="btn btn-primary btn-sm" data-action="confirmWrite" data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('write.confirm', 'Confirm write')}</button>
+                <button data-live class="btn btn-primary btn-sm" data-action="confirmWrite" data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('write.confirm', 'Confirm write')}</button>
               </div>
             </div>`;
     },

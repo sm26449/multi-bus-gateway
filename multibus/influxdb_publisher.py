@@ -595,7 +595,8 @@ class InfluxDBPublisher:
         except (ValueError, TypeError):
             return None
 
-    def _should_write(self, address: int, value: Any, device_id: str = "") -> bool:
+    def _should_write(self, address: int, value: Any, device_id: str = "",
+                      mode: Optional[str] = None, interval: Optional[float] = None) -> bool:
         """
         Check if value should be written based on mode and interval.
         Does NOT update cache — call _confirm_write() after successful write.
@@ -609,11 +610,11 @@ class InfluxDBPublisher:
             # Rate limiting
             if key in self.last_write_time:
                 elapsed = current_time - self.last_write_time[key]
-                if elapsed < self.config.write_interval:
+                if elapsed < (self.config.write_interval if interval is None else interval):
                     return False
 
             # Change detection
-            if self.publish_mode == 'changed':
+            if (mode or self.publish_mode) == 'changed':
                 if key in self.last_values:
                     if self.last_values[key] == value:
                         return False
@@ -781,8 +782,11 @@ class InfluxDBPublisher:
                             bucket: Optional[str] = None,
                             device_tag: Optional[str] = None,
                             device_id: str = "",
-                            extra_tags: Optional[Dict[str, str]] = None):
-        """Write register data from a poll group. Works whether or not InfluxDB
+                            extra_tags: Optional[Dict[str, str]] = None,
+                            mode: Optional[str] = None, interval: Optional[float] = None):
+        """Write register data from a poll group. ``mode`` and ``interval``:
+        the device's own publishing (its `influxdb:` block), None = the
+        gateway's (Settings → InfluxDB). Works whether or not InfluxDB
         is reachable — points produced during an outage go to the replay buffer.
         ``bucket``/``device_tag``/``device_id`` route one device's data
         (Tier 2); omitted = the legacy global routing (device #1)."""
@@ -797,7 +801,7 @@ class InfluxDBPublisher:
                 if register is None or not register.influxdb_enabled:
                     continue
 
-                if not self._should_write(address, value, device_id):
+                if not self._should_write(address, value, device_id, mode, interval):
                     self.writes_skipped += 1
                     continue
 
@@ -1015,6 +1019,11 @@ class InfluxDBPublisher:
                     f'{sel}'
                     f'{dev_filter}'
                     f'{meas_filter}'
+                    # one series whatever measurement a point was filed under
+                    # (a field's measurement can change — a template section,
+                    # an upgrade): merged and in time order, not two tables
+                    f'  |> group()\n'
+                    f'  |> sort(columns: ["_time"])\n'
                     f'  |> aggregateWindow(every: {every}, fn: {f}, createEmpty: false)\n'
                     f'  |> keep(columns: ["_time", "_value"])')
             out = []
@@ -1142,7 +1151,7 @@ def get_measurement(register: SelectedRegister) -> str:
 
     # A canonical register name is the authoritative source — consult the
     # dictionary before the unit heuristic, which otherwise misfiles fields
-    # the unit can't disambiguate (power_factor/diagnostics → 'janitza',
+    # the unit can't disambiguate (power_factor/diagnostics → the fallback,
     # apparent energy 'kVAh' → 'power_apparent' via the 'va' substring).
     from .canonical_fields import measurement_for
     m = measurement_for(getattr(register, 'name', '') or '')
@@ -1171,8 +1180,17 @@ def get_measurement(register: SelectedRegister) -> str:
         return 'current'
     elif '%' in unit:
         return 'percentage'
-    else:
-        return 'janitza'
+    # nothing above knows it (a temperature, a pressure, a state): the row's
+    # own section, so one device's fields are never filed under another's name
+    return _measurement_slug(getattr(register, 'category', '') or '') or 'other'
+
+
+def _measurement_slug(text: str) -> str:
+    """A template section as a measurement name: accents folded
+    (Températures → temperatures), anything else outside a-z 0-9 _ → _."""
+    import unicodedata
+    folded = unicodedata.normalize('NFKD', str(text)).encode('ascii', 'ignore').decode()
+    return re.sub(r'[^a-z0-9_]+', '_', folded.strip().lower()).strip('_')[:64]
 
 def get_tags(register: SelectedRegister,
          device_tag: Optional[str] = None) -> Dict[str, str]:

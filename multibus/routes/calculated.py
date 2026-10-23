@@ -92,7 +92,7 @@ def build(ctx) -> APIRouter:
         items = payload.get('calculated', [])
         if not isinstance(items, list):
             raise HTTPException(status_code=422, detail={"errors": ["'calculated' must be a list"]})
-        errors, clean, seen = [], [], set()
+        errors, clean, seen, warnings = [], [], set(), []
         for i, it in enumerate(items):
             name = str(it.get('name', '')).strip()
             expr = str(it.get('expr', '')).strip()
@@ -106,6 +106,11 @@ def build(ctx) -> APIRouter:
             ok, err, _refs = expressions.validate_expression(expr)
             if not ok:
                 errors.append(f"#{i+1} ({name or '?'}): {err}")
+            # a hyphenated id this gateway does not have computes a
+            # subtraction: said, not refused (a stored formula must never
+            # block every other edit of the list)
+            for tok in expressions.dashed_unknown(expr):
+                warnings.append(f"#{i+1} ({name or '?'}): {expressions.dashed_unknown_text(tok)}")
             dec = it.get('decimals')
             entry = {
                 'name': name, 'label': str(it.get('label', '') or name),
@@ -144,7 +149,8 @@ def build(ctx) -> APIRouter:
             raise HTTPException(status_code=422, detail={"errors": errors})
         config.save_calculated(device_id, clean)
         calc_engine.load(device_id)               # refresh runtime cache in place
-        return {"status": "ok", "calculated": clean, "count": len(clean)}
+        return {"status": "ok", "calculated": clean, "count": len(clean),
+                **({"warnings": warnings} if warnings else {})}
 
     @r.post("/api/devices/{device_id}/calculated/test")
     def test_calculated(device_id: str, payload: Dict = Body(...)):
@@ -157,6 +163,9 @@ def build(ctx) -> APIRouter:
         ok, err, refs = expressions.validate_expression(expr)
         if not ok:
             return {"ok": False, "error": err, "refs": [], "missing": []}
+        dashed = expressions.dashed_unknown(expr)
+        if dashed:
+            return {"ok": False, "error": expressions.dashed_unknown_text(dashed[0]), "refs": refs, "missing": []}
         store = registry.store_for(device_id) or {}
         resolve = calc_engine.resolver(store)
         missing = [r for r in refs if resolve(r) is None]

@@ -49,8 +49,8 @@ Object.assign(JanitzaMonitor.prototype, {
                     <code>:${this._esc(p.port)}</code>
                     ${p.label ? `<span>${this._esc(p.label)}</span>` : ''}
                     ${p.serial_text || p.serial ? `<span class="dev-chip">${this._esc(p.serial_text || p.serial)}</span>` : ''}
-                    <span class="field-hint">${t('bridges.nDevices', '{n} device(s)', { n: (p.devices || []).length })}</span>
-                    ${p.busy ? `<span class="sink-pill ${p.busy.level === 'full' ? 'bad' : p.busy.level === 'high' ? 'warn' : 'ok'}" title="${this._esc(this._busyTitle(p))}">${t('bridges.busy', 'bus {pct}% busy', { pct: p.busy.pct })}</span>` : ''}
+                    <span class="field-hint">${this.tn('bridges.nDevices', (p.devices || []).length, '{n} devices')}</span>
+                    ${p.busy ? this._busyMeter(p) : ''}
                     ${p.tapped ? `<span class="sink-pill ${p.wire?.error ? 'bad' : 'ok'}" title="${this._esc(p.wire?.error || t('bridges.tappedHint', 'Another master polls this bus; the gateway only listens. Scan, Check mode and polled devices are off here — they would transmit.'))}"><i aria-hidden="true" class="bi bi-ear"></i> ${p.wire?.error ? this._esc(t('bridges.tapLost', 'listening — link lost')) : this._esc(t('bridges.tapped', 'listening · {frames} frames · {crc} CRC errors', { frames: p.wire?.frames ?? 0, crc: p.wire?.crc_errors ?? 0 }))}</span>` : ''}
                     ${p.tapped ? '' : `<span class="bridge-port-actions">
                       <button data-admin class="btn btn-ghost btn-sm" ${this._act('busScan', [b.id, p.port])} title="${this._esc(t('bridges.scanBusHint', 'Ask every unit id on this bus who answers, and what it probably is'))}"><i aria-hidden="true" class="bi bi-search"></i> ${t('bridges.scanBus', 'Scan')}</button>
@@ -60,13 +60,13 @@ Object.assign(JanitzaMonitor.prototype, {
                     </span>`}
                   </div>
                   ${(p.devices || []).map(d => `
-                    <div class="bridge-dev" role="button" tabindex="0" ${this._act(d.endpoint_id ? 'openEndpointDetail' : 'openDeviceDetail', [d.endpoint_id || d.id])}>
+                    <div class="bridge-dev" role="button" tabindex="0" data-f="${this._esc(d.id)}" ${this._act(d.endpoint_id ? 'openEndpointDetail' : 'openDeviceDetail', [d.endpoint_id || d.id])}>
                       <span class="status-dot" style="--dot:${healthColor[d.health] || healthColor.idle}"></span>
-                      <span class="dev-chip">unit ${this._esc(d.unit_id)}</span>
+                      <span class="dev-chip">${this._esc(this.t('common.unitN', 'unit {n}', { n: d.unit_id }))}</span>
                       ${d.tap ? `<span class="dev-chip" title="${this._esc(t('bridges.tapDevHint', 'listen-only'))}"><i aria-hidden="true" class="bi bi-ear"></i></span>` : ''}
                       <span>${this._esc(d.name || d.id)}</span>
                       ${d.endpoint_id ? `<span class="field-hint">${t('bridges.inInstallation', 'in an installation')}</span>` : ''}
-                      ${!d.endpoint_id ? `<button data-admin class="btn btn-ghost btn-sm bridge-move" ${this._act('openDeviceWizard', [d.id])} title="${this._esc(t('bridges.moveHint', 'Edit — or move it to another bus or bridge; its topics and history stay'))}" aria-label="${this._esc(t('common.edit', 'Edit'))}"><i aria-hidden="true" class="bi bi-arrow-left-right"></i></button>` : ''}
+                      ${!d.endpoint_id ? `<button data-admin class="btn btn-ghost btn-sm bridge-move" ${this._act('openDeviceEdit', [d.id])} title="${this._esc(t('bridges.moveHint', 'Edit — or move it to another bus or bridge; its topics and history stay'))}" aria-label="${this._esc(t('common.edit', 'Edit'))}"><i aria-hidden="true" class="bi bi-arrow-left-right"></i></button>` : ''}
                     </div>`).join('') || `<div class="field-hint bridge-dev">${t('bridges.noDevices', 'No device on this bus yet.')}</div>`}
                 </div>`).join('');
             return `
@@ -79,7 +79,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <code>${this._esc(b.host)}</code>
                 <span class="field-hint">${this._esc(t('bridges.state.' + (st.status || 'unknown'), st.status || 'unknown'))}${st.detail ? ' — ' + this._esc(st.detail) : ''}</span>
                 <span class="bridge-actions">
-                  ${ty.discovery === 'api' ? `<button class="btn btn-ghost btn-sm" ${this._act('bridgeScan', [b.id])}><i aria-hidden="true" class="bi bi-arrow-repeat"></i> ${t('bridges.scan', 'Buses')}</button>` : ''}
+                  ${ty.discovery === 'api' ? `<button data-admin class="btn btn-ghost btn-sm" ${this._act('bridgeScan', [b.id])}><i aria-hidden="true" class="bi bi-arrow-repeat"></i> ${t('bridges.scan', 'Buses')}</button>` : ''}
                   <button class="btn btn-ghost btn-sm" ${this._act('bridgeSetup', [b.id])}><i aria-hidden="true" class="bi bi-wrench"></i> ${t('bridges.setup', 'Set-up')}</button>
                   <button data-admin class="btn btn-ghost btn-sm" ${this._act('openBridgeModal', [b.id])} aria-label="${t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
                   <button data-admin class="btn btn-ghost btn-sm" ${this._act('deleteBridge', [b.id])} aria-label="${t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
@@ -92,6 +92,30 @@ Object.assign(JanitzaMonitor.prototype, {
         }).join('').replace(/^/, bar);
     },
 
+    // How busy the bus is: one measured value per bus (the wire's held time in
+    // the last minute), never above 100 %; over capacity is said in words.
+    // A meter for assistive tech, with the same words as the text beside it.
+    _busyText(busy) {
+        const t = (k, d, x) => this.t(k, d, x);
+        return busy.over_capacity
+            ? t('bridges.busyOver', 'over capacity')
+            : t('bridges.busyText', 'busy {pct} % · capacity left ~{left} %',
+                { pct: busy.pct, left: busy.capacity_left_pct ?? Math.max(0, 100 - busy.pct) });
+    },
+
+    _busyMeter(p) {
+        const b = p.busy;
+        const level = b.level === 'full' ? 'bad' : b.level === 'high' ? 'warn' : 'ok';
+        const text = this._busyText(b);
+        const pct = Math.max(0, Math.min(100, Number(b.pct) || 0));
+        return `<span class="bus-meter ${level}" role="meter" aria-valuemin="0" aria-valuemax="100"
+                  aria-valuenow="${pct}" aria-valuetext="${this._esc(text)}" tabindex="0"
+                  aria-label="${this._esc(this.t('bridges.busyLabel', 'Bus :{port}', { port: p.port }))}"
+                  title="${this._esc(this._busyTitle(p))}">
+                  <span class="bus-meter-bar" aria-hidden="true"><span class="bus-meter-fill" style="width:${pct}%"></span></span>
+                  <span class="bus-meter-text">${this._esc(text)}</span></span>`;
+    },
+
     _busyTitle(p) {
         const t = (k, d, x) => this.t(k, d, x);
         const lines = (p.devices || []).filter(d => d.bus_share != null)
@@ -99,7 +123,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const advice = p.busy.level === 'full'
             ? t('bridges.busyFull', 'The bus cannot keep up: requests queue and readings age. Slow the poll groups that need no speed, raise the baud rate (every slave and the bus), or split the slaves over two buses.')
             : p.busy.level === 'high' ? t('bridges.busyHigh', 'Close to full: another device or a faster poll group will make readings late.') : '';
-        return [t('bridges.busyLead', 'Measured share of the wire, per device:'), ...lines, advice].filter(Boolean).join('\n');
+        return [t('bridges.busyLead', 'Measured share of the wire in the last minute, per device:'), ...lines, advice].filter(Boolean).join('\n');
     },
 
     // ── scan a bus ──────────────────────────────────────────────────────────
@@ -127,7 +151,7 @@ Object.assign(JanitzaMonitor.prototype, {
             document.getElementById('busScanState').textContent = st.state === 'running'
                 ? t('bridges.scanProgress', '{done}/{total} asked · {n} answered', { done: st.done, total: st.total, n: st.found.length })
                 : st.state === 'failed' ? `${t('bridges.scanFailed', 'Scan failed')}: ${st.error}`
-                : t('bridges.scanDone', 'Done — {n} slave(s) answered.', { n: st.found.length });
+                : this.tn('bridges.scanDone', st.found.length, 'Done — {n} slaves answered.');
             document.getElementById('busScanResult').innerHTML = this._busScanTable(bridgeId, port, st.found);
             if (st.state === 'running') setTimeout(tick, 1000);
         };
@@ -137,7 +161,7 @@ Object.assign(JanitzaMonitor.prototype, {
     _busScanTable(bridgeId, port, found) {
         const t = (k, d, x) => this.t(k, d, x);
         if (!found.length) return '';
-        return `<table class="tplu-table"><thead><tr><th>Unit</th><th>${t('bridges.scanWhat', 'What it is')}</th><th></th></tr></thead><tbody>
+        return `<table class="tplu-table"><thead><tr><th>${t('bridges.colUnit', 'Unit')}</th><th>${t('bridges.scanWhat', 'What it is')}</th><th></th></tr></thead><tbody>
           ${found.map(f => {
               const what = f.matches.length ? f.matches.map(m => this._esc(m.name)).join(' / ')
                   : f.fc43 && (f.fc43.vendor || f.fc43.product) ? this._esc(`${f.fc43.vendor || ''} ${f.fc43.product || ''}`.trim())
@@ -165,12 +189,12 @@ Object.assign(JanitzaMonitor.prototype, {
             .find(h => /^\d+\.\d+\.\d+\.\d+$/.test(h || ''));
         this._bridgeInfo(t('bridges.findTitle', 'Find bridges on the LAN'), `
           <p class="field-hint">${t('bridges.findLead2', 'Looks at every address of the range for the ports each kind of bridge declares: our serial bridge answers its /health; a converter only has an open port, so one register is asked of a unit, as RTU and as Modbus TCP, to tell transparent from gateway. Bridges already added are not knocked on.')}</p>
-          <div class="form-row" style="align-items:end;">
+          <div class="form-row align-end">
             <div class="form-group flex-2"><label class="form-label" for="brFindCidr">${t('bridges.findRange', 'Range')}</label>
               <input class="input" id="brFindCidr" value="${this._esc(ip ? ip.split('.').slice(0, 3).join('.') + '.0/24' : '')}" placeholder="192.168.1.0/24"></div>
             <div class="form-group"><label class="form-label" for="brFindUnit">${t('bridges.findUnit', 'Ask unit')}</label>
               <input class="input" id="brFindUnit" type="number" min="1" max="247" value="1"></div>
-            <div class="form-group"><button class="btn btn-primary btn-sm" id="brFindBtn" ${this._act('bridgesDiscoverRun', [])}><i aria-hidden="true" class="bi bi-radar"></i> ${t('bridges.findGo', 'Search')}</button></div>
+            <div class="form-group"><button data-admin class="btn btn-primary btn-sm" id="brFindBtn" ${this._act('bridgesDiscoverRun', [])}><i aria-hidden="true" class="bi bi-radar"></i> ${t('bridges.findGo', 'Search')}</button></div>
           </div>
           <div id="brFindResult" role="status"></div>`);
     },
@@ -189,7 +213,7 @@ Object.assign(JanitzaMonitor.prototype, {
             if (!r.ok) throw new Error((d.detail?.errors || [d.detail || r.statusText]).join(' '));
             this._brFound = d.found || [];
             if (!this._brFound.length) {
-                box.innerHTML = `<div class="field-hint">${t('bridges.findNone', 'Nothing found in {n} addresses. A converter may use another port: add it by hand with the port from its web page.', { n: d.scanned })}</div>`;
+                box.innerHTML = `<div class="field-hint">${this.tn('bridges.findNone', d.scanned, 'Nothing found in {n} addresses. A converter may use another port: add it by hand with the port from its web page.')}</div>`;
                 return;
             }
             box.innerHTML = `<table class="tplu-table"><tbody>${this._brFound.map((x, i) => `<tr>
@@ -227,7 +251,7 @@ Object.assign(JanitzaMonitor.prototype, {
           <textarea id="brImportText" class="input" rows="9" spellcheck="false" style="font-family:var(--font-mono,monospace);font-size:12px;"></textarea>
           <label class="checkbox-label"><input type="checkbox" id="brImportReplace"> <span>${t('bridges.importReplace', 'Replace bridges that already exist here')}</span></label>
           <div style="display:flex;gap:8px;margin-top:8px;">
-            <button class="btn btn-secondary btn-sm" ${this._act('bridgesImportRun', [false])}>${t('rules.import.check', 'Check')}</button>
+            <button data-admin class="btn btn-secondary btn-sm" ${this._act('bridgesImportRun', [false])}>${t('rules.import.check', 'Check')}</button>
             <button data-admin class="btn btn-primary btn-sm" ${this._act('bridgesImportRun', [true])}>${t('rules.import', 'Import')}</button></div>
           <div id="brImportResult" style="margin-top:10px;"></div>`);
     },
@@ -296,7 +320,7 @@ Object.assign(JanitzaMonitor.prototype, {
           <div class="form-group"><label class="form-label">${t('bridges.ports', 'Buses on this box (TCP ports)')}</label>
             ${(d.ports || []).map((p, i) => `
               <div class="form-row bridge-port-row">
-                <input class="input br-port" data-i="${i}" type="number" min="1" max="65535" value="${this._esc(p.port || '')}" aria-label="TCP port">
+                <input class="input br-port" data-i="${i}" type="number" min="1" max="65535" value="${this._esc(p.port || '')}" aria-label="${this._esc(this.t('bridges.tcpPort', 'TCP port'))}">
                 <input class="input br-label" data-i="${i}" value="${this._esc(p.label || '')}" placeholder="${this._esc(t('bridges.portLabel', 'label, e.g. panel A'))}">
                 <input class="input br-serial" data-i="${i}" value="${this._esc(p.serial || '')}" placeholder="9600 8N1" title="${this._esc(t('bridges.serialNote', 'What the converter is set to — for your reference; set it in its web page'))}">
                 <button class="btn btn-ghost btn-sm" ${this._act('bridgeDelPort', [i])} aria-label="${t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-x-lg"></i></button>
@@ -370,7 +394,11 @@ Object.assign(JanitzaMonitor.prototype, {
 
     async deleteBridge(id) {
         const t = (k, d, p) => this.t(k, d, p);
-        if (!confirm(t('bridges.deleteConfirm', 'Delete the bridge {id}?', { id }))) return;
+        if (!await this.confirmAction({
+            title: t('bridges.deleteTitle', 'Delete bridge {id}', { id }),
+            message: t('bridges.deleteConfirm', 'Only the bridge is removed; a bridge that still carries devices is refused.'),
+            confirmLabel: t('common.delete', 'Delete'), danger: true,
+        })) return;
         const r = await fetch(`/api/bridges/${encodeURIComponent(id)}`, { method: 'DELETE' });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) { this.showToast('error', t('bridges.deleteFail', 'Cannot delete'), (d.detail?.errors || [r.statusText]).join(' ')); return; }
@@ -423,7 +451,7 @@ Object.assign(JanitzaMonitor.prototype, {
         this._scanPorts = s.ports || [];
         this._bridgeInfo(t('bridges.scanTitle', 'Buses'), `
           <p class="field-hint">${this._esc(t('bridges.scanLead', '{host} · bridge {version} — one bus per adapter; serial settings apply to that bus only.', { host: s.hostname || id, version: s.version || '' }))}</p>
-          ${rows ? `<table class="tplu-table"><thead><tr><th>Port</th><th>${t('bridges.adapter', 'Adapter')}</th><th>Baud</th><th>${t('bridges.parity', 'Parity')}</th><th>Stop</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+          ${rows ? `<table class="tplu-table"><thead><tr><th>${t('bridges.colPort', 'Port')}</th><th>${t('bridges.adapter', 'Adapter')}</th><th>${t('bridges.colBaud', 'Baud')}</th><th>${t('bridges.parity', 'Parity')}</th><th>${t('bridges.colStop', 'Stop')}</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
                  : `<p>${t('bridges.noAdapters', 'No adapter plugged in on that host.')}</p>`}`);
     },
 
@@ -441,11 +469,16 @@ Object.assign(JanitzaMonitor.prototype, {
 
     async bridgeProbe(id, port) {
         const t = (k, d, p) => this.t(k, d, p);
-        const unit = prompt(t('bridges.probeUnit', 'Unit id of a slave on this bus:'), '1');
+        const unit = await this.askValue({
+            title: t('bridges.probeTitle', 'Check mode'),
+            label: t('bridges.probeUnit', 'Unit id of a slave on this bus:'),
+            min: 1, max: 247, step: 1, initial: 1,
+            confirmLabel: t('bridges.probeGo', 'Check'),
+        });
         if (unit === null) return;
         this._bridgeInfo(t('bridges.probeTitle', 'Check mode'), `<p class="field-hint">${t('bridges.probing', 'Asking… (a converter that takes one client drops the gateway\'s connection for a moment)')}</p>`);
         const r = await fetch(`/api/bridges/${encodeURIComponent(id)}/probe`, { method: 'POST',
-            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ port, unit_id: +unit || 1 }) });
+            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ port, unit_id: unit }) });
         const d = await r.json().catch(() => ({}));
         document.getElementById('bridgeInfoBody').innerHTML = `
           <p><b>${this._esc(d.verdict || d.error || r.statusText)}</b></p>

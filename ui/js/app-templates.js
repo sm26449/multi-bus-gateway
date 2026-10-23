@@ -19,6 +19,7 @@ Object.assign(JanitzaMonitor.prototype, {
             refreshBtn.addEventListener('click', () => this.renderTemplateManager());
         }
         let devTpls = [], vmTpls = [], loadErrors = {}, loadWarnings = {};
+        await this._fetchDevices();             // who uses a map: units counted as their installation
         try {
             const d = await (await fetch('/api/device-templates')).json();
             devTpls = d.templates || []; loadErrors = d.load_errors || {}; loadWarnings = d.load_warnings || {};
@@ -30,45 +31,46 @@ Object.assign(JanitzaMonitor.prototype, {
         const badgeUser = `<span style="font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:8px;background:rgba(26,143,76,.15);color:#1a8f4c;">${t('templates.userTag', 'user')}</span>`;
 
         // ── Device maps ──
-        const q = (this._tmSearch || '').toLowerCase();
-        const devFiltered = devTpls.filter(x => !q ||
-            `${x.id} ${x.name} ${x.vendor} ${x.model}`.toLowerCase().includes(q));
-        const devCards = devFiltered.length ? devFiltered.map(x => {
-            const inUse = (x.used_by || []).length;
+        // every map is drawn once; the search and filters only hide cards
+        // (app-find.js) — a keystroke never re-renders the page
+        if (this._tplFindIndex) this._tplFindIndex(devTpls);
+        const devCards = devTpls.length ? devTpls.map(x => {
+            const users = this._tplUsers(x.used_by);
+            const inUse = users.length;
             const meta = [x.vendor, x.model].filter(Boolean).map(s => this._esc(s)).join(' · ');
             const usedRow = inUse
-                ? `<div style="margin-top:3px;color:var(--text-secondary);font-size:12px;">${t('templates.inUse', 'in use by')}: ${x.used_by.map(d => `<code>${this._esc(d)}</code>`).join(', ')}</div>`
+                ? `<div class="tm-used">${this._esc(this.tn('templates.usedBy', inUse, 'Used by {n}'))}: ${users.map(u => `<a href="#" class="ub-inline" aria-label="${this._esc(t(`usedby.open.${u.type}`, 'Open {id}', { id: u.label }))}" ${this._act('usedByOpen', [u.type, u.id, ''])}>${this._esc(u.label)}</a>`).join(', ')}</div>`
                 : '';
             // installations / devices with an update from this map waiting
             const pend = x.pending_updates || [];
             const pendRow = pend.length
                 ? `<div class="tm-pending"><i aria-hidden="true" class="bi bi-stars"></i> ${t('templates.pending', 'Update waiting in')}: ${pend.map(p => `<span class="tm-pending-item">${this._esc(p.name)} <button data-admin class="btn btn-ghost btn-sm" ${this._act('openTemplateUpdate', [p.kind, p.id])}>${t('tplu.review', 'Review and apply')}</button></span>`).join(' ')}</div>`
                 : '';
-            const viewBtn = `<button class="btn btn-sm" data-tm-view="${this._esc(x.id)}"><i aria-hidden="true" class="bi bi-eye"></i> ${t('templates.view', 'View')}</button>`;
+            const viewBtn = `<button class="btn btn-ghost btn-sm" data-tm-view="${this._esc(x.id)}"><i aria-hidden="true" class="bi bi-eye"></i> ${t('templates.view', 'View')}</button>`;
             const actions = x.builtin
                 ? `${viewBtn}
-                   <button class="btn btn-sm" data-tm-dup="${this._esc(x.id)}"><i aria-hidden="true" class="bi bi-files"></i> ${t('templates.duplicate', 'Duplicate')}</button>
-                   <button class="btn btn-ghost btn-sm" data-tm-exp="${this._esc(x.id)}" title="Export JSON"><i aria-hidden="true" class="bi bi-download"></i></button>`
+                   <button data-admin class="btn btn-ghost btn-sm" data-tm-dup="${this._esc(x.id)}"><i aria-hidden="true" class="bi bi-files"></i> ${t('templates.duplicate', 'Duplicate')}</button>
+                   <button class="btn btn-ghost btn-sm" data-tm-exp="${this._esc(x.id)}" ${this._ib(t('templates.exportOne', 'Export template'), x.name || x.id)}><i aria-hidden="true" class="bi bi-download"></i></button>`
                 : `${viewBtn}
-                   <button class="btn btn-sm" data-tm-edit="${this._esc(x.id)}"><i aria-hidden="true" class="bi bi-pencil"></i> ${t('common.edit', 'Edit')}</button>
-                   <button class="btn btn-sm" data-tm-dup="${this._esc(x.id)}"><i aria-hidden="true" class="bi bi-files"></i> ${t('templates.duplicate', 'Duplicate')}</button>
-                   <button class="btn btn-ghost btn-sm" data-tm-exp="${this._esc(x.id)}" title="Export JSON"><i aria-hidden="true" class="bi bi-download"></i></button>
-                   <button class="btn btn-ghost btn-sm" data-tm-del="${this._esc(x.id)}" ${inUse ? 'disabled' : ''} title="${inUse ? t('templates.delInUse', 'in use — reassign first') : t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>`;
-            return `<div class="settings-card" style="margin-bottom:10px;">
+                   <button data-admin class="btn btn-ghost btn-sm" data-tm-edit="${this._esc(x.id)}"><i aria-hidden="true" class="bi bi-pencil"></i> ${t('common.edit', 'Edit')}</button>
+                   <button data-admin class="btn btn-ghost btn-sm" data-tm-dup="${this._esc(x.id)}"><i aria-hidden="true" class="bi bi-files"></i> ${t('templates.duplicate', 'Duplicate')}</button>
+                   <button class="btn btn-ghost btn-sm" data-tm-exp="${this._esc(x.id)}" ${this._ib(t('templates.exportOne', 'Export template'), x.name || x.id)}><i aria-hidden="true" class="bi bi-download"></i></button>
+                   <button data-admin class="btn btn-ghost btn-sm" data-tm-del="${this._esc(x.id)}" ${inUse ? 'aria-disabled="true"' : ''} title="${this._esc(inUse ? this.tn('usedby.deleteHeld', inUse, 'Cannot be deleted while {n} thing(s) use it — see "Used by".') : t('common.delete', 'Delete'))}" aria-label="${this._esc(inUse ? `${t('common.delete', 'Delete')}: ${this.tn('usedby.deleteHeld', inUse, 'Cannot be deleted while {n} thing(s) use it — see "Used by".')}` : `${t('common.delete', 'Delete')} ${x.id}`)}"><i aria-hidden="true" class="bi bi-trash"></i></button>`;
+            const proto = x.transport ? ` · ${this._esc(this._findValueLabel ? this._findValueLabel('proto', String(x.transport).toLowerCase()) : x.transport)}` : '';
+            return `<div class="settings-card" style="margin-bottom:10px;" data-f="${this._esc(x.id)}">
                 <div class="settings-card-body" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
                   <div style="min-width:0;">
-                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><b>${this._esc(x.name)}</b> ${x.builtin ? badgeBuiltin : badgeUser}</div>
-                    <div style="color:var(--text-secondary);font-size:12px;margin-top:3px;">id <code>${this._esc(x.id)}</code>${meta ? ' · ' + meta : ''} · ${x.registers} ${t('templates.regs', 'registers')}${x.version ? ' · v' + this._esc(x.version) : ''}</div>
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">${this._kindIconHtml ? this._kindIconHtml(x.device_kind) : ''}<b>${this._esc(x.name)}</b> ${x.builtin ? badgeBuiltin : badgeUser}</div>
+                    <div style="color:var(--text-secondary);font-size:12px;margin-top:3px;">id <code>${this._esc(x.id)}</code>${meta ? ' · ' + meta : ''}${proto} · ${x.registers} ${t('templates.regs', 'registers')}${x.version ? ' · v' + this._esc(x.version) : ''}</div>
                     ${usedRow}
                     ${pendRow}
                   </div>
                   <div style="display:flex;gap:8px;flex-wrap:wrap;">${actions}</div>
                 </div></div>`;
-        }).join('') : (q ? `<p style="color:var(--text-secondary);">${t('templates.noMatch', 'No templates match your search.')}</p>`
-            : `<div class="settings-card" style="padding:14px;"><p style="margin:0 0 8px;">${t('templates.noneLead', 'No device maps yet. A map (template) says which registers a device has and how to read them — every device uses one.')}</p>
+        }).join('') : (`<div class="settings-card" style="padding:14px;"><p style="margin:0 0 8px;">${t('templates.noneLead', 'No device maps yet. A map (template) says which registers a device has and how to read them — every device uses one.')}</p>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                  <button class="btn btn-primary btn-sm" ${this._act('openTplEditor', [null])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('templates.createFirst', 'Create a map')}</button>
-                  <button class="btn btn-ghost btn-sm" ${this._act('tplUpload', [])}><i aria-hidden="true" class="bi bi-upload"></i> ${t('templates.uploadFirst', 'Upload a map file')}</button>
+                  <button data-admin class="btn btn-primary btn-sm" ${this._act('openTplEditor', [null])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('templates.createFirst', 'Create a map')}</button>
+                  <button data-admin class="btn btn-ghost btn-sm" ${this._act('tplUpload', [])}><i aria-hidden="true" class="bi bi-upload"></i> ${t('templates.uploadFirst', 'Upload a map file')}</button>
                   <a class="btn btn-ghost btn-sm" href="https://github.com/sm26449/multi-bus-gateway/blob/main/docs/device-templates.md" target="_blank" rel="noopener"><i aria-hidden="true" class="bi bi-book"></i> ${t('devtpl.guide', 'Guide: writing a template')}</a>
                 </div></div>`);
 
@@ -80,13 +82,12 @@ Object.assign(JanitzaMonitor.prototype, {
         const warnBanner = warnKeys.length
             ? `<div class="settings-card" style="border-left:3px solid #f59e0b;padding:8px 12px;margin-bottom:10px;color:var(--warning-text,#b45309);font-size:12.5px;"><i aria-hidden="true" class="bi bi-exclamation-circle"></i> ${t('templates.canonicalWarn', 'Non-canonical field names (see docs/canonical-fields.md)')}: ${warnKeys.map(k => `<b>${this._esc(k)}</b> — ${this._esc(loadWarnings[k])}`).join(' · ')}</div>`
             : '';
-        const devToolbar = `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
-            <input type="search" id="tmSearch" placeholder="${t('templates.search', 'Search maps…')}" value="${this._esc(this._tmSearch || '')}" style="max-width:240px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary);color:inherit;">
+        const devToolbar = `<div style="display:flex;justify-content:flex-end;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              <button class="btn btn-ghost btn-sm" id="tmImportCsvBtn"><i aria-hidden="true" class="bi bi-filetype-csv"></i> ${t('registers.importCsv', 'Import CSV')}</button>
-              <button class="btn btn-ghost btn-sm" id="tmImportYamlBtn"><i aria-hidden="true" class="bi bi-filetype-yml"></i> ${t('registers.importYaml', 'Import YAML')}</button>
-              <button class="btn btn-ghost btn-sm" id="tmUploadBtn"><i aria-hidden="true" class="bi bi-upload"></i> ${t('templates.upload', 'Upload JSON')}</button>
-              <button class="btn btn-sm" id="tmNewBtn"><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('templates.new', 'New map')}</button>
+              <button data-admin class="btn btn-ghost btn-sm" id="tmImportCsvBtn"><i aria-hidden="true" class="bi bi-filetype-csv"></i> ${t('registers.importCsv', 'Import CSV')}</button>
+              <button data-admin class="btn btn-ghost btn-sm" id="tmImportYamlBtn"><i aria-hidden="true" class="bi bi-filetype-yml"></i> ${t('registers.importYaml', 'Import YAML')}</button>
+              <button data-admin class="btn btn-ghost btn-sm" id="tmUploadBtn"><i aria-hidden="true" class="bi bi-upload"></i> ${t('templates.upload', 'Upload JSON')}</button>
+              <button data-admin class="btn btn-primary btn-sm" id="tmNewBtn"><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('templates.new', 'New map')}</button>
             </div></div>`;
 
         // ── Meter emulations (vmeter output templates) ──
@@ -96,17 +97,17 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div><b>${this._esc(tp.name)}</b><br>
                   <span style="color:var(--text-secondary);font-size:12px;">id <code>${this._esc(tp.id)}</code> · ${this._esc(tp.kind || '')} · ${tp.registers} ${t('templates.measurements', 'measurements')}</span></div>
                 <div style="display:flex;gap:8px;">
-                  <button class="btn btn-sm" data-tmvm-edit="${this._esc(tp.id)}"><i aria-hidden="true" class="bi bi-pencil"></i> ${t('common.edit', 'Edit')}</button>
-                  <button class="btn btn-ghost btn-sm" data-tmvm-exp="${this._esc(tp.id)}" title="Export YAML"><i aria-hidden="true" class="bi bi-download"></i></button>
-                  <button class="btn btn-ghost btn-sm" data-tmvm-del="${this._esc(tp.id)}" title="Delete"><i aria-hidden="true" class="bi bi-trash"></i></button>
+                  <button data-admin class="btn btn-ghost btn-sm" data-tmvm-edit="${this._esc(tp.id)}"><i aria-hidden="true" class="bi bi-pencil"></i> ${t('common.edit', 'Edit')}</button>
+                  <button class="btn btn-ghost btn-sm" data-tmvm-exp="${this._esc(tp.id)}" ${this._ib(t('templates.exportOne', 'Export template'), tp.name || tp.id)}><i aria-hidden="true" class="bi bi-download"></i></button>
+                  <button data-admin class="btn btn-ghost btn-sm" data-tmvm-del="${this._esc(tp.id)}" ${this._ib(t('common.delete', 'Delete'), tp.name || tp.id)}><i aria-hidden="true" class="bi bi-trash"></i></button>
                 </div>
               </div></div>`).join('') : `<p style="color:var(--text-secondary);">${t('templates.noEmu', 'No meter emulations yet.')}</p>`;
         const vmToolbar = `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
             <p style="color:var(--text-secondary);font-size:12.5px;margin:0;max-width:560px;">${t('templates.emuHint', 'Map live values into the layout a consumer expects. Run and monitor instances on the Virtual Meters page.')}</p>
             <div style="display:flex;gap:8px;">
               <input type="file" id="tmVmImportFile" accept=".yaml,.yml" style="display:none;">
-              <button class="btn btn-ghost btn-sm" id="tmVmImportBtn"><i aria-hidden="true" class="bi bi-upload"></i> ${t('common.import', 'Import')}</button>
-              <button class="btn btn-sm" id="tmVmNewBtn"><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('templates.newEmu', 'New template')}</button>
+              <button data-admin class="btn btn-ghost btn-sm" id="tmVmImportBtn"><i aria-hidden="true" class="bi bi-upload"></i> ${t('common.import', 'Import')}</button>
+              <button data-admin class="btn btn-primary btn-sm" id="tmVmNewBtn"><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('templates.newEmu', 'New template')}</button>
             </div></div>`;
 
         el.innerHTML = `
@@ -115,7 +116,14 @@ Object.assign(JanitzaMonitor.prototype, {
               <button class="config-main-tab ${activeTab === 'emulations' ? 'active' : ''}" data-tmtab="emulations"><i aria-hidden="true" class="bi bi-hdd-network"></i> ${t('templates.tab.emu', 'Meter emulations')} <span style="opacity:.6;">(${vmTpls.length})</span></button>
               <button class="config-main-tab ${activeTab === 'fields' ? 'active' : ''}" data-tmtab="fields"><i aria-hidden="true" class="bi bi-tags"></i> ${t('templates.tab.fields', 'Canonical fields')}</button>
             </div>
-            <div data-tmpanel="devmaps" ${activeTab === 'devmaps' ? '' : 'hidden'}>${errBanner}${warnBanner}${devToolbar}${devCards}</div>
+            <div data-tmpanel="devmaps" ${activeTab === 'devmaps' ? '' : 'hidden'}>${errBanner}${warnBanner}${devToolbar}
+                ${devTpls.length && this._findBarHtml ? this._findBarHtml('templates') : ''}
+                <div class="tm-cards">${devCards}</div>
+                <div class="tm-table" hidden></div>
+                <div class="tm-find-empty find-empty" hidden><i aria-hidden="true" class="bi bi-search"></i>
+                    <div><b>${t('find.noMatch', 'Nothing matches')}</b><div class="field-hint">${t('find.noMatchHint', 'Try fewer words, or clear the filters.')}</div></div>
+                    <button type="button" class="btn btn-secondary btn-sm" data-find-clear-empty>${t('find.clear', 'Clear filters')}</button></div>
+            </div>
             <div data-tmpanel="emulations" ${activeTab === 'emulations' ? '' : 'hidden'}>${vmToolbar}${vmCards}</div>
             <div data-tmpanel="fields" id="tmFieldsPanel" ${activeTab === 'fields' ? '' : 'hidden'}></div>`;
 
@@ -127,15 +135,13 @@ Object.assign(JanitzaMonitor.prototype, {
             if (this._tmTab === 'fields') this.renderFieldsPanel();
         }));
         if (activeTab === 'fields') this.renderFieldsPanel();
-        // search (re-render + keep focus)
-        const searchEl = document.getElementById('tmSearch');
-        if (searchEl) searchEl.addEventListener('input', () => {
-            this._tmSearch = searchEl.value; this._tmRefocusSearch = true; this.renderTemplateManager();
-        });
-        if (this._tmRefocusSearch) {
-            this._tmRefocusSearch = false;
-            const s = document.getElementById('tmSearch');
-            if (s) { s.focus(); const v = s.value; s.value = ''; s.value = v; }
+        // search and filters hide cards in place (app-find.js)
+        if (devTpls.length && this._findWireBar) {
+            this._findWireBar('templates', viewChanged => this._tplFindApply(viewChanged));
+            this._findWireSlash();
+            el.querySelector('[data-find-clear-empty]')?.addEventListener('click', () =>
+                el.querySelector('.find-bar[data-find="templates"] .find-clear')?.click());
+            this._tplFindApply(true);
         }
         // device-map actions (reuse the wizard handlers; their refresh re-renders this page)
         el.querySelectorAll('[data-tm-view]').forEach(b => b.addEventListener('click', () => this.viewTemplate(b.dataset.tmView)));
@@ -161,6 +167,12 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     // Read-only register-map viewer for a device template (built-in or user).
+    // a map read over Modbus (any framing), or none named yet
+    _tplIsModbus(transports) {
+        const tr = (transports || []).map(x => String(x).toLowerCase());
+        return !tr.length || tr.some(x => ['tcp', 'rtu', 'rtu-tcp', 'rtu_tap', 'ascii', 'udp'].includes(x));
+    },
+
     async viewTemplate(id) {
         const t = this.t.bind(this);
         let full;
@@ -170,17 +182,29 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!full) { this.showToast('error', this.t('toast.template', 'Template'), id); return; }
         const regs = full.registers || [];
         const proto = full.protocol || {};
-        const bo = proto.byte_order || 'big';
-        const boLabel = { big: 'big-endian (ABCD)', little: 'little-endian / word-swap (CDAB)',
-                          badc: 'byte-swap (BADC)', dcba: 'full little-endian (DCBA)' }[bo] || bo;
-        const fcs = [...new Set(regs.map(r => r.register_type || 'holding'))]
-            .map(k => k === 'input' ? 'FC04 input' : 'FC03 holding').join(', ');
+        const tr = (proto.transports || []).map(x => String(x).toLowerCase());
+        // what a register is read by: a Modbus function, a JSON path, a topic
+        const modbus = this._tplIsModbus(tr);
+        const mqtt = !modbus && tr.includes('mqtt');
+        const FC = { holding: ['FC03', t('templates.fcHolding', 'holding')], input: ['FC04', t('templates.fcInput', 'input')],
+                     coil: ['FC01', t('templates.fcCoil', 'coil')], discrete: ['FC02', t('templates.fcDiscrete', 'discrete input')] };
+        const fcOf = r => FC[r.register_type || 'holding'] || FC.holding;
+        let transport;
+        if (modbus) {
+            const bo = proto.byte_order || 'big';
+            const boLabel = { big: 'big-endian (ABCD)', little: 'little-endian / word-swap (CDAB)',
+                              badc: 'byte-swap (BADC)', dcba: 'full little-endian (DCBA)' }[bo] || bo;
+            const fcs = [...new Set(regs.map(r => fcOf(r).join(' ')))].join(', ') || 'FC03 holding';
+            transport = `${fcs} · ${boLabel}`;
+        } else {
+            transport = mqtt ? t('templates.viaMqtt', 'MQTT · topics') : t('templates.viaHttp', 'HTTP · JSON');
+        }
         document.getElementById('tmViewTitle').textContent =
             `${full.name || id}${full.builtin ? ' · ' + t('templates.builtin', 'built-in') : ''}`;
         const meta = `<div style="display:flex;gap:18px 26px;flex-wrap:wrap;font-size:12.5px;margin-bottom:10px;">
             <div><div style="color:var(--text-secondary);">id</div><code>${this._esc(full.id)}</code></div>
             <div><div style="color:var(--text-secondary);">${t('templates.vendorModel', 'Vendor / model')}</div>${this._esc([full.vendor, full.model].filter(Boolean).join(' · ') || '—')}</div>
-            <div><div style="color:var(--text-secondary);">${t('templates.transport', 'Transport')}</div>${this._esc(fcs || 'FC03 holding')} · ${this._esc(boLabel)}</div>
+            <div data-tpl-transport><div style="color:var(--text-secondary);">${t('templates.transport', 'Transport')}</div>${this._esc(transport)}</div>
             <div><div style="color:var(--text-secondary);">${t('templates.regs', 'registers')}</div><b>${regs.length}</b></div>
             ${full.version ? `<div><div style="color:var(--text-secondary);">version</div>v${this._esc(full.version)}</div>` : ''}
           </div>`;
@@ -188,30 +212,69 @@ Object.assign(JanitzaMonitor.prototype, {
             ? `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;"><i aria-hidden="true" class="bi bi-journal-check"></i> ${t('templates.source', 'Source')}: ${this._esc(full.source_document)}</div>` : '';
         const desc = full.description
             ? `<details style="margin-bottom:10px;"><summary style="cursor:pointer;font-size:12.5px;color:var(--text-secondary);">${t('templates.details', 'Details / provenance')}</summary><p style="font-size:12.5px;color:var(--text-secondary);margin:6px 0 0;">${this._esc(full.description)}</p></details>` : '';
-        const rows = regs.slice().sort((a, b) => (a.address - b.address)).map(r => {
-            const a = r.address;
-            const hx = (typeof a === 'number') ? ' <span style="color:var(--text-secondary);">0x' + a.toString(16).toUpperCase().padStart(4, '0') + '</span>' : '';
+        const also = this._tplViewAlso(full);
+        const firstHead = modbus ? t('templates.address', 'Address') : mqtt ? t('templates.topic', 'Topic') : t('templates.jsonPath', 'JSON path');
+        const sorted = modbus ? regs.slice().sort((a, b) => (a.address - b.address)) : regs;
+        const rows = sorted.map(r => {
+            let first;
+            if (modbus) {
+                const a = r.address;
+                const hx = (typeof a === 'number') ? ' <span style="color:var(--text-secondary);">0x' + a.toString(16).toUpperCase().padStart(4, '0') + '</span>' : '';
+                first = `${this._esc(String(a))}${hx}`;
+            } else {
+                // a topic with its JSON path, or the path alone (HTTP)
+                const where = mqtt ? [r.topic, r.json_path && r.json_path !== 'value' ? r.json_path : ''].filter(Boolean).join(' → ') : (r.json_path || '');
+                first = `<code style="word-break:break-all;">${this._esc(where || '—')}</code>`;
+            }
+            const fcNote = modbus && (r.register_type || 'holding') !== 'holding' ? ` <span style="color:var(--text-secondary);">(${fcOf(r)[0]})</span>` : '';
             return `<tr>
-                <td style="padding:2px 10px 2px 0;font-variant-numeric:tabular-nums;">${this._esc(String(a))}${hx}</td>
+                <td style="padding:2px 10px 2px 0;font-variant-numeric:tabular-nums;">${first}</td>
                 <td style="padding:2px 10px 2px 0;"><code>${this._esc(r.name || '')}</code></td>
                 <td style="padding:2px 10px 2px 0;">${this._esc(r.label || '')}</td>
-                <td style="padding:2px 10px 2px 0;">${this._esc(r.data_type || '')}${(r.register_type === 'input') ? ' <span style="color:var(--text-secondary);">(FC04)</span>' : ''}</td>
+                <td style="padding:2px 10px 2px 0;">${this._esc(r.data_type || '')}${fcNote}</td>
                 <td style="padding:2px 10px 2px 0;text-align:right;font-variant-numeric:tabular-nums;" ${r.scale_from ? `title="dynamic SunSpec scale factor: engineering = raw × 10^${this._esc(r.scale_from)}"` : ''}>${r.scale_from ? `×10^<code>${this._esc(r.scale_from)}</code>` : this._esc(String(r.scale ?? 1))}</td>
                 <td style="padding:2px 10px 2px 0;">${this._esc(r.unit || '')}</td>
                 <td style="padding:2px 0;color:var(--text-secondary);">${this._esc(r.poll_group || '')}</td>
               </tr>`;
         }).join('');
-        const table = `<div style="overflow-x:auto;"><table style="width:100%;font-size:12.5px;border-collapse:collapse;">
+        const table = `<div style="overflow-x:auto;"><table style="width:100%;font-size:12.5px;border-collapse:collapse;" data-tpl-view-regs>
             <thead><tr style="text-align:left;border-bottom:1px solid var(--border);color:var(--text-secondary);">
-              <th style="padding:4px 10px 4px 0;">${t('templates.address', 'Address')}</th><th style="padding:4px 10px 4px 0;">${t('templates.name', 'Name')}</th>
+              <th style="padding:4px 10px 4px 0;">${firstHead}</th><th style="padding:4px 10px 4px 0;">${t('templates.name', 'Name')}</th>
               <th style="padding:4px 10px 4px 0;">${t('templates.label', 'Description')}</th><th style="padding:4px 10px 4px 0;">${t('templates.type', 'Type')}</th>
               <th style="padding:4px 10px 4px 0;text-align:right;">${t('templates.scale', 'Scale')}</th><th style="padding:4px 10px 4px 0;">${t('templates.unit', 'Unit')}</th>
               <th style="padding:4px 0;">${t('templates.poll', 'Poll')}</th></tr></thead>
             <tbody>${rows || `<tr><td colspan="7" style="color:var(--text-secondary);padding:8px 0;">${t('templates.noRegs', 'No registers.')}</td></tr>`}</tbody></table></div>`;
-        document.getElementById('tmViewBody').innerHTML = meta + src + desc + table;
+        document.getElementById('tmViewBody').innerHTML = meta + src + desc + also + '<section id="tmUsedBy"></section>' + table;
         document.getElementById('tmViewExportBtn').onclick = () => this.tplExport(id);
         document.getElementById('tmViewDupBtn').onclick = () => { this.closeModal('tmViewModal'); this.openTplEditor(id, true); };
         this.openModal('tmViewModal');
+        this._ubMount('template', id, document.getElementById('tmUsedBy'));
+    },
+
+    // what else the map holds, beside its registers, read-only: each count
+    // opens to the names (the editor's Advanced tabs and Raw JSON change them)
+    _tplViewAlso(full) {
+        const t = (k, d) => this.t(k, d);
+        const calc = (full.calculated || []).map(c => [c.name, c.label || c.expr || '']);
+        const cmds = Object.entries(full.commands || {}).map(([k, c]) => [k, (c && (c.label || c.description)) || '']);
+        const chRaw = full.channels || {};
+        const chans = Array.isArray(chRaw) ? chRaw.map(c => [c.name || c.id || '', c.label || ''])
+            : Object.entries(chRaw).map(([k, c]) => [k, (c && (c.label || c.description || (c.combine && `${this.t('templates.combine', 'combine')}: ${c.combine}`))) || '']);
+        const comps = Object.entries(full.components || {}).map(([k, c]) => [k, `${(c && c.name) || ''}${c && c.registers ? ` · ${this.tn('templates.nRegs', c.registers.length, '{n} registers')}` : ''}`]);
+        const presets = (full.rule_presets || full.rules || []).map(p => [p.id || p.name || '', p.label || '']);
+        const parts = [
+            ['calculated', 'templates.nCalc', '{n} calculated', calc],
+            ['commands', 'templates.nCmds', '{n} commands', cmds],
+            ['channels', 'templates.nChannels', '{n} channels', chans],
+            ['components', 'templates.nComps', '{n} components', comps],
+            ['presets', 'templates.nPresets', '{n} rule examples', presets],
+        ].filter(([, , , list]) => list.length);
+        if (!parts.length) return '';
+        return `<div data-tpl-view-also style="display:flex;gap:6px 18px;flex-wrap:wrap;font-size:12.5px;margin-bottom:10px;">
+            <span style="color:var(--text-secondary);">${t('templates.alsoIn', 'Also in this map')}:</span>
+            ${parts.map(([key, k, d, list]) => `<details data-also="${key}"><summary style="cursor:pointer;">${this._esc(this.tn(k, list.length, d))}</summary>
+                <ul style="margin:4px 0 0;padding-left:18px;">${list.map(([n, l]) => `<li><code>${this._esc(n)}</code>${l ? ` — ${this._esc(l)}` : ''}</li>`).join('')}</ul></details>`).join('')}
+          </div>`;
     },
 
     // ── CSV register-map import ───────────────────────────────────────────
@@ -396,9 +459,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 body: JSON.stringify({ template: data, overwrite }),
             });
             const res = await r.json();
-            if (r.status === 409 && !res.builtin) {
-                if (confirm(this.t('devtpl.overwriteConfirm',
-                    'A template with this id already exists.\n\nYes: overwrite it with the uploaded file.\nNo: cancel the upload.')))
+            if (r.status === 409 && !res.detail?.builtin) {
+                if (await this._tplOverwriteAsk(data?.device_template?.id || data?.id))
                     return this._tplUploadPost(data, true);
                 return;
             }
@@ -423,17 +485,37 @@ Object.assign(JanitzaMonitor.prototype, {
         a.click();
     },
 
-    async tplDelete(id) {
-        if (!confirm(this.t('devtpl.deleteConfirm',
-            'Delete this template?\n\nYes: removes the template file (devices are untouched).\nNo: keeps it.'))) return;
-        try {
-            const r = await fetch(`/api/device-templates/${encodeURIComponent(id)}`, { method: 'DELETE' });
-            if (!r.ok) throw new Error(((await r.json()).detail?.errors || ['delete failed']).join('; '));
-            this.showToast('success', this.t('devtpl.deleted', 'Template deleted'), id);
-            await this._refreshWizTemplates();
-        } catch (e) {
-            this.showToast('error', this.t('devtpl.deleteFail', 'Delete failed'), e.message);
+    // an upload whose id is taken: replace that template, or keep it
+    _tplOverwriteAsk(id) {
+        return this.confirmAction({
+            title: this.t('devtpl.overwriteTitle', 'Overwrite template {id}?', { id: id || '' }),
+            message: this.t('devtpl.overwriteConfirm', 'A template with this id already exists. The uploaded file replaces it.'),
+            confirmLabel: this.t('devtpl.overwrite', 'Overwrite'), danger: true,
+        });
+    },
+
+    // who uses a map, as the gateway counts it: a standalone device, or the
+    // installation its units belong to (once)
+    _tplUsers(ids) {
+        const out = new Map();
+        for (const id of ids || []) {
+            const d = (this._devices || []).find(x => x.id === id);
+            if (d && d.endpoint_id) out.set(`installation:${d.endpoint_id}`, { type: 'installation', id: d.endpoint_id, label: d.endpoint_name || d.endpoint_id });
+            else out.set(`device:${id}`, { type: 'device', id, label: (d && d.name) || id });
         }
+        return [...out.values()];
+    },
+
+    async tplDelete(id) {
+        // asks the server first: a template in use opens its View, whose
+        // "Used by" says what uses it
+        if (!await this._ubDelete({
+            kind: 'template', id,
+            title: this.t('devtpl.deleteTitle', 'Delete template {id}', { id }),
+            message: this.t('devtpl.deleteConfirm', 'The template file is removed; nothing uses it.'),
+        })) return;
+        this.showToast('success', this.t('devtpl.deleted', 'Template deleted'), id);
+        await this._refreshWizTemplates();
     },
 
     async openTplEditor(id, duplicate = false) {
@@ -447,7 +529,13 @@ Object.assign(JanitzaMonitor.prototype, {
                 return;
             }
             if (duplicate) {
-                data.id = `${data.id}-copy`;
+                // a free id: duplicating twice must not give two maps one id
+                let ids = new Set();
+                try { ids = new Set(((await (await fetch('/api/device-templates')).json()).templates || []).map(x => x.id)); }
+                catch (e) { /* the server refuses a taken id anyway */ }
+                let n = 1, cand = `${data.id}-copy`;
+                while (ids.has(cand)) cand = `${data.id}-copy-${++n}`;
+                data.id = cand;
                 data.name = `${data.name} (copy)`;
                 data.author = 'user';
             }
@@ -461,7 +549,7 @@ Object.assign(JanitzaMonitor.prototype, {
                      registers: [{ address: 0, name: '', label: '', unit: '', data_type: 'float',
                                    access: 'RD', category: 'basic', description: '' }] };
         }
-        this._tplEdit = { data, isNew: !id || duplicate, search: '' };
+        this._tplEdit = { data, isNew: !id || duplicate, openedId: (!id || duplicate) ? '' : id, search: '' };
         await this._loadCanonicalFields();   // canonical dictionary for name guidance (before first render)
         document.getElementById('devTplTitle').textContent =
             (!id ? this.t('devtpl.newTitle', 'New Device Template')
@@ -476,7 +564,7 @@ Object.assign(JanitzaMonitor.prototype, {
     // different unit (the canonical dictionary is a unit contract too — a
     // kWh value under an energy_* name is a silent 1000x error downstream;
     // the Fronius 65A shipped mislabeled exactly this way).
-    _tplUnitCell(r) {
+    _tplUnitState(r) {
         const cf = r.name && this._canonicalFields
             && this._canonicalFields[String(r.name).toLowerCase()];
         const want = (cf && cf.unit) || '';
@@ -485,9 +573,85 @@ Object.assign(JanitzaMonitor.prototype, {
             ? `${r.name}: ${this.t('devtpl.unitCanon', 'canonical unit is')} ${want} — `
               + this.t('devtpl.unitFix', 'adjust the scale to deliver it (a native-kWh map needs scale/1000), or rename the register')
             : (want ? `${this.t('devtpl.unitCanon', 'canonical unit is')} ${want}` : '');
-        return `<td><input class="input tpl-cell${bad ? ' tpl-noncanon' : ''}" data-f="unit" `
-             + `value="${this._esc(r.unit || '')}" style="width:56px" aria-label="Unit"`
-             + `${title ? ` title="${this._esc(title)}"` : ''}></td>`;
+        return { want, bad, title };
+    },
+
+    _tplUnitCell(r) {
+        const { want, bad, title } = this._tplUnitState(r);
+        return `<td style="white-space:nowrap"><input class="input tpl-cell${bad ? ' tpl-noncanon' : ''}" data-f="unit" `
+             + `value="${this._esc(r.unit || '')}" style="width:56px" aria-label="${this._esc(this.t('devtpl.colUnit', 'Unit'))}"`
+             + `${title ? ` title="${this._esc(title)}"` : ''}>`
+             + `<button type="button" class="btn btn-ghost btn-sm tpl-unitfix"${bad ? '' : ' style="display:none"'} `
+             + `title="${this._esc(this.t('devtpl.unitUse', 'Use the canonical unit (the value itself must be in it: check the scale)'))}">→ ${this._esc(want)}</button></td>`;
+    },
+
+    // Bring a row's Unit cell in line with its state (class, title, the fix button).
+    _tplSyncUnit(tr, row) {
+        const uinp = tr && tr.querySelector('input[data-f="unit"]');
+        if (!uinp) return;
+        const { want, bad, title } = this._tplUnitState(row);
+        uinp.value = row.unit || '';
+        uinp.classList.toggle('tpl-noncanon', bad);
+        uinp.title = title;
+        const fix = tr.querySelector('.tpl-unitfix');
+        if (fix) { fix.style.display = bad ? '' : 'none'; fix.textContent = `→ ${want}`; }   // .btn's display beats [hidden]
+    },
+
+    // A canonical name promises a unit and a measurement (the row's
+    // category). The unit is filled while it is empty or still what the
+    // dictionary put there. The category is the InfluxDB measurement, so it
+    // is filled only on a row added in this session (tplAddRow, _advAddCalc
+    // mark it with its starting section): renaming a row or a calculated
+    // field that was already in the map never moves its data to another
+    // measurement. What the user typed stays. The marks map a row to what the
+    // field held before the dictionary filled it, so a name that stops being
+    // canonical gives the field back. They live beside the rows, never in the
+    // saved template.
+    _tplAuto() {
+        return this._tplEdit.auto || (this._tplEdit.auto = { unit: new WeakMap(), category: new WeakMap() });
+    },
+
+    _tplCanonFill(row) {
+        const cf = row.name && this._canonicalFields
+            && this._canonicalFields[String(row.name).toLowerCase()];
+        const auto = this._tplAuto();
+        const unit = cf && cf.unit;
+        if (unit && (!row.unit || auto.unit.has(row))) {
+            if (!auto.unit.has(row)) auto.unit.set(row, row.unit || '');
+            row.unit = unit;
+        } else if (!unit && auto.unit.has(row)) {
+            row.unit = auto.unit.get(row);
+            auto.unit.delete(row);
+        }
+        // only a row this session added carries a category mark
+        if (auto.category.has(row)) {
+            const v = (cf && cf.measurement) || auto.category.get(row);
+            if (v) row.category = v; else delete row.category;
+        }
+    },
+
+    // a category the dictionary filled in on a new row (never one the user
+    // typed) is declared in the template's sections, or Save would refuse it
+    // as undeclared; a typo stays an error. A section the editor declared is
+    // dropped again once no row uses it — never one the map had before.
+    _tplDeclareCanonCats(d) {
+        const cats = d.categories;
+        if (!cats || !Object.keys(cats).length || !this._tplEdit.auto) return;
+        const auto = this._tplEdit.auto.category;
+        const mine = this._tplEdit.declaredCats || (this._tplEdit.declaredCats = new Set());
+        const rows = [...(d.registers || []), ...(d.calculated || [])];
+        const used = new Set(rows.map(r => r && r.category).filter(Boolean));
+        for (const c of [...mine]) if (!used.has(c)) { delete cats[c]; mine.delete(c); }
+        const dict = Object.values(this._canonicalFields || {}).filter(f => !f.user);
+        let order = Math.max(0, ...Object.values(cats).map(c => Number(c && c.order) || 0));
+        for (const row of rows) {
+            const c = row && row.category;
+            if (!c || c in cats || !auto.has(row)) continue;
+            const f = dict.find(x => x.measurement === c);
+            if (!f) continue;
+            cats[c] = { label: f.measurement_label || c.replace(/_/g, ' ').replace(/^./, x => x.toUpperCase()), order: ++order };
+            mine.add(c);
+        }
     },
 
     // One template-editor Name cell, flagged amber + 'did you mean' title when
@@ -499,7 +663,7 @@ Object.assign(JanitzaMonitor.prototype, {
             ? `${this.t('registers.canon.non', 'Non-canonical name')} — ${this.t('registers.canon.didYouMean', 'did you mean')} ${s}?`
             : this.t('registers.canon.non', 'Non-canonical name'));
         return `<td><input class="input tpl-cell${canon ? '' : ' tpl-noncanon'}" data-f="name" `
-            + `list="tplCanonList" value="${this._esc(r.name)}" aria-label="Name" title="${this._esc(title)}"></td>`;
+            + `list="tplCanonList" value="${this._esc(r.name)}" aria-label="${this._esc(this.t('devtpl.colName', 'Name'))}" title="${this._esc(title)}"></td>`;
     },
 
     // "N/M canonical" summary for the editor header.
@@ -516,7 +680,7 @@ Object.assign(JanitzaMonitor.prototype, {
                            'int64', 'uint64', 'sm16', 'sm32', 'string:8', 'string:16'];
         const proto = d.protocol || (d.protocol = {});
         const tr = (proto.transports || []).map(x => String(x).toLowerCase());
-        const isModbus = !tr.length || tr.some(x => ['tcp', 'rtu', 'rtu-tcp', 'rtu_tap'].includes(x));
+        const isModbus = this._tplIsModbus(tr);
         const usesPath = tr.includes('http') || tr.includes('mqtt');
         const usesTopic = tr.includes('mqtt');
         // Offer every category / poll group the registers actually use (bundled
@@ -534,30 +698,31 @@ Object.assign(JanitzaMonitor.prototype, {
         const shown = matching.slice(0, MAX);
         const rows = shown.map(({ r, i }) => `
             <tr data-idx="${i}">
-                <td><input class="input tpl-cell" data-f="address" type="number" min="0" max="65535" value="${r.address}" aria-label="Address"></td>
+                <td><input class="input tpl-cell" data-f="address" type="number" min="0" max="65535" value="${r.address}" aria-label="${this._esc(this.t('devtpl.aria.address', 'Address'))}"></td>
                 ${this._tplNameCell(r)}
-                <td><input class="input tpl-cell" data-f="label" value="${this._esc(r.label || '')}" aria-label="Label"></td>
+                <td><input class="input tpl-cell" data-f="label" value="${this._esc(r.label || '')}" aria-label="${this._esc(this.t('devtpl.colLabel', 'Label'))}"></td>
                 ${this._tplUnitCell(r)}
-                <td><input class="input tpl-cell" data-f="data_type" list="tplTypeList" value="${this._esc(r.data_type || 'float')}" style="width:84px" aria-label="Data type"></td>
-                <td><input class="input tpl-cell" data-f="scale" type="number" step="any" value="${r.scale ?? 1}" style="width:68px" aria-label="Scale"></td>
-                <td><input class="input tpl-cell" data-f="offset" type="number" step="any" value="${r.offset ?? 0}" style="width:68px" aria-label="Offset" title="engineering = raw / scale + offset"></td>
-                ${isModbus ? `<td><select class="input tpl-cell" data-f="register_type" aria-label="Register type" title="${this._esc(this.t('devtpl.fcHint', 'Modbus function code: FC3 holding / FC4 input registers; FC1 coils / FC2 discrete inputs are single bits'))}">
+                <td><input class="input tpl-cell" data-f="data_type" list="tplTypeList" value="${this._esc(r.data_type || 'float')}" style="width:84px" aria-label="${this._esc(this.t('devtpl.aria.dataType', 'Data type'))}"></td>
+                <td><input class="input tpl-cell" data-f="scale" type="number" step="any" value="${r.scale ?? 1}" style="width:68px" aria-label="${this._esc(this.t('devtpl.colScale', 'Scale'))}"></td>
+                <td><input class="input tpl-cell" data-f="offset" type="number" step="any" value="${r.offset ?? 0}" style="width:68px" aria-label="${this._esc(this.t('devtpl.colOffset', 'Offset'))}" title="${this._esc(this.t('devtpl.tip.offset', 'engineering = raw / scale + offset'))}"></td>
+                ${isModbus ? `<td><select class="input tpl-cell" data-f="register_type" aria-label="${this._esc(this.t('devtpl.aria.registerType', 'Register type'))}" title="${this._esc(this.t('devtpl.fcHint', 'Modbus function code: FC3 holding / FC4 input registers; FC1 coils / FC2 discrete inputs are single bits'))}">
                     <option value="holding" ${(r.register_type || 'holding') === 'holding' ? 'selected' : ''}>FC3</option>
                     <option value="input" ${r.register_type === 'input' ? 'selected' : ''}>FC4</option>
                     <option value="coil" ${r.register_type === 'coil' ? 'selected' : ''}>FC1</option>
                     <option value="discrete" ${r.register_type === 'discrete' ? 'selected' : ''}>FC2</option></select></td>` : ''}
-                ${usesPath ? `<td><input class="input tpl-cell" data-f="json_path" value="${this._esc(r.json_path || '')}" style="width:150px" placeholder="Body.Data.PAC" aria-label="JSON path"></td>` : ''}
-                ${usesTopic ? `<td><input class="input tpl-cell" data-f="topic" value="${this._esc(r.topic || '')}" style="width:120px" placeholder="~/soc" aria-label="MQTT topic"></td>` : ''}
-                <td><input class="input tpl-cell" data-f="category" list="tplCatList" value="${this._esc(r.category || '')}" style="width:118px" aria-label="Category"></td>
-                <td><input class="input tpl-cell" data-f="poll_group" list="tplGroupList" value="${this._esc(r.poll_group || '')}" style="width:96px" aria-label="Poll group"></td>
-                <td style="text-align:center;"><input type="checkbox" class="tpl-cell" data-f="writable" ${r.writable ? 'checked' : ''} title="Writable via the write API" aria-label="Writable"></td>
-                <td><input class="input tpl-cell" data-f="write_min" type="number" step="any" value="${r.write_min ?? ''}" style="width:60px" placeholder="min" aria-label="Write min"></td>
-                <td><input class="input tpl-cell" data-f="write_max" type="number" step="any" value="${r.write_max ?? ''}" style="width:60px" placeholder="max" aria-label="Write max"></td>
-                <td><input class="input tpl-cell" data-f="write_safe" type="number" step="any" value="${r.write_safe ?? ''}" style="width:60px" placeholder="safe" aria-label="Write safe (auto-revert)"></td>
+                ${usesPath ? `<td><input class="input tpl-cell" data-f="json_path" value="${this._esc(r.json_path || '')}" style="width:150px" placeholder="Body.Data.PAC" aria-label="${this._esc(this.t('devtpl.aria.jsonPath', 'JSON path'))}"></td>` : ''}
+                ${usesTopic ? `<td><input class="input tpl-cell" data-f="topic" value="${this._esc(r.topic || '')}" style="width:120px" placeholder="~/soc" aria-label="${this._esc(this.t('devtpl.aria.topic', 'MQTT topic'))}"></td>` : ''}
+                ${usesTopic ? `<td><input class="input tpl-cell" data-f="write_topic" value="${this._esc(r.write_topic || '')}" style="width:120px" placeholder="~/soc/set" aria-label="${this._esc(this.t('devtpl.aria.writeTopic', 'MQTT write topic'))}"></td>` : ''}
+                <td><input class="input tpl-cell" data-f="category" list="tplCatList" value="${this._esc(r.category || '')}" style="width:118px" aria-label="${this._esc(this.t('devtpl.colCategory', 'Category'))}"></td>
+                <td><input class="input tpl-cell" data-f="poll_group" list="tplGroupList" value="${this._esc(r.poll_group || '')}" style="width:96px" aria-label="${this._esc(this.t('devtpl.colGroup', 'Poll group'))}"></td>
+                <td style="text-align:center;"><input type="checkbox" class="tpl-cell" data-f="writable" ${r.writable ? 'checked' : ''} title="${this._esc(this.t('devtpl.tip.writable', 'Writable via the write API'))}" aria-label="${this._esc(this.t('devtpl.aria.writable', 'Writable'))}"></td>
+                <td><input class="input tpl-cell" data-f="write_min" type="number" step="any" value="${r.write_min ?? ''}" style="width:60px" placeholder="min" aria-label="${this._esc(this.t('devtpl.aria.writeMin', 'Write min'))}"></td>
+                <td><input class="input tpl-cell" data-f="write_max" type="number" step="any" value="${r.write_max ?? ''}" style="width:60px" placeholder="max" aria-label="${this._esc(this.t('devtpl.aria.writeMax', 'Write max'))}"></td>
+                <td><input class="input tpl-cell" data-f="write_safe" type="number" step="any" value="${r.write_safe ?? ''}" style="width:60px" placeholder="safe" aria-label="${this._esc(this.t('devtpl.aria.writeSafe', 'Write safe (auto-revert)'))}"></td>
                 <td style="white-space:nowrap;">
-                    <button class="btn btn-ghost btn-sm" ${this._act('tplEditStates', [i])} title="${this.t('devtpl.editStates', 'Decode states (enum / bitfield)')}" aria-label="Decode states" style="${(r.enum || r.bits) ? 'color:var(--accent,#3b82f6);' : ''}"><i aria-hidden="true" class="bi bi-list-ol"></i>${(r.enum || r.bits) ? ` <span style="font-size:10px;">${r.bits ? 'bits' : Object.keys(r.enum).length}</span>` : ''}</button>
-                    <button class="btn btn-ghost btn-sm" ${this._act('tplRowExtras', [i])} title="${this._esc(this.t('adv.row.title', 'Row details: description, not-available marker, counters, scale factor, totals, Home Assistant'))}" aria-label="Row details" style="${this._advRowHasExtras?.(r) ? 'color:var(--accent,#3b82f6);' : ''}"><i aria-hidden="true" class="bi bi-sliders"></i></button>
-                    <button class="btn btn-ghost btn-sm" ${this._act('tplDelRow', [i])} title="${this.t('common.delete', 'Delete')}" aria-label="Delete row"><i aria-hidden="true" class="bi bi-trash"></i></button>
+                    <button class="btn btn-ghost btn-sm" ${this._act('tplEditStates', [i])} title="${this.t('devtpl.editStates', 'Decode states (enum / bitfield)')}" aria-label="${this._esc(this.t('devtpl.aria.states', 'Decode states'))}" style="${(r.enum || r.bits) ? 'color:var(--accent,#3b82f6);' : ''}"><i aria-hidden="true" class="bi bi-list-ol"></i>${(r.enum || r.bits) ? ` <span style="font-size:10px;">${r.bits ? 'bits' : Object.keys(r.enum).length}</span>` : ''}</button>
+                    <button class="btn btn-ghost btn-sm" ${this._act('tplRowExtras', [i])} title="${this._esc(this.t('adv.row.title', 'Row details: description, not-available marker, counters, scale factor, totals, Home Assistant'))}" aria-label="${this._esc(this.t('devtpl.aria.rowDetails', 'Row details'))}" style="${this._advRowHasExtras?.(r) ? 'color:var(--accent,#3b82f6);' : ''}"><i aria-hidden="true" class="bi bi-sliders"></i></button>
+                    <button class="btn btn-ghost btn-sm" ${this._act('tplDelRow', [i])} title="${this.t('common.delete', 'Delete')}" aria-label="${this._esc(this.t('devtpl.aria.deleteRow', 'Delete row'))}"><i aria-hidden="true" class="bi bi-trash"></i></button>
                 </td>
             </tr>`).join('');
         document.getElementById('devTplBody').innerHTML = `
@@ -585,12 +750,12 @@ Object.assign(JanitzaMonitor.prototype, {
         ${this._tplAdvancedHtml ? this._tplAdvancedHtml(d) : ''}
         <datalist id="tplTypeList">${dataTypes.map(t => `<option value="${t}"></option>`).join('')}</datalist>
         <div style="display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap;">
-            <input type="text" id="tplSearch" class="input" placeholder="${this.t('common.search', 'Search')}…"
+            <input type="text" id="tplSearch" class="input" placeholder="${this.t('common.search', 'Search…')}…"
                    value="${this._esc(e.search || '')}" style="max-width:220px;">
             <button class="btn btn-secondary btn-sm" data-action="tplAddRow">
                 <i aria-hidden="true" class="bi bi-plus-lg"></i> ${this.t('devtpl.addRegister', 'Add measurement')}</button>
-            <button class="btn btn-secondary btn-sm" data-action="tplAutoCanonicalize"
-                    title="${this._esc(this.t('devtpl.autoCanonHint', 'Infer canonical names from each row’s label/unit (conservative — leaves anything uncertain untouched). Review, then Save.'))}">
+            <button data-admin class="btn btn-secondary btn-sm" data-action="tplAutoCanonicalize"
+                    title="${this._esc(this.t('devtpl.autoCanonHint', 'Infer canonical names from each row\'s label/unit (conservative — leaves anything uncertain untouched). Review, then Save.'))}">
                 <i aria-hidden="true" class="bi bi-magic"></i> ${this.t('devtpl.autoCanon', 'Auto-canonicalize')}</button>
             <span class="field-hint">${matching.length > MAX
                 ? this.t('devtpl.showing', 'showing') + ` ${MAX} / ${matching.length}`
@@ -609,7 +774,7 @@ Object.assign(JanitzaMonitor.prototype, {
         <datalist id="tplGroupList">${groups.map(g => `<option value="${this._esc(g)}"></option>`).join('')}</datalist>
         <div class="table-container" style="max-height:320px;overflow:auto;">
             <table class="data-table tpl-table">
-                <thead><tr><th>Addr</th><th>${this.t('devtpl.colName', 'Name')}</th><th>${this.t('devtpl.colLabel', 'Label')}</th><th>${this.t('devtpl.colUnit', 'Unit')}</th><th>${this.t('devtpl.colType', 'Type')}</th><th>${this.t('devtpl.colScale', 'Scale')}</th><th title="engineering = raw / scale + offset">${this.t('devtpl.colOffset', 'Offset')}</th>${isModbus ? `<th title="Function code">${this.t('devtpl.colFC', 'FC')}</th>` : ''}${usesPath ? `<th title="${this._esc(this.t('devtpl.jsonPathHint', 'Where the value sits in the JSON payload, dot/bracket path'))}">json_path</th>` : ''}${usesTopic ? `<th title="${this._esc(this.t('devtpl.topicHint', 'Its own MQTT topic; ~/leaf is relative to the device topic'))}">topic</th>` : ''}<th>${this.t('devtpl.colCategory', 'Category')}</th><th>${this.t('devtpl.colGroup', 'Poll group')}</th><th title="Writable via the write API">${this.t('devtpl.colWr', 'Wr')}</th><th>${this.t('devtpl.colMin', 'Min')}</th><th>${this.t('devtpl.colMax', 'Max')}</th><th title="Auto-revert value on lease expiry">${this.t('devtpl.colSafe', 'Safe')}</th><th></th></tr></thead>
+                <thead><tr><th>${this.t('devtpl.colAddr', 'Addr')}</th><th>${this.t('devtpl.colName', 'Name')}</th><th>${this.t('devtpl.colLabel', 'Label')}</th><th>${this.t('devtpl.colUnit', 'Unit')}</th><th>${this.t('devtpl.colType', 'Type')}</th><th>${this.t('devtpl.colScale', 'Scale')}</th><th title="${this._esc(this.t('devtpl.tip.offset', 'engineering = raw / scale + offset'))}">${this.t('devtpl.colOffset', 'Offset')}</th>${isModbus ? `<th title="${this._esc(this.t('devtpl.tip.fc', 'Function code'))}">${this.t('devtpl.colFC', 'FC')}</th>` : ''}${usesPath ? `<th title="${this._esc(this.t('devtpl.jsonPathHint', 'Where the value sits in the JSON payload, dot/bracket path'))}">json_path</th>` : ''}${usesTopic ? `<th title="${this._esc(this.t('devtpl.topicHint', 'Its own MQTT topic; ~/leaf is relative to the device topic'))}">topic</th>` : ''}${usesTopic ? `<th title="${this._esc(this.t('devtpl.writeTopicHint', 'Where a command publishes this row’s new value; what arrives on its topic is the read-back. Empty: not written over MQTT.'))}">write topic</th>` : ''}<th>${this.t('devtpl.colCategory', 'Category')}</th><th>${this.t('devtpl.colGroup', 'Poll group')}</th><th title="${this._esc(this.t('devtpl.tip.writable', 'Writable via the write API'))}">${this.t('devtpl.colWr', 'Wr')}</th><th>${this.t('devtpl.colMin', 'Min')}</th><th>${this.t('devtpl.colMax', 'Max')}</th><th title="${this._esc(this.t('devtpl.tip.safe', 'Auto-revert value on lease expiry'))}">${this.t('devtpl.colSafe', 'Safe')}</th><th></th></tr></thead>
                 <tbody>${rows}</tbody>
             </table>
         </div>
@@ -627,22 +792,19 @@ Object.assign(JanitzaMonitor.prototype, {
                 else if (f === 'write_min' || f === 'write_max' || f === 'write_safe')
                     v = inp.value === '' ? null : parseFloat(inp.value);
                 else v = inp.value;
-                this._tplEdit.data.registers[idx][f] = v;
-                if (f === 'unit' || f === 'name') {
-                    // live unit-contract feedback on the row's Unit cell
-                    const row = this._tplEdit.data.registers[idx];
-                    const uinp = inp.closest('tr').querySelector('input[data-f="unit"]');
-                    if (uinp) {
-                        const cf = row.name && this._canonicalFields
-                            && this._canonicalFields[String(row.name).toLowerCase()];
-                        const want = (cf && cf.unit) || '';
-                        const bad = !!(want && (row.unit || '') && row.unit !== want);
-                        uinp.classList.toggle('tpl-noncanon', bad);
-                        uinp.title = bad
-                            ? `${row.name}: ${this.t('devtpl.unitCanon', 'canonical unit is')} ${want}`
-                            : (want ? `${this.t('devtpl.unitCanon', 'canonical unit is')} ${want}` : '');
-                    }
+                // an edit that lands after the table was redrawn or the
+                // editor closed (the blur of a removed field) has no row left
+                const row = inp.isConnected && this._tplEdit?.data?.registers?.[idx];
+                if (!row) return;
+                row[f] = v;
+                const auto = this._tplEdit.auto;
+                if (auto && (f === 'unit' || f === 'category')) auto[f].delete(row);   // typed by hand: it stays
+                if (f === 'name') {
+                    this._tplCanonFill(row);
+                    const cat = inp.closest('tr').querySelector('input[data-f="category"]');
+                    if (cat) cat.value = row.category || '';
                 }
+                if (f === 'unit' || f === 'name') this._tplSyncUnit(inp.closest('tr'), row);   // live unit-contract feedback
                 if (f === 'name') {
                     // live canonical feedback: flag the cell + refresh the summary
                     const canon = !v || this._isCanonical(v);
@@ -654,6 +816,15 @@ Object.assign(JanitzaMonitor.prototype, {
                     const sum = document.getElementById('tplCanonSummary');
                     if (sum) sum.textContent = this._tplCanonSummaryText();
                 }
+            });
+        });
+        document.querySelectorAll('#devTplBody .tpl-unitfix').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tr = btn.closest('tr');
+                const row = this._tplEdit.data.registers[parseInt(tr.dataset.idx, 10)];
+                row.unit = this._tplUnitState(row).want;
+                if (this._tplEdit.auto) this._tplEdit.auto.unit.delete(row);
+                this._tplSyncUnit(tr, row);
             });
         });
         this._tplWireProtocol();
@@ -670,6 +841,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
     _tplCollectMeta() {
         const d = this._tplEdit.data;
+        this._tplDeclareCanonCats(d);
         const g = id => document.getElementById(id);
         if (this._tplEdit.isNew) d.id = g('tplId')?.value.trim() ?? d.id;
         d.name = g('tplName')?.value.trim() ?? d.name;
@@ -679,13 +851,62 @@ Object.assign(JanitzaMonitor.prototype, {
         if (canon) d.canonical = canon.checked;
         const p = d.protocol || (d.protocol = {});
         const tr = (p.transports || []);
-        if (!tr.length || tr.some(x => ['tcp', 'rtu', 'rtu-tcp', 'rtu_tap'].includes(x))) {
+        if (this._tplIsModbus(tr)) {
             const uid = parseInt(g('tplUnitId')?.value, 10);
             if (Number.isFinite(uid)) p.default_unit_id = uid;
+            const gap = parseFloat(g('tplWriteGap')?.value);
+            if (Number.isFinite(gap) && gap > 0) p.min_write_gap_s = gap; else delete p.min_write_gap_s;
+            const single = g('tplSingleWrites');
+            if (single) { if (single.checked) p.single_register_writes = true; else delete p.single_register_writes; }
             const mx = parseInt(g('tplMaxRead')?.value, 10);
             if (Number.isFinite(mx)) p.max_registers_per_read = mx;
             if (g('tplByteOrder')) p.byte_order = g('tplByteOrder').value;
         }
+        if (tr.includes('mqtt') && g('tplAvTopic')) {
+            // how an MQTT source says it is alive, and how it is asked to keep publishing
+            const avTopic = g('tplAvTopic').value.trim();
+            if (avTopic) p.availability = { topic: avTopic, online: g('tplAvOn').value || 'online',
+                                            offline: g('tplAvOff').value || 'offline' };
+            else delete p.availability;
+            const kaTopic = g('tplKaTopic').value.trim();
+            if (kaTopic) {
+                const every = parseFloat(g('tplKaEvery').value);
+                p.keepalive = { topic: kaTopic, first_payload: g('tplKaFirst').value,
+                                payload: g('tplKaPayload').value, every_s: Number.isFinite(every) ? every : 30 };
+            } else delete p.keepalive;
+        }
+    },
+
+    // ── an MQTT source: is it alive, and does it need to be asked ──────────
+    _tplMqttProtoHtml(proto) {
+        const t = (k, def) => this.t(k, def);
+        const av = proto.availability || {}, ka = proto.keepalive || {};
+        const v = x => this._esc(x ?? '');
+        return `
+            <div class="form-row">
+              <div class="form-group flex-2">
+                <label class="form-label" for="tplAvTopic">${t('devtpl.avTopic', 'Availability topic (MQTT)')}</label>
+                <input class="input" id="tplAvTopic" value="${v(av.topic)}" placeholder="~/status">
+                <div class="field-hint">${t('devtpl.avHint', 'Where the device says it is online or offline (its birth and last will). Empty: judged by how recently something arrived.')}</div>
+              </div>
+              <div class="form-group"><label class="form-label" for="tplAvOn">online</label>
+                <input class="input" id="tplAvOn" value="${v(av.online || 'online')}"></div>
+              <div class="form-group"><label class="form-label" for="tplAvOff">offline</label>
+                <input class="input" id="tplAvOff" value="${v(av.offline || 'offline')}"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-group flex-2">
+                <label class="form-label" for="tplKaTopic">${t('devtpl.kaTopic', 'Keepalive topic')}</label>
+                <input class="input" id="tplKaTopic" value="${v(ka.topic)}" placeholder="R/{portal}/keepalive">
+                <div class="field-hint">${t('devtpl.kaHint', 'For a device that publishes only while it is asked (a Victron GX). The first payload goes out on connect, the other every N seconds. A device can turn it off with keepalive: false.')}</div>
+              </div>
+              <div class="form-group"><label class="form-label" for="tplKaFirst">${t('devtpl.kaFirst', 'First payload')}</label>
+                <input class="input" id="tplKaFirst" value="${v(ka.first_payload ?? ka.payload)}"></div>
+              <div class="form-group flex-2"><label class="form-label" for="tplKaPayload">${t('devtpl.kaPayload', 'Then')}</label>
+                <input class="input" id="tplKaPayload" value="${v(ka.payload)}"></div>
+              <div class="form-group"><label class="form-label" for="tplKaEvery">${t('devtpl.kaEvery', 'Every (s)')}</label>
+                <input class="input" id="tplKaEvery" type="number" min="5" max="3600" value="${v(ka.every_s ?? 30)}"></div>
+            </div>`;
     },
 
     // ── how the device is reached and how its words are laid out ──────────
@@ -696,7 +917,7 @@ Object.assign(JanitzaMonitor.prototype, {
                             ['http', 'HTTP/JSON'], ['mqtt', 'MQTT']];
         const bo = proto.byte_order || 'big';
         // word order, unit id and read size mean something only over Modbus
-        const modbus = !tr.length || tr.some(x => ['tcp', 'rtu', 'rtu-tcp', 'rtu_tap'].includes(x));
+        const modbus = this._tplIsModbus(tr);
         const ORDERS = [
             ['big', 'ABCD', t('devtpl.boBig', 'big-endian, high word first — the Modbus default (most meters)')],
             ['little', 'CDAB', t('devtpl.boLittle', 'word-swapped: low word first (common on many meters and PLCs)')],
@@ -725,7 +946,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 <label class="form-label" for="tplByteOrder">${t('devtpl.byteOrder', 'Word / byte order (32- and 64-bit values)')}</label>
                 <select class="input" id="tplByteOrder">${ORDERS.map(([v, code, help]) => `
                   <option value="${v}" ${bo === v ? 'selected' : ''}>${code} · ${this._esc(help)}</option>`).join('')}</select>
-                <div class="field-hint">${t('devtpl.byteOrderHint', 'If 230 V reads as a huge or tiny number, the order is wrong: try CDAB. Diagnostics → Probe shows every order side by side on the live device.')}</div>
+                <div class="field-hint">${t('devtpl.byteOrderHint', 'If 230 V reads as a huge or tiny number, the order is wrong: try CDAB. Diagnostics → Register Probe shows every order side by side on the live device.')}</div>
               </div>
               <div class="form-group">
                 <label class="form-label" for="tplUnitId">${t('devtpl.unitId', 'Default unit ID')}</label>
@@ -736,7 +957,17 @@ Object.assign(JanitzaMonitor.prototype, {
                 <input class="input" id="tplMaxRead" type="number" min="1" max="125" value="${proto.max_registers_per_read ?? 125}">
                 <div class="field-hint">${t('devtpl.maxReadHint', 'Lower it (e.g. 40) for devices that reject long reads.')}</div>
               </div>
+              <div class="form-group">
+                <label class="form-label" for="tplWriteGap">${t('devtpl.writeGap', 'Pause between writes (s)')}</label>
+                <input class="input" id="tplWriteGap" type="number" min="0" max="60" step="0.5" value="${proto.min_write_gap_s ?? 0}">
+                <div class="field-hint">${t('devtpl.writeGapHint', 'For interfaces that relay writes slowly and choke on a burst (e.g. 2). 0 = none.')}</div>
+              </div>
+              <div class="form-group">
+                <label class="checkbox-label"><input type="checkbox" id="tplSingleWrites" ${proto.single_register_writes ? 'checked' : ''}> ${t('devtpl.singleWrites', 'Single-register writes only (FC6)')}</label>
+                <div class="field-hint">${t('devtpl.singleWritesHint', 'For devices that refuse FC16: every write goes out as one FC6 per register, in order.')}</div>
+              </div>
             </div>
+            ${tr.includes('mqtt') ? this._tplMqttProtoHtml(proto) : ''}
             <div class="form-group">
               <label class="form-label">${t('devtpl.pollGroups', 'Poll groups (seconds between reads)')}</label>
               <div class="tpl-proto-groups">${groups.map(([n, g]) => `
@@ -755,7 +986,7 @@ Object.assign(JanitzaMonitor.prototype, {
         document.querySelectorAll('#devTplBody .tpl-tr').forEach(cb => cb.addEventListener('change', () => {
             this._tplCollectMeta();
             p.transports = [...document.querySelectorAll('#devTplBody .tpl-tr:checked')].map(x => x.value);
-            if (p.transports.length && !p.transports.some(x => ['tcp', 'rtu', 'rtu-tcp', 'rtu_tap'].includes(x))) {
+            if (p.transports.length && !this._tplIsModbus(p.transports)) {
                 // an HTTP / MQTT map carries no Modbus settings
                 ['functions', 'max_registers_per_read', 'byte_order', 'default_unit_id'].forEach(k => delete p[k]);
             }
@@ -773,10 +1004,20 @@ Object.assign(JanitzaMonitor.prototype, {
         }));
     },
 
-    tplAddPollGroup() {
+    async tplAddPollGroup() {
         this._tplCollectMeta();
-        const name = (prompt(this.t('devtpl.groupName', 'Name of the new poll group (e.g. fast, hourly):')) || '').trim().toLowerCase();
-        if (!name || !/^[a-z][a-z0-9_]{0,31}$/.test(name)) return;
+        const have = Object.keys(this._tplEdit.data.poll_groups || {});
+        const v = await this.askValue({
+            title: this.t('devtpl.groupAdd', 'New poll group'),
+            kind: 'text', label: this.t('devtpl.groupName', 'Name of the new poll group (e.g. fast, hourly):'),
+            hint: this.t('devtpl.groupNameRule', 'Lower-case letters, digits and _, starting with a letter.'),
+            validate: x => !/^[a-z][a-z0-9_]{0,31}$/.test(x.toLowerCase())
+                ? this.t('devtpl.groupNameRule', 'Lower-case letters, digits and _, starting with a letter.')
+                : have.includes(x.toLowerCase()) ? this.t('devtpl.groupExists', 'This poll group already exists.') : null,
+            confirmLabel: this.t('common.add', 'Add'),
+        });
+        if (v === null || !this._tplEdit) return;
+        const name = v.toLowerCase();
         const d = this._tplEdit.data;
         const all = {};
         document.querySelectorAll('#devTplBody .tpl-pg-iv').forEach(x => {
@@ -825,6 +1066,7 @@ Object.assign(JanitzaMonitor.prototype, {
             if (!g) { unresolved++; return; }
             if (taken.has(g)) { conflict++; return; }
             regs[ri].name = g; taken.add(g); mapped++;
+            this._tplCanonFill(regs[ri]);                  // and the unit / category it promises, where empty
         });
         if (mapped) this._tplEdit.data.canonical = true;   // opt into validation
         this._tplEdit.search = '';                         // show all rows so renames are visible
@@ -840,9 +1082,13 @@ Object.assign(JanitzaMonitor.prototype, {
         this._tplCollectMeta();
         const d = this._tplEdit.data;
         const cat = Object.keys(d.categories || {})[0] || 'basic';
-        d.registers.push({ address: 0, name: '', label: '', unit: '',
-                           data_type: 'float', scale: 1, register_type: 'holding',
-                           access: 'RD', category: cat, poll_group: '', description: '' });
+        const row = { address: 0, name: '', label: '', unit: '',
+                      data_type: 'float', scale: 1, register_type: 'holding',
+                      access: 'RD', category: cat, poll_group: '', description: '' };
+        // the section is the editor's guess, not the user's: a canonical name
+        // replaces it, and gives it back when the name stops being canonical
+        this._tplAuto().category.set(row, cat);
+        d.registers.push(row);
         this._tplEdit.search = '';
         this._tplEditorRender();
         const body = document.querySelector('#devTplBody .table-container');
@@ -909,7 +1155,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <tr>
               <td><input class="input enum-cell" data-f="v" data-i="${i}" value="${this._esc(row.v)}" style="width:120px;" placeholder="${this._enumBuilder.mode === 'bits' ? '0' : 'e.g. 4'}"></td>
               <td><input class="input enum-cell" data-f="label" data-i="${i}" value="${this._esc(row.label)}" placeholder="e.g. ${this._enumBuilder.mode === 'bits' ? 'overtemp' : 'MPPT'}"></td>
-              <td><button class="btn btn-ghost btn-sm" ${this._act('enumBuilderDelRow', [i])} aria-label="Remove"><i aria-hidden="true" class="bi bi-x-lg"></i></button></td>
+              <td><button class="btn btn-ghost btn-sm" ${this._act('enumBuilderDelRow', [i])} aria-label="${this._esc(this.t('common.remove', 'Remove'))}"><i aria-hidden="true" class="bi bi-x-lg"></i></button></td>
             </tr>`).join('');
         body.querySelectorAll('.enum-cell').forEach(inp => inp.addEventListener('change', () => {
             const r = this._enumBuilder.rows[parseInt(inp.dataset.i, 10)];
@@ -990,12 +1236,35 @@ Object.assign(JanitzaMonitor.prototype, {
         const d = this._tplEdit.data;
         const fb = document.getElementById('devTplFeedback');
         const errBox = document.getElementById('tplErrors');
+        // a new map, a duplicate, or an edit saved under another id must not
+        // replace an existing template silently
+        const create = !!this._tplEdit.isNew || (this._tplEdit.openedId && d.id !== this._tplEdit.openedId);
         try {
-            const r = await fetch('/api/device-templates', {
+            let r = await fetch('/api/device-templates', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ device_template: d }),
+                body: JSON.stringify({ device_template: d, ...(create ? { create: true } : {}) }),
             });
-            const res = await r.json();
+            let res = await r.json();
+            if (r.status === 409) {
+                if (res.detail?.builtin) {
+                    errBox.textContent = this.t('devtpl.builtinTaken', 'A built-in template already has the id "{id}" — choose another id.')
+                        .replace('{id}', d.id);
+                    errBox.style.display = '';
+                    fb.textContent = ''; fb.className = 'save-feedback';
+                    return;
+                }
+                if (!await this.confirmAction({
+                    title: this.t('devtpl.overwriteTitle', 'Overwrite template {id}?', { id: d.id }),
+                    message: this.t('devtpl.overwriteSaveConfirm',
+                        'A template with the id "{id}" already exists. Replace it with this one, or cancel and change the id here.', { id: d.id }),
+                    confirmLabel: this.t('devtpl.replace', 'Replace'), danger: true,
+                })) return;
+                r = await fetch('/api/device-templates', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ device_template: d }),
+                });
+                res = await r.json();
+            }
             if (!r.ok) {
                 const errs = res.detail?.errors || ['save failed'];
                 errBox.textContent = errs.slice(0, 8).join('\n');
@@ -1060,20 +1329,20 @@ Object.assign(JanitzaMonitor.prototype, {
                 </div>
                 <div class="field-hint">${t('fields.lockHint', 'Once a device reads a field, its category and topic stay as they are — they hold history. Unit and description can still change.')}</div>
                 <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
-                  <button class="btn btn-primary btn-sm" ${this._act('saveUserField', [])}><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('common.save', 'Save')}</button>
+                  <button data-admin class="btn btn-primary btn-sm" ${this._act('saveUserField', [])}><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('common.save', 'Save')}</button>
                   ${this._tfEdit ? `<button class="btn btn-ghost btn-sm" ${this._act('editUserField', [''])}>${t('common.cancel', 'Cancel')}</button>` : ''}
                   <span class="save-feedback" id="tfFeedback"></span>
                 </div>
               </div>
             </details>
             <div style="display:flex;gap:10px;align-items:center;margin:10px 0;flex-wrap:wrap;">
-              <input type="text" id="tfSearch" class="input" style="max-width:260px;" placeholder="${t('common.search', 'Search')}" value="${this._esc(this._tfSearch || '')}">
+              <input type="text" id="tfSearch" class="input" style="max-width:260px;" placeholder="${t('common.search', 'Search…')}" value="${this._esc(this._tfSearch || '')}">
               <select id="tfCatFilter" class="input" style="max-width:240px;" aria-label="${this._esc(t('fields.categoryShort', 'Category'))}" ${this._act('_tfSetCat', [], { value: true, on: 'change' })}>
                 <option value="" ${cat ? '' : 'selected'}>${t('fields.allCats', 'All categories')} (${Object.keys(fields).length})</option>
                 ${own ? `<option value="__mine" ${cat === '__mine' ? 'selected' : ''}>${t('fields.mineOnly', 'Only yours')} (${own})</option>` : ''}
                 ${cats.map(c => `<option value="${this._esc(c)}" ${c === cat ? 'selected' : ''}>${this._esc(c)} (${perCat[c]})</option>`).join('')}
               </select>
-              <span class="field-hint">${t('fields.shown', '{shown} shown', { shown: rows.length })} · ${t('fields.count', '{n} fields · {own} yours', { n: Object.keys(fields).length, own })}</span>
+              <span class="field-hint">${t('fields.shown', '{shown} shown', { shown: rows.length })} · ${this.tn('fields.count', Object.keys(fields).length, '{n} fields · {own} yours', { own })}</span>
             </div>
             <div class="table-container tf-list">
               <table class="data-table"><thead><tr>
@@ -1128,7 +1397,11 @@ Object.assign(JanitzaMonitor.prototype, {
 
     async deleteUserField(name) {
         const t = (k, d, p) => this.t(k, d, p);
-        if (!confirm(t('fields.deleteConfirm', 'Delete the field {name}?', { name }))) return;
+        if (!await this.confirmAction({
+            title: t('fields.deleteTitle', 'Delete field {name}', { name }),
+            message: t('fields.deleteHint', 'Refused while a template uses it.'),
+            confirmLabel: t('common.delete', 'Delete'), danger: true,
+        })) return;
         const r = await fetch(`/api/canonical-fields/user/${encodeURIComponent(name)}`, { method: 'DELETE' });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) {

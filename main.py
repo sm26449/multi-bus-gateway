@@ -147,27 +147,12 @@ class GatewayApp:
         for _bad in load_user_fields(self.config.config_path.parent / 'canonical_fields_user.json'):
             logger.warning("canonical field skipped: %s", _bad)
 
-        # Endpoint-materialized devices seed their register selection from the
-        # template at BOOT — the API's create path covers CRUD devices, but a
-        # endpoint can appear straight in config.yaml, and its units must poll
-        # from the first start (one template instantiated N times).
-        from multibus.device_seed import autoselect_template_registers
-        for device in self.config.devices:
-            if not (device.endpoint_id and device.enabled):
-                continue
-            # Seed PER SOURCE: each way of reaching a unit has its own template
-            # and therefore its own map, and they live in separate files so
-            # adding a second source never disturbs the first one's selection.
-            for src in (device.sources or []):
-                if not (src.enabled and (src.template or device.template)):
-                    continue
-                try:
-                    autoselect_template_registers(
-                        self.config, self.template_registry, device,
-                        source=src if len(device.sources) > 1 else None)
-                except Exception as e:  # noqa: BLE001 — seeding must not block boot
-                    logger.warning(f"device {device.id} source {src.id}: "
-                                   f"template seeding failed: {e}")
+        # Devices written straight into config.yaml (an installation's units,
+        # or a device of its own with a template) seed their register
+        # selection from the template at BOOT, as the API's create does —
+        # they must read from the first start.
+        from multibus.device_seed import seed_devices_at_boot
+        seed_devices_at_boot(self.config, self.template_registry)
 
         for device in self.config.devices:
             client = build_device_client(
@@ -384,14 +369,31 @@ class GatewayApp:
                 daemon=True
             ).start()
 
-        # Virtual meters (each runs its own isolated server thread).
-        if self.vmeter_manager:
-            self.vmeter_manager.start_all()
-            self.vmeter_manager.start_state_publisher()   # publish health to MQTT for alertd
+        # Virtual meters (each runs its own isolated server thread) and PQ event
+        # recorders (opt-in per device) — on an active gateway; a standby
+        # serves only its `balanced` meters, and starts the rest when it
+        # becomes active (and stops them the other way).
+        def _outputs(on: bool) -> None:
+            if self.vmeter_manager:
+                if on:
+                    self.vmeter_manager.start_all()
+                    self.vmeter_manager.start_state_publisher()   # publish health to MQTT for alertd
+                else:
+                    self.vmeter_manager.standby()
+            if getattr(self, 'pq_manager', None):
+                (self.pq_manager.start_all if on else self.pq_manager.stop_all)()
 
-        # PQ event recorders (opt-in per device)
-        if getattr(self, 'pq_manager', None):
-            self.pq_manager.start_all()
+        gw_role = self.app.state.role
+        if gw_role.active:
+            _outputs(True)
+        else:
+            if self.vmeter_manager:
+                self.vmeter_manager.start_all()                 # the balanced ones
+            logger.warning("standby gateway: failover virtual meters and PQ recorders wait for the active role")
+
+        def _vmeters_and_pq(old: str, new: str) -> None:
+            _outputs(new == 'active')
+        self.app.state.role_hooks.append(_vmeters_and_pq)
 
         logger.info(f"Starting web server on {self.config.ui.host}:{self.config.ui.port}")
 

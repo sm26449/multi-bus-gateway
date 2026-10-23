@@ -119,21 +119,22 @@ try {
   check('a direct Modbus TCP device (API)', (await post('/api/devices', { id: DEV.tcp, template: TPL, enabled: false,
     connection: { protocol: 'tcp', host: '192.0.2.9', port: 502, unit_id: 1 } })).status === 200);
   await goDevices();
-  await page.evaluate(id => window.app.openDeviceWizard(id), DEV.tcp);
-  await page.waitForSelector('#deviceWizardModal.active');
+  // a saved device is edited on its page (Configure → Connection), in the
+  // same connection form Add Device uses
+  await page.evaluate(id => window.app.openDeviceEdit(id), DEV.tcp);
+  await page.waitForSelector('#ddvConn input[name="ddvProto"]', { state: 'attached' });
   check('editing: Modbus RTU can be chosen, HTTP and MQTT cannot',
-    !(await page.isDisabled('input[name="devWizProto"][value="rtu"]'))
-    && await page.isDisabled('input[name="devWizProto"][value="http"]')
-    && await page.isDisabled('input[name="devWizProto"][value="mqtt"]'));
-  check('…and the hint says why', /register map stays valid/.test(await page.innerText('#devWizBody')));
-  await page.click('#deviceWizardModal label:has(input[name="devWizProto"][value="rtu"])');
-  await page.click('#deviceWizardModal label:has(input[name="devWizRtuMode"][value="rtu"])');
-  await page.fill('#devWizSerial', '/dev/ttyE2EUX');
-  await page.fill('#devWizUnitR', '3');
-  await page.click('#devWizNext');
-  await page.click('#devWizNext');
-  await page.click('#devWizNext');
-  await page.waitForSelector('#deviceWizardModal', { state: 'hidden' });
+    !(await page.isDisabled('input[name="ddvProto"][value="rtu"]'))
+    && await page.isDisabled('input[name="ddvProto"][value="http"]')
+    && await page.isDisabled('input[name="ddvProto"][value="mqtt"]'));
+  check('…and the hint says why', /register map stays valid/.test(await page.innerText('#ddvConn')));
+  await page.click('#ddvConn label:has(input[name="ddvProto"][value="rtu"])');
+  await page.click('#ddvConn label:has(input[name="ddvRtuMode"][value="rtu"])');
+  check('…and says a change of how it is reached starts afresh', await page.isVisible('#ddvRouteHint'));
+  await page.fill('#ddvSerial', '/dev/ttyE2EUX');
+  await page.fill('#ddvUnitR', '3');
+  await page.click('#deviceDetailView [data-action="saveDeviceDetail"]');
+  await page.waitForFunction(() => /Saved/.test(document.getElementById('ddvFeedback')?.textContent || ''), null, { timeout: 10000 });
   d = await devOf(DEV.tcp);
   check('…the device is now Modbus RTU on that port, same id and map',
     d.protocol === 'rtu' && d.serial?.serial_port === '/dev/ttyE2EUX' && d.template === TPL, JSON.stringify(d).slice(0, 220));
@@ -161,16 +162,15 @@ try {
     JSON.stringify(d).slice(0, 200));
   await goDevices();
   check('the device list names it Modbus ASCII', /ASCII/.test(await page.innerText('#devicesListView')));
-  await page.evaluate(id => window.app.openDeviceWizard(id), DEV.asc);
-  await page.waitForSelector('#deviceWizardModal.active');
+  await page.evaluate(id => window.app.openDeviceEdit(id), DEV.asc);
+  await page.waitForSelector('#ddvConn input[name="ddvRtuMode"]', { state: 'attached' });
   check('editing it shows Direct serial with ASCII framing',
-    await page.isChecked('input[name="devWizRtuMode"][value="rtu"]') && await page.inputValue('#devWizFraming') === 'ascii');
-  await page.click('#deviceWizardModal [data-action="closeModal"]');
-  await page.evaluate(id => window.app.openDeviceWizard(id), DEV.udp);
-  await page.waitForSelector('#deviceWizardModal.active');
+    await page.isChecked('input[name="ddvRtuMode"][value="rtu"]') && await page.inputValue('#ddvFraming') === 'ascii');
+  await page.evaluate(id => window.app.openDeviceEdit(id), DEV.udp);
+  await page.waitForSelector('#ddvConn input[name="ddvProto"]', { state: 'attached' });
   check('editing the UDP device shows Modbus TCP with "Over UDP" ticked',
-    await page.isChecked('input[name="devWizProto"][value="tcp"]') && await page.isChecked('#devWizUdp'));
-  await page.click('#deviceWizardModal [data-action="closeModal"]');
+    await page.isChecked('input[name="ddvProto"][value="tcp"]') && await page.isChecked('#ddvUdp'));
+  await page.evaluate(() => window.app.closeDeviceDetail(true));
 
   // ═══ 3. Virtual Meters: a disabled "Add instance" says why ══════════════
   await page.click('[data-page="vmeters"]');

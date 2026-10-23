@@ -22,9 +22,11 @@ unit, a new way the bank totals combine) never reached a unit that already
 existed. This refreshes what the template DESCRIBES on the rows the unit
 already has, and nothing the operator decided:
 
-refreshed  label, unit, description, category, aggregates — on registers and
-           template-shipped calculated fields matched by name (the unit only
-           while the row keeps the template's scale and offset)
+refreshed  label, unit, description, category, aggregates, and how a value
+           is decoded (states, bits, mask/shift, the not-available marker) —
+           on registers and template-shipped calculated fields matched by
+           name (the unit only while the row keeps the template's scale and
+           offset)
 kept       which rows are selected, their dashboard/ui flags, MQTT/InfluxDB
            switches and topics, thresholds, and every calculated EXPRESSION
            (a formula is logic; the operator may have tuned it)
@@ -40,9 +42,12 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-REGISTER_KEYS = ("label", "unit", "description", "category")
+REGISTER_KEYS = ("label", "unit", "description", "category", "enum", "bits", "mask", "shift", "nan")
 SILENT_FILL = ("description", "category")
-CALC_KEYS = ("label", "unit")
+# how a value is decoded belongs to the template: one it dropped (a wrong
+# mask, an enum replaced by bits) is dropped from the row too
+DECODE_KEYS = ("enum", "bits", "mask", "shift", "nan")
+CALC_KEYS = ("label", "unit", "category")
 
 
 def _rescaled(row: Dict[str, Any], t) -> bool:
@@ -66,8 +71,10 @@ def _apply_row(row: Dict[str, Any], t, keys: Tuple[str, ...]) -> None:
         if k == "unit" and _rescaled(row, t):
             continue        # the operator's scale goes with the operator's unit
         v = getattr(t, k, None)
-        if v not in (None, ""):
-            row[k] = v
+        if v not in (None, "", {}):
+            row[k] = copy.deepcopy(v)
+        elif k in DECODE_KEYS:
+            row.pop(k, None)
     agg = getattr(t, "aggregates", None)
     if agg:
         row["aggregates"] = dict(agg)

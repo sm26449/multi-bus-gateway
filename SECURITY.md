@@ -56,8 +56,7 @@ Defense in depth — every layer applies independently:
    HttpOnly sliding cookies (7-day slide, 30-day absolute cap, cookie
    re-issued as the session slides) persisted as SHA-256 token hashes (0600).
 3. **Optional API key** (`API_KEY`) required on every state-changing HTTP
-   request and on the OTA-capable builder WebSocket (header or
-   `mbg-api-key.<base64url>` subprotocol). A gate for machine clients, never
+   request. A gate for machine clients, never
    a role: with login on it cannot unlock what the operator role withholds.
 4. **Optional IP allowlist** in front of everything, including `/health`.
 5. **Hardware-write gating chain**: `security.allow_writes` (default off)
@@ -94,7 +93,7 @@ Defense in depth — every layer applies independently:
 ## By design (read before reporting)
 
 - **Admin-configured egress is trusted.** The InfluxDB URL, MQTT broker,
-  alert webhooks, REST push and ESPHome dashboard are set by the admin and
+  alert webhooks and REST push are set by the admin and
   the gateway connects to them as told (redirects are refused). Device
   sources and probes are the ones restricted to the LAN.
 - **MQTT writes delegate authentication to the broker.** With

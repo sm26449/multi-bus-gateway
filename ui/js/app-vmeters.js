@@ -9,10 +9,11 @@ Object.assign(JanitzaMonitor.prototype, {
     // state when it was really this morning's history (live confusion, 28.07)
     _relTime(ts) {
         const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
-        if (s < 90) return `${s}s ago`;
-        if (s < 5400) return `${Math.round(s / 60)}m ago`;
-        if (s < 129600) return `${Math.round(s / 3600)}h ago`;
-        return `${Math.round(s / 86400)}d ago`;
+        const ago = (t) => this.t('common.agoShort', '{t} ago', { t });
+        if (s < 90) return ago(`${s}s`);
+        if (s < 5400) return ago(`${Math.round(s / 60)}m`);
+        if (s < 129600) return ago(`${Math.round(s / 3600)}h`);
+        return ago(`${Math.round(s / 86400)}d`);
     },
 
     async renderVirtualMeters() {
@@ -62,7 +63,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const addBar = `
             <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
               <span style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-              <button class="btn btn-primary btn-sm" id="vmAddInstanceBtn" ${canAdd ? '' : 'disabled'} title="${this._esc(canAdd ? '' : whyNot)}">
+              <button data-admin class="btn btn-primary btn-sm" id="vmAddInstanceBtn" ${canAdd ? '' : 'disabled'} title="${this._esc(canAdd ? '' : whyNot)}">
                 <i aria-hidden="true" class="bi bi-plus-lg"></i> ${this.t('vmeter.addInstance', 'Add instance')}</button>
               ${canAdd || !insts.length ? '' : `<span class="field-hint">${this._esc(whyNot)}${opts ? '' : ` <a href="#" ${this._act('vmShowTab', ['templates'])}>${this.t('vmeter.newTemplate', 'Create a template')}</a>`}</span>`}
               </span>
@@ -72,10 +73,12 @@ Object.assign(JanitzaMonitor.prototype, {
         // stays disabled until one exists that is not already in use
         const noTpl = !templates.length || !opts;
         const cards = !insts.length
-            ? `<p style="color:var(--text-secondary);">${noTpl
-                ? this.t('vmeter.needTemplate', 'No virtual meters yet. A virtual meter serves a register map you define: first create one on the Templates tab (which registers, from which device values), then come back and use “Add instance”.')
-                  + ` <a href="#" ${this._act('vmShowTab', ['templates'])}>${this.t('vmeter.goTemplates', 'Open Templates')}</a>`
-                : this.t('vmeter.noneConfigured', 'No virtual meters configured. Use “Add instance”.')}</p>`
+            ? (noTpl
+                ? this._emptyState({ icon: 'bi-broadcast', title: this.t('vmeter.noneTitle', 'No virtual meters yet'),
+                    body: this.t('vmeter.needTemplateBody', 'A virtual meter serves a register map you define. First make one on the Templates tab — which registers, from which device values — then add an instance here.'),
+                    actionHtml: `<button type="button" class="btn btn-secondary btn-sm" data-admin ${this._act('vmShowTab', ['templates'])}><i aria-hidden="true" class="bi bi-arrow-right"></i> ${this.t('vmeter.goTemplates', 'Open Templates')}</button>` })
+                : this._emptyState({ icon: 'bi-broadcast', title: this.t('vmeter.noneTitle', 'No virtual meters yet'),
+                    body: this.t('vmeter.noneConfigured', 'No virtual meters configured. Use “Add instance”.') }))
             : insts.map(m => {
             const mid = this._esc(m.template);
             // One status component app-wide (same pill as the Outputs sinks) —
@@ -96,7 +99,7 @@ Object.assign(JanitzaMonitor.prototype, {
             const conns = m.connections || [];
             const connRows = conns.length
                 ? conns.map(c => `<tr><td style="padding:2px 14px 2px 0;color:var(--text-secondary);font-family:monospace;">${this._esc(c.ip)}${c.port ? ':' + c.port : ''}</td>`
-                    + `<td style="padding:2px 0;color:var(--text-secondary);font-variant-numeric:tabular-nums;white-space:nowrap;" title="connection uptime">up ${this._dur(c.connected_s)}</td></tr>`).join('')
+                    + `<td style="padding:2px 0;color:var(--text-secondary);font-variant-numeric:tabular-nums;white-space:nowrap;" title="${this._esc(this.t('vmeter.connUptime', 'connection uptime'))}">${this.t('vmeter.up', 'up')} ${this._dur(c.connected_s)}</td></tr>`).join('')
                 : `<tr><td style="color:var(--text-secondary);">${this.t('vmeter.noConns', 'no active connections')}</td></tr>`;
             const summary = `:${m.port ?? '—'} · ${conns.length} conn${conns.length === 1 ? '' : 's'}`
                 + (m.running ? ` · ${m.requests ?? 0} req · ${m.req_rate ?? 0}/s` : '');
@@ -110,6 +113,7 @@ Object.assign(JanitzaMonitor.prototype, {
                   <div><div style="color:var(--text-secondary);font-size:11.5px;">${this.t('lbl.status', "Status")}</div>${badge}</div>
                   <div><div style="color:var(--text-secondary);font-size:11.5px;">${this.t('lbl.throughput', "Throughput")}</div><b>${m.running ? (m.requests ?? 0) : '—'}</b> req · <b>${m.running ? (m.req_rate ?? 0) : 0}</b>/s</div>
                   <div><div style="color:var(--text-secondary);font-size:11.5px;">${this.t('lbl.freshness', "Freshness")}</div>${this.t('vmeter.freshness', 'stale after <b>{s}s</b> · <b>{refresh}</b> refresh', { s: m.stale_after_s ?? 15, refresh: this._fmtInterval(m.update_interval_s ?? 1) })}</div>
+                  ${m.ha_mode === 'balanced' || m.waits_for_active ? `<div><div style="color:var(--text-secondary);font-size:11.5px;">${t('vmeter.haMode', 'In a high-availability pair')}</div><b>${this._esc(m.ha_mode)}</b>${m.waits_for_active ? ` · ${t('vmeter.waitsActive', 'waits for the active role')}` : ''}</div>` : ''}
                   ${m.errors ? `<div style="color:var(--danger-text,#c0392b);"><div style="font-size:11.5px;">${this.t('lbl.errors', "Errors")}</div><b>${m.errors}</b></div>` : ''}
                 </div>
                 ${m.last_error ? `<div style="color:var(--warning-text,#c77700);font-size:12.5px;margin-bottom:10px;" title="${this._esc(m.last_error.message || '')}"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> ${this._esc(m.last_error.kind || '')}${m.last_error.ts ? ` <span style="color:var(--text-secondary);">· ${this._relTime(m.last_error.ts)}</span>` : ''}</div>` : ''}
@@ -117,8 +121,8 @@ Object.assign(JanitzaMonitor.prototype, {
                   <div style="color:var(--text-secondary);margin-bottom:4px;"><i aria-hidden="true" class="bi bi-plug"></i> ${t('vmeter.connections', 'Connections ({n})', { n: conns.length })}</div>
                   <table>${connRows}</table></div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                  <button class="btn btn-sm" data-vm-editinst="${mid}"><i aria-hidden="true" class="bi bi-sliders"></i> ${t('common.edit', 'Edit')}</button>
-                  <button class="btn btn-ghost btn-sm" data-vm-del="${mid}"><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>
+                  <button data-admin class="btn btn-ghost btn-sm" data-vm-editinst="${mid}"><i aria-hidden="true" class="bi bi-sliders"></i> ${t('common.edit', 'Edit')}</button>
+                  <button data-admin class="btn btn-ghost btn-sm" data-vm-del="${mid}"><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>
                 </div>`;
             const live = prev
                 ? `<div style="font-size:13px;"><div style="color:var(--text-secondary);margin-bottom:6px;">${this.t('vmeter.liveServed', 'Live values served (source → served value)')}</div><table>${prev}</table></div>`
@@ -134,8 +138,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 </div>
                 <div class="vm-head-r" style="display:flex;align-items:center;gap:14px;">
                   <span class="vm-head-summary" style="font-size:12px;color:var(--text-secondary);font-variant-numeric:tabular-nums;white-space:nowrap;">${summary}</span>
-                  <label class="toggle-switch" title="Enable / disable">
-                    <input type="checkbox" data-vm="${mid}" aria-label="Enable virtual meter ${mid}" ${m.enabled ? 'checked' : ''}>
+                  <label class="toggle-switch" title="${this._esc(this.t('vmeter.enableToggle', 'Enable / disable'))}">
+                    <input type="checkbox" data-vm="${mid}" aria-label="Enable virtual meter ${mid}" ${m.enabled ? 'checked' : ''} ${this._isAdminView() ? '' : 'disabled'}>
                     <span class="toggle-slider"></span>
                   </label>
                 </div>
@@ -161,21 +165,21 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div><b>${this._esc(t.name)}</b><br>
                   <span style="color:var(--text-secondary);font-size:12px;">id <code>${this._esc(t.id)}</code> · ${t.kind} · ${t.registers} measurements</span></div>
                 <div style="display:flex;gap:8px;">
-                  <button class="btn btn-sm" data-vm-edit="${this._esc(t.id)}"><i aria-hidden="true" class="bi bi-pencil"></i> Edit</button>
-                  <button class="btn btn-ghost btn-sm" data-vm-export="${this._esc(t.id)}" title="Export YAML"><i aria-hidden="true" class="bi bi-download"></i></button>
-                  <button class="btn btn-ghost btn-sm" data-vm-tpldel="${this._esc(t.id)}" title="Delete template"><i aria-hidden="true" class="bi bi-trash"></i></button>
+                  <button data-admin class="btn btn-ghost btn-sm" data-vm-edit="${this._esc(t.id)}"><i aria-hidden="true" class="bi bi-pencil"></i> ${this.t('common.edit', 'Edit')}</button>
+                  <button class="btn btn-ghost btn-sm" data-vm-export="${this._esc(t.id)}" ${this._ib(this.t('templates.exportOne', 'Export template'), t.name || t.id)}><i aria-hidden="true" class="bi bi-download"></i></button>
+                  <button data-admin class="btn btn-ghost btn-sm" data-vm-tpldel="${this._esc(t.id)}" ${this._ib(this.t('common.delete', 'Delete'), t.name || t.id)}><i aria-hidden="true" class="bi bi-trash"></i></button>
                 </div>
               </div>
             </div>`).join('');
         const tmplSection = `
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                <h3 style="margin:0;"><i aria-hidden="true" class="bi bi-diagram-3"></i> Templates</h3>
+                <h3 style="margin:0;"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this.t('vmeter.templates', 'Templates')}</h3>
                 <div style="display:flex;gap:8px;">
-                  <button class="btn btn-ghost btn-sm" id="vmImportBtn"><i aria-hidden="true" class="bi bi-upload"></i> Import</button>
-                  <button class="btn btn-sm" id="vmNewTplBtn"><i aria-hidden="true" class="bi bi-plus-lg"></i> New template</button>
+                  <button data-admin class="btn btn-ghost btn-sm" id="vmImportBtn"><i aria-hidden="true" class="bi bi-upload"></i> ${this.t('common.import', 'Import')}</button>
+                  <button data-admin class="btn btn-primary btn-sm" id="vmNewTplBtn"><i aria-hidden="true" class="bi bi-plus-lg"></i> ${this.t('vmeter.newTplBtn', 'New template')}</button>
                 </div>
               </div>
-              <p style="color:var(--text-secondary);font-size:12.5px;margin:0 0 10px;">Map a device's live measurements into the layout a consumer expects. Editing a template that an instance uses reloads it live. Export shares a template as YAML; Import validates before saving.</p>
+              <p style="color:var(--text-secondary);font-size:12.5px;margin:0 0 10px;">${this.t('vmeter.templatesLead', 'Map a device\'s live measurements into the layout a consumer expects. Editing a template that an instance uses reloads it live. Export shares a template as YAML; Import validates before saving.')}</p>
               <input type="file" id="vmImportFile" accept=".yaml,.yml" style="display:none;">
               ${tmplCards || `<p style="color:var(--text-secondary);">${this.t('msg.noTemplatesYet', "No templates yet.")}</p>`}`;
         el.innerHTML = `
@@ -240,12 +244,34 @@ Object.assign(JanitzaMonitor.prototype, {
             });
             // enable / disable toggle
             const cb = card.querySelector('input[data-vm]');
+            // disabling one is a write to what reads it: the meter stops
+            // answering, and a Victron ESS reading it as its grid meter loses it
             if (cb) cb.addEventListener('change', async () => {
-                const on = cb.checked; cb.disabled = true;
+                const on = cb.checked;
+                if (!on && !await this.confirmAction({
+                    title: this.t('vmeter.disableTitle', 'Disable virtual meter {id}', { id: mid }),
+                    message: this.t('vmeter.disableConfirm',
+                        'It stops answering on port {port}. Anything reading it as its meter (a Victron ESS, a Fronius inverter) loses it and falls back to its own fail-safe.',
+                        { port: (this._vmInsts || {})[mid]?.port ?? '—' }),
+                    confirmLabel: this.t('vmeter.disable', 'Disable'),
+                })) { cb.checked = true; return; }
+                cb.disabled = true;
                 try {
-                    await fetch(`/api/virtual-meters/${encodeURIComponent(mid)}/toggle?on=${on}`, { method: 'POST' });
-                    this.showToast('success', this.t('toast.vmeter', 'Virtual meter'), `${mid} ${on ? 'enabled' : 'disabled'}`);
-                } catch (e) { this.showToast('error', this.t('toast.toggleFailed', 'Toggle failed'), mid); }
+                    const r = await fetch(`/api/virtual-meters/${encodeURIComponent(mid)}/toggle?on=${on}`, { method: 'POST' });
+                    const d = await r.json().catch(() => ({}));
+                    if (!r.ok) {
+                        // the switch shows what the meter is, not what was asked
+                        cb.checked = !on;
+                        if (r.status !== 403) this.showToast('error', this.t('toast.toggleFailed', 'Toggle failed'),
+                            `${mid}: ${this._respError(r, d)}`);
+                    } else {
+                        const now = d.enabled ?? on;
+                        cb.checked = !!now;               // what the meter is, by the server's answer
+                        this.showToast('success', this.t('toast.vmeter', 'Virtual meter'),
+                            `${mid} ${now ? this.t('vmeter.enabledLc', 'enabled') : this.t('vmeter.disabledLc', 'disabled')}`);
+                    }
+                } catch (e) { cb.checked = !on; this.showToast('error', this.t('toast.toggleFailed', 'Toggle failed'), mid); }
+                finally { cb.disabled = !this._isAdminView(); }
                 setTimeout(() => this.renderVirtualMeters(), 1200);
             });
             // overview edit + delete
@@ -273,26 +299,144 @@ Object.assign(JanitzaMonitor.prototype, {
         const primaryId = ctx.primaryId;
         const templates = (ctx.templates || []).filter(t => !(ctx.configured || new Set()).has(t.id));
         const pr = ctx.pr || {};
-        const set = (id, v) => { const e = document.getElementById(id); if (e) e.value = v; };
         const html = (id, opts) => { const e = document.getElementById(id); if (e) e.innerHTML = opts; };
-        html('vmAddDevice', devices.map(d => `<option value="${this._esc(d.id)}" ${d.id === primaryId ? 'selected' : ''}>${this._esc(d.name || d.id)}</option>`).join(''));
-        this._wireFallbackSelect('vmAddDevice', 'vmAddFallback', devices, '');
         html('vmAddTemplate', templates.length
-            ? templates.map(t => `<option value="${this._esc(t.id)}">${this._esc(t.name)} · ${t.registers} measurements</option>`).join('')
-            : '<option value="">— all templates already added —</option>');
-        set('vmAddPort', pr.next_free ?? '');
-        const portEl = document.getElementById('vmAddPort');
-        if (portEl && pr.start != null) { portEl.min = pr.start; portEl.max = pr.end; }
-        set('vmAddUnit', 1);
-        const hint = document.getElementById('vmAddPortHint');
-        if (hint) hint.textContent = pr.start != null ? `published range ${pr.start}–${pr.end}` : '';
+            ? templates.map(t => `<option value="${this._esc(t.id)}">${this._esc(t.name)} · ${t.registers} ${this._esc(this.t('vmeter.measurements', 'measurements'))}</option>`).join('')
+            : `<option value="">${this._esc((ctx.templates || []).length
+                ? this.t('vmeter.allTplUsed', '— every template already has an instance —')
+                : this.t('vmeter.noTplYet', '— no templates yet: create one on the Templates tab —'))}</option>`);
+        this._vmFillInstanceFields('vmAdd', devices, {
+            device: primaryId, device_fallback: '', port: pr.next_free ?? '', unit_id: 1,
+            stale_after_s: 15, update_interval_s: 1, on_stale: 'legacy', quality_block: false,
+            ha_mode: 'failover', max_hold_s: 30 }, pr);
         const fb = document.getElementById('vmAddFeedback');
         if (fb) { fb.textContent = ''; fb.className = 'save-feedback'; }
-        set('vmAddOnStale', 'legacy');
-        const _q = document.getElementById('vmAddQuality'); if (_q) _q.checked = false;
-        this._wireHoldToggle('vmAddOnStale', 'vmAddHoldWrap');
         this._vmAddPr = pr;
         this.openModal('vmAddInstanceModal');
+    },
+
+    // ── the fields Add and Edit share: one form, filled the same way and read
+    // the same way (Add lacked the refresh, the stale limit and the HA mode)
+    _vmInstanceFieldsHtml(px) {
+        const t = (k, d) => this._esc(this.t(k, d));
+        const hint = (k, d) => `<div class="field-hint">${t(k, d)}</div>`;
+        return `
+            <div class="form-group">
+                <label class="form-label" for="${px}Device">${t('vmeter.sourceDevice', 'Source device')}</label>
+                <select id="${px}Device" class="input"></select>
+                ${hint('vmeter.whichDevice', "Which device's live values this meter re-serves.")}
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="${px}Fallback">${t('vmeter.fallbackDevice', 'Secondary source device (failover)')}</label>
+                <select id="${px}Fallback" class="input"></select>
+                ${hint('vmeter.fallbackHint', 'Optional. If the source device goes stale, each register transparently falls back to this twin device (same canonical field). Recovers to the source the moment it returns. Pick a device on a DIFFERENT physical path for real redundancy.')}
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label" for="${px}Port">${t('lbl.port', 'Port')}</label>
+                    <input type="number" id="${px}Port" class="input">
+                    <div class="field-hint" id="${px}PortHint"></div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="${px}Unit">${t('lbl.unitId', 'Unit ID')}</label>
+                    <input type="number" id="${px}Unit" class="input" min="0" max="255" step="1">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label" for="${px}Stale">${t('vmeter.staleAfter', 'Stale after (s)')}</label>
+                    <input type="number" id="${px}Stale" class="input" min="1" step="1">
+                    ${hint('vmeter.staleAfterHint', 'A source older than this stops the meter (fail-safe).')}
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="${px}Interval">${t('vmeter.refreshInterval', 'Refresh (s)')}</label>
+                    <input type="number" id="${px}Interval" class="input" min="0.1" max="3600" step="0.05">
+                    ${hint('vmeter.refreshIntervalHint', 'How often the meter re-samples its source (0.1 to 3600).')}
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="${px}OnStale">${t('vmeter.onStale', 'Stale-source policy (composite)')}</label>
+                <select id="${px}OnStale" class="input">
+                    <option value="legacy">${t('vmeter.onStaleLegacy', 'legacy — one watchdog for the whole meter (single-source default)')}</option>
+                    <option value="fail">${t('vmeter.onStaleFail', 'fail — refuse reads touching a stale register (Modbus exception)')}</option>
+                    <option value="sentinel">${t('vmeter.onStaleSentinel', 'sentinel — serve SunSpec N/A (float NaN, int 0x8000…)')}</option>
+                    <option value="hold">${t('vmeter.onStaleHold', 'hold — keep last value up to a cap, then fail')}</option>
+                </select>
+                ${hint('vmeter.onStaleHint', 'For multi-source (device.register) maps choose fail or sentinel — absence is never served as 0.')}
+            </div>
+            <div class="form-group" id="${px}HoldWrap" style="display:none;">
+                <label class="form-label" for="${px}MaxHold">${t('vmeter.maxHold', 'Max hold (s)')}</label>
+                <input type="number" id="${px}MaxHold" class="input" min="1" step="1">
+            </div>
+            <div class="form-group">
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                    <input type="checkbox" id="${px}Quality">
+                    <span>${t('vmeter.qualityBlock', 'In-band quality block (registers 61440–61447)')}</span>
+                </label>
+                ${hint('vmeter.qualityBlockHint', 'Read-only block a Modbus consumer can poll to judge data quality: format version, state (1 ok / 2 degraded / 3 stale), fresh/stale/missing row counts, age of the newest fresh value (u32 s). All big-endian, no floats. Addresses between the meter map and 61440 still answer illegal-address.')}
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="${px}HaMode">${t('vmeter.haMode', 'In a high-availability pair')}</label>
+                <select id="${px}HaMode" class="input">
+                    <option value="failover">${t('vmeter.haFailover', 'failover — only the active gateway serves it (behind the load balancer, its address moves)')}</option>
+                    <option value="balanced">${t('vmeter.haBalanced', "balanced — both serve it, the standby from its copy of the partner's values")}</option>
+                </select>
+                ${hint('vmeter.haModeHint', "Only matters with the high-availability module. Balanced: a client may read either gateway; the standby's values are its last copy, as fresh as the copy (the stale-after limit still applies).")}
+            </div>`;
+    },
+
+    _vmFillInstanceFields(px, devices, m, pr) {
+        const host = document.getElementById(`${px}Fields`);
+        if (host) host.innerHTML = this._vmInstanceFieldsHtml(px);
+        const set = (id, v) => { const e = document.getElementById(px + id); if (e) e.value = v ?? ''; };
+        const dev = document.getElementById(`${px}Device`);
+        if (dev) dev.innerHTML = (devices || []).map(d =>
+            `<option value="${this._esc(d.id)}" ${d.id === m.device ? 'selected' : ''}>${this._esc(d.name || d.id)}</option>`).join('');
+        this._wireFallbackSelect(`${px}Device`, `${px}Fallback`, devices, m.device_fallback || '');
+        this._pickDevice(`${px}Device`);
+        this._pickDevice(`${px}Fallback`);
+        set('Port', m.port);
+        const port = document.getElementById(`${px}Port`);
+        if (port && pr && pr.start != null) { port.min = pr.start; port.max = pr.end; }
+        const ph = document.getElementById(`${px}PortHint`);
+        if (ph) ph.textContent = pr && pr.start != null
+            ? this.t('vmeter.portRange', 'published range {start}–{end}', { start: pr.start, end: pr.end }) : '';
+        set('Unit', m.unit_id ?? 1);
+        set('Stale', m.stale_after_s ?? 15);
+        set('Interval', m.update_interval_s ?? 1);
+        set('OnStale', m.on_stale || 'legacy');
+        set('MaxHold', m.max_hold_s ?? 30);
+        set('HaMode', m.ha_mode || 'failover');
+        const q = document.getElementById(`${px}Quality`);
+        if (q) q.checked = !!m.quality_block;
+        this._wireHoldToggle(`${px}OnStale`, `${px}HoldWrap`);
+    },
+
+    // {values, error}: the shared fields as the API takes them; error names
+    // the first field that cannot be sent (a unit of 0 stays 0)
+    _vmInstanceRead(px) {
+        const el = id => document.getElementById(px + id);
+        const num = id => { const v = (el(id) || {}).value; return v === '' || v == null ? undefined : Number(v); };
+        const values = {
+            device: el('Device')?.value || '',
+            // always sent (possibly '') so clearing the fallback persists
+            device_fallback: el('Fallback')?.value || '',
+            port: num('Port'), unit_id: num('Unit'),
+            stale_after_s: num('Stale'), update_interval_s: num('Interval'),
+            on_stale: el('OnStale')?.value || 'legacy',
+            quality_block: !!el('Quality')?.checked,
+            ha_mode: el('HaMode')?.value || 'failover',
+            max_hold_s: num('MaxHold'),
+        };
+        const t = (k, d, p) => this.t(k, d, p);
+        let error = '';
+        if (!Number.isInteger(values.unit_id) || values.unit_id < 0 || values.unit_id > 255)
+            error = t('vmeter.badUnit', 'Unit ID: a whole number from 0 to 255.');
+        else if (values.update_interval_s !== undefined && !(values.update_interval_s >= 0.1 && values.update_interval_s <= 3600))
+            error = t('vmeter.badInterval', 'Refresh: from 0.1 to 3600 seconds.');
+        else if (values.stale_after_s !== undefined && !(values.stale_after_s > 0))
+            error = t('vmeter.badStale', 'Stale after: a number of seconds above 0.');
+        return { values, error };
     },
 
     // show the max-hold field only when the hold policy is selected
@@ -343,31 +487,27 @@ Object.assign(JanitzaMonitor.prototype, {
 
     async submitAddInstance(btn) {
         const template = document.getElementById('vmAddTemplate').value;
-        const device = document.getElementById('vmAddDevice')?.value || '';
-        const device_fallback = document.getElementById('vmAddFallback')?.value || '';
-        const port = parseInt(document.getElementById('vmAddPort').value, 10);
-        const unit_id = parseInt(document.getElementById('vmAddUnit').value, 10) || 1;
+        const { values, error } = this._vmInstanceRead('vmAdd');
         const pr = this._vmAddPr || {};
         const fb = document.getElementById('vmAddFeedback');
-        if (!template) { if (fb) { fb.textContent = 'Pick a template.'; fb.className = 'save-feedback err'; } return; }
-        if (pr.start != null && (port < pr.start || port > pr.end)) {
-            if (fb) { fb.textContent = `Port must be in ${pr.start}–${pr.end}.`; fb.className = 'save-feedback err'; } return;
+        const say = msg => { if (fb) { fb.textContent = msg; fb.className = 'save-feedback err'; } };
+        if (!template) { say(this.t('vmeter.pickTemplate', 'Pick a template.')); return; }
+        if (pr.start != null && !(values.port >= pr.start && values.port <= pr.end)) {
+            say(this.t('vmeter.portOutOfRange', 'Port must be in {start}–{end}.', { start: pr.start, end: pr.end })); return;
         }
+        if (error) { say(error); return; }
         if (btn) btn.disabled = true;
         try {
-            const on_stale = document.getElementById('vmAddOnStale')?.value || 'legacy';
-            const quality_block = !!document.getElementById('vmAddQuality')?.checked;
-            const max_hold_s = Number(document.getElementById('vmAddMaxHold')?.value) || 30;
             const r = await fetch('/api/virtual-meters', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ template, port, unit_id, enabled: false, device,
-                                       device_fallback, on_stale, max_hold_s, quality_block })
+                body: JSON.stringify({ template, enabled: false, ...values,
+                                       max_hold_s: values.max_hold_s ?? 30 }),
             });
             if (r.ok) {
                 this.showToast('success', this.t('toast.vmeter', 'Virtual meter'), `${template} ${this.t('toast.addedLc', 'added')}`);
                 this.closeModal('vmAddInstanceModal');
             } else {
-                if (fb) { fb.textContent = (await r.json()).detail || 'Add failed'; fb.className = 'save-feedback err'; }
+                say(this._respError(r, await r.json().catch(() => ({}))));
                 return;
             }
         } catch (e) { if (fb) { fb.textContent = e.message; fb.className = 'save-feedback err'; } return; }
@@ -375,32 +515,21 @@ Object.assign(JanitzaMonitor.prototype, {
         setTimeout(() => this.renderVirtualMeters(), 600);
     },
 
-    // ── Delete instance (double confirm: type DELETE) ─────────────────────
-    openDeleteInstanceModal(template) {
-        this._vmDelTarget = template;
-        document.getElementById('vmDelName').textContent = template;
-        const inp = document.getElementById('vmDelConfirm');
-        if (inp) inp.value = '';
-        const btn = document.getElementById('vmDelBtn');
-        if (btn) btn.disabled = true;
-        this.openModal('vmDeleteInstanceModal');
-        setTimeout(() => inp && inp.focus(), 100);
-    },
-
-    // the delete button unlocks only once the operator typed DELETE
-    _vmDeleteConfirmInput(el) {
-        const btn = document.getElementById('vmDelBtn');
-        if (btn) btn.disabled = (el.value.trim() !== 'DELETE');
-    },
-
-    async confirmDeleteInstance() {
-        const template = this._vmDelTarget;
-        if (!template) return;
-        try {
-            await fetch(`/api/virtual-meters/${encodeURIComponent(template)}`, { method: 'DELETE' });
-            this.showToast('success', this.t('toast.vmeter', 'Virtual meter'), `${template} ${this.t('toast.removedLc', 'removed')}`);
-            this.closeModal('vmDeleteInstanceModal');
-        } catch (e) { this.showToast('error', this.t('toast.removeFailed', 'Remove failed'), template); return; }
+    // ── Delete instance: typed confirm (its id) ───────────────────────────
+    async openDeleteInstanceModal(template) {
+        if (!await this.confirmAction({
+            title: this.t('vmeter.delete.title', 'Delete virtual meter {id}', { id: template }),
+            message: this.t('vmeter.delete.body',
+                'It stops and is removed. Any connected consumer (Victron / Fronius) drops to its own grid-loss fail-safe.'),
+            confirmLabel: this.t('common.delete', 'Delete'), danger: true, typed: template,
+            submit: async () => {
+                const r = await fetch(`/api/virtual-meters/${encodeURIComponent(template)}`, { method: 'DELETE' });
+                if (r.ok) return null;
+                const d = await r.json().catch(() => ({}));
+                return this._respError(r, d);
+            },
+        })) return;
+        this.showToast('success', this.t('toast.vmeter', 'Virtual meter'), `${template} ${this.t('toast.removedLc', 'removed')}`);
         setTimeout(() => this.renderVirtualMeters(), 600);
     },
 
@@ -411,40 +540,15 @@ Object.assign(JanitzaMonitor.prototype, {
         const set = (id, v) => { const e = document.getElementById(id); if (e) e.value = v; };
         document.getElementById('vmEditInstName').textContent = m.name || template;
         set('vmEditInstTemplate', template);
-        // source device selector
-        const devSel = document.getElementById('vmEditDevice');
-        const _devices = (this._vmAddCtx && this._vmAddCtx.devices) || this._devices || [];
-        if (devSel) {
-            devSel.innerHTML = _devices.map(d => `<option value="${this._esc(d.id)}" ${d.id === m.device ? 'selected' : ''}>${this._esc(d.name || d.id)}</option>`).join('');
-        }
-        this._wireFallbackSelect('vmEditDevice', 'vmEditFallback', _devices, m.device_fallback || '');
-        const portEl = document.getElementById('vmEditPort');
-        set('vmEditPort', m.port ?? '');
-        if (portEl && pr.start != null) { portEl.min = pr.start; portEl.max = pr.end; }
-        document.getElementById('vmEditPortHint').textContent =
-            (pr.start != null) ? `published range ${pr.start}–${pr.end}` : '';
-        set('vmEditUnit', m.unit_id ?? 1);
-        set('vmEditStale', m.stale_after_s ?? 15);
-        set('vmEditInterval', m.update_interval_s ?? 1);
-        set('vmEditOnStale', m.on_stale || 'legacy');
-        const _eq = document.getElementById('vmEditQuality'); if (_eq) _eq.checked = !!m.quality_block;
-        set('vmEditMaxHold', m.max_hold_s ?? 30);
-        this._wireHoldToggle('vmEditOnStale', 'vmEditHoldWrap');
+        const devices = (this._vmAddCtx && this._vmAddCtx.devices) || this._devices || [];
+        this._vmFillInstanceFields('vmEdit', devices, m, pr);
         this.openModal('vmEditInstanceModal');
     },
 
     async saveEditInstance() {
         const template = document.getElementById('vmEditInstTemplate').value;
-        const num = (id) => { const v = document.getElementById(id).value; return v === '' ? undefined : Number(v); };
-        const device = document.getElementById('vmEditDevice')?.value;
-        const body = { port: num('vmEditPort'), unit_id: num('vmEditUnit'),
-                       stale_after_s: num('vmEditStale'), update_interval_s: num('vmEditInterval'),
-                       device,
-                       // always send (possibly '') so clearing the fallback persists
-                       device_fallback: document.getElementById('vmEditFallback')?.value || '',
-                       on_stale: document.getElementById('vmEditOnStale')?.value || undefined,
-                       quality_block: !!document.getElementById('vmEditQuality')?.checked,
-                       max_hold_s: num('vmEditMaxHold') };
+        const { values: body, error } = this._vmInstanceRead('vmEdit');
+        if (error) { this.showToast('error', this.t('toast.updateFailed', 'Update failed'), error); return; }
         try {
             const r = await fetch(`/api/virtual-meters/${encodeURIComponent(template)}`, {
                 method: 'PATCH', headers: { 'Content-Type': 'application/json' },
@@ -454,7 +558,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 this.showToast('success', this.t('toast.instanceUpdated', 'Instance updated'), `${template}${d.restarted ? ' · restarted' : ''}`);
                 this.closeModal('vmEditInstanceModal');
             } else {
-                this.showToast('error', this.t('toast.updateFailed', 'Update failed'), d.detail || `HTTP ${r.status}`);
+                this.showToast('error', this.t('toast.updateFailed', 'Update failed'), this._respError(r, d));
                 return;
             }
         } catch (e) { this.showToast('error', this.t('toast.updateFailed', 'Update failed'), template); return; }
@@ -505,7 +609,11 @@ Object.assign(JanitzaMonitor.prototype, {
         try {
             let r = await post(false);
             if (r.status === 409) {
-                if (!confirm(this.t('vmeter.overwriteConfirm', 'A template with this id already exists. Overwrite it?'))) return;
+                if (!await this.confirmAction({
+                    title: this.t('vmeter.overwriteTitle', 'Overwrite template?'),
+                    message: this.t('vmeter.overwriteConfirm', 'A template with this id already exists. Importing replaces it.'),
+                    confirmLabel: this.t('devtpl.overwrite', 'Overwrite'), danger: true,
+                })) return;
                 r = await post(true);
             }
             const d = await r.json().catch(() => ({}));
@@ -537,8 +645,8 @@ Object.assign(JanitzaMonitor.prototype, {
         const panel = host.querySelector('.vm-decode-panel');
         this._vmDecodeSel = null;
         if (panel) panel.innerHTML = `<div class="settings-card" style="padding:16px;color:var(--text-secondary);">
-            <div style="font-size:13px;margin-bottom:4px;"><i aria-hidden="true" class="bi bi-braces"></i> Decode</div>
-            <div style="font-size:12.5px;line-height:1.5;">Click any row on the left to decode that Modbus read — raw words → value → the source variable each maps to.</div></div>`;
+            <div style="font-size:13px;margin-bottom:4px;"><i aria-hidden="true" class="bi bi-braces"></i> ${this.t('vmeter.decode', 'Decode')}</div>
+            <div style="font-size:12.5px;line-height:1.5;">${this.t('vmeter.decodeHint', 'Click any row on the left to decode that Modbus read — raw words → value → the source variable each maps to.')}</div></div>`;
         if (!out._decodeWired) {                  // delegated: click a row → decode in side panel
             out._decodeWired = true;
             out.addEventListener('click', (e) => {
@@ -561,11 +669,11 @@ Object.assign(JanitzaMonitor.prototype, {
             const qs = (d.queries || []).slice().reverse();
             const rows = qs.map(q => {
                 const ms = String(Math.floor((q.ts % 1) * 1000)).padStart(3, '0');
-                const t = new Date(q.ts * 1000).toLocaleTimeString('en-GB', { hour12: false }) + '.' + ms;
+                const t = new Date(q.ts * 1000).toLocaleTimeString(this._loc(), { hour12: false }) + '.' + ms;
                 const resp = q.resp ? q.resp.slice(0, 6).join(' ') + (q.count > 6 ? ' …' : '') : '—';
                 const res = q.err ? '<span style="color:var(--danger-text,#c0392b);font-weight:600;">EXC</span>'
                                   : '<span style="color:var(--success-text);">OK</span>';
-                return `<tr class="vm-log-row${q.err ? ' err' : ''}" data-addr="${q.addr}" data-count="${q.count}" title="click to decode this read" style="border-bottom:1px solid var(--border-light);">
+                return `<tr class="vm-log-row${q.err ? ' err' : ''}" data-addr="${q.addr}" data-count="${q.count}" title="${this._esc(this.t('vmeter.decodeRow', 'click to decode this read'))}" style="border-bottom:1px solid var(--border-light);">
                   <td style="padding:3px 10px 3px 0;color:var(--text-secondary);font-variant-numeric:tabular-nums;">${t}</td>
                   <td style="padding:3px 10px 3px 0;">FC${q.fc}</td>
                   <td style="padding:3px 10px 3px 0;font-variant-numeric:tabular-nums;">${q.addr}</td>
@@ -638,7 +746,7 @@ Object.assign(JanitzaMonitor.prototype, {
             const evColor = { error: 'var(--danger-text,#c0392b)', warn: 'var(--warning-text,#c77700)', info: 'var(--text-secondary,#5a6470)' };
             const events = (d.events || []).slice().reverse();   // newest first
             const evRows = events.map(e => {
-                const t = e.ts ? new Date(e.ts * 1000).toLocaleTimeString('en-GB') : '';
+                const t = e.ts ? new Date(e.ts * 1000).toLocaleTimeString(this._loc()) : '';
                 const c = evColor[e.level] || '#5a6470';
                 return `<tr>
                   <td style="white-space:nowrap;color:var(--text-secondary);font-variant-numeric:tabular-nums;">${t}</td>
@@ -655,7 +763,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 ${events.length ? `<div style="overflow-x:auto;"><table class="data-table" style="width:100%;font-size:12.5px;">
                   <thead><tr><th>${this.t('lbl.time', "Time")}</th><th>${this.t('lbl.level', "Level")}</th><th>${this.t('lbl.kind', "Kind")}</th><th>${this.t('lbl.message', "Message")}</th></tr></thead>
                   <tbody>${evRows}</tbody></table></div>`
-                  : '<span style="color:#1a8f4c;">No errors — meter has been healthy.</span>'}</div>
+                  : `<span style="color:#1a8f4c;">${this.t('vmeter.noErrors', 'No errors — meter has been healthy.')}</span>`}</div>
               <div class="settings-card" style="padding:14px;">
                 <div style="color:var(--text-secondary);font-size:12.5px;margin-bottom:8px;">${this.t('msg.mostRead', "Most-read addresses (where the consumer looks)")}</div>
                 ${bars || `<span style="color:var(--text-secondary);">${this.t('msg.noReads', "No reads yet.")}</span>`}</div>`;
@@ -703,7 +811,7 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!panel || !id || !Number.isFinite(addr)) return;
         const wrap = (inner) => `<div class="settings-card" style="padding:14px;">
             <h4 style="margin:0 0 8px;font-size:13.5px;"><i aria-hidden="true" class="bi bi-braces"></i> Decode · addr ${addr} · count ${count}</h4>${inner}</div>`;
-        panel.innerHTML = wrap('<p style="color:var(--text-secondary);font-size:12.5px;margin:0;">Decoding…</p>');
+        panel.innerHTML = wrap(`<p style="color:var(--text-secondary);font-size:12.5px;margin:0;">${this.t('vmeter.decoding', 'Decoding…')}</p>`);
         let d;
         try {
             d = await (await fetch(`/api/virtual-meters/${encodeURIComponent(id)}/decode?addr=${addr}&count=${count}`)).json();
@@ -779,38 +887,38 @@ Object.assign(JanitzaMonitor.prototype, {
           <div class="form-row">
             <div class="form-group"><label class="form-label">${this.t('lbl.byteOrder', "Byte order")}</label>
               <select id="vmfByteOrder" class="input">
-                <option value="big" ${tpl.byte_order === 'big' ? 'selected' : ''}>ABCD · big (high word first)</option>
-                <option value="little" ${tpl.byte_order === 'little' ? 'selected' : ''}>CDAB · little (word swap)</option>
-                <option value="badc" ${tpl.byte_order === 'badc' ? 'selected' : ''}>BADC · byte swap</option>
-                <option value="dcba" ${tpl.byte_order === 'dcba' ? 'selected' : ''}>DCBA · full little-endian</option>
+                <option value="big" ${tpl.byte_order === 'big' ? 'selected' : ''}>${this.t('vmeter.bo.big', 'ABCD · big (high word first)')}</option>
+                <option value="little" ${tpl.byte_order === 'little' ? 'selected' : ''}>${this.t('vmeter.bo.little', 'CDAB · little (word swap)')}</option>
+                <option value="badc" ${tpl.byte_order === 'badc' ? 'selected' : ''}>${this.t('vmeter.bo.badc', 'BADC · byte swap')}</option>
+                <option value="dcba" ${tpl.byte_order === 'dcba' ? 'selected' : ''}>${this.t('vmeter.bo.dcba', 'DCBA · full little-endian')}</option>
               </select></div>
             <div class="form-group"><label class="form-label">${this.t('lbl.port', "Port")}</label>
               <input id="vmfPort" class="input" type="number" value="${defPort}" min="${pr.start ?? ''}" max="${pr.end ?? ''}">
               ${portHint ? `<span class="hint-text" style="font-size:11px;">${portHint}</span>` : ''}</div>
             <div class="form-group"><label class="form-label">${this.t('lbl.unitIdLc', "Unit id")}</label>
               <input id="vmfUnit" class="input" type="number" value="${t.unit_id ?? 1}"></div>
-            <div class="form-group"><label class="form-label">Bind</label>
+            <div class="form-group"><label class="form-label">${this.t('vmeter.bind', 'Bind')}</label>
               <input id="vmfBind" class="input" value="${this._esc(t.bind || '0.0.0.0')}"></div>
           </div>
-          ${tpl.in_use ? '<p class="hint-text" style="color:#e08e0b;"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> Used by an instance — saving reloads it live.</p>' : ''}
+          ${tpl.in_use ? `<p class="hint-text" style="color:#e08e0b;"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> ${this.t('vmeter.inUseNote', 'Used by an instance — saving reloads it live.')}</p>` : ''}
           <div class="form-section">
             <div style="display:flex;justify-content:space-between;align-items:center;">
               <h4 style="margin:0;">${this.t('lbl.measurements', "Measurements")}</h4>
-              <button class="btn btn-sm" id="vmAddRowBtn"><i aria-hidden="true" class="bi bi-plus-lg"></i> Add measurement</button>
+              <button data-admin class="btn btn-ghost btn-sm" id="vmAddRowBtn"><i aria-hidden="true" class="bi bi-plus-lg"></i> ${this.t('vmeter.addRow', 'Add measurement')}</button>
             </div>
             <div style="overflow-x:auto;margin-top:8px;">
               <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
                 <thead><tr style="text-align:left;color:var(--text-secondary);">
                   <th style="padding:4px 6px;">${this.t('lbl.address', "Address")}</th><th>${this.t('lbl.type', "Type")}</th><th>${this.t('lbl.source', "Source")}</th>
-                  <th>${this.t('lbl.valueSource', "Value / Source")}</th><th title="${this.t('vmeter.scaleHint', 'raw = value × scale; the consumer reads raw ÷ scale')}">${this.t('lbl.scale', "Scale")}</th><th>Len</th>
+                  <th>${this.t('lbl.valueSource', "Value / Source")}</th><th title="${this.t('vmeter.scaleHint', 'raw = value × scale; the consumer reads raw ÷ scale')}">${this.t('lbl.scale', "Scale")}</th><th>${this.t('vmeter.colLen', 'Len')}</th>
                   <th title="${this.t('vmeter.rowStaleHint', 'Per-row freshness bound (s) for composite policies — empty = auto (source device / instance)')}">${this.t('vmeter.rowStale', "Stale s")}</th>
                   <th>${this.t('lbl.note', "Note")}</th><th></th>
                 </tr></thead>
                 <tbody id="vmRegRows"></tbody>
               </table>
             </div>
-            <p class="hint-text">Address in hex (e.g. <code>0x0028</code>) or decimal. Scale: raw = value × scale (consumer reads raw ÷ scale). Length applies to <code>string</code> only.</p>
-            <p class="hint-text"><b>Sum</b> adds every listed live value (any missing → the register goes stale). <b>Failover</b> takes a comma-separated list in priority order and serves the first <em>fresh</em> one — it auto-switches to the next source when the primary goes stale and switches back the moment the primary recovers. Use <code>device.register</code> to pull a redundant source from another device.</p>
+            <p class="hint-text">${this.t('vmeter.addrHint', 'Address in hex (e.g. <code>0x0028</code>) or decimal. Scale: raw = value × scale (consumer reads raw ÷ scale). Length applies to <code>string</code> only.')}</p>
+            <p class="hint-text">${this.t('vmeter.sumFailoverHint', '<b>Sum</b> adds every listed live value (any missing → the register goes stale). <b>Failover</b> takes a comma-separated list in priority order and serves the first <em>fresh</em> one — it auto-switches to the next source when the primary goes stale and switches back the moment the primary recovers. Use <code>device.register</code> to pull a redundant source from another device.')}</p>
           </div>`;
         (tpl.registers || []).forEach(r => this._addTemplateRow(r));
         if (!(tpl.registers || []).length) this._addTemplateRow();
@@ -878,7 +986,7 @@ Object.assign(JanitzaMonitor.prototype, {
           <td><input class="input input-sm vm-len" type="number" style="width:52px;" value="${reg.length ?? 1}"></td>
           <td><input class="input input-sm vm-stale" type="number" style="width:64px;" min="1" placeholder="auto" value="${reg.stale_after_s ?? ''}"></td>
           <td><input class="input input-sm vm-note" style="width:130px;" value="${this._esc(reg.note || '')}"></td>
-          <td style="white-space:nowrap;"><button class="btn btn-ghost btn-sm vm-row-dup" title="Duplicate row"><i aria-hidden="true" class="bi bi-copy"></i></button><button class="btn btn-ghost btn-sm vm-row-del" title="Remove"><i aria-hidden="true" class="bi bi-x-lg"></i></button></td>`;
+          <td style="white-space:nowrap;"><button class="btn btn-ghost btn-sm vm-row-dup" ${this._ib(this.t('vmeter.dupRow', 'Duplicate row'), reg.name || addrHex)}><i aria-hidden="true" class="bi bi-copy"></i></button><button class="btn btn-ghost btn-sm vm-row-del" ${this._ib(this.t('common.remove', 'Remove'), reg.name || addrHex)}><i aria-hidden="true" class="bi bi-x-lg"></i></button></td>`;
         tbody.appendChild(tr);
         const kindSel = tr.querySelector('.vm-kind');
         const liveSel = tr.querySelector('.vm-src-live');
@@ -945,8 +1053,12 @@ Object.assign(JanitzaMonitor.prototype, {
             registers.push(row);
         });
         if (!registers.length) { this.showToast('error', this.t('toast.noMeasurements', 'No measurements'), this.t('toast.addOneMeasurement', 'Add at least one measurement')); return; }
-        if (unknownDevs.size
-            && !confirm(`${this.t('vmeter.unknownDevWarn', 'Warning: source prefix is not a known device id')}: ${[...unknownDevs].join(', ')}\n${this.t('vmeter.unknownDevWarn2', 'Those rows will read as plain register names (or show as missing). Save anyway?')}`)) {
+        if (unknownDevs.size && !await this.confirmAction({
+            title: this.t('vmeter.unknownDevTitle', 'Unknown device'),
+            message: this.t('vmeter.unknownDevWarn2', 'Those rows will read as plain register names (or show as missing).'),
+            details: [`${this.t('vmeter.unknownDevWarn', 'Source prefix is not a known device id')}: ${[...unknownDevs].join(', ')}`],
+            confirmLabel: this.t('vmeter.saveAnyway', 'Save anyway'),
+        })) {
             return;
         }
         const btn = document.getElementById('vmTplSaveBtn');
@@ -963,19 +1075,23 @@ Object.assign(JanitzaMonitor.prototype, {
                 this.closeModal('vmTemplateModal');
                 this._afterVmTemplateChange();
             } else {
-                this.showToast('error', this.t('toast.saveFailed', 'Save failed'), j.detail || this.t('toast.validationError', 'validation error'));
+                this.showToast('error', this.t('toast.saveFailed', 'Save Failed'), j.detail || this.t('toast.validationError', 'validation error'));
             }
-        } catch (e) { this.showToast('error', this.t('toast.saveFailed', 'Save failed'), this._errMsg(e)); }
+        } catch (e) { this.showToast('error', this.t('toast.saveFailed', 'Save Failed'), this._errMsg(e)); }
         finally { btn.disabled = false; }
     },
 
     async deleteTemplate(id) {
-        if (!confirm(`${this.t('vmeter.deleteConfirm', 'Delete template')} "${id}"?\n${this.t('vmeter.deleteConfirmHint', '(only if no instance uses it)')}`)) return;
+        if (!await this.confirmAction({
+            title: this.t('vmeter.deleteTplTitle', 'Delete template {id}', { id }),
+            message: this.t('vmeter.deleteConfirmHint', 'Refused while a virtual meter uses it.'),
+            confirmLabel: this.t('common.delete', 'Delete'), danger: true,
+        })) return;
         try {
             const r = await fetch(`/api/virtual-meters/template/${encodeURIComponent(id)}`, { method: 'DELETE' });
             const j = await r.json();
             if (r.ok) this.showToast('success', this.t('toast.templateDeleted', 'Template deleted'), id);
-            else this.showToast('error', this.t('toast.deleteFailed', 'Delete failed'), j.detail || '');
+            else this.showToast('error', this.t('toast.deleteFailed', 'Delete failed'), this._respError(r, j));
         } catch (e) { this.showToast('error', this.t('toast.deleteFailed', 'Delete failed'), id); }
         this._afterVmTemplateChange();
     },

@@ -1,5 +1,97 @@
 # Changelog
 
+## 3.92.0
+
+**Upgrade notes:**
+- **The Device Builder is gone (breaking).** ESP flashing, ESPHome builds
+  and the node list moved to the separate **multi-bus-gateway-esphome**
+  service. `/api/builder/*`, the USB flasher, the `ESPHOME_*` variables and
+  the bundled `esphome` compose service are removed; an `esphome:` block in
+  `config.yaml` is ignored and dropped by the next save. ESPHome LAN
+  discovery stays.
+- **InfluxDB measurement of unclassified fields.** A field the gateway
+  cannot classify used to land in measurement `janitza` on every device; it
+  now lands in its row's **category**, or `other`. Bucket and field names
+  do not change. A Flux query of your own that filters
+  `_measurement == "janitza"` on a device other than the UMG needs the new
+  name.
+- **Saving through the API keeps what it was not told.** A `PUT` that leaves
+  a key out keeps the stored value; `null` clears it; an unchanged save
+  writes nothing and restarts nothing. A client that relied on a missing key
+  meaning "back to the default" must now send `null`.
+- **Deleting is refused while something uses the object** (409 with what
+  uses it): a device, an installation or a template that a rule, a sequence,
+  a formula, a virtual meter or another device's meter link names. Disable
+  it instead, or change those first.
+- **Yes/no fields take only JSON `true` or `false`.** `enabled` and the
+  other switches (the write master switch, raw writes, anonymous OPC UA, a
+  rule's `enabled`) now refuse strings and numbers such as `"true"`,
+  `"false"`, `1` or `"on"` with 422 and name the field. Before, any
+  non-empty string, `"false"` too, counted as true. Turning a rule or a
+  command on or off needs `enabled` in the body. A command's `lease_s` is a
+  whole number from 0 to 86400, and a bad one is refused before anything is
+  written.
+
+**Control**
+- **Rules:** a `schedule` kind, timers on every kind (`for_s`, minimum on/off
+  time, maximum starts per hour), forcing a rule for a while, time and
+  per-rule counters in expressions, several rules on one target as layers
+  (safety, manual, schedule, optimize), and **sequences** — commands in order
+  across devices, undone on failure. A new rule runs in **shadow** until
+  armed; disarming or disabling an armed rule puts its target back to its
+  safe values first (unless the rule says `on_disable: hold`). One rule
+  that cannot be read in `rules.yaml` no longer stops the others: it is
+  shown in error, alerts, and can be fixed or deleted. Opt-in per-rule
+  keys wait for the read-back after a restart, resume the step the device
+  holds and resend an urgent want sooner. A rule that leaves armed never
+  sends a write it still had queued, and a command's lease reverts to safe
+  even after the command was turned off.
+- **Commands over MQTT** — a device read over MQTT runs its template's
+  commands; a new **Victron GX** template brings the ESS commands.
+- **Meters with roles** — a device measured by other meters: consumption, or
+  input and output (a UPS, a charger), with power, energy, loss, efficiency
+  and load published only when the readings can be trusted. A device with no
+  connection of its own can be added, measured by its meters alone.
+
+**Devices and templates**
+- **Components** — the batteries and sensors a Victron GX holds, each its
+  own device on the GX's single connection, found on the device.
+- **Asset attributes** — location, grid connection limits, PV inputs,
+  ratings, battery limits, from the gateway's catalog; the sun's position and
+  `attr()` in formulas and rules.
+- **Formulas:** `fresh`, `count_fresh`, `age`, `absent`, `steps`, `ema`,
+  `hysteresis`; a copy/paste character is named before saving.
+- **Templates:** notes for users, setup words written at connect, rule
+  examples, pauses between writes, single-register writes; new maps for a
+  Samsung heat pump, a Delta VFD-EL drive and the Victron GX.
+- **Devices found over MQTT** can be adopted from Devices; topic variables
+  per device; TLS to a device with its own certificate.
+
+**Outputs**
+- **OPC UA server** for SCADA and HMI panels: every device and value with its
+  quality and read time, logins with the gateway's accounts, encryption on by
+  default, chosen per device; tested with FUXA ([guide](docs/opcua.md)).
+- A device may publish on its own rhythm; a device's Outputs tab lists every
+  output with its state.
+
+**Pages**
+- **Devices:** kinds, search and filters; the device page in three groups
+  (Live, Configure, Diagnose); one connection form for adding and editing;
+  *Used by* and *Disable* instead of a refused delete.
+- **Bridges** say how busy each bus really was in the last minute.
+- **Installations:** a save restarts only the units it changes.
+- **A page left open across an update** says so and offers Reload.
+- **The whole UI in English and Romanian**, in one vocabulary, with the
+  language's plural forms and dates.
+
+**Operations**
+- **High-availability hooks:** the gateway's role (active / standby), state
+  and configuration mirroring for a standby, behind a load balancer.
+- **Service tokens** for programs (`Authorization: Bearer …`), with a role.
+- Device alarms declared by a template become alerts.
+- **Dependencies:** certifi 2026.10.19 (PYSEC-2026-4320); `asyncua` for the
+  OPC UA server.
+
 ## 3.91.0
 
 **Upgrade notes:**
@@ -3501,8 +3593,8 @@ re-shoot, vendor-doc licensing decision, GHCR tag) is still pending.
 - **Privacy scrub (pre-flip)** — real deployment details genericized in
   code/comments (reverse-proxy hostname, BMS neighbour naming, personal
   lockfile command); the remaining flip-only items (production screenshots,
-  history purge, vendor register-list licensing) are inventoried in
-  `.audit/go-public-inventory.md`.
+  history purge, vendor register-list licensing) are inventoried
+  separately.
 - Tests: 899 passed, 0 skipped; both compose configurations validate.
 
 ## 3.33.0
@@ -3553,8 +3645,8 @@ that were still real:
   upgrade-guide / yaml-import linked from the README; CONTRIBUTING states
   the real CI gates (ruff, coverage floor, random test order).
 
-Still deferred to the go-public window (unchanged, tracked in
-.audit/BACKLOG.md): GHCR release pipeline (B6), first-run generated
+Still deferred to the go-public window (unchanged, tracked
+separately): GHCR release pipeline (B6), first-run generated
 password + bind default (B5), backfill schema-from-config (B3 — live is
 canonical post-Migration A, the public example is not), config.example
 refresh, AGPL headers + vendor NOTICE, capacity re-run (swarm still calls
@@ -3709,8 +3801,7 @@ and the on-demand query returned raw-with-caller-scale only.
 
 Closes every remaining item of the internal data-path audit (DP-2, 18, 19,
 21-27, 29-33, 35) and folds in the verified criticals of an independent
-external audit (run against 3.25.1; adjudication:
-`.audit/audit-2026-08-15-external-adjudication.md`).
+external audit (run against 3.25.1).
 
 - **Vmeter zero-serving closed (external E1, CRITICAL):** a template row
   whose source NEVER resolved (rename/deselect/typo) was skipped with "keep
@@ -3889,8 +3980,8 @@ external audit (run against 3.25.1; adjudication:
   SRs, real login dialog, keyboard theme toggle, skip-link + landmark,
   reduced-motion, one reconnect toast per outage, human-readable error
   toasts, empty-state contract.
-- Full data-path audit report (36 adjudicated findings, 5 tracks):
-  `.audit/audit-2026-08-15-datapath.md`. +10 tests (suite 830+).
+- Full data-path audit (36 adjudicated findings, 5 tracks). +10 tests
+  (suite 830+).
 
 ## 3.25.1
 

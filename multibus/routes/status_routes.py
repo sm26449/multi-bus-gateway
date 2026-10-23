@@ -26,6 +26,7 @@ from typing import Dict, Optional
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+from ..device_registry import client_health
 from ..threshold_engine import gate_open
 
 
@@ -58,9 +59,12 @@ def build(ctx) -> APIRouter:
         """Get system status. Top-level modbus = device #1 (back-compat);
         ``devices`` lists every configured southbound device (Tier 2)."""
         from .. import __version__
+        from ..api import ui_build
         mqtt_publisher, influxdb_publisher = ctx.mqtt_publisher, ctx.influxdb_publisher
         out = {
             "version": __version__,
+            # what a page loaded now would run: an older open tab says "reload"
+            "ui_build": ui_build(),
             "modbus": modbus_client.get_stats() if modbus_client else {},
             "mqtt": mqtt_publisher.get_stats() if mqtt_publisher else {},
             "influxdb": influxdb_publisher.get_stats() if influxdb_publisher else {},
@@ -102,12 +106,17 @@ def build(ctx) -> APIRouter:
                         "staleness_age_s": stats.get("staleness_age_s"),
                         "last_latency_ms": stats.get("last_latency_ms"),
                         "data_health": client.data_health().get("status"),
+                        # the Devices page's word: ok + not connected reads
+                        # degraded — the status page must not contradict it
+                        "health": client_health(client),
                     })
+                    # the time in the state the page shows (health), not in
+                    # the raw data_health word underneath it
                     entry["up_since_s"] = _up_since_s(
-                        dev_cfg.id, str(entry.get("data_health") or ""))
+                        dev_cfg.id, str(entry.get("health") or ""))
                 else:
                     entry.update({"connected": False,
-                                  "data_health": "idle",
+                                  "data_health": "idle", "health": "idle",
                                   "note": "transport not available yet (rtu = Tier 3)"})
                 out["devices"].append(entry)
         # Endpoints are entities in their own right, not just a grouping of rows:
@@ -115,7 +124,7 @@ def build(ctx) -> APIRouter:
         # 2/4 producing tells the operator nothing about the ENDPOINT.
         endpoints = getattr(config, "endpoints", None) or []
         if endpoints and registry:
-            from ..endpoint_aggregator import compute_endpoint_aggregates
+            from ..endpoint_aggregator import asleep_units, compute_endpoint_aggregates
             out["endpoints"] = []
             for p in endpoints:
                 pid = p.get("id")
@@ -125,12 +134,21 @@ def build(ctx) -> APIRouter:
                     agg = compute_endpoint_aggregates(config, registry, pid)
                 except Exception:  # noqa: BLE001 — status must never 500
                     agg = {}
+                if agg:          # a failed computation names no one asleep
+                    for d in out.get("devices", ()):
+                        if d.get("endpoint_id") == pid and d.get("id") in asleep_units(pid):
+                            d["asleep"] = True
                 out["endpoints"].append({
                     "id": pid, "name": p.get("name") or pid,
                     "enabled": bool(p.get("enabled", True)),
                     "status": agg.get("status", ""),
                     "units_online": agg.get("units_online", 0),
                     "units_total": agg.get("units_total", 0),
+                    # None when the sun is unknown (no location, or no
+                    # inverter): the status page then says how to fix a night
+                    "units_asleep": agg.get("units_asleep"),
+                    "inverters": any(getattr(d, "role", "") == "inverter"
+                                     for d in config.endpoint_devices(pid)),
                     "power_active_total": agg.get("power_active_total"),
                     "aggregates_enabled": bool(p.get("aggregates", True)),
                 })
@@ -284,6 +302,7 @@ def build(ctx) -> APIRouter:
                 "status": agg.get("status", ""),
                 "units_online": agg.get("units_online", 0),
                 "units_total": agg.get("units_total", 0),
+                "units_asleep": agg.get("units_asleep", 0),
                 "power_active_total": agg.get("power_active_total"),
                 "card": card,
             })
@@ -308,6 +327,11 @@ def build(ctx) -> APIRouter:
         restarting the container cannot fix an unreachable meter, and we must not
         restart-loop on an upstream-device problem (the vmeter freshness watchdog
         already fail-safes the consumers)."""
+        role = getattr(ctx.app.state, "role", None)
+        if role is not None and not role.active:
+            # a standby polls nothing and serves no meter ON PURPOSE: healthy as
+            # long as it answers — never a reason for a container restart
+            return JSONResponse(content={"status": "ok", "role": role.status()}, status_code=200)
         rank = {"ok": 0, "degraded": 1, "down": 2}
         mgr = getattr(ctx.app.state, "vmeter_manager", None)
         vh = mgr.health() if mgr else {"status": "ok", "enabled_meters": 0, "meters": []}
@@ -317,6 +341,8 @@ def build(ctx) -> APIRouter:
         body["modbus"] = mh
         body["status"] = max([vh.get("status", "ok"), mh.get("status", "ok")],
                              key=lambda s: rank.get(s, 0))
+        if role is not None:
+            body["role"] = role.status()
         vmeter_down = vh.get("status") == "down"
         return JSONResponse(content=body, status_code=503 if vmeter_down else 200)
 

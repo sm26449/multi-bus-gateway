@@ -1,0 +1,82 @@
+# Every way a device is reached, shaped like production (fake addresses
+# only), for the connection form's golden round-trip: the form opens each
+# device from GET /api/devices and an untouched save must change nothing;
+# one edited field must send that field and nothing else.
+bridges:
+  - {id: ws, type: rtu_transparent, host: 192.0.2.60, ports: [{port: 4196}, {port: 4197}]}
+  - {id: gw, type: modbus_gateway, host: 192.0.2.61, ports: [{port: 502}]}
+devices:
+  - id: tcp
+    name: Modbus TCP, no timeout stored
+    template: eastron_sdm630
+    enabled: false
+    connection: {protocol: tcp, host: 192.0.2.80, port: 502, unit_id: 1}
+  - id: udp
+    name: Modbus UDP
+    template: eastron_sdm630
+    enabled: false
+    connection: {protocol: udp, host: 192.0.2.81, port: 502, unit_id: 3, timeout: 2}
+  - id: via-gw
+    name: Through a Modbus TCP gateway
+    template: eastron_sdm630
+    enabled: false
+    connection: {bridge: gw, bridge_port: 502, unit_id: 4}
+  - id: rtu
+    name: Direct serial RTU
+    template: eastron_sdm630
+    enabled: false
+    connection: {protocol: rtu, serial_port: /dev/ttyUSB9, baudrate: 19200, parity: E, stopbits: 1, bytesize: 8, unit_id: 4}
+  - id: ascii
+    name: Direct serial ASCII
+    template: eastron_sdm630
+    enabled: false
+    connection: {protocol: ascii, serial_port: /dev/ttyUSB8, baudrate: 9600, unit_id: 5, timeout: 4}
+  - id: on-bridge
+    name: Heat pump on a bridge (samsung-dvm shape)
+    template: samsung_mim_b19n
+    enabled: false
+    connection: {bridge: ws, bridge_port: 4196, unit_id: 2}
+  - id: rtu-tcp
+    name: RTU over the network, typed address
+    template: eastron_sdm630
+    enabled: false
+    connection: {protocol: rtu-tcp, host: 192.0.2.90, port: 4001, unit_id: 6}
+  - id: ascii-tcp
+    name: ASCII over the network
+    template: eastron_sdm630
+    enabled: false
+    connection: {protocol: ascii-tcp, host: 192.0.2.91, port: 4002, unit_id: 7}
+  - id: tap-local
+    name: Listening on a local port (seplos shape)
+    template: seplos_bms_v3_rtu_tap
+    enabled: false
+    connection: {protocol: rtu_tap, serial_port: /dev/ttySEPLOS, baudrate: 19200, parity: N, unit_id: 2}
+  - id: tap-bridge
+    name: Listening through a bridge
+    template: seplos_bms_v3_rtu_tap
+    enabled: false
+    connection: {protocol: rtu_tap, bridge: ws, bridge_port: 4197, unit_id: 9}
+  - id: http
+    name: HTTP JSON
+    template: fronius_solar_api_inverter
+    enabled: false
+    connection: {protocol: http, url: "http://192.0.2.40/solar_api/v1/GetInverterRealtimeData.cgi?DeviceId=1"}
+  - id: gx
+    name: GX, vars, own certificate, own keepalive
+    template: victron_gx_mqtt
+    enabled: false
+    connection: {protocol: mqtt, broker: 192.0.2.10, port: 8883, topic: 'N/c0ffee000001/#',
+                 password: secret-not-shown, tls: true, tls_insecure: true,
+                 vars: {portal: c0ffee000001, vebus: '274'},
+                 keepalive: {topic: 'R/{portal}/keepalive', payload: '', every_s: 30}}
+  - id: gx-plain
+    name: GX as prod stores it (no username, no tls)
+    template: victron_gx_mqtt
+    enabled: false
+    connection: {protocol: mqtt, broker: 192.0.2.10, port: 1883, topic: 'N/c0ffee000002/#',
+                 vars: {portal: c0ffee000002, vebus: '275'}}
+  - id: mqtt-off
+    name: MQTT, keepalive off
+    template: mqtt_json_generic
+    enabled: false
+    connection: {protocol: mqtt, broker: 192.0.2.10, port: 1883, topic: 'x/#', keepalive: false}

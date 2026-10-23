@@ -26,6 +26,10 @@ An alert fires on these conditions (each toggleable), plus three ungated ones: c
 | `latency`| on | a source's read latency stays above `latency_ms` |
 | `buffer` | on | the InfluxDB store-and-forward buffer grows past `buffer_points` (or drops points) |
 | `threshold` | **off** | a register value crosses one of its warning/danger thresholds (see next section) |
+| `alarm` | on | an **alarm field its template declares** (`display.alarms`: an error code, a fault word, a calculated flag) turns active and stays so for its `for_s`; again on a new value (another error code); an `info` when it clears. Only while the device is live |
+
+Saving the alerts form changes only the signals it shows; a signal set in
+`config.yaml` that the form does not show stays as it is.
 
 Each alert is **rate-limited per key** (`min_interval_s`) so a flapping signal
 can't spam. Every alert is also mirrored into the persisted event log and shown
@@ -94,8 +98,20 @@ Every alert is the JSON object:
 
 - **Without `webhook_body`** that raw object is POSTed as-is.
 - **With `webhook_body`** (a dict), each string value is rendered with the alert
-  fields as `{placeholders}` and the resulting dict is POSTed. Available fields:
+  fields as `{placeholders}` (at any depth: nested objects and lists too) and
+  the resulting dict is POSTed. Available fields:
   `{ts}` `{severity}` `{source}` `{message}` `{key}` `{host}`.
+
+Example — a receiver that wants the event typed and its details nested, like
+a notification service's `POST /v1/fire`:
+
+```yaml
+  webhook_url: "http://alertd:5090/v1/fire"
+  webhook_headers: { "X-API-Key": "…" }
+  webhook_body: { "type": "mbg_alert",
+                  "context": { "severity": "{severity}", "source": "{source}",
+                               "message": "{message}", "key": "{key}" } }
+```
 
 Example — mapping onto an SMS gateway that expects `{"message": "..."}`:
 

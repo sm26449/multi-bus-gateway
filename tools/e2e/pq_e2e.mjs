@@ -3,6 +3,7 @@
  * known credentials, MQTT off, register polling pointed away).
  */
 import { chromium } from 'playwright';
+import { openDeviceTab } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://localhost:8080';
 const USER = process.env.MBG_USER || 'admin';
@@ -104,16 +105,16 @@ try {
     await page.screenshot({ path: SHOT('05-pq-second-event') });
   }
 
-  // ---- 5. Outputs tab: PQ recorder card ----------------------------------
+  // ---- 5. Power Quality tab: the recorder card, with the events it records --
   await dismissOnboarding();
-  await page.click('#deviceWsTabs [data-dtab="outputs"]');
+  await openDeviceTab(page, 'pq');
   await page.waitForSelector('#ddvPqEnabled');
-  check('Outputs: PQ card present', await page.locator('#ddvPqEnabled').count() === 1);
-  check('Outputs: PQ enabled checkbox reflects config', await page.isChecked('#ddvPqEnabled'));
+  check('PQ tab: recorder card present', await page.locator('#ddvPqEnabled').count() === 1);
+  check('PQ tab: enabled checkbox reflects config', await page.isChecked('#ddvPqEnabled'));
   await page.waitForFunction(() => (document.getElementById('ddvPqStatus')?.textContent || '').length > 0,
     { timeout: 15000 }).catch(() => {});
   const st = await page.locator('#ddvPqStatus').innerText().catch(() => '');
-  check('Outputs: live status line filled', st.length > 0, st.slice(0, 90));
+  check('PQ tab: live status line filled', st.length > 0, st.slice(0, 90));
   await page.screenshot({ path: SHOT('06-outputs-card') });
 
   // save round-trip (poll_s 300 -> 240 -> back), verifies POST /api/pq/config

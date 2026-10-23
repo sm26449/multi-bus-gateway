@@ -15,6 +15,7 @@
  * host that REFUSES so the offline paths are the ones under test.
  */
 import { chromium } from 'playwright';
+import { watchDialogs } from './lib/dialogs.mjs';
 
 const BASE = process.env.MBG_URL || 'http://localhost:18085';
 const EP = process.env.ENDPOINT || 'sunfield';
@@ -30,6 +31,7 @@ const browser = await chromium.launch(
   process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });
 page.setDefaultTimeout(20000);
+const dlg = await watchDialogs(page);
 const errs = [];
 page.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
 page.on('pageerror', e => errs.push(String(e)));
@@ -50,7 +52,7 @@ try {
   await openHow();
 
   // ---- 1. the plant shows a card per group ------------------------------
-  const cards = page.locator('[data-group]');
+  const cards = page.locator('[data-group]:not([data-group=""])');   // the device switcher's dsw-group carries an empty one
   check('a card per group', await cards.count() === 2, `${await cards.count()}`);
   check('the inverter group is there', await page.locator('[data-group="inverters"]').count() === 1);
   check('the meter group is there', await page.locator('[data-group="grid"]').count() === 1);
@@ -122,7 +124,7 @@ try {
         `${before} -> ${after}`);
 
   // ---- 6. a source can be removed, the last one cannot -----------------
-  page.once('dialog', dlg => dlg.accept());
+  dlg.answers.push(true);
   await openHow();
   await page.locator('[data-group="inverters"] [data-src-row="solar_api"] button[data-action="deleteSource"]').first().click();
   await page.waitForTimeout(3000);
@@ -138,7 +140,7 @@ try {
   await page.locator('button[data-action="openGroupModal"]').first().click();
   await page.waitForTimeout(900);
   await page.fill('#grpId', 'battery');
-  await page.selectOption('#grpRole', 'battery');
+  await page.selectOption('#grpRole', 'meter');      // the form offers templates by role: a meter template for a meter group
   await page.selectOption('#grpTpl', 'eastron_sdm120');
   await page.fill('#grpUnits', '30, 31');
   await page.fill('#grpAddr', '127.0.0.1');
@@ -168,7 +170,7 @@ try {
   check('two groups cannot claim one unit id', bad.status === 422, String(bad.status));
 
   // ---- 9. removing a group ---------------------------------------------
-  page.once('dialog', dlg => dlg.accept());
+  dlg.answers.push(true);
   await page.locator('[data-group="battery"] button[data-action="deleteGroup"]').first().click();
   await page.waitForTimeout(3500);
   check('a group can be removed',

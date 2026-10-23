@@ -436,7 +436,8 @@ def test_delete_guard_blocks_device_referenced_by_composite(tmp_path):
 
     client.app.state.vmeter_manager = _Stub()
     r = client.delete("/api/devices/srcdev")
-    assert r.status_code == 422 and "comp" in str(r.json())      # blocked with the meter named
+    assert r.status_code == 409 and "comp" in str(r.json())      # blocked with the meter named
+    assert [(d['type'], d['id']) for d in r.json()['detail']['dependents']['blocking']] == [('virtual_meter', 'comp')]
     # un-reference it → delete succeeds
     (tdir / "comp.yaml").write_text(
         "template:\n  id: comp\n  name: Comp\n  transport: { port: 1503 }\n"

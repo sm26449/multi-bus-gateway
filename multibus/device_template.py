@@ -28,8 +28,6 @@ Two sources, one registry:
   ``docs/``, so built-ins must live in code).
 - USER templates live in ``config/device_templates/`` (bind-mounted, writable)
   — uploads/creations survive restarts and image upgrades.
-
-Design: docs/design/tier2-device-profiles.md §2.
 """
 from __future__ import annotations
 
@@ -96,6 +94,11 @@ class TemplateRegister:
     poll_group: str = ""                     # suggested group when selected
     json_path: str = ""                      # HTTP/JSON + MQTT input: path into the JSON payload
     topic: str = ""                          # MQTT input: the topic this register reads from
+    # MQTT: where a command publishes this register's new value, and the text
+    # it publishes (${value} = the number or code, ${label} = an enum's text);
+    # what arrives on `topic` is the read-back
+    write_topic: str = ""
+    write_payload: str = ""
     register_type: str = "holding"           # holding (FC3) | input (FC4) | coil (FC1/5) | discrete (FC2)
     defaults: Dict[str, Any] = field(default_factory=dict)
     # ── write envelope — GUARDS ARE OPT-IN (F3a trust model) ─────────────────
@@ -156,6 +159,10 @@ class TemplateRegister:
             d['json_path'] = self.json_path
         if self.topic:
             d['topic'] = self.topic
+        if self.write_topic:
+            d['write_topic'] = self.write_topic
+        if self.write_payload:
+            d['write_payload'] = self.write_payload
         if self.register_type and self.register_type != 'holding':
             d['register_type'] = self.register_type
         if self.defaults:
@@ -224,6 +231,7 @@ class TemplateCalculated:
     decimals: Optional[int] = None
     topic: str = ""                 # explicit MQTT leaf, relative to the device prefix
     measurement: str = ""           # explicit InfluxDB measurement
+    category: str = ""              # the template section it belongs to (as a row's)
     enum: Optional[Dict[Any, str]] = None    # computed code → text
     mqtt: bool = True
     influxdb: bool = True
@@ -236,7 +244,7 @@ class TemplateCalculated:
             d['aggregates'] = self.aggregates
         if self.ui:
             d['ui'] = self.ui
-        for k in ('label', 'unit', 'poll_group', 'topic', 'measurement'):
+        for k in ('label', 'unit', 'poll_group', 'topic', 'measurement', 'category'):
             if getattr(self, k):
                 d[k] = getattr(self, k)
         if self.decimals is not None:
@@ -256,10 +264,17 @@ class DeviceTemplate:
     name: str
     vendor: str = ""
     model: str = ""
+    # a few files say `manufacturer` where the schema says `vendor`; the list
+    # shows it as the vendor (the file itself stays as it is)
+    manufacturer: str = ""
     version: str = "1.0.0"
     author: str = ""
     description: str = ""
     source_document: str = ""
+    # what the equipment is, in the vocabulary installation groups use for
+    # their role (attribute_catalog.KINDS): the attributes that fit it are
+    # offered first. Empty: unknown (guessed from the canonical names)
+    kind: str = ""
     schema_version: int = SCHEMA_VERSION
     protocol: Dict[str, Any] = field(default_factory=dict)
     poll_groups: Dict[str, Dict[str, Any]] = field(default_factory=dict)
@@ -285,10 +300,34 @@ class DeviceTemplate:
     # how a bus scan recognises this device: registers that must read given
     # values, and/or the FC43 identification it answers (regexes)
     identify: Dict[str, Any] = field(default_factory=dict)
+    # what the device must be told before part of its map exists (written at
+    # connect, again when it forgets) — see device_setup.py
+    setup: List[Dict[str, Any]] = field(default_factory=list)
+    # what the user should know before relying on the template — a limitation,
+    # a model it does not fit, a step to take first. Shown where the template
+    # is picked and on each device made from it:
+    # [{level: info|warning, text, fields?: [row/command names], link?}]
+    notes: List[Dict[str, Any]] = field(default_factory=list)
+    # rules a device of this kind is commonly run with — examples the rule
+    # editor offers, never armed by themselves. `{device}` stands for the
+    # device's id: [{id, label, description?, kind, target: {device:
+    # "{device}", command}, when/signal…}] (see rules_preset)
+    rules: List[Dict[str, Any]] = field(default_factory=list)
+    # what a channel (the registers some commands control together) must
+    # respect whoever writes: {name: {combine: priority|min|max, min_on_s,
+    # min_off_s, max_starts_per_h}} — rules phase 3, docs/rules.md
+    channels: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     registers: List[TemplateRegister] = field(default_factory=list)
     # derived measurements the template ships with (seeded into each device's
     # `calculated` list) — see TemplateCalculated
     calculated: List['TemplateCalculated'] = field(default_factory=list)
+    # kinds of things the device holds, each added by instance:
+    # {type: {name, description, kind, instance, discover, registers, …}}
+    components: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    # set on a component's own template (`<parent>:<key>`), never saved
+    component_of: str = ""
+    component_key: str = ""
+    component: Dict[str, Any] = field(default_factory=dict)
     # provenance (not serialized into exports)
     builtin: bool = False
     path: str = ""
@@ -302,6 +341,7 @@ class DeviceTemplate:
             'version': self.version, 'author': self.author,
             'description': self.description,
             'source_document': self.source_document,
+            **({'kind': self.kind} if self.kind else {}),
             'protocol': self.protocol,
             'poll_groups': self.poll_groups,
             'categories': self.categories,
@@ -310,21 +350,62 @@ class DeviceTemplate:
             **({'commands': self.commands} if self.commands else {}),
             **({'display': self.display} if self.display else {}),
             **({'identify': self.identify} if self.identify else {}),
+            **({'setup': self.setup} if self.setup else {}),
+            **({'notes': self.notes} if self.notes else {}),
+            **({'rules': self.rules} if self.rules else {}),
+            **({'channels': self.channels} if self.channels else {}),
             'registers': [r.to_dict() for r in self.registers],
             **({'calculated': [c.to_dict() for c in self.calculated]}
                if self.calculated else {}),
+            **({'components': self.components} if self.components else {}),
         }}
 
     def summary(self) -> Dict[str, Any]:
         """List-view form for the API/UI."""
         return {
-            'id': self.id, 'name': self.name, 'vendor': self.vendor,
+            'id': self.id, 'name': self.name, 'vendor': self.vendor or self.manufacturer,
             'model': self.model, 'version': self.version,
             'builtin': self.builtin, 'registers': len(self.registers),
+            'kind': self.kind or kind_from_names(self),
             'categories': len(self.categories),
             'transport': template_transport(self),   # 'modbus' | 'http'
             'commands': sorted(self.commands.keys()),
+            'notes': self.notes,
+            'rules': [r.get('id') for r in self.rules],
+            **({'components': [{'type': k, 'name': str(c.get('name') or k),
+                                'kind': str(c.get('kind', '') or '')}
+                               for k, c in self.components.items()]}
+               if self.components else {}),
+            **({'component_of': self.component_of, 'component_key': self.component_key}
+               if self.component_of else {}),
         }
+
+
+def kind_from_names(tpl) -> str:
+    """A template without a declared ``kind``: what its canonical names say
+    it is — DC inputs → an inverter; a state of charge → a battery; import
+    and export energy without DC → a meter. '' when they say nothing."""
+    names = {getattr(r, 'name', '') for r in (getattr(tpl, 'registers', None) or [])}
+    names |= {getattr(c, 'name', '') for c in (getattr(tpl, 'calculated', None) or [])}
+    if any(n.startswith('power_dc') or n.startswith('current_dc_mppt') for n in names):
+        return 'inverter'
+    if 'soc' in names:
+        return 'battery'
+    if 'energy_active_import' in names or 'energy_active_export' in names:
+        return 'meter'
+    return ''
+
+
+def mppt_count_of(tpl) -> int:
+    """How many MPPT inputs the template's canonical names show
+    (``power_dc_mppt2`` → 2); 0 when none."""
+    import re as _re
+    n = 0
+    for r in (getattr(tpl, 'registers', None) or []):
+        m = _re.match(r'^(?:power|voltage|current)_dc_mppt(\d+)$', getattr(r, 'name', '') or '')
+        if m:
+            n = max(n, int(m.group(1)))
+    return n
 
 
 def template_transport(tpl) -> str:
@@ -500,7 +581,7 @@ def validate_template(data: Dict[str, Any], *, extras: bool = True) -> List[str]
         if isinstance(cname, str):
             _seen_calc.add(cname)
         from . import expressions as _expr
-        ok, err, _refs = _expr.validate_expression(str(c.get('expr', '') or ''))
+        ok, err, _refs = _expr.validate_expression(str(c.get('expr', '') or ''), check_places=False)
         if not ok:
             errors.append(f"{where}: {err}")
         pg = c.get('poll_group')
@@ -553,7 +634,293 @@ def validate_template(data: Dict[str, Any], *, extras: bool = True) -> List[str]
         errors.extend(extra_errors(data))
     errors.extend(_display_errors(t))
     errors.extend(_identify_errors(t))
+    errors.extend(_setup_errors(t))
+    errors.extend(_notes_errors(t))
+    errors.extend(_rule_preset_errors(t))
+    gap = (t.get('protocol') or {}).get('min_write_gap_s') if isinstance(t.get('protocol'), dict) else None
+    if gap is not None and (isinstance(gap, bool) or not isinstance(gap, (int, float)) or not 0 <= gap <= 60):
+        errors.append("protocol.min_write_gap_s: seconds between two writes, 0..60")
+    single = (t.get('protocol') or {}).get('single_register_writes') if isinstance(t.get('protocol'), dict) else None
+    if single is not None and not isinstance(single, bool):
+        errors.append("protocol.single_register_writes: true or false")
+    errors.extend(_availability_errors(t.get('protocol')))
+    if isinstance(t.get('protocol'), dict) and t['protocol'].get('keepalive') is not None:
+        from .mqtt_input import keepalive_errors
+        errors.extend(keepalive_errors(t['protocol']['keepalive'], 'protocol.keepalive'))
+    if t.get('components') is not None:
+        errors.extend(_component_errors(t, extras))
     return errors
+
+
+# ── components: kinds of things a device holds, added by instance ──────────
+# A component is described inside its
+# parent's template and becomes a template of its own, `<parent>:<key>`, that
+# reads through the parent's connection with `{instance}` filled in.
+COMPONENT_SEP = ':'
+_COMPONENT_KEYS = {'name', 'description', 'kind', 'instance', 'discover', 'categories',
+                   'display', 'notes', 'poll_groups', 'registers', 'calculated'}
+_INHERITED_KEYS = ('schema_version', 'vendor', 'model', 'version', 'author',
+                   'source_document', 'protocol', 'canonical')
+
+
+def component_document(t: Dict[str, Any], key: str, c: Dict[str, Any]) -> Dict[str, Any]:
+    """One component as a template document of its own, so the same
+    validator and parser read it as read any template. The id is a
+    placeholder: the registry names it ``<parent>:<key>``."""
+    doc = {k: t[k] for k in _INHERITED_KEYS if k in t}
+    doc.update({k: c[k] for k in _COMPONENT_KEYS if k in c
+                and k not in ('instance', 'discover')})
+    doc['id'] = 'component'
+    doc['name'] = str(c.get('name') or key)
+    return {'device_template': doc}
+
+
+def _component_errors(t: Dict[str, Any], extras: bool) -> List[str]:
+    comps = t.get('components')
+    if not isinstance(comps, dict):
+        return ["components must be a mapping of type → definition"]
+    transports = [str(x).lower() for x in ((t.get('protocol') or {}).get('transports') or [])] \
+        if isinstance(t.get('protocol'), dict) else []
+    errors: List[str] = []
+    if comps and 'mqtt' not in transports:
+        errors.append("components: only an MQTT template (protocol.transports: [mqtt]) may declare them for now")
+    for key, c in comps.items():
+        where = f"component {key!r}"
+        if not isinstance(key, str) or not _ID_RE.match(key):
+            errors.append(f"{where}: type invalid (a-z 0-9 - _, 2-64 chars, starts alphanumeric)")
+            continue
+        if not isinstance(c, dict):
+            errors.append(f"{where}: definition must be a mapping")
+            continue
+        unknown = sorted(set(c) - _COMPONENT_KEYS)
+        if unknown:
+            errors.append(f"{where}: {', '.join(unknown)} not allowed here — a component is read-only "
+                          f"and takes {', '.join(sorted(_COMPONENT_KEYS))}")
+        errors.extend(f"{where}: {e}" for e in validate_template(component_document(t, key, c), extras=extras))
+        for i, r in enumerate(c.get('registers') or []):
+            if isinstance(r, dict) and '{instance}' not in str(r.get('topic', '') or ''):
+                errors.append(f"{where}: register #{i} ({r.get('name')!r}): its topic must contain "
+                              "{instance}, or every instance would read the same value")
+        inst = c.get('instance')
+        if inst is not None and (not isinstance(inst, dict) or not all(
+                isinstance(inst.get(k, ''), str) for k in ('label', 'hint'))):
+            errors.append(f"{where}: instance must be {{label?, hint?}} (text)")
+        disc = c.get('discover')
+        if disc is not None:
+            if not isinstance(disc, dict) or not isinstance(disc.get('topic'), str):
+                errors.append(f"{where}: discover must be {{topic, name_topic?}}")
+            else:
+                levels = disc['topic'].split('/')
+                if levels.count('+') != 1 or '#' in disc['topic'] or '{instance}' in disc['topic']:
+                    errors.append(f"{where}: discover.topic must have exactly one + level (the instance) and no #")
+                nt = disc.get('name_topic')
+                if nt is not None and (not isinstance(nt, str) or '{instance}' not in nt
+                                       or any(x in nt for x in '+#')):
+                    errors.append(f"{where}: discover.name_topic must contain {{instance}} and no wildcard")
+    return errors
+
+
+def component_templates(parent: 'DeviceTemplate') -> List['DeviceTemplate']:
+    """The templates a parent's components become: ``<parent>:<key>``."""
+    out: List[DeviceTemplate] = []
+    raw = parent.to_dict()['device_template']
+    for key, c in (parent.components or {}).items():
+        try:
+            ct = parse_template(component_document(raw, key, c), builtin=parent.builtin,
+                                path=parent.path, strict=False)
+        except ValueError as e:
+            logger.warning("template %s: component %s skipped: %s", parent.id, key, e)
+            continue
+        ct.id = f"{parent.id}{COMPONENT_SEP}{key}"
+        ct.component_of, ct.component_key = parent.id, key
+        ct.component = {'name': str(c.get('name') or key),
+                        'description': str(c.get('description', '') or ''),
+                        'instance': dict(c.get('instance') or {}),
+                        'discover': dict(c.get('discover') or {})}
+        out.append(ct)
+    return out
+
+
+def is_component_id(template_id: Any) -> bool:
+    return isinstance(template_id, str) and COMPONENT_SEP in template_id
+
+
+def _availability_errors(proto: Any) -> List[str]:
+    """protocol.availability: how an MQTT source says it is alive (its birth
+    and last will), e.g. {topic: "~/status", online: "online", offline: "offline"}."""
+    av = proto.get('availability') if isinstance(proto, dict) else None
+    if av is None:
+        return []
+    if not isinstance(av, dict) or not isinstance(av.get('topic'), str) or not av['topic'].strip():
+        return ["protocol.availability: {topic, online, offline}, the topic required "
+                "(relative to the device's topic as ~/…)"]
+    errs = []
+    if any(c in av['topic'] for c in '+#'):
+        errs.append("protocol.availability.topic: one topic, no wildcards")
+    from .text_check import topic_issue
+    _ti = topic_issue(av['topic'], "protocol.availability.topic")
+    if _ti:
+        errs.append(_ti)
+    for k in ('online', 'offline'):
+        if k in av and not (isinstance(av[k], str) and av[k]):
+            errs.append(f"protocol.availability.{k}: the payload text, e.g. {k!r}")
+    if av.get('online', 'online') == av.get('offline', 'offline'):
+        errs.append("protocol.availability: online and offline must differ")
+    return errs
+
+
+def rule_preset_for(preset: Dict[str, Any], device_id: str) -> Dict[str, Any]:
+    """A template's rule preset made concrete for one device: `{device}`
+    replaced everywhere, the id prefixed with the device's, always shadow."""
+    import json as _json
+    txt = _json.dumps({k: v for k, v in preset.items() if k != 'description'})
+    rule = _json.loads(txt.replace('{device}', device_id))
+    # a rule id starts with a letter and is at most 48 characters; a device id
+    # may start with a digit and be longer — keep the id valid either way
+    rid = f"{device_id}-{preset.get('id')}"
+    if not rid[:1].isalpha():
+        rid = 'r-' + rid
+    rule['id'] = rid[:48].rstrip('-_') or 'rule'
+    rule['mode'] = 'shadow'
+    return rule
+
+
+def _rule_preset_errors(t: Dict[str, Any]) -> List[str]:
+    """``rules``: examples — each a rule (rules.md) over `{device}`, checked
+    as the rule editor would check it, on a placeholder device, and its
+    command and fields must be this template's."""
+    rp = t.get('rules')
+    if rp is None:
+        return []
+    if not isinstance(rp, list) or len(rp) > 20:
+        return ["rules must be a list of at most 20 rule examples"]
+    from .rules import validate_rule_def
+    from .expressions import validate_expression
+
+    def _expr_err(e):
+        ok, err, _refs = validate_expression(e, check_places=False)
+        return None if ok else err
+    names = {r.get('name') for k in ('registers', 'calculated')
+             for r in (t.get(k) or []) if isinstance(r, dict)}
+    cmds = set(t.get('commands') or {}) if isinstance(t.get('commands'), dict) else set()
+    out, ids = [], set()
+    for i, p in enumerate(rp):
+        w = f"rules[{i}]"
+        if not isinstance(p, dict):
+            out.append(f"{w}: must be an object")
+            continue
+        pid = p.get('id')
+        if not isinstance(pid, str) or not _ID_RE.match(pid):
+            out.append(f"{w}: id invalid (a-z 0-9 - _, 2-64 chars)")
+        elif pid in ids:
+            out.append(f"{w}: duplicate id {pid!r}")
+        else:
+            ids.add(pid)
+        tg = p.get('target')
+        if not isinstance(tg, dict):
+            out.append(f"{w}: target must be an object {{device: \"{{device}}\", command}}")
+            continue
+        if tg.get('device') != '{device}':
+            out.append(f"{w}: target.device must be \"{{device}}\" (the device the example is offered for)")
+        cmd = tg.get('command')
+        if not isinstance(cmd, str) or cmd not in cmds:
+            out.append(f"{w}: target.command {cmd!r} is not a command of this template")
+        try:
+            rule = rule_preset_for(p, 'dev')
+            out += [f"{w}: {e}" for e in validate_rule_def(rule, validate_expr=_expr_err)]
+        except Exception as e:  # noqa: BLE001 — a malformed example is an answer, not a 500
+            out.append(f"{w}: cannot be read as a rule: {e}")
+        for k in ('signal', 'when', 'release'):
+            for ref in re.findall(r"\{device\}\.([A-Za-z_][A-Za-z0-9_\[\]]*)", str(p.get(k) or '')):
+                if ref not in names:
+                    out.append(f"{w}: {k} reads {ref!r}, which is not a field of this template")
+    return out
+
+
+NOTE_LEVELS = ('info', 'warning')
+
+
+def _notes_errors(t: Dict[str, Any]) -> List[str]:
+    """``notes``: ``[{level: info|warning, text, fields?: [names], link?: url}]``
+    — ``fields`` names the rows or commands a note is about, so the UI can
+    mark them where they are listed."""
+    nt = t.get('notes')
+    if nt is None:
+        return []
+    if not isinstance(nt, list) or len(nt) > 20:
+        return ["notes must be a list of at most 20 notes"]
+    known = {r.get('name') for k in ('registers', 'calculated')
+             for r in (t.get(k) or []) if isinstance(r, dict)}
+    known |= set(t.get('commands') or {}) if isinstance(t.get('commands'), dict) else set()
+    out = []
+    for i, n in enumerate(nt):
+        w = f"notes[{i}]"
+        if not isinstance(n, dict):
+            out.append(f"{w}: must be an object")
+            continue
+        if n.get('level', 'info') not in NOTE_LEVELS:
+            out.append(f"{w}: level is info or warning")
+        txt = n.get('text')
+        if not isinstance(txt, str) or not txt.strip() or len(txt) > 1000:
+            out.append(f"{w}: text is required (at most 1000 characters)")
+        fl = n.get('fields')
+        if fl is not None and (not isinstance(fl, list)
+                               or not all(isinstance(x, str) and x for x in fl)):
+            out.append(f"{w}: fields is a list of row or command names")
+        elif fl:
+            missing = [x for x in fl if x not in known]
+            if missing:
+                out.append(f"{w}: fields not in this template: {', '.join(missing)}")
+        link = n.get('link')
+        if link not in (None, '') and (not isinstance(link, str)
+                                       or not link.startswith(('https://', 'http://'))):
+            out.append(f"{w}: link must be an http(s) address")
+    return out
+
+
+def _setup_errors(t: Dict[str, Any]) -> List[str]:
+    """``setup``: ``[{name, label?, address, values: [int | "0x…"], provides?: {from, to}}]``
+    — written as one write-multiple frame each, at connect and when the
+    registers a step provides are refused."""
+    st = t.get('setup')
+    if st is None:
+        return []
+    if not isinstance(st, list):
+        return ["setup must be a list of steps"]
+    out, names = [], set()
+    for i, s in enumerate(st):
+        w = f"setup[{i}]"
+        if not isinstance(s, dict):
+            out.append(f"{w}: must be an object")
+            continue
+        n = s.get('name')
+        if not isinstance(n, str) or not _ID_RE.match(n):
+            out.append(f"{w}: name invalid (a-z 0-9 - _, 2-64 chars)")
+        elif n in names:
+            out.append(f"{w}: duplicate name {n!r}")
+        names.add(n)
+        a = s.get('address')
+        if isinstance(a, bool) or not isinstance(a, int) or not 0 <= a <= 65535:
+            out.append(f"{w}: address must be 0..65535")
+        vals = s.get('values')
+        if not isinstance(vals, list) or not 1 <= len(vals) <= 123:
+            out.append(f"{w}: values must be a list of 1..123 words")
+        else:
+            for j, v in enumerate(vals):
+                try:
+                    if isinstance(v, float) and not v.is_integer():
+                        raise ValueError            # 1.7 would be written as 1, silently
+                    iv = int(v, 0) if isinstance(v, str) else (None if isinstance(v, bool) else int(v))
+                    if iv is None or not 0 <= iv <= 0xFFFF:
+                        raise ValueError
+                except (TypeError, ValueError):
+                    out.append(f"{w}: values[{j}] {v!r} is not a 16-bit word (0..65535 or \"0x…\")")
+        p = s.get('provides')
+        if p is not None:
+            if (not isinstance(p, dict) or not isinstance(p.get('from'), int)
+                    or not isinstance(p.get('to', p.get('from')), int) or p.get('to', p['from']) < p['from']):
+                out.append(f"{w}: provides must be {{from, to}} with from ≤ to")
+    return out
 
 
 def extra_errors(data: Dict[str, Any]) -> List[str]:
@@ -562,7 +929,17 @@ def extra_errors(data: Dict[str, Any]) -> List[str]:
     t = (data or {}).get('device_template') or {}
     regs = t.get('registers') if isinstance(t.get('registers'), list) else []
     calcs = t.get('calculated') if isinstance(t.get('calculated'), list) else []
-    return (_register_extra_errors(regs, calcs) + _category_errors(t) + _command_errors(t))
+    return (_register_extra_errors(regs, calcs) + _category_errors(t) + _command_errors(t) + _channel_errors(t)
+            + _kind_errors(t))
+
+
+def _kind_errors(t: Dict[str, Any]) -> List[str]:
+    """``kind``: the attribute catalog's vocabulary, or nothing."""
+    k = t.get('kind')
+    if k in (None, ''):
+        return []
+    from .attribute_catalog import KINDS
+    return [] if k in KINDS else [f"kind: one of {', '.join(KINDS)} (or empty)"]
 
 
 AGGREGATE_OPS = ('sum', 'avg', 'min', 'max', 'spread', 'mode')
@@ -594,6 +971,25 @@ def _register_extra_errors(regs: List[Any], calcs: List[Any]) -> List[str]:
             continue
         where = f"register #{i} (name {r.get('name')!r})"
         errors.extend(_aggregate_errors(where, r.get('aggregates')))
+        wt = r.get('write_topic')
+        if wt is not None and (not isinstance(wt, str) or any(c in wt for c in '+#')):
+            errors.append(f"{where}: write_topic is one topic, no + or #")
+        from .text_check import formula_issue, topic_issue
+        if isinstance(r.get('name'), str):
+            # a name is what a formula, a rule and a topic leaf call the row
+            _ni = formula_issue(r['name'], f"{where} name")
+            if _ni:
+                errors.append(_ni)
+            if r['name'].lower() == 'meta' or str(r.get('topic') or '').strip('/').lower() == 'meta' \
+                    or str((r.get('defaults') or {}).get('mqtt', {}).get('topic') or '').strip('/').lower() == 'meta':
+                errors.append(f"{where}: 'meta' is reserved — <device topic>/meta carries the device's attributes")
+        for _tk in ('topic', 'write_topic'):
+            if isinstance(r.get(_tk), str) and r.get(_tk):
+                _ti = topic_issue(r[_tk], f"{where} {_tk}")
+                if _ti:
+                    errors.append(_ti)
+        if r.get('write_payload') is not None and not isinstance(r.get('write_payload'), str):
+            errors.append(f"{where}: write_payload is text, with ${{value}} or ${{label}} where the value goes")
         nan = r.get('nan')
         if nan is not None and not (nan is True or num(nan)
                                     or (isinstance(nan, list) and nan and all(num(x) for x in nan))):
@@ -656,6 +1052,11 @@ def _category_errors(t: Dict[str, Any]) -> List[str]:
     if not isinstance(cats, dict):
         return ["categories must be an object {id: {label, order}}"]
     out = []
+    # a calculated field names its section like a row does
+    for i, c in enumerate(t.get('calculated') or []):
+        cc = c.get('category') if isinstance(c, dict) else None
+        if cc and cats and cc not in cats:
+            out.append(f"calculated[{i}] ({c.get('name')}): category {cc!r} not declared in categories")
     for cid, c in cats.items():
         if not isinstance(c, dict):
             out.append(f"category {cid!r}: must be an object {{label, order}}")
@@ -668,6 +1069,40 @@ def _category_errors(t: Dict[str, Any]) -> List[str]:
     return out
 
 
+CHANNEL_COMBINE = ('priority', 'min', 'max')
+
+
+def _channel_errors(t: Dict[str, Any]) -> List[str]:
+    """`channels:` and each command's `channel` / `on`."""
+    out: List[str] = []
+    ch = t.get('channels')
+    if ch is not None and not isinstance(ch, dict):
+        return ["channels: an object {name: {combine, min_on_s, min_off_s, max_starts_per_h}}"]
+    for name, c in (ch or {}).items():
+        w = f"channel {name!r}"
+        if not isinstance(c, dict):
+            out.append(f"{w}: an object")
+            continue
+        unknown = set(c) - {'combine', 'min_on_s', 'min_off_s', 'max_starts_per_h', 'min_interval_s', 'label'}
+        if unknown:
+            out.append(f"{w}: unknown {', '.join(sorted(unknown))}")
+        if c.get('combine', 'priority') not in CHANNEL_COMBINE:
+            out.append(f"{w}: combine is one of {', '.join(CHANNEL_COMBINE)}")
+        for k in ('min_on_s', 'min_off_s', 'max_starts_per_h', 'min_interval_s'):
+            v = c.get(k)
+            if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= 7 * 86400):
+                out.append(f"{w}: {k} 0..604800")
+    from .commands import _COND
+    for cname, c in (t.get('commands') or {}).items() if isinstance(t.get('commands'), dict) else ():
+        if not isinstance(c, dict):
+            continue
+        if c.get('channel') is not None and not (isinstance(c['channel'], str) and _ID_RE.match(c['channel'])):
+            out.append(f"command {cname!r}: channel is a name (a-z 0-9 - _)")
+        if c.get('on') is not None and not (isinstance(c['on'], str) and _COND.match(c['on'])):
+            out.append(f"command {cname!r}: on is a condition on its parameters, e.g. \"${{value}} > 0\"")
+    return out
+
+
 def _command_errors(t: Dict[str, Any]) -> List[str]:
     """A command is checked against the map it lives in: the registers it
     reads and writes exist, its expressions evaluate, its parameters have
@@ -677,6 +1112,13 @@ def _command_errors(t: Dict[str, Any]) -> List[str]:
         return []
     from .commands import ExprError, evaluate
     names = {r.get('name') for r in t.get('registers') or [] if isinstance(r, dict)}
+    # an MQTT template writes by publishing: each written register needs the
+    # topic it is published on
+    _transports = [str(x).lower() for x in ((t.get('protocol') or {}).get('transports') or [])] \
+        if isinstance(t.get('protocol'), dict) else []
+    publishes = {r.get('name') for r in t.get('registers') or []
+                 if isinstance(r, dict) and r.get('write_topic')}
+    is_mqtt = 'mqtt' in _transports or bool(publishes)
     groups = set((t.get('poll_groups') or {}).keys())
     num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)  # noqa: E731
     out: List[str] = []
@@ -732,6 +1174,11 @@ def _command_errors(t: Dict[str, Any]) -> List[str]:
                         except (ExprError, TypeError, ValueError, ZeroDivisionError) as e:
                             out.append(f"{w}: {kind}[{j}] {vk}: {e}")
         _check('writes', c.get('writes'), 'register')
+        if is_mqtt and isinstance(c.get('writes'), list):
+            for j, it in enumerate(c['writes']):
+                if isinstance(it, dict) and it.get('register') in names and it.get('register') not in publishes:
+                    out.append(f"{w}: writes[{j}] register {it.get('register')!r} has no write_topic "
+                               "— an MQTT command publishes there")
         _check('guard', c.get('guard'), 'read')
         _check('verify', c.get('verify'), 'read')
         st = c.get('settle_s')
@@ -750,6 +1197,11 @@ def _command_errors(t: Dict[str, Any]) -> List[str]:
             out.append(f"{w}: readback_group {rg!r} is not a poll group of this template")
         if 'confirm' in c and not isinstance(c['confirm'], bool):
             out.append(f"{w}: confirm must be true or false")
+        rf = c.get('refresh_s')
+        if rf is not None and (not num(rf) or (rf != 0 and not 10 <= rf <= 86400)):
+            out.append(f"{w}: refresh_s must be 0 (off) or 10..86400 seconds")
+        if rf and not c.get('safe'):
+            out.append(f"{w}: refresh_s needs safe parameters — they are what stops the refresh")
     return out
 
 
@@ -838,6 +1290,10 @@ def _display_errors(t: Dict[str, Any]) -> List[str]:
                     errs.append(f"display.alarms[{i}]: 'field' must be a field of this template")
                 elif a.get('severity', 'warning') not in ('warning', 'danger'):
                     errs.append(f"display.alarms[{i}]: severity is warning or danger")
+                elif a.get('for_s') is not None and (isinstance(a.get('for_s'), bool)
+                                                     or not isinstance(a.get('for_s'), (int, float))
+                                                     or not 0 <= a['for_s'] <= 86400):
+                    errs.append(f"display.alarms[{i}]: for_s is how long it must stay active before an alert, 0..86400 s")
     secs = d.get('sections')
     if secs is not None:
         cats = set((t.get('categories') or {}).keys())
@@ -908,6 +1364,8 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         poll_group=str(r.get('poll_group', '')),
         json_path=str(r.get('json_path', '')),
         topic=str(r.get('topic', '')),
+        write_topic=str(r.get('write_topic', '') or ''),
+        write_payload=str(r.get('write_payload', '') or ''),
         register_type=_norm_rtype(r.get('register_type') or r.get('fc')),
         defaults=r.get('defaults', {}) or {},
         writable=bool(r.get('writable', False)),
@@ -940,6 +1398,7 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         decimals=c.get('decimals'),
         topic=str(c.get('topic', '') or ''),
         measurement=str(c.get('measurement', '') or ''),
+        category=str(c.get('category', '') or ''),
         enum=c.get('enum'),
         mqtt=bool(c.get('mqtt', True)),
         influxdb=bool(c.get('influxdb', True)),
@@ -950,9 +1409,11 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
     return DeviceTemplate(
         id=t['id'], name=t['name'],
         vendor=t.get('vendor', ''), model=t.get('model', ''),
+        manufacturer=str(t.get('manufacturer', '') or ''),
         version=str(t.get('version', '1.0.0')), author=t.get('author', ''),
         description=t.get('description', ''),
         source_document=t.get('source_document', ''),
+        kind=str(t.get('kind', '') or ''),
         schema_version=int(t.get('schema_version', SCHEMA_VERSION)),
         protocol=t.get('protocol', {}) or {},
         poll_groups=t.get('poll_groups', {}) or {},
@@ -962,7 +1423,14 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         commands=dict(t.get('commands') or {}),
         display=dict(t.get('display') or {}) if isinstance(t.get('display'), dict) else {},
         identify=dict(t.get('identify') or {}) if isinstance(t.get('identify'), dict) else {},
+        setup=[dict(x) for x in (t.get('setup') or []) if isinstance(x, dict)],
+        notes=[dict(x) for x in (t.get('notes') or []) if isinstance(x, dict)],
+        rules=[dict(x) for x in (t.get('rules') or []) if isinstance(x, dict)],
+        channels={str(k): dict(v) for k, v in (t.get('channels') or {}).items() if isinstance(v, dict)}
+        if isinstance(t.get('channels'), dict) else {},
         registers=regs, calculated=calcs, builtin=builtin, path=path,
+        components={str(k): dict(v) for k, v in (t.get('components') or {}).items()
+                    if isinstance(v, dict)} if isinstance(t.get('components'), dict) else {},
     )
 
 
@@ -1013,7 +1481,7 @@ class TemplateRegistry:
                         raise ValueError(
                             f"id {t.id!r} already provided by "
                             f"{self._templates[t.id].path}")
-                    self._templates[t.id] = t
+                    self._put(t)
                     # opt-in canonical checks (warnings, not load failures):
                     # flag non-canonical names, and duplicate names — which
                     # collide on one MQTT topic / InfluxDB field (raw vendor maps
@@ -1056,6 +1524,18 @@ class TemplateRegistry:
         logger.info("device templates loaded: %d (%d errors)",
                     len(self._templates), len(self.load_errors))
 
+    def _put(self, t: DeviceTemplate) -> None:
+        """Hold a template and the templates its components become; a
+        component the template no longer declares goes."""
+        self._drop_components(t.id)
+        self._templates[t.id] = t
+        for ct in component_templates(t):
+            self._templates[ct.id] = ct
+
+    def _drop_components(self, template_id: str) -> None:
+        for k in [k for k, v in self._templates.items() if v.component_of == template_id]:
+            del self._templates[k]
+
     def get(self, template_id: str) -> Optional[DeviceTemplate]:
         return self._templates.get(template_id)
 
@@ -1067,14 +1547,21 @@ class TemplateRegistry:
         tpl = self.get(template_id) if template_id else None
         return (tpl.protocol.get('byte_order', 'big') if tpl else 'big')
 
+    def all(self) -> List[DeviceTemplate]:
+        """Every template, components included (what their formulas name)."""
+        return list(self._templates.values())
+
     def list(self) -> List[DeviceTemplate]:
-        return sorted(self._templates.values(),
+        # a component is added through its parent, never picked by itself
+        return sorted((t for t in self._templates.values() if not t.component_of),
                       key=lambda t: (not t.builtin, t.vendor.lower(), t.name.lower()))
 
     def save_user(self, data: Dict[str, Any]) -> DeviceTemplate:
         """Validate + persist a user template (create or update). Refuses to
         touch built-ins."""
         t = parse_template(data)
+        if is_component_id(t.id):
+            raise ValueError(f"{t.id!r} is a component — edit its parent template")
         existing = self.get(t.id)
         if existing and existing.builtin:
             raise ValueError(f"template {t.id!r} is built-in (read-only) — duplicate it under a new id")
@@ -1099,7 +1586,7 @@ class TemplateRegistry:
             os.fsync(_f.fileno())
         os.replace(_tmp, path)
         t.path = str(path)
-        self._templates[t.id] = t
+        self._put(t)
         logger.info("device template %s saved (%d registers)", t.id, len(t.registers))
         return t
 
@@ -1125,10 +1612,13 @@ class TemplateRegistry:
         t = self.get(template_id)
         if not t:
             raise KeyError(template_id)
+        if t.component_of:
+            raise ValueError(f"{template_id!r} is a component of {t.component_of!r} — edit that template")
         if t.builtin:
             raise ValueError(f"template {template_id!r} is built-in (read-only)")
         Path(t.path).unlink(missing_ok=True)
         for twin in self._user_files_with_id(template_id):      # F-20: no resurrection
             twin.unlink(missing_ok=True)
         del self._templates[template_id]
+        self._drop_components(template_id)
         logger.info("device template %s deleted", template_id)

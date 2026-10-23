@@ -26,7 +26,7 @@ UMG 512-PRO polled at 250 ms, four Fronius inverters read through Solar API
 and SunSpec with power-limit commands and rules, a Fronius Smart Meter over
 RTU, and a virtual EM24 that a Victron Ekrano GX consumes as its grid
 meter. About 130 MB of RAM. Less exercised so far: the serial bridge for
-remote RS-485, the ESP32 Device Builder, and the PQ recorder, which has a
+remote RS-485 and the PQ recorder, which has a
 single meter behind it. See [History](#history) for where it came from.
 
 - 🔌 **Retrofit instead of replacement** — digitize installed equipment;
@@ -35,12 +35,11 @@ single meter behind it. See [History](#history) for where it came from.
   topic prefix, InfluxDB bucket, opt-in outputs), independent pipelines.
 - 🪞 **One meter, many consumers** — emulated virtual meters with explicit
   staleness policies and an in-band quality block.
+- 🏭 **OPC UA server for SCADA and HMI** — every device and value with its
+  quality and the time it was read, under stable node ids; encrypted, with
+  the gateway's own accounts ([guide](docs/opcua.md)).
 - 🛠️ **Operator-grade UI** — discovery wizard, frame-level diagnostics,
   config snapshots with rollback, roles and an audit trail.
-- 📟 **Device Builder (remote ESP32 nodes)** — generate, compile and flash
-  ESPHome firmware for far-away RS485 readers straight from the UI (builds
-  on your own ESPHome container, browser USB flashing, OTA, automatic
-  adoption as an MQTT device — zero double configuration).
 - ⚡ **PQ event recorder (Janitza)** — permanently archives the meter's
   on-device power-quality event ring (dips/outages/RVC + RMS waveforms),
   with a dedicated tab, alerts and a queryable history —
@@ -53,12 +52,16 @@ single meter behind it. See [History](#history) for where it came from.
 📖 **[User Manual](docs/MANUAL.md)** ·
 🏗️ **[Architecture (diagrams)](docs/architecture.md)** ·
 🔌 **[API Reference](docs/API.md)** ·
+🧪 **[API by example](docs/api-examples.md)** ·
 📡 **[Virtual meter spec](docs/virtual-meter-spec.md)** ·
+🏭 **[OPC UA server](docs/opcua.md)** ·
+🖥️ **[FUXA on the gateway](docs/fuxa.md)** ·
 🗂️ **[Device catalog](docs/device-catalog.md)** ·
 🧩 **[Write a device template](docs/device-templates.md)** ·
 🧮 **[Templates, advanced: calculated fields, commands, display, scan recognition](docs/templates-advanced.md)** ·
 🔌 **[RS-485 over the network (bridges)](docs/rtu-over-network.md)** ·
 🧠 **[Rules: guide & recipes](docs/rules.md)** ·
+⚙️ **[A Delta VFD-EL drive: read and control](docs/delta-vfd-el.md)** ·
 🖼️ **[Visual UI guide](docs/GHID-UI.md)** (RO notes) ·
 🛡️ **[Reliability & fail-safety](docs/reliability.md)** ·
 ⚙️ **[Config reference](docs/config-reference.md)** ·
@@ -108,14 +111,15 @@ all the same. No vendor lock-in, no per-box cost.
 - **MQTT-in** — subscribe to a broker; value from the JSON payload
   (`json_path`) or the bare payload; per-register topics with `+`/`#`
   wildcards.
-- **Device templates** — the register map as a portable JSON file; 19
+- **Device templates** — the register map as a portable JSON file; 24
   bundled maps with documented provenance
   ([catalog](docs/device-catalog.md)): Janitza UMG 512-PRO (4,126
   registers), ABB B21/B23, Carlo Gavazzi EM24, Eastron SDM120/SDM630,
   Schneider iEM3000, Fronius Smart Meter 65A-3, Fronius SunSpec inverter
   and meter, three Fronius Solar API maps (inverter, per-phase inverter,
-  site), Seplos BMS V3 (RTU tap per pack, MQTT pack and bank) and three
-  MQTT maps (Zigbee2MQTT, Theengs BLE, generic JSON).
+  site, meter), Seplos BMS V3 (RTU tap per pack, MQTT pack and bank), a
+  Victron GX over MQTT, a Samsung heat pump, a Delta VFD-EL drive and MQTT
+  maps (Zigbee2MQTT, Theengs BLE, Tasmota, generic JSON).
   Provenance and confidence are stated per map in the catalog.
   In-UI editor + upload + export + **CSV/YAML import**
   ([CSV](docs/csv-import.md), [YAML](docs/yaml-import.md)). Per-register
@@ -145,6 +149,35 @@ all the same. No vendor lock-in, no per-box cost.
   every output.
 - Per-register **thresholds** (warning/danger color coding) on the
   dashboard.
+
+**Control and integration**
+- **Installations** — one datalogger, many units: groups of inverters, a
+  grid meter and site totals, each unit an ordinary device, read over
+  several sources in order of precedence (Solar API and Modbus), with
+  group totals and one write lock ([manual §5b](docs/MANUAL.md#5b-installations--one-datalogger-many-units)).
+- **Commands** — named, guarded writes declared by the template
+  (`power_limit = 60 %`): guard reads, one frame, read-back verification,
+  a test that writes nothing, and the same gates from the UI, the API,
+  MQTT and Home Assistant.
+- **Rules** — a declarative controller: steps, conditions, trims and
+  schedules with timers, several rules on one target as layers, sequences
+  of commands; new rules run in **shadow** (they decide and log, write
+  nothing) until armed ([rules guide](docs/rules.md)).
+- **OPC UA server** — every device and value for SCADA and HMI panels,
+  with quality and read time ([guide](docs/opcua.md)).
+- **Components** — the batteries and sensors a Victron GX holds, each its
+  own device on the GX's single connection.
+- **Meters with roles** — a device measured by other meters (consumption,
+  or input and output): power, energy, loss, efficiency and load,
+  published only when the readings can be trusted.
+- **Bridges** — serial buses reached over the network (our serial bridge
+  or an RS-485-to-Ethernet converter), several slaves per bus, and how
+  busy each wire really is.
+- **Asset attributes** — what the equipment is (location, grid connection
+  limits, PV inputs, ratings) for an EMS or a SCADA ([guide](docs/attributes.md)).
+- **Nothing is deleted while something uses it** — a device, an
+  installation or a template in use says what uses it and offers Disable
+  instead.
 
 **Northbound sinks — all opt-in, per device**
 - **MQTT** — `changed`/`all` modes, retain/QoS, TLS/mTLS, Last-Will +
@@ -176,16 +209,10 @@ all the same. No vendor lock-in, no per-box cost.
   freshness watchdog (stale source → the server goes silent so the
   consumer's fail-safe engages).
 
-**Device Builder — remote ESP32/ESP8266 nodes (ESPHome)**
-- **Generate firmware from a template** — pick a Modbus template + registers
-  and get complete YAML for a node that reads the meter over RS485 and
-  publishes MQTT back to the gateway; build/OTA on your own ESPHome container
-  (bundled in compose, zero-config).
-- **One-click Adopt** — also creates the paired mqtt-in device with
-  byte-identical topics — data flows with no double configuration.
-- **Browser USB flashing** (vendored esp-web-tools, no cloud) + Improv Wi-Fi;
-  **mDNS import**; reusable hardware profiles; **Update all** (bulk rebuild +
-  OTA) — all through one interface and audit trail.
+**ESP nodes** — flashing ESP32/ESP8266 boards from the browser and the node
+list live in the companion **multi-bus-gateway-esphome** service, behind the
+gateway's own login (`/api/auth/forward`) and linked from Devices
+(`ui.nodes_url`). A node publishing over MQTT is an ordinary MQTT device here.
 
 **Diagnostics (commissioning)**
 - Frame-level **bus monitor** — TX/RX hex, decode, latency, **each retry as
@@ -199,9 +226,9 @@ all the same. No vendor lock-in, no per-box cost.
   **semantic diff** between snapshots, reversible **rollback**, and a
   **last-known-good boot seatbelt** (a broken config.yaml is restored
   automatically at boot).
-- **Backup export/import ZIP** — secrets stripped by default (incl. the
-  ESPHome password and webhook tokens); includes per-device registers,
-  templates, virtual meters, hardware profiles and calculated presets;
+- **Backup export/import ZIP** — secrets stripped by default (incl.
+  webhook tokens); includes per-device registers,
+  templates, virtual meters and calculated presets;
   passkeys only in a secret-bearing backup. Identity files (`passkeys.json`,
   `audit.jsonl`) are created `0600`. Import merges
   import (secrets survive the round-trip).
@@ -225,7 +252,9 @@ all the same. No vendor lock-in, no per-box cost.
   container-probe-correct `/health`.
 - **Infrastructure alerts** over MQTT + webhook
   ([guide](docs/alerts-webhooks.md)).
-- **EN+RO i18n** (languages are `ui/languages/*.json` files — no rebuild),
+- **EN+RO i18n** — the whole UI in both languages, with the language's
+  plural forms and date format (languages are `ui/languages/*.json` files
+  — no rebuild),
   configurable **timezone** for monthly reports, real-time WebSocket,
   hot-reload nearly everywhere.
 
@@ -285,7 +314,7 @@ curl -fsSLO https://raw.githubusercontent.com/sm26449/multi-bus-gateway/main/doc
 curl -fsSL  https://raw.githubusercontent.com/sm26449/multi-bus-gateway/main/.env.example -o .env
 mkdir -p mosquitto/config && curl -fsSL https://raw.githubusercontent.com/sm26449/multi-bus-gateway/main/mosquitto/config/mosquitto.conf -o mosquitto/config/mosquitto.conf
 #   edit .env: uncomment and set the four REQUIRED secrets (MQTT, InfluxDB ×2, Grafana) — no placeholders are accepted
-docker compose pull && docker compose up -d     # gateway + broker + InfluxDB + Grafana + ESPHome
+docker compose pull && docker compose up -d     # gateway + broker + InfluxDB + Grafana
 
 # B) from source — same stack, built locally
 git clone https://github.com/sm26449/multi-bus-gateway.git && cd multi-bus-gateway
@@ -346,7 +375,7 @@ same way as `ghcr.io/sm26449/multi-bus-gateway-serial-bridge`. Upgrades and
 rollbacks by tag: [docs/upgrade-guide.md](docs/upgrade-guide.md); how a
 release is cut: [docs/releasing.md](docs/releasing.md).
 
-> **Ports:** `8080` = Web UI · `1502-1512` = virtual meters (grow via
+> **Ports:** `8080` = Web UI · `4840` = OPC UA (when enabled, publish it) · `1502-1512` = virtual meters (grow via
 > `VMETER_PORT_START/END`) · `502` = the standard Modbus port some
 > consumers poll (drop it if it's taken on the host; it is a privileged
 > port and the app runs non-root since 3.24.1, hence the
@@ -408,7 +437,8 @@ in a global menu. Full tab-by-tab tour:
 virtual meters, diagnostics, config, snapshots, audit, metrics), each with
 its minimum required role — the full reference, hand-maintained and
 checked against the routes in the code:
-**[docs/API.md](docs/API.md)**.
+**[docs/API.md](docs/API.md)**. Recipes to copy (commands, rules, MQTT, a
+Python client): **[docs/api-examples.md](docs/api-examples.md)**.
 
 ```bash
 curl -s http://localhost:8080/api/status | jq .devices

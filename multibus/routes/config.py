@@ -17,6 +17,7 @@ import logging
 from typing import Dict
 
 from fastapi import APIRouter, Body, HTTPException, Request
+from ..payload import flag
 from fastapi.responses import JSONResponse
 
 from ._models import InfluxDBConfigUpdate, ModbusConfigUpdate, MQTTConfigUpdate
@@ -124,6 +125,7 @@ def build(ctx) -> APIRouter:
             "viewer_username": config.ui.viewer_username,
             "operator_username": config.ui.operator_username,
             "canonical_url": config.ui.canonical_url,
+            "nodes_url": config.ui.nodes_url,
             "lockout_threshold": config.ui.lockout_threshold,
             "lockout_minutes": config.ui.lockout_minutes,
             "has_viewer": bool(config.ui.viewer_username),
@@ -145,14 +147,14 @@ def build(ctx) -> APIRouter:
         restart_needed = False
         try:
             if "tls_enabled" in payload:
-                changes["tls_enabled"] = bool(payload["tls_enabled"])
+                changes["tls_enabled"] = flag(payload, "tls_enabled")
                 restart_needed = restart_needed or (changes["tls_enabled"] != u.tls_enabled)
             if "tls_cert" in payload:
                 changes["tls_cert"] = str(payload["tls_cert"]).strip()
             if "tls_key" in payload:
                 changes["tls_key"] = str(payload["tls_key"]).strip()
             if "auth_enabled" in payload:
-                changes["auth_enabled"] = bool(payload["auth_enabled"])
+                changes["auth_enabled"] = flag(payload, "auth_enabled")
             if payload.get("auth_username"):
                 changes["auth_username"] = str(payload["auth_username"]).strip()
             if payload.get("auth_password"):
@@ -168,6 +170,12 @@ def build(ctx) -> APIRouter:
                 if _cu and not (_cu.startswith("http://") or _cu.startswith("https://")):
                     raise ValueError("canonical_url must start with http:// or https://")
                 changes["canonical_url"] = _cu
+            if "nodes_url" in payload:
+                _nu = str(payload["nodes_url"] or "").strip()
+                if _nu and not (_nu.startswith("/") or _nu.startswith("http://")
+                                or _nu.startswith("https://")) or _nu.startswith("//"):
+                    raise ValueError("nodes_url must be a path (/nodes/) or start with http:// or https://")
+                changes["nodes_url"] = _nu
             if payload.get("operator_password"):
                 changes["operator_password"] = _auth.hash_password(str(payload["operator_password"]))
             if payload.get("lockout_threshold"):
@@ -294,9 +302,9 @@ def build(ctx) -> APIRouter:
                 raise HTTPException(status_code=422, detail={"errors": errors})
             config.security.allowlist = cleaned
         if "allow_writes" in payload:
-            config.security.allow_writes = bool(payload["allow_writes"])
+            config.security.allow_writes = flag(payload, "allow_writes")
         if "allow_nonlan_http_devices" in payload:
-            config.security.allow_nonlan_http_devices = bool(payload["allow_nonlan_http_devices"])
+            config.security.allow_nonlan_http_devices = flag(payload, "allow_nonlan_http_devices")
         config.save_yaml_config()
         return {"status": "ok", "allowlist": config.security.allowlist,
                 "active": bool(config.security.allowlist),

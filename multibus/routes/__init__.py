@@ -48,11 +48,18 @@ class ApiCtx:
       alert_mgr          AlertManager — alerting channels/state
       auth_state         auth.AuthState — sessions/lockout
       api_key            str — optional API key ("" when unset)
+      service_tokens     service_tokens.ServiceTokens — named tokens for programs
       mqtt_publisher     MQTTPublisher|None — MUTABLE: rebound by /api/config/apply
       influxdb_publisher InfluxDBPublisher|None — MUTABLE: rebound by /api/config/apply
       audit_log          AuditLog — append-only who-changed-what trail
       ip_allowed         callable(str)->bool — the api.py allowlist check;
                          WS routes must call it (HTTP middleware skips WS scopes)
+      rule_fields_changed callable() — a device's readable names changed (a
+                         register selection saved): rules' `inputs` judged afresh
+      dependents_of      callable(kind, id) -> {blocking, follows} — what uses a
+                         device, an installation or a template (dependents.py)
+      mutation_lock      the device-mutation lock: a delete that must not
+                         interleave with a device create or edit takes it
     """
 
     def __init__(self, **kw):

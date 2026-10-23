@@ -1,0 +1,33 @@
+# FUXA — a web SCADA/HMI used as the OPC UA test consumer of the gateway
+# (docs/fuxa.md). Everything FUXA keeps is on a volume, the OPC UA client
+# plugin included (FUXA installs node-opcua on demand into _pkg).
+#
+#   docker compose -f tools/fuxa/docker-compose.yml up -d
+#   python tools/fuxa/provision.py       # plugin, connection, tags
+#   python tools/fuxa/compare.py         # FUXA's values against the gateway's
+#   node tools/e2e/fuxa_ui_check.mjs     # what FUXA's own screens show
+name: fuxa
+services:
+  fuxa:
+    image: frangoteam/fuxa@sha256:504175bd5eeeaa6f82a3d6f9b40ba8711e7fe8e89e915883f318be315328abe1        # 1.3.5 (latest on 2026-10-19), pinned by digest
+    container_name: fuxa
+    restart: unless-stopped
+    ports:
+      - "${FUXA_PORT:-1881}:1881"
+    volumes:
+      - fuxa_appdata:/usr/src/app/FUXA/server/_appdata
+      - fuxa_db:/usr/src/app/FUXA/server/_db
+      - fuxa_logs:/usr/src/app/FUXA/server/_logs
+      - fuxa_images:/usr/src/app/FUXA/server/_images
+      - fuxa_pkg:/usr/src/app/FUXA/server/_pkg
+volumes:
+  fuxa_appdata:
+    name: fuxa_appdata
+  fuxa_db:
+    name: fuxa_db
+  fuxa_logs:
+    name: fuxa_logs
+  fuxa_images:
+    name: fuxa_images
+  fuxa_pkg:
+    name: fuxa_pkg

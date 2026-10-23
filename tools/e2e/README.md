@@ -269,3 +269,118 @@ it. It removes every `e2e_br_*` / `e2e-br-*` thing it made at the start and the
 end. `BUG` lines are product bugs known when it was written: the check states
 the right behaviour, does not fail the run unless `STRICT=1`, and prints
 `FIXED` once the product is right.
+
+## Dialogs in a test (`lib/dialogs.mjs`)
+
+The UI asks through its own dialog (`ui/js/app-dialogs.js`), never the
+browser's `confirm()`/`prompt()`/`alert()`. A script answers it with
+`watchDialogs(page)` (called before `page.goto`): `dlg.answer` is the default
+answer, `dlg.answers.push(…)` queues the next ones (`true`/`false` for a
+confirm; an object of field values, a bare value for the first field, or
+`null` for a dialog with fields), `dlg.seen` records each dialog's title and
+message, and `dlg.native` counts any native dialog that still fired.
+`dialogs_e2e.mjs` drives the dialog itself by keyboard and mouse.
+
+## Throwaway fixtures (`fixture_up.sh`)
+
+The rules, commands and installation scripts run against a throwaway gateway
+built from `fixtures/installation_safety/`: `base.yaml` plus one variant, with
+every address on the container's own loopback where nothing listens — every
+read and every write is refused, nothing real is reached. `fixture_up.sh`
+rebuilds its config from scratch on each start and runs this checkout's `ui/`
+and `multibus/` (image `MBG_IMAGE`, default `multi-bus-gateway:latest`):
+
+    tools/e2e/fixture_up.sh safety 18087                    # mbg-fx-safety
+    tools/e2e/fixture_up.sh plant  18085                    # mbg-fx-plant
+    tools/e2e/fixture_up.sh drive  18090                    # mbg-fx-drive, auth off, writes off
+    tools/e2e/fixture_up.sh drive  18090 --writes --login <pass>   # login on, writes on
+
+| Variant | What it holds | Scripts |
+|---|---|---|
+| `safety` | installation `sunfield`: `inverters` (units 1, 2; sources `solar_api` http + `sunspec` tcp; power_limit/restore), `grid` (unit 240 as `sunfield-meter-240`), `spare` (unit 7, no template → idle) | `installation_safety_e2e`, `rules_e2e`, `commands_e2e`, `attributes_e2e` (`ATTR_DEVICE=sunfield-meter-240`), `attributes_use_e2e`, `endpoint_outputs_e2e`, `new_user_e2e` |
+| `plant` | `sunfield` with `inverters` (1, 2; `sunspec`) and `grid` (240) only | `plant_groups_e2e` |
+| `drive` | `vfd1` (delta_vfd_el, `run_at` enabled) | `rules_trim_e2e`, `rules_schedule_e2e`, `rules_timers_e2e`; with `--writes --login`: `rules_layers_e2e`, `sequences_e2e` (`MBG_USER=admin MBG_PASS=<pass>`) |
+
+Run the safety scripts on a fresh start (`rules_e2e` and `commands_e2e`
+expect writes off; `installation_safety_e2e` puts the name back itself).
+Extra setup some scripts need on `mbg-fx-safety`:
+
+- `attributes_use_e2e` — a location and a grid connection, then
+  `E2E_TARGET=sunfield-u1/power_limit`:
+
+      curl -XPUT -H 'Content-Type: application/json' localhost:18087/api/attributes/site/location \
+        -d '{"latitude_deg":48.86,"longitude_deg":2.35}'
+      curl -XPUT -H 'Content-Type: application/json' localhost:18087/api/attributes/devices/umg512/grid_connection \
+        -d '{"role":"connection_point","max_export_kw":45,"max_import_kw":60}'
+
+- `endpoint_outputs_e2e` — the fake pack bus:
+  `docker cp tools/e2e/tap_feeder.py mbg-fx-safety:/tmp/ && docker exec -d -u 10001 -e TAP_UNITS=2,3 mbg-fx-safety python /tmp/tap_feeder.py`
+- `new_user_e2e` — a private network for its throwaway broker:
+  `docker network create mbg-fx-net; docker network connect mbg-fx-net mbg-fx-safety`,
+  then `CTR=mbg-fx-safety DOCKER_NET=mbg-fx-net`.
+
+Stop with `docker rm -f mbg-fx-<variant>`.
+
+## Finding at scale (`findability_e2e.mjs`)
+
+Search, filter chips, tree / list and the address (`#/devices?…`) on the
+Devices and Templates pages run against the `unchanged_save` sandbox. With
+`SCALE_URL` the script also measures the pages at 200 devices / 100
+templates — a second safety gateway filled by the scale loader:
+
+    MBG_FX_NAME=mbg-fx-scale tools/e2e/fixture_up.sh safety 18096 --writes
+    python3 tools/e2e/fixtures/scale/load_scale.py http://127.0.0.1:18096 200 100
+    SCALE_URL=http://127.0.0.1:18096 MBG_URL=http://127.0.0.1:8097 node tools/e2e/findability_e2e.mjs
+
+Every scale device is created off, at a loopback port where nothing listens.
+The timings are printed; they are targets, not gates.
+
+## The shared pickers (`pickers_e2e.mjs`)
+
+A rule made with the keyboard alone (target found by typing, signal
+completed `device.` then `.field`, a misspelt field said with the nearest
+one), a calculated formula completing a device's own names, a group's
+template list (its kind first, the others folded, vendor chips), the device
+wizard's template panel, and the list on screen at phone width in both
+themes. On the safety fixture; the one rule it saves is deleted at the end:
+
+    tools/e2e/fixture_up.sh safety 18087
+    CHROMIUM_PATH=… MBG_URL=http://127.0.0.1:18087 OUT=<dir> node tools/e2e/pickers_e2e.mjs
+
+## The device page's tabs (`lib/device-page.mjs`)
+
+The device page shows its tabs in three groups (Live, Configure, Diagnose),
+one strip at a time: a tab of another group is out of sight until its group
+is picked. A script opens a tab as a user does — `openDeviceTab(page, 'meters')`
+clicks the group, then the tab (`edit` is the earlier name of `connection`) —
+and `deviceAction(page, '#ddvDeleteBtn')` opens the header's ⋯ menu and
+clicks an item (a held-back item still answers, it says why). The next
+reorganisation then changes this file only. `device_page_e2e.mjs` covers the
+groups, the keyboard, links, the Meters tab and a meter-only device on the
+`safety` fixture with `--writes`.
+
+## The connection form (`connform_e2e.mjs`, `connform_model_test.mjs`)
+
+One form says how a device is reached, in Add Device and on a device's
+Configure → Connection tab (`ui/js/app-connform.js`); its model and what it
+sends are `ui/js/connform-model.js`. Three checks, chained:
+
+- `tests/test_connform_payloads.py` serves every way a device is reached
+  (`tests/fixtures/connform_shapes.yaml` plus the primary) and keeps the rows
+  the form opens from in `tests/fixtures/connform_rows.json`;
+- `node tools/e2e/connform_model_test.mjs` runs the model over those rows
+  (an untouched form sends nothing; one edited field sends that field) and
+  keeps what it would send in `tests/fixtures/connform_payloads.json`;
+- the pytest then sends those bodies to the server as the model built them
+  (`pagePayload`: the page's own fields beside the connection): unchanged on
+  the first save, the running client kept; an edit changes that field only.
+
+After a deliberate change: `CONNFORM_WRITE=1` on the pytest, then the node
+test with `--write`. `connform_e2e.mjs` drives the form in a browser on the
+`unchanged_save` fixture (it edits the devices: restart the sandbox after),
+with screenshots per protocol in both themes and on a phone under `OUT`.
+`connform_review_e2e.mjs` (same fixture, a fresh sandbox) drives the paths
+around a save: off a gateway's bus, Test after leaving a bridge and on an
+edited bridged device, arrow keys on the segments, Back in Add Device with a
+typed address, the components lock, a local tap, a meter-only and an HTTP
+device saved untouched.

@@ -68,7 +68,7 @@ Everything the gateway itself owns is in the mounted **`./config`**:
 | `virtual_meters.yaml` | virtual-meter instances | |
 | `rules.yaml` | rules | in the bundle since 3.79.0 |
 | `calculated_templates.json` | calculated-register presets | |
-| `builder_profiles.json` | Device Builder hardware profiles | |
+| `builder_profiles.json` | hardware profiles of the removed Device Builder | no longer read or backed up; safe to delete |
 | `passkeys.json` | WebAuthn credentials | `0600`; only in with-secrets backups and snapshots |
 | `sessions.json` | login sessions (token hashes) | `0600`; restore keeps everyone logged in — optional |
 | `write_leases.json` | active dead-man leases | ephemeral by design; leaves out |
@@ -91,8 +91,7 @@ Two ways to capture it, both valid:
 **The bundled stack's named volumes** (from `docker-compose.yml`) are not in
 either bundle: `mosquitto-data` (retained messages), `mqtt-explorer-config`,
 `influxdb-data` + `influxdb-config` (**your history**), `grafana-data`
-(dashboards), `esphome-config` (**the Device Builder's node YAMLs**),
-`serial-bridge-data` (the adapter port map). Back them up with your
+(dashboards), `serial-bridge-data` (the adapter port map). Back them up with your
 infrastructure tooling, e.g.
 
 ```bash

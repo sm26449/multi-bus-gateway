@@ -7,6 +7,7 @@
     "model": "Smart Meter 63A/50kA (SunSpec 203)",
     "version": "2.1.0",
     "description": "Fronius Smart Meter read THROUGH the DataManager/datalogger over Modbus TCP (SunSpec model 203, int + scale factor; full 3-phase set + per-phase import/export energies). Registers are CANONICAL (voltage/l1_n, power/active/total, energy/active/import …) — same output shape as every other MBG meter; the legacy SunSpec-name tree is available via mqtt.compat_aliases. The meter appears on the datalogger at unit ID 240 (default; 241/242 for additional meters). Use this when the meter hangs off a Fronius datalogger — for a Smart Meter wired DIRECTLY to your own RS-485 (RTU or an RTU-TCP bridge), use the separate 'Fronius Smart Meter 65A-3 (RTU)' template instead: same hardware, completely different register map. Power factor is normalized to the ±1 fraction every other gateway device publishes (SunSpec reports it as a percentage, so the map carries scale: 100 on top of the dynamic scale factor).",
+    "kind": "meter",
     "source_document": "SunSpec Information Models (int+SF); register map verified live against a production Fronius fleet (raw-frame decode parity, 2026-09-11)",
     "protocol": {
       "byte_order": "big",

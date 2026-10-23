@@ -64,11 +64,11 @@ Object.assign(JanitzaMonitor.prototype, {
                 ? this.t('monitor.hintTouch', 'Tap a value in the list on the left to add it to the live graph. Tap again in the list to highlight it.')
                 : this.t('monitor.hintMouse', 'Click or drag measurements from the left sidebar onto the graph to monitor them in real-time. Use mouse wheel to zoom and drag to pan when zoomed.');
         hint.innerHTML = `
-            <span class="hint-banner-icon">💡</span>
+            <i aria-hidden="true" class="bi bi-lightbulb hint-banner-icon"></i>
             <span class="hint-banner-text">
                 <strong>${this.t('monitor.hintTitle', 'Getting started:')}</strong> ${body}
             </span>
-            <button class="hint-banner-dismiss" data-action="dismissMonitorHint" aria-label="Dismiss">✕</button>
+            <button class="hint-banner-dismiss" data-action="dismissMonitorHint" aria-label="${this.t('common.dismiss', 'Dismiss')}"><i aria-hidden="true" class="bi bi-x-lg"></i></button>
         `;
 
         main.insertBefore(hint, main.firstChild);
@@ -432,7 +432,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
         // Find values closest to this time for each monitored variable
         let tooltipLines = [];
-        const timeStr = new Date(mouseTime).toLocaleTimeString();
+        const timeStr = new Date(mouseTime).toLocaleTimeString(this._loc());
         tooltipLines.push(`<div class="tooltip-time">${timeStr}</div>`);
 
         for (const [address, info] of Object.entries(this.monitorData)) {
@@ -908,7 +908,7 @@ Object.assign(JanitzaMonitor.prototype, {
             const t = minTime + (timeRange / 4) * i;
             const x = timeToX(t);
             if (x >= marginLeft - 30 && x <= width - marginRight + 30) {
-                const timeStr = new Date(t).toLocaleTimeString();
+                const timeStr = new Date(t).toLocaleTimeString(this._loc());
                 ctx.fillText(timeStr, Math.max(marginLeft, Math.min(width - marginRight, x)), height - 12);
             }
         }

@@ -24,14 +24,17 @@ Object.assign(JanitzaMonitor.prototype, {
             ['commands', 'bi-send', this.t('adv.tab.commands', 'Commands'), n.commands],
             ['display', 'bi-layout-text-window', this.t('adv.tab.display', 'Display'), n.display],
             ['identify', 'bi-fingerprint', this.t('adv.tab.identify', 'Scan recognition'), n.identify],
+            ['setup', 'bi-gear-wide-connected', this.t('adv.tab.setup', 'Setup at connect'), n.setup],
+            ['notes', 'bi-sticky', this.t('adv.tab.notes', 'Notes for users'), n.notes],
+            ['rules', 'bi-diagram-2', this.t('adv.tab.rules', 'Rule examples'), n.rules],
             ['details', 'bi-info-circle', this.t('adv.tab.details', 'Details & categories'), null],
             ['json', 'bi-braces', this.t('adv.tab.json', 'Raw JSON'), null],
         ];
-        const total = n.calculated + n.commands + n.display + n.identify;
+        const total = n.calculated + n.commands + n.display + n.identify + n.setup + n.notes + n.rules;
         return `
         <details class="tpl-proto tpl-adv" id="tplAdv" ${e.advOpen ? 'open' : ''}>
             <summary><i aria-hidden="true" class="bi bi-sliders"></i> ${this.t('adv.title', 'Advanced')}
-                <span class="field-hint">— ${this.t('adv.summary', 'calculated fields, commands, display, scan recognition, details, raw JSON')}${total ? ` · ${total} ${this.t('adv.declared', 'declared')}` : ''}</span></summary>
+                <span class="field-hint">— ${this.t('adv.summary', 'calculated fields, commands, display, scan recognition, setup, notes, rule examples, details, raw JSON')}${total ? ` · ${total} ${this.t('adv.declared', 'declared')}` : ''}</span></summary>
             <div class="tpl-adv-tabs" role="tablist">${tabs.map(([id, ic, lbl, c]) => `
                 <button type="button" role="tab" class="tpl-adv-tab ${e.advTab === id ? 'on' : ''}" aria-selected="${e.advTab === id}" ${this._act('_advTab', [id])}>
                     <i aria-hidden="true" class="bi ${ic}"></i> ${lbl}${c ? ` <span class="tpl-adv-n">${c}</span>` : ''}</button>`).join('')}
@@ -44,7 +47,7 @@ Object.assign(JanitzaMonitor.prototype, {
     // a row that carries something set in its details dialog
     _advRowHasExtras(r) {
         return ['scale_from', 'nan', 'monotonic', 'daily', 'aggregates', 'device_class', 'state_class',
-                'entity_category', 'icon', 'suggested_display_precision', 'write_allowed']
+                'entity_category', 'icon', 'suggested_display_precision', 'write_allowed', 'write_payload']
             .some(k => r[k] != null && r[k] !== '' && r[k] !== false) || r.enabled_by_default != null;
     },
 
@@ -61,6 +64,9 @@ Object.assign(JanitzaMonitor.prototype, {
             commands: Object.keys(d.commands || {}).length,
             display: Object.keys(disp).length,
             identify: ((d.identify || {}).registers || []).length + ((d.identify || {}).fc43 ? 1 : 0),
+            setup: (d.setup || []).length,
+            notes: (d.notes || []).length,
+            rules: (d.rules || []).length,
         };
     },
 
@@ -98,7 +104,7 @@ Object.assign(JanitzaMonitor.prototype, {
     _advPanelHtml() {
         const tab = this._tplEdit.advTab;
         const fn = { calculated: '_advCalcHtml', commands: '_advCmdHtml', display: '_advDisplayHtml',
-                     identify: '_advIdentifyHtml', details: '_advDetailsHtml', json: '_advJsonHtml' }[tab];
+                     identify: '_advIdentifyHtml', setup: '_advSetupHtml', notes: '_advNotesHtml', rules: '_advRulesHtml', details: '_advDetailsHtml', json: '_advJsonHtml' }[tab];
         return fn ? this[fn]() : '';
     },
 
@@ -180,6 +186,13 @@ Object.assign(JanitzaMonitor.prototype, {
             default: v = String(raw).trim() || undefined;
         }
         if (v === undefined) this._advDelPath(path); else this._advPut(path, v);
+        if (path[0] === 'calculated' && path.length === 3) {
+            // a calculated field's canonical name fills its unit and section,
+            // as a register row's does; what is typed by hand stays
+            const c = this._tplEdit.data.calculated[path[1]];
+            if (path[2] === 'name' && c) { this._tplCanonFill(c); this._advRender(); }
+            else if ((path[2] === 'unit' || path[2] === 'category') && c) this._tplAuto()[path[2]].delete(c);
+        }
         if (el.dataset.rerender !== undefined) this._advRender();
         if (path[0] === 'calculated' && path[2] === 'expr') this._advExprCheck();
         this._advChanged();
@@ -339,7 +352,10 @@ enum:  0 = Idle · 1 = Charging · 2 = Discharging</pre>
     _advAddCalc() {
         this._tplCollectMeta();
         const d = this._tplEdit.data;
-        (d.calculated = d.calculated || []).push({ name: '', expr: '' });
+        const c = { name: '', expr: '' };
+        // a new field: its canonical name may give it a section (_tplCanonFill)
+        this._tplAuto().category.set(c, '');
+        (d.calculated = d.calculated || []).push(c);
         this._tplEdit.advEdit = { kind: 'calc', i: d.calculated.length - 1 };
         this._advRender();
     },
@@ -356,15 +372,20 @@ enum:  0 = Idle · 1 = Charging · 2 = Discharging</pre>
         const aggs = Object.entries(c.aggregates || {});
         return `<div class="tpl-adv-form">
             <div class="form-row">
-                ${this._advField(t('calc.name', 'Name'), this._advIn(P('name'), 'str', c.name, { ph: 'power_active_total', label: 'name' }), t('adv.calc.nameHint', 'Letters, digits and _ — not the name of a register.'))}
+                ${this._advField(t('calc.name', 'Name'), this._advIn(P('name'), 'str', c.name, { ph: 'power_active_total', label: 'name', list: 'tplCanonList' }), t('adv.calc.nameHint', 'Letters, digits and _ — not the name of a register.'))}
                 ${this._advField(t('calc.label', 'Label'), this._advIn(P('label'), 'str', c.label, { label: 'label' }))}
                 ${this._advField(t('calc.unit', 'Unit'), this._advIn(P('unit'), 'str', c.unit, { label: 'unit', style: 'max-width:90px' }))}
                 ${this._advField(t('calc.decimals', 'Decimals'), this._advIn(P('decimals'), 'int', c.decimals, { type: 'number', label: 'decimals', style: 'max-width:80px' }))}
                 ${this._advField(t('calc.pollGroup', 'Poll group'), this._advSel(P('poll_group'), 'str', c.poll_group, groups, { label: 'poll group' }))}
+                ${this._advField(t('adv.calc.category', 'Section'), this._advSel(P('category'), 'str', c.category,
+                    [['', '—']].concat(Object.entries(this._tplEdit.data.categories || {}).map(([k, v]) => [k, (v && v.label) || k]),
+                        // filled from the dictionary, not declared yet: declared on save
+                        c.category && !(c.category in (this._tplEdit.data.categories || {})) ? [[c.category, `${c.category} (${t('adv.calc.newSection', 'new')})`]] : []), { label: 'category' }),
+                    t('adv.calc.categoryHint', 'Where it is listed — and its InfluxDB measurement when nothing else names one.'))}
             </div>
             <div class="form-group">
                 <label class="form-label" for="advExpr">${t('calc.expr', 'Expression')}</label>
-                <textarea id="advExpr" class="input calc-expr-input" rows="2" spellcheck="false" aria-label="expression"
+                <textarea id="advExpr" class="input calc-expr-input" rows="2" spellcheck="false" aria-label="${this._esc(this.t('adv.aria.expression', 'Expression'))}"
                     ${this._act('_advSet', [P('expr'), 'text'], { el: true, on: 'input' })}>${this._esc(c.expr || '')}</textarea>
                 <div id="advExprCheck" class="calc-preview"></div>
             </div>
@@ -373,9 +394,9 @@ enum:  0 = Idle · 1 = Charging · 2 = Discharging</pre>
             <div class="calc-palette"><div class="calc-palette-label">${t('calc.functions', 'Functions & operators')}</div>
                 <div class="calc-chips">${(fns.functions || []).map(f => `<button type="button" class="calc-chip fn" title="${this._esc(f.desc)}" ${this._act('_advInsert', [f.name === 'dt' ? 'dt' : f.name + '()'])}>${this._esc(f.sig)}</button>`).join('')}
                 ${(fns.operators || []).map(o => `<button type="button" class="calc-chip op" ${this._act('_advInsert', [' ' + o.replace(' ', '') + ' '])}>${this._esc(o)}</button>`).join('')}</div></div>
-            <details class="tpl-adv-more"><summary>${t('adv.more', 'More')} — ${t('adv.calc.moreSum', 'text states, MQTT topic, totals of an installation, dashboard')}</summary>
+            <details class="tpl-adv-more"><summary>${t('adv.more', 'more')} — ${t('adv.calc.moreSum', 'text states, MQTT topic, totals of an installation, dashboard')}</summary>
                 <div class="form-row">
-                    ${this._advField(t('adv.calc.enum', 'Text for codes'), `<textarea class="input" rows="3" spellcheck="false" placeholder="0 = Idle&#10;1 = Charging" aria-label="enum" ${this._act('_advSet', [P('enum'), 'map'], { el: true, on: 'change' })}>${this._esc(enumText)}</textarea>`,
+                    ${this._advField(t('adv.calc.enum', 'Text for codes'), `<textarea class="input" rows="3" spellcheck="false" placeholder="0 = Idle&#10;1 = Charging" aria-label="${this._esc(this.t('adv.aria.enum', 'Value names (enum)'))}" ${this._act('_advSet', [P('enum'), 'map'], { el: true, on: 'change' })}>${this._esc(enumText)}</textarea>`,
                         t('adv.calc.enumHint', 'One “code = text” per line: the computed number is published as the text.'))}
                     ${this._advField(t('adv.calc.topic', 'MQTT topic'), this._advIn(P('topic'), 'str', c.topic, { ph: 'status/text', label: 'topic' }),
                         t('adv.calc.topicHint', 'Relative to the device topic. Empty: the name.'))}
@@ -438,7 +459,7 @@ enum:  0 = Idle · 1 = Charging · 2 = Discharging</pre>
             <div class="field-hint">${t('adv.agg.hint', 'When several units of this template form an installation (a battery bank, an inverter farm), each line publishes one total: its name and how the units’ values combine. pack_average_soc = average of soc.')}
                 <a href="${this._ADV_DOC}#totals-of-an-installation" target="_blank" rel="noopener">${t('adv.learnMore', 'Learn more')}</a></div>
             ${entries.map(([name, op]) => `<div class="form-row tpl-adv-line">
-                <input class="input" value="${this._esc(name)}" aria-label="output name" ${this._act('_advRenameKey', [path, name], { el: true, on: 'change' })}>
+                <input class="input" value="${this._esc(name)}" aria-label="${this._esc(this.t('adv.aria.outputName', 'Output name'))}" ${this._act('_advRenameKey', [path, name], { el: true, on: 'change' })}>
                 ${this._advSel([...path, name], 'str', op, OPS, { label: 'op' })}
                 ${this._advDelBtn([...path, name])}</div>`).join('')}
             <button type="button" class="btn btn-ghost btn-sm" ${this._act('_advAddKey', [path, 'total', 'sum'])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('adv.agg.add', 'Add a total')}</button>
@@ -490,7 +511,7 @@ enum:  0 = Idle · 1 = Charging · 2 = Discharging</pre>
                 <button type="button" class="btn btn-ghost btn-sm" ${this._act('_advAdd', [path, proto])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('adv.add', 'Add')}</button></div>`;
         return `<div class="tpl-adv-form">
             <div class="form-row">
-                ${this._advField(t('adv.cmd.name', 'Name'), `<input class="input" value="${this._esc(key)}" aria-label="command name" ${this._act('_advRenameKey', [['commands'], key], { el: true, on: 'change' })}>`, t('adv.cmd.nameHint', 'a-z 0-9 _ - · it becomes an MQTT topic and an HA entity'))}
+                ${this._advField(t('adv.cmd.name', 'Name'), `<input class="input" value="${this._esc(key)}" aria-label="${this._esc(this.t('adv.aria.commandName', 'Command name'))}" ${this._act('_advRenameKey', [['commands'], key], { el: true, on: 'change' })}>`, t('adv.cmd.nameHint', 'a-z 0-9 _ - · it becomes an MQTT topic and an HA entity'))}
                 ${this._advField(t('calc.label', 'Label'), this._advIn(P('label'), 'str', c.label, { label: 'label' }))}
                 ${this._advChk(P('confirm'), c.confirm !== false, t('adv.cmd.confirm', 'Ask for confirmation in the UI'), 'bool')}
             </div>
@@ -505,7 +526,7 @@ enum:  0 = Idle · 1 = Charging · 2 = Discharging</pre>
             <div class="form-group"><label class="form-label">${t('adv.cmd.params', 'Parameters')}</label>
                 <div class="field-hint">${t('adv.cmd.paramsHint', 'What the caller gives. The main one is called “value” (Home Assistant shows it as a number). Bounds are enforced before anything is written.')}</div>
                 ${params.map(([pn, pd]) => `<div class="form-row tpl-adv-line">
-                    <input class="input" value="${this._esc(pn)}" aria-label="param name" style="max-width:120px" ${this._act('_advRenameKey', [P('params'), pn], { el: true, on: 'change' })}>
+                    <input class="input" value="${this._esc(pn)}" aria-label="${this._esc(this.t('adv.aria.paramName', 'Parameter name'))}" style="max-width:120px" ${this._act('_advRenameKey', [P('params'), pn], { el: true, on: 'change' })}>
                     ${this._advIn(P('params', pn, 'label'), 'str', pd.label, { ph: t('calc.label', 'Label'), label: 'param label' })}
                     ${this._advIn(P('params', pn, 'unit'), 'str', pd.unit, { ph: t('calc.unit', 'Unit'), label: 'param unit', style: 'max-width:70px' })}
                     ${this._advIn(P('params', pn, 'min'), 'num', pd.min, { ph: 'min', type: 'number', step: 'any', label: 'min', style: 'max-width:80px' })}
@@ -522,7 +543,7 @@ enum:  0 = Idle · 1 = Charging · 2 = Discharging</pre>
                 ${this._advIn([...p, 'in'], 'numlist', g.in, { ph: 'one of: 1, 2', label: 'in', style: 'max-width:110px' })}
                 ${this._advIn([...p, 'min'], 'num', g.min, { ph: '≥ min', type: 'number', step: 'any', label: 'min', style: 'max-width:80px' })}
                 ${this._advIn([...p, 'max'], 'num', g.max, { ph: '≤ max', type: 'number', step: 'any', label: 'max', style: 'max-width:80px' })}`, { read: '' })}
-            ${list(t('adv.cmd.writes', 'Writes, in order'), t('adv.cmd.writesHint', 'Consecutive registers go out as one frame. A value: a number, ${value}, or a JSON rule.'),
+            ${list(t('adv.cmd.writes', 'Writes, in order'), t('adv.cmd.writesHint', 'Modbus: consecutive registers go out as one frame. MQTT: each is published on its row’s write topic. A value: a number, ${value}, or a JSON rule.'),
                 P('writes'), c.writes, (w, p) => `
                 ${this._advSel([...p, 'register'], 'str', w.register, regs, { label: 'register' })}
                 ${this._advIn([...p, 'value'], 'value', w.value, { ph: '${value}', label: 'value' })}`, { register: '', value: '${value}' })}
@@ -532,13 +553,15 @@ enum:  0 = Idle · 1 = Charging · 2 = Discharging</pre>
                 ${this._advIn([...p, 'expect'], 'value', v.expect, { ph: '${value}', label: 'expect' })}
                 ${this._advIn([...p, 'tolerance'], 'num', v.tolerance, { ph: '± tolerance', type: 'number', step: 'any', label: 'tolerance', style: 'max-width:110px' })}`, { read: '', expect: '${value}' })}
             <div class="form-row">
-                ${this._advField(t('adv.cmd.settle', 'Settle time (s)'), this._advIn(P('settle_s'), 'num', c.settle_s, { type: 'number', step: 'any', label: 'settle', style: 'max-width:100px' }), t('adv.cmd.settleHint', 'Wait before verifying.'))}
+                ${this._advField(t('adv.cmd.refresh', 'Write again every (s)'), this._advIn(P('refresh_s'), 'num', c.refresh_s, { type: 'number', ph: '0', label: 'refresh', style: 'max-width:110px' }),
+                    t('adv.cmd.refreshHint', 'For a setting the device forgets by itself: the last parameters are written again until the safe ones are sent. 0 = off.'))}
+                ${this._advField(t('adv.cmd.settle', 'Settle time (s)'), this._advIn(P('settle_s'), 'num', c.settle_s, { type: 'number', step: 'any', label: 'settle', style: 'max-width:100px' }), t('adv.cmd.settleHint', 'Modbus: wait before verifying. MQTT: the longest wait for the read-back.'))}
                 ${this._advField(t('adv.cmd.readback', 'Then re-read group'), this._advSel(P('readback_group'), 'str', c.readback_group, groups, { label: 'readback group' }), t('adv.cmd.readbackHint', 'So MQTT/HA see the new value in seconds.'))}
             </div>
             <div class="form-group"><label class="form-label">${t('adv.cmd.safe', 'Safe values')}</label>
                 <div class="field-hint">${t('adv.cmd.safeHint', 'The parameters a timed (leased) command is restored with when its lease expires — e.g. value = 100 % for a power limit.')}</div>
                 ${Object.entries(c.safe || {}).map(([sp, sv]) => `<div class="form-row tpl-adv-line">
-                    <input class="input" value="${this._esc(sp)}" aria-label="safe param" list="advParamList" style="max-width:140px" ${this._act('_advRenameKey', [P('safe'), sp], { el: true, on: 'change' })}>
+                    <input class="input" value="${this._esc(sp)}" aria-label="${this._esc(this.t('adv.aria.safeParam', 'Safe value of the parameter'))}" list="advParamList" style="max-width:140px" ${this._act('_advRenameKey', [P('safe'), sp], { el: true, on: 'change' })}>
                     ${this._advIn(P('safe', sp), 'num', sv, { type: 'number', step: 'any', label: 'safe value', style: 'max-width:100px' })}
                     ${this._advDelBtn(P('safe', sp))}</div>`).join('')}
                 <datalist id="advParamList">${paramOpts.slice(1).map(([n]) => `<option value="${this._esc(n)}"></option>`).join('')}</datalist>
@@ -613,7 +636,7 @@ bitmasks        balancing_bits → "Cell {n}"</pre>`,
             <div class="form-group"><label class="form-label">${t('adv.disp.sections', 'Sections')}</label>
                 <div class="field-hint">${t('adv.disp.sectionsHint', 'A category shown as a grid of tiles (cell voltages) or only its active rows (alarms). Tiles: a pattern of field names, e.g. ^cell_\\d+$.')}</div>
                 ${Object.entries(disp.sections || {}).map(([cat, s]) => `<div class="form-row tpl-adv-line">
-                    <select class="input" aria-label="category" ${this._act('_advRenameKey', [P('sections'), cat], { el: true, on: 'change' })}>${cats.map(([v, l]) => `<option value="${this._esc(v)}" ${v === cat ? 'selected' : ''}>${this._esc(l)}</option>`).join('')}</select>
+                    <select class="input" aria-label="${this._esc(this.t('adv.aria.category', 'Category'))}" ${this._act('_advRenameKey', [P('sections'), cat], { el: true, on: 'change' })}>${cats.map(([v, l]) => `<option value="${this._esc(v)}" ${v === cat ? 'selected' : ''}>${this._esc(l)}</option>`).join('')}</select>
                     ${this._advSel(P('sections', cat, 'widget'), 'str', s.widget, [['grid', t('adv.disp.grid', 'grid of tiles')], ['active_only', t('adv.disp.activeOnly', 'only active rows')]], { label: 'widget' })}
                     ${this._advIn(P('sections', cat, 'tiles'), 'str', s.tiles, { ph: '^cell_\\d+$', label: 'tiles' })}
                     ${this._advIn(P('sections', cat, 'decimals'), 'int', s.decimals, { ph: t('calc.decimals', 'Decimals'), type: 'number', label: 'decimals', style: 'max-width:90px' })}
@@ -623,7 +646,7 @@ bitmasks        balancing_bits → "Cell {n}"</pre>`,
             <div class="form-group"><label class="form-label">${t('adv.disp.bitmasks', 'Bitmasks')}</label>
                 <div class="field-hint">${t('adv.disp.bitmasksHint', 'A field whose bits each mean one thing (balancing cells): shown as the list of what is set. The label carries {n} for the bit number.')}</div>
                 ${Object.entries(disp.bitmasks || {}).map(([f, lbl]) => `<div class="form-row tpl-adv-line">
-                    <input class="input" value="${this._esc(f)}" list="advNameList" aria-label="field" ${this._act('_advRenameKey', [P('bitmasks'), f], { el: true, on: 'change' })}>
+                    <input class="input" value="${this._esc(f)}" list="advNameList" aria-label="${this._esc(this.t('adv.aria.field', 'Field'))}" ${this._act('_advRenameKey', [P('bitmasks'), f], { el: true, on: 'change' })}>
                     ${this._advIn(P('bitmasks', f), 'str', lbl, { ph: 'Cell {n}', label: 'label' })}
                     ${this._advDelBtn(P('bitmasks', f))}</div>`).join('')}
                 <button type="button" class="btn btn-ghost btn-sm" ${this._act('_advAddKey', [P('bitmasks'), 'field', 'Bit {n}'])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('adv.add', 'Add')}</button>
@@ -661,9 +684,9 @@ FC43 vendor ~ ^Eastron · product ~ SDM630</pre>
                 ${this._advField(t('adv.idf.vendor', 'FC43 vendor (pattern)'), this._advIn(P('fc43', 'vendor'), 'str', (idf.fc43 || {}).vendor, { ph: '^Eastron', label: 'fc43 vendor' }))}
                 ${this._advField(t('adv.idf.product', 'FC43 product (pattern)'), this._advIn(P('fc43', 'product'), 'str', (idf.fc43 || {}).product, { ph: 'SDM630', label: 'fc43 product' }))}
             </div>
-            <div class="form-row" style="align-items:end;">
-                ${this._advField(t('adv.idf.try', 'Try it on a device'), `<select class="input" id="advIdfDev" aria-label="device">${devs.map(x => `<option value="${this._esc(x.id)}">${this._esc(x.name || x.id)}</option>`).join('') || `<option value="">${this._esc(t('adv.idf.noDev', 'no Modbus device yet'))}</option>`}</select>`)}
-                <div class="form-group"><button type="button" class="btn btn-secondary btn-sm" id="advIdfBtn" ${this._act('_advIdentifyTest', [])} ${devs.length ? '' : 'disabled'}><i aria-hidden="true" class="bi bi-play"></i> ${t('adv.idf.test', 'Test')}</button></div>
+            <div class="form-row align-end">
+                ${this._advField(t('adv.idf.try', 'Try it on a device'), `<select class="input" id="advIdfDev" aria-label="${this._esc(this.t('adv.aria.device', 'Device'))}">${devs.map(x => `<option value="${this._esc(x.id)}">${this._esc(x.name || x.id)}</option>`).join('') || `<option value="">${this._esc(t('adv.idf.noDev', 'no Modbus device yet'))}</option>`}</select>`)}
+                <div class="form-group"><button data-admin type="button" class="btn btn-secondary btn-sm" id="advIdfBtn" ${this._act('_advIdentifyTest', [])} ${devs.length ? '' : 'disabled'}><i aria-hidden="true" class="bi bi-play"></i> ${t('adv.idf.test', 'Test')}</button></div>
             </div>
             <div id="advIdfResult" role="status"></div>`;
     },
@@ -685,12 +708,114 @@ FC43 vendor ~ ^Eastron · product ~ SDM630</pre>
         }
     },
 
+    // ═══ Setup at connect ══════════════════════════════════════════════════
+    _advSetupHtml() {
+        const d = this._tplEdit.data;
+        const t = (k, def) => this.t(k, def);
+        const steps = d.setup || [];
+        const intro = this._advIntro(
+            t('adv.setup.lead', 'Words the gateway writes to the device before part of its map exists — some interfaces show extra values only once told which ones. Written at connect, again after the device comes back from an outage, and again when a register a step provides is refused as an illegal address (the device forgot). One write-multiple frame per step; only where writes are allowed.'),
+            `<pre class="tpl-adv-code">activate outdoor values   address 6000   values 0x8238, 0x8204   provides registers 4…5
+→ register 4 = compressor frequency, register 5 = outdoor temperature</pre>
+            <p class="field-hint">${this._esc(t('adv.setup.exHint', 'Values are 16-bit words: decimal, or hex like 0x8238. Declare the rows of the registers a step provides like any other row.'))}</p>`,
+            'setup-at-connect');
+        return `${intro}
+            ${steps.map((s, i) => `<div class="tpl-adv-form">
+                <div class="form-row">
+                    ${this._advField(t('adv.setup.name', 'Name'), this._advIn(['setup', i, 'name'], 'str', s.name, { ph: 'outdoor_messages', label: 'setup name' }))}
+                    ${this._advField(t('calc.label', 'Label'), this._advIn(['setup', i, 'label'], 'str', s.label, { label: 'setup label' }))}
+                    ${this._advField(t('lbl.address', 'Address'), this._advIn(['setup', i, 'address'], 'int', s.address, { type: 'number', label: 'setup address', style: 'max-width:110px' }))}
+                </div>
+                ${this._advField(t('adv.setup.values', 'Values, in order'), `<textarea class="input" rows="3" spellcheck="false" aria-label="${this._esc(this.t('adv.aria.setupValues', 'Setup values'))}"
+                    ${this._act('_advSetupValues', [i], { el: true, on: 'change' })}>${this._esc((s.values || []).join(', '))}</textarea>`,
+                    t('adv.setup.valuesHint', 'Comma or line separated; decimal or 0x… (at most 123).'))}
+                <div class="form-row align-end">
+                    ${this._advField(t('adv.setup.provFrom', 'Provides registers from'), this._advIn(['setup', i, 'provides', 'from'], 'int', (s.provides || {}).from, { type: 'number', label: 'provides from', style: 'max-width:110px' }))}
+                    ${this._advField(t('adv.setup.provTo', 'to'), this._advIn(['setup', i, 'provides', 'to'], 'int', (s.provides || {}).to, { type: 'number', label: 'provides to', style: 'max-width:110px' }),
+                        t('adv.setup.provHint', 'A refusal there means the device forgot: the step is written again.'))}
+                    <div class="form-group">${this._advDelBtn(['setup', i])}</div>
+                </div>
+            </div>`).join('') || `<p class="field-hint">${t('adv.setup.none', 'None — most devices need none.')}</p>`}
+            <button type="button" class="btn btn-secondary btn-sm" ${this._act('_advAdd', [['setup'], { name: '', address: 0, values: [] }])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('adv.setup.add', 'Add a setup step')}</button>`;
+    },
+
+    _advSetupValues(i, el) {
+        const vals = String(el.value).split(/[\s,;]+/).map(x => x.trim()).filter(Boolean)
+            .map(x => (/^0x/i.test(x) ? '0x' + x.slice(2).toUpperCase() : (/^\d+$/.test(x) ? Number(x) : x)));
+        this._advPut(['setup', i, 'values'], vals);
+        this._advChanged();
+    },
+
+    // ═══ Notes for users ═══════════════════════════════════════════════════
+    _advNotesHtml() {
+        const d = this._tplEdit.data;
+        const t = (k, def) => this.t(k, def);
+        const notes = d.notes || [];
+        const names = this._advNames(true).concat(Object.keys(d.commands || {}));
+        const intro = this._advIntro(
+            t('adv.notes.lead', 'What a user should know before relying on this template: a model it does not fit, a value the device leaves at 0, a step to take first. Shown when the template is picked and at the top of every device made from it; a warning that names a command or a field marks it where it is listed.'),
+            `<pre class="tpl-adv-code">warning   "Quiet mode has no effect on the HE hydro kit."   fields: quiet
+info      "Values 4-22 appear after the first connect (setup step)."</pre>`,
+            'notes-for-users');
+        return `${intro}
+            <datalist id="advNoteNames">${names.map(x => `<option value="${this._esc(x)}">`).join('')}</datalist>
+            ${notes.map((n, i) => `<div class="tpl-adv-form">
+                <div class="form-row">
+                    ${this._advField(t('adv.notes.level', 'Level'), this._advSel(['notes', i, 'level'], 'str', n.level || 'info',
+                        [['info', t('adv.notes.info', 'Information')], ['warning', t('adv.notes.warning', 'Warning')]], { label: 'note level', style: 'max-width:160px' }))}
+                    ${this._advField(t('adv.notes.link', 'Link (optional)'), this._advIn(['notes', i, 'link'], 'str', n.link, { ph: 'https://…', label: 'note link' }))}
+                    <div class="form-group">${this._advDelBtn(['notes', i])}</div>
+                </div>
+                ${this._advField(t('adv.notes.text', 'Text'), `<textarea class="input" rows="2" aria-label="${this._esc(this.t('adv.aria.noteText', 'Note text'))}"
+                    ${this._act('_advSet', [['notes', i, 'text'], 'str'], { el: true, on: 'change' })}>${this._esc(n.text || '')}</textarea>`)}
+                ${this._advField(t('adv.notes.fields', 'About (optional)'), this._advIn(['notes', i, 'fields'], 'strlist', n.fields, { list: 'advNoteNames', ph: 'quiet, water_flow', label: 'note fields' }),
+                    t('adv.notes.fieldsHint', 'Commands or fields this note is about, comma separated — they get a mark where they are listed.'))}
+            </div>`).join('') || `<p class="field-hint">${t('adv.notes.none', 'None yet.')}</p>`}
+            <button type="button" class="btn btn-secondary btn-sm" ${this._act('_advAdd', [['notes'], { level: 'info', text: '' }])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('adv.notes.add', 'Add a note')}</button>`;
+    },
+
+    // ═══ Rule examples ═════════════════════════════════════════════════════
+    _advRulesHtml() {
+        const d = this._tplEdit.data;
+        const t = (k, def) => this.t(k, def);
+        const rules = d.rules || [];
+        const intro = this._advIntro(
+            t('adv.rules.lead', 'Rules a device of this kind is commonly run with. They are examples: the rule editor offers them under "Start from" for every device made from this template, with {device} replaced by its id, and a rule always starts in shadow. Each is a rule as in the rules guide; its command must be one of this template\'s and the fields it reads must be its own.'),
+            `<pre class="tpl-adv-code">[{"id": "buffer", "label": "On under 25 °C, off over 35 °C", "kind": "condition",
+  "target": {"device": "{device}", "command": "power"},
+  "when": "{device}.water_in < 25", "release": "{device}.water_in > 35",
+  "then": {"params": {"value": 1}}, "else": {"params": {"value": 0}},
+  "timing": {"every_s": 10, "debounce": 3, "min_interval_s": 900}}]</pre>`,
+            'rule-examples');
+        return `${intro}
+            ${rules.length ? `<ul class="tpl-adv-list">${rules.map(r => `<li><code>${this._esc(r.id || '?')}</code> — ${this._esc(r.label || '')} <span class="field-hint">(${this._esc(r.kind || 'steps')} → ${this._esc((r.target || {}).command || '?')})</span></li>`).join('')}</ul>`
+                : `<p class="field-hint">${t('adv.rules.none', 'None yet.')}</p>`}
+            <textarea id="advRulesJson" class="input tpl-adv-json" rows="14" spellcheck="false" aria-label="${this._esc(this.t('adv.aria.rulesJson', 'Rule examples (JSON)'))}">${this._esc(JSON.stringify(rules, null, 2))}</textarea>
+            <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+                <button type="button" class="btn btn-primary btn-sm" ${this._act('_advRulesApply', [])}><i aria-hidden="true" class="bi bi-box-arrow-in-down"></i> ${t('adv.json.apply', 'Apply to the editor')}</button>
+            </div>
+            <div id="advRulesResult" role="status"></div>`;
+    },
+
+    _advRulesApply() {
+        const box = document.getElementById('advRulesResult');
+        try {
+            const v = JSON.parse(document.getElementById('advRulesJson').value || '[]');
+            if (!Array.isArray(v)) throw new Error(this.t('adv.rules.list', 'a list of rules'));
+            if (v.length) this._tplEdit.data.rules = v; else delete this._tplEdit.data.rules;
+            this._advChanged();
+            this._advRender();
+        } catch (e) {
+            if (box) box.innerHTML = `<div class="calc-preview err"><i aria-hidden="true" class="bi bi-x-circle"></i> ${this._esc(this.t('adv.json.bad', 'Not valid JSON'))}: ${this._esc(String(e.message || e))}</div>`;
+        }
+    },
+
     // ═══ Details & categories ══════════════════════════════════════════════
     _advDetailsHtml() {
         const d = this._tplEdit.data;
         const t = (k, def) => this.t(k, def);
         const used = {};
-        (d.registers || []).forEach(r => { used[r.category] = (used[r.category] || 0) + 1; });
+        (d.registers || []).concat(d.calculated || []).forEach(r => { if (r.category) used[r.category] = (used[r.category] || 0) + 1; });
         const cats = Object.entries(d.categories || {}).sort((a, b) => ((a[1] || {}).order ?? 99) - ((b[1] || {}).order ?? 99));
         return `${this._advIntro(t('adv.det.lead', 'Who made this map, from what, and how its measurements are grouped. Categories decide the sections of a device page and their order.'), '', 'details-and-categories')}
             <div class="form-row">
@@ -698,11 +823,11 @@ FC43 vendor ~ ^Eastron · product ~ SDM630</pre>
                 ${this._advField(t('adv.det.author', 'Author'), this._advIn(['author'], 'str', d.author, { label: 'author' }))}
                 ${this._advField(t('adv.det.source', 'Source document'), this._advIn(['source_document'], 'str', d.source_document, { ph: 'EM3 Modbus manual v2.1, p. 14', label: 'source document' }))}
             </div>
-            ${this._advField(t('adv.det.description', 'Description'), `<textarea class="input" rows="2" aria-label="description" ${this._act('_advSet', [['description'], 'text'], { el: true, on: 'change' })}>${this._esc(d.description || '')}</textarea>`)}
+            ${this._advField(t('adv.det.description', 'Description'), `<textarea class="input" rows="2" aria-label="${this._esc(this.t('adv.aria.description', 'Description'))}" ${this._act('_advSet', [['description'], 'text'], { el: true, on: 'change' })}>${this._esc(d.description || '')}</textarea>`)}
             <div class="form-group"><label class="form-label">${t('adv.det.cats', 'Categories')}</label>
                 <div class="field-hint">${t('adv.det.catsHint', 'Each row of the map names one. Renaming one renames it on its rows; one still used cannot be deleted.')}</div>
                 ${cats.map(([id, c]) => `<div class="form-row tpl-adv-line">
-                    <input class="input" value="${this._esc(id)}" aria-label="category id" style="max-width:140px" ${this._act('_advRenameCat', [id], { el: true, on: 'change' })}>
+                    <input class="input" value="${this._esc(id)}" aria-label="${this._esc(this.t('adv.aria.categoryId', 'Category ID'))}" style="max-width:140px" ${this._act('_advRenameCat', [id], { el: true, on: 'change' })}>
                     ${this._advIn(['categories', id, 'label'], 'str', (c || {}).label, { ph: t('calc.label', 'Label'), label: 'category label' })}
                     ${this._advIn(['categories', id, 'order'], 'int', (c || {}).order, { ph: t('adv.det.order', 'order'), type: 'number', label: 'order', style: 'max-width:90px' })}
                     <span class="field-hint" style="min-width:70px;">${used[id] || 0} ${t('adv.det.rows', 'rows')}</span>
@@ -714,7 +839,9 @@ FC43 vendor ~ ^Eastron · product ~ SDM630</pre>
     _advRenameCat(oldId, el) {
         const nk = String(el.value).trim();
         if (!nk || nk === oldId) return;
-        (this._tplEdit.data.registers || []).forEach(r => { if (r.category === oldId) r.category = nk; });
+        // rows and calculated fields name their section alike
+        (this._tplEdit.data.registers || []).concat(this._tplEdit.data.calculated || [])
+            .forEach(r => { if (r.category === oldId) r.category = nk; });
         this._advRenameKey(['categories'], oldId, el);
         this._tplEditorRender();
     },
@@ -723,9 +850,9 @@ FC43 vendor ~ ^Eastron · product ~ SDM630</pre>
     _advJsonHtml() {
         const t = (k, def) => this.t(k, def);
         return `${this._advIntro(t('adv.json.lead', 'The whole template as JSON, for what is quicker typed than clicked — or pasted from a colleague. Apply puts it into the editor (nothing is saved until Save); Check shows what a save would refuse.'), '', 'raw-json')}
-            <textarea id="advJson" class="input tpl-adv-json" rows="18" spellcheck="false" aria-label="template JSON">${this._esc(JSON.stringify(this._tplEdit.data, null, 2))}</textarea>
+            <textarea id="advJson" class="input tpl-adv-json" rows="18" spellcheck="false" aria-label="${this._esc(this.t('adv.aria.templateJson', 'Template (JSON)'))}">${this._esc(JSON.stringify(this._tplEdit.data, null, 2))}</textarea>
             <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
-                <button type="button" class="btn btn-secondary btn-sm" ${this._act('_advJsonCheck', [])}><i aria-hidden="true" class="bi bi-check2-square"></i> ${t('adv.json.check', 'Check')}</button>
+                <button data-admin type="button" class="btn btn-secondary btn-sm" ${this._act('_advJsonCheck', [])}><i aria-hidden="true" class="bi bi-check2-square"></i> ${t('adv.json.check', 'Check')}</button>
                 <button type="button" class="btn btn-primary btn-sm" ${this._act('_advJsonApply', [])}><i aria-hidden="true" class="bi bi-box-arrow-in-down"></i> ${t('adv.json.apply', 'Apply to the editor')}</button>
                 <button type="button" class="btn btn-ghost btn-sm" ${this._act('_advJsonReload', [])}><i aria-hidden="true" class="bi bi-arrow-counterclockwise"></i> ${t('adv.json.reload', 'Reload from the editor')}</button>
             </div>
@@ -816,6 +943,14 @@ FC43 vendor ~ ^Eastron · product ~ SDM630</pre>
             </div>
             <div class="field-hint">${t('adv.row.counterHint', 'A growing counter ignores a reading that goes backwards (a glitch would look like a reset to Home Assistant and InfluxDB). A day counter keeps the day’s maximum and adopts only the midnight reset.')}</div>
             ${r.writable ? `<div class="form-row">${this._advField(t('adv.row.allowed', 'Only these values may be written'), this._advIn(P('write_allowed'), 'numlist', r.write_allowed, { ph: '0, 1, 2', label: 'write allowed' }), t('adv.row.allowedHint', 'Comma-separated; Home Assistant offers them as a list.'))}</div>` : ''}
+            ${((this._tplEdit.data.protocol || {}).transports || []).includes('mqtt') ? `
+            <h4 class="tpl-adv-h">${t('adv.row.mqttWrite', 'Written over MQTT')}</h4>
+            <div class="form-row">
+                ${this._advField(t('adv.row.writeTopic', 'Write topic'), this._advIn(P('write_topic'), 'str', r.write_topic, { ph: 'W/{portal}/settings/…', label: 'write topic' }),
+                    t('adv.row.writeTopicHint', 'Where a command publishes the new value. What arrives on the row’s topic is the read-back.'))}
+                ${this._advField(t('adv.row.writePayload', 'Payload'), this._advIn(P('write_payload'), 'str', r.write_payload, { ph: '{"value": ${value}}', label: 'write payload' }),
+                    t('adv.row.writePayloadHint', '${value}: the number (an enum’s code); ${label}: an enum’s text. Empty: the bare number. Without either, a fixed text.'))}
+            </div>` : ''}
             <h4 class="tpl-adv-h">${t('adv.row.installation', 'In an installation')}</h4>
             ${this._advAggHtml(P('aggregates'), Object.entries(r.aggregates || {}))}
             <h4 class="tpl-adv-h">Home Assistant</h4>

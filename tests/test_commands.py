@@ -217,3 +217,47 @@ def test_commands_respect_the_register_envelope_and_never_clamp(fronius):
     regs2['power_limit_revert_s'].register_type = 'holding'
     with pytest.raises(ValueError):                                    # 100 % with SF -3 → 100000 > uint16
         plan_frames(cmd, {'value': 100, 'revert_s': 600, 'ramp_s': 0}, regs2, enc, {'wmaxlimpct_sf': -3})
+
+
+def test_a_state_register_verifies_against_its_code():
+    """A register with states reads back as text ("On"); a verify written
+    with the code (1) holds — it used to answer 'mismatch' on every success
+    (found on a Samsung heat pump, 2026-10-08)."""
+    from types import SimpleNamespace
+    from multibus.commands import parse_command_def, run_command
+    reg = SimpleNamespace(name='power', address=52, data_type='uint16', register_type='holding', scale=1.0,
+                          offset=0.0, scale_from='', nan=None, enum={0: 'Off', 1: 'On'}, bits=None, mask=None,
+                          shift=None, monotonic=False, daily=False)
+
+    class Conn:
+        def __init__(self):
+            self.word = 0
+
+        def read_registers(self, address, count, register_type='holding'):
+            return [self.word] * count
+
+        def write(self, address, register_type='holding', values=None, **kw):
+            self.word = values[0]
+            return True, None
+    cmd = parse_command_def('power', {'params': {'value': {'allowed': [0, 1], 'required': True}},
+                                      'writes': [{'register': 'power', 'value': '${value}'}], 'settle_s': 0,
+                                      'verify': [{'read': 'power', 'expect': '${value}'}]})
+    res = run_command(cmd, {'value': 1}, Conn(), {'power': reg})
+    assert res['status'] == 'success', res
+    assert res['after'] == {'power': 'On'}
+
+
+# ── reads the device can answer ──────────────────────────────────────────────
+
+def test_guard_and_verify_registers_far_apart_are_read_in_separate_blocks():
+    from multibus.commands import _blocks_for
+
+    class R:
+        def __init__(self, a, dt='uint16'):
+            self.address, self.data_type = a, dt
+    regs = {'param': R(0x0200), 'status': R(0x2102), 'near': R(0x2104), 'wide': R(0x2110, 'uint32')}
+    assert _blocks_for(regs, ['param', 'status']) == [(0x0200, 1), (0x2102, 1)]   # was: one impossible block
+    assert _blocks_for(regs, ['status', 'near', 'wide']) == [(0x2102, 16)]
+    assert _blocks_for(regs, ['status', 'near'], max_read=1) == [(0x2102, 1), (0x2104, 1)]
+    with pytest.raises(ValueError):
+        _blocks_for(regs, ['wide'], max_read=1)                # a 2-word value cannot fit one word

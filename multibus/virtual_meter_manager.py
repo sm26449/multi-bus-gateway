@@ -39,6 +39,7 @@ import yaml
 from .canonical_fields import is_cumulative_field
 from .encoder import RegisterEncoder
 from .register_parser import RegisterParser
+from .role import is_active
 from .virtual_meter import VirtualMeter, _parse_source, load_template
 
 logger = logging.getLogger(__name__)
@@ -151,6 +152,26 @@ def make_multi_provider(default_store: dict, stores: dict, primary_store: dict,
     return provider
 
 
+# how often a virtual meter refreshes what it serves: below 0.1 s the
+# supervisor loop only spins, above an hour the meter is as good as frozen
+DEFAULT_UPDATE_INTERVAL_S = 1.0
+UPDATE_INTERVAL_RANGE = (0.1, 3600.0)
+
+
+def _interval_error(v) -> str:
+    """'' when ``v`` is a usable refresh interval, else why not."""
+    if isinstance(v, bool):
+        return "update_interval_s must be a number"
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return "update_interval_s must be a number"
+    lo, hi = UPDATE_INTERVAL_RANGE
+    if not math.isfinite(f) or not (lo <= f <= hi):
+        return f"update_interval_s must be {lo:g}..{hi:g} s"
+    return ""
+
+
 class VirtualMeterManager:
     def __init__(self, current_values: dict,
                  config_path: str = "config/virtual_meters.yaml",
@@ -201,6 +222,17 @@ class VirtualMeterManager:
         hand-edited row missing the key starts at boot yet is silently stopped
         by the next template edit (audit 2026-08-14 M3)."""
         return bool(inst.get("enabled", True))
+
+    @staticmethod
+    def _inst_ha_mode(inst: dict) -> str:
+        """In a high-availability pair: `failover` (absent) — only the active
+        gateway serves the meter, its address moves with the role behind the
+        load balancer; `balanced` — the standby serves it too, from its copy
+        of the partner's values (a client may read either)."""
+        return "balanced" if inst.get("ha_mode") == "balanced" else "failover"
+
+    def _may_serve(self, inst: dict) -> bool:
+        return is_active() or self._inst_ha_mode(inst) == "balanced"
 
     def _store_for(self, inst: dict) -> dict:
         """The live value cache a meter reads from — its source device's cache.
@@ -438,8 +470,9 @@ class VirtualMeterManager:
         except Exception as e:  # noqa: BLE001
             logger.error("virtual meters: bad config %s: %s", self.config_path, e)
             return
+        running = {vm.t.id for vm in self._snap()}
         for inst in cfg.get("instances", []):
-            if not self._inst_enabled(inst):
+            if not self._inst_enabled(inst) or inst.get("template") in running:
                 continue
             try:
                 self._start_one(inst)
@@ -491,6 +524,8 @@ class VirtualMeterManager:
                    "on_stale": inst.get("on_stale", "legacy"),
                    "max_hold_s": inst.get("max_hold_s", 30),
                    "quality_block": bool(inst.get("quality_block", False)),
+                   "ha_mode": self._inst_ha_mode(inst),
+                   "waits_for_active": self._inst_enabled(inst) and not self._may_serve(inst),
                    "running": vm is not None and vm._running,
                    "name": name,
                    "preview": vm.preview() if vm else {}}
@@ -921,17 +956,28 @@ class VirtualMeterManager:
                      stale_after_s: float = 15.0, enabled: bool = False,
                      device: str = "", on_stale: str = "legacy",
                      max_hold_s: float = 30.0, quality_block: bool = False,
-                     device_fallback: str = "") -> dict:
+                     device_fallback: str = "", update_interval_s=None,
+                     ha_mode=None) -> dict:
         """Add a new virtual-meter instance (persist + optionally start).
         `device` is the SOURCE device whose live values feed the meter (absent →
         the primary device). `device_fallback` is an optional twin device the
         meter transparently fails over to per register when the source goes
         stale. `on_stale` is the composite staleness policy
-        (legacy|fail|sentinel|hold); `max_hold_s` bounds the hold policy."""
+        (legacy|fail|sentinel|hold); `max_hold_s` bounds the hold policy.
+        `update_interval_s` and `ha_mode` as on Edit; absent keeps the
+        defaults (the meter's own refresh, failover)."""
         if on_stale not in ("legacy", "fail", "sentinel", "hold"):
             return {"error": f"on_stale must be legacy|fail|sentinel|hold, not {on_stale!r}"}
+        if ha_mode is not None and ha_mode not in ("failover", "balanced"):
+            return {"error": f"ha_mode must be failover|balanced, not {ha_mode!r}"}
+        if not (0 <= int(unit_id) <= 255):
+            return {"error": "unit_id must be 0..255"}
         # a non-finite or non-positive bound would defeat the freshness watchdog
         # (inf/nan makes every age look in-bound) — reject it, like update_instance
+        if update_interval_s is not None:
+            err = _interval_error(update_interval_s)
+            if err:
+                return {"error": err}
         for _nm, _v in (("stale_after_s", stale_after_s), ("max_hold_s", max_hold_s)):
             try:
                 _f = float(_v)
@@ -969,6 +1015,10 @@ class VirtualMeterManager:
                 inst["max_hold_s"] = float(max_hold_s)
         if quality_block:                              # absent = off (back-compat)
             inst["quality_block"] = True
+        if update_interval_s is not None and float(update_interval_s) != DEFAULT_UPDATE_INTERVAL_S:
+            inst["update_interval_s"] = float(update_interval_s)   # the default = absent
+        if ha_mode == "balanced":                      # failover = absent (back-compat)
+            inst["ha_mode"] = "balanced"
         cfg["instances"].append(inst)
         self._save_cfg(cfg)
         if enabled:
@@ -1040,7 +1090,7 @@ class VirtualMeterManager:
     def update_instance(self, template_id: str, port=None, unit_id=None,
                         stale_after_s=None, update_interval_s=None,
                         device=None, on_stale=None, max_hold_s=None,
-                        quality_block=None, device_fallback=None) -> dict:
+                        quality_block=None, device_fallback=None, ha_mode=None) -> dict:
         """Edit an existing instance's port / unit_id / stale_after_s /
         update_interval_s / source device / staleness policy (partial — only
         provided fields change). Persists, then live-restarts the meter if it
@@ -1058,6 +1108,13 @@ class VirtualMeterManager:
                 inst.pop("max_hold_s", None)
             else:
                 inst["on_stale"] = on_stale
+        if ha_mode is not None:
+            if ha_mode not in ("failover", "balanced"):
+                return {"error": f"ha_mode must be failover|balanced, not {ha_mode!r}"}
+            if ha_mode == "balanced":
+                inst["ha_mode"] = "balanced"
+            else:
+                inst.pop("ha_mode", None)         # failover = absent (back-compat)
         if quality_block is not None:
             if bool(quality_block):
                 inst["quality_block"] = True
@@ -1119,18 +1176,23 @@ class VirtualMeterManager:
                 return {"error": "stale_after_s must be a positive, finite number"}
             inst["stale_after_s"] = stale_after_s
         if update_interval_s is not None:
-            try:
-                update_interval_s = float(update_interval_s)
-            except (TypeError, ValueError):
-                return {"error": "update_interval_s must be a number"}
-            if not math.isfinite(update_interval_s) or update_interval_s <= 0:
-                return {"error": "update_interval_s must be a positive, finite number"}
-            inst["update_interval_s"] = update_interval_s
+            err = _interval_error(update_interval_s)
+            if err:
+                return {"error": err}
+            inst["update_interval_s"] = float(update_interval_s)
         self._save_cfg(cfg)
         restarted = False
         running = [m for m in self._snap() if m.t.id == template_id]
+        if running and not self._may_serve(inst):
+            for vm in running:                    # a standby's meter made failover: its partner serves it
+                vm.stop()
+                with self._meters_lock:
+                    self.meters.remove(vm)
+            running = []
+        elif not running and self._inst_enabled(inst) and not is_active() and self._may_serve(inst):
+            running = [None]                      # a standby's meter made balanced: it serves now
         if running and self._inst_enabled(inst):
-            for vm in running:
+            for vm in filter(None, running):
                 vm.stop()
                 with self._meters_lock:
                     self.meters.remove(vm)
@@ -1149,9 +1211,12 @@ class VirtualMeterManager:
                 "port": inst.get("port"), "unit_id": inst.get("unit_id", 1),
                 "stale_after_s": inst.get("stale_after_s", 15),
                 "update_interval_s": inst.get("update_interval_s", 1.0),
-                "device": self._inst_device(inst)}
+                "device": self._inst_device(inst), "ha_mode": self._inst_ha_mode(inst)}
 
     def _start_one(self, inst: dict) -> None:
+        if not self._may_serve(inst):
+            logger.info("virtual meter '%s' waits for the active role (failover)", inst.get("template"))
+            return
         # Composite-aware provider: bare names read the instance's own store
         # (exactly the old single-source behavior); `device.register` names
         # reach any device's cache, carrying that source's staleness bound.
@@ -1197,6 +1262,23 @@ class VirtualMeterManager:
                 pass
         with self._meters_lock:
             self.meters.clear()
+
+    def standby(self) -> None:
+        """This gateway became the standby: its failover meters stop (their
+        address moves to the partner), its balanced ones go on serving."""
+        self._states_stop.set()
+        cfg = self._load_cfg()
+        balanced = {i.get("template") for i in cfg.get("instances", [])
+                    if self._inst_ha_mode(i) == "balanced"}
+        for vm in self._snap():
+            if vm.t.id in balanced:
+                continue
+            try:
+                vm.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            with self._meters_lock:
+                self.meters.remove(vm)
 
     def status(self) -> list[dict]:
         return [vm.status() for vm in self._snap()]

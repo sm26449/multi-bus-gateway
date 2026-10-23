@@ -27,8 +27,7 @@ ca monitor Janitza din care a crescut, din martie 2026: un Janitza UMG
 SunSpec, cu comenzi de limitare a puterii și reguli, un Fronius Smart Meter
 pe RTU și un EM24 virtual pe care un Victron Ekrano GX îl folosește drept
 contor de rețea. Circa 130 MB RAM. Mai puțin exersate până acum: puntea
-serială pentru RS-485 la distanță, Device Builder-ul ESP32 și înregistratorul
-PQ, care are un singur contor în spate. Vezi [Istoric](#istoric).
+serială pentru RS-485 la distanță și înregistratorul PQ, care are un singur contor în spate. Vezi [Istoric](#istoric).
 
 - 🔌 **Retrofit în loc de înlocuire** — digitalizezi echipamente deja
   instalate; **zero hardware nou**.
@@ -38,14 +37,10 @@ PQ, care are un singur contor în spate. Vezi [Istoric](#istoric).
   politici explicite de staleness și bloc de calitate in-band.
 - 🛠️ **UI de operator** — wizard cu discovery, diagnostice la nivel de
   cadru, snapshot-uri de configurație cu rollback, roluri și audit.
-- 📟 **Device Builder (noduri ESP32 remote)** — generează, compilează și
-  flash-uiește firmware ESPHome pentru cititoare RS485 aflate la distanță,
-  direct din UI (build pe containerul tău ESPHome, flash USB din browser,
-  OTA, adopție automată ca dispozitiv MQTT — zero configurare dublă).
 - ⚡ **Recorder de evenimente PQ (Janitza)** — arhivează permanent ring-ul
   de evenimente de calitate a energiei al aparatului (dip/întrerupere/RVC
   + forme de undă RMS), cu tab dedicat, alerte și istoric interogabil —
-  [manual §11c](docs/MANUAL.ro.md#11c-power-quality--recorderul-de-evenimente-pq-janitza).
+  [manual §11c](docs/MANUAL.ro.md#11c-calitatea-energiei--înregistratorul-de-evenimente-pq-janitza).
 
 > **Scop asumat:** e un **gateway de protocol**, nu o aplicație de
 > energie/raportare — costuri, tarife, facturare și analize rămân treaba
@@ -91,7 +86,7 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
 - 🍓 **Frugal, măsurat pe hardware limitat** — ~90 MB RAM și câteva procente
   CPU la o instalare tipică, fără scurgeri. Un **RPi 3 rulează confortabil
   ~4–5 dispozitive + ~3 metere virtuale** (realtime ≥ 1 s), un Pi 4/5 mult mai
-  mult. Plicul de capacitate complet + profilul recomandat: [MANUAL §18b](docs/MANUAL.ro.md#18b-rulare-pe-hardware-limitat-raspberry-pi).
+  mult. Plicul de capacitate complet + profilul recomandat: [MANUAL §18b](docs/MANUAL.ro.md#18b-rularea-pe-echipamente-modeste-raspberry-pi).
 
 ## Caracteristici
 
@@ -107,14 +102,15 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
   SSRF (doar LAN privat, implicit).
 - **MQTT-in** — abonare la un broker; valoare din payload JSON (`json_path`)
   sau payload brut; topic per registru cu wildcard-uri `+`/`#`.
-- **Template-uri de dispozitiv** — harta de registre ca fișier JSON portabil;
-  19 hărți incluse, cu proveniență documentată
+- **Șabloane de dispozitiv** — harta de registre ca fișier JSON portabil;
+  24 de hărți incluse, cu proveniență documentată
   ([catalog](docs/device-catalog.md)): Janitza UMG 512-PRO (4.126 registre),
   ABB B21/B23, Carlo Gavazzi EM24, Eastron SDM120/SDM630, Schneider iEM3000,
   Fronius Smart Meter 65A-3, invertor și contor Fronius SunSpec, trei hărți
-  Fronius Solar API (invertor, invertor pe faze, instalație), Seplos BMS V3
-  (tap RTU per pachet, MQTT pachet și bancă) și trei hărți MQTT (Zigbee2MQTT,
-  Theengs BLE, JSON generic). Proveniența și gradul de
+  Fronius Solar API (invertor, invertor pe faze, amplasament, contor),
+  Seplos BMS V3 (tap RTU per pachet, MQTT pachet și bancă), un Victron GX
+  prin MQTT, o pompă de căldură Samsung, un variator Delta VFD-EL și hărți
+  MQTT (Zigbee2MQTT, Theengs BLE, Tasmota, JSON generic). Proveniența și gradul de
   încredere sunt scrise în catalog, la fiecare hartă. Editor + upload + export + **import CSV**
   ([ghid](docs/csv-import.md)).
 - **Nume canonice de câmpuri** — nume uniforme de registre pe orice dispozitiv
@@ -137,6 +133,37 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
   dispozitive, preview live, preset-uri reutilizabile; curg către toate
   ieșirile.
 - **Praguri** de colorare per registru (warning/danger) pe dashboard.
+
+**Control și integrare**
+- **Instalații** — un datalogger, mai multe unități: grupuri de invertoare,
+  un contor de rețea și totaluri de amplasament, fiecare unitate un
+  dispozitiv obișnuit, citit prin mai multe surse în ordinea priorității
+  (Solar API și Modbus), cu totaluri pe grup și un singur lacăt de scriere
+  ([manual §5b](docs/MANUAL.ro.md#5b-instalații--un-datalogger-mai-multe-unități)).
+- **Comenzi** — scrieri cu nume, păzite, declarate de șablon
+  (`power_limit = 60 %`): citiri de protecție, un singur cadru, verificare
+  prin citire înapoi, un test care nu scrie nimic și aceleași porți din
+  interfață, API, MQTT și Home Assistant.
+- **Reguli** — un controler declarativ: trepte, condiții, ajustări și
+  programări cu temporizări, mai multe reguli pe o țintă ca straturi,
+  secvențe de comenzi; regulile noi rulează în **shadow** (decid și scriu în
+  jurnal, nu scriu în echipament) până le armezi ([ghidul regulilor](docs/rules.md)).
+- **Server OPC UA** — fiecare dispozitiv și fiecare valoare pentru SCADA și
+  panouri HMI, cu calitatea și momentul citirii ([ghid](docs/opcua.md)).
+- **Componente** — bateriile și senzorii pe care îi ține un Victron GX,
+  fiecare dispozitiv de sine stătător pe singura conexiune a GX-ului.
+- **Contoare cu roluri** — un dispozitiv măsurat de alte contoare (consum,
+  sau intrare și ieșire): putere, energie, pierdere, randament și încărcare,
+  publicate doar când citirile sunt de încredere.
+- **Bridge-uri** — magistrale seriale accesate prin rețea (bridge-ul nostru
+  serial sau un convertor RS-485–Ethernet), mai mulți slave pe o
+  magistrală și cât de ocupat e de fapt fiecare fir.
+- **Atributele echipamentului** — ce este echipamentul (locația, limitele
+  racordului la rețea, intrările PV, puterile nominale) pentru un EMS sau
+  un SCADA ([ghid](docs/attributes.md)).
+- **Nimic nu se șterge cât timp ceva îl folosește** — un dispozitiv, o
+  instalație sau un șablon folosit spune ce îl folosește și oferă în loc
+  Dezactivează.
 
 **Northbound (sink-uri) — toate opt-in, per dispozitiv**
 - **MQTT** — moduri `changed`/`all`, retain/QoS, TLS/mTLS, Last-Will +
@@ -169,16 +196,11 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
   decode pe interval de adrese, watchdog de prospețime (sursă stale → serverul
   tace, fail-safe-ul consumatorului preia).
 
-**Device Builder — noduri ESP32/ESP8266 remote (ESPHome)**
-- **Generează firmware dintr-un template** — alegi un template Modbus +
-  registre și primești YAML complet pentru un nod care citește contorul pe
-  RS485 și publică MQTT înapoi în gateway; build/OTA pe containerul tău
-  ESPHome (inclus în compose, zero-config).
-- **Adopt cu un click** — creează automat și device-ul mqtt-in pereche, cu
-  topicuri byte-identice — datele curg fără configurare dublă.
-- **Flash USB din browser** (esp-web-tools vendored, fără cloud) + Improv
-  Wi-Fi; **import mDNS**; profiluri hardware refolosibile; **Update all**
-  (rebuild + OTA în masă) — totul printr-o singură interfață și audit trail.
+**Noduri ESP** — scrierea plăcilor ESP32/ESP8266 din browser și lista de
+noduri sunt în serviciul însoțitor **multi-bus-gateway-esphome**, în spatele
+login-ului gateway-ului (`/api/auth/forward`), cu link din Devices
+(`ui.nodes_url`). Un nod care publică prin MQTT e aici un dispozitiv MQTT
+obișnuit.
 
 **Diagnostice (punere în funcțiune)**
 - **Bus monitor** la nivel de cadru — hex TX/RX, decodare, latență,
@@ -193,8 +215,8 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
   **last-known-good boot seatbelt** (un config.yaml stricat e restaurat
   automat la boot).
 - **Backup export/import ZIP** — secretele eliminate implicit (inclusiv
-  parola ESPHome și token-urile din webhook); include registre per dispozitiv,
-  template-uri, metere virtuale, profiluri hardware și presetări calculate;
+  token-urile din webhook); include registre per dispozitiv,
+  template-uri, metere virtuale și presetări calculate;
   passkeys doar în backup-ul cu secrete. Import cu merge (secretele
   supraviețuiesc). Fișierele de identitate (`passkeys.json`, `audit.jsonl`)
   sunt create `0600`.
@@ -217,7 +239,8 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
   taxonomia erorilor, **jurnal de evenimente persistat**, `/health` corect
   pentru probe de container.
 - **Alerte de infrastructură** pe MQTT + webhook ([ghid](docs/alerts-webhooks.md)).
-- **i18n EN+RO** (limbile = fișiere `ui/languages/*.json`, fără rebuild),
+- **i18n EN+RO** — toată interfața în ambele limbi, cu pluralul și formatul
+  de dată ale limbii (limbile = fișiere `ui/languages/*.json`, fără rebuild),
   **fus orar configurabil** pentru rapoartele lunare, WebSocket real-time,
   hot-reload aproape peste tot.
 
@@ -272,7 +295,7 @@ git clone https://github.com/sm26449/multi-bus-gateway.git
 cd multi-bus-gateway
 cp .env.example .env          # OBLIGATORIU — decomentează și setează cele patru secrete (MQTT, InfluxDB ×2, Grafana); placeholder-ele sunt refuzate
 docker compose up -d          # stack COMPLET: gateway + MQTT (mosquitto)
-                              # + MQTT Explorer + InfluxDB + Grafana + ESPHome
+                              # + MQTT Explorer + InfluxDB + Grafana
 # Parola de admin generată la primul boot (afișată o singură dată):
 docker compose logs multi-bus-gateway | grep -A3 'FIRST RUN'
 # UI: http://localhost:8080 · Grafana: :3000 · (MQTT Explorer: --profile debug, 127.0.0.1:4000)
@@ -375,7 +398,7 @@ Patru zone principale — **Dashboard** (global), **Devices** (workspace per
 dispozitiv: Overview / Edit / Registers / Calculated / Outputs / Monitor /
 History / Energy), **Virtual Meters**, **Diagnostics**, **Status** și
 **Config**. Tot ce ține de un singur dispozitiv stă în workspace-ul lui, nu
-într-un meniu global. Tur complet, tab cu tab: [manual §4](docs/MANUAL.ro.md#4-interfața-web-tab-cu-tab).
+într-un meniu global. Tur complet, tab cu tab: [manual §4](docs/MANUAL.ro.md#4-interfața-web-filă-cu-filă).
 
 ## API
 

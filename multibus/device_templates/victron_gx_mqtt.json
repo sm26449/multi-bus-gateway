@@ -1,0 +1,1857 @@
+{
+ "device_template": {
+  "schema_version": 1,
+  "id": "victron_gx_mqtt",
+  "name": "Victron GX (Venus OS) over MQTT",
+  "vendor": "Victron Energy",
+  "model": "GX device (Cerbo, Ekrano, Venus GX)",
+  "kind": "site",
+  "version": "1.1",
+  "author": "Multi-Bus Gateway",
+  "description": "A Victron system through its GX device's MQTT (Venus OS): battery, ESS state, grid, consumption, PV, the inverter/charger, and the ESS settings — with commands for them (grid setpoint, charge current and power, inverter power, feed-in, minimum SOC). Set the topic variables `portal` (the VRM portal id) and `vebus` (the inverter/charger instance). The GX needs 'MQTT on LAN' on. Commands are off until enabled on the device; the settings live in the GX's flash, so each is written at most once a minute. Batteries and temperature sensors the GX sees are added as components of this device (any number, by instance), read through the same connection.",
+  "source_document": "https://github.com/victronenergy/dbus-flashmq",
+  "protocol": {
+   "transports": [
+    "mqtt"
+   ],
+   "keepalive": {
+    "topic": "R/{portal}/keepalive",
+    "first_payload": "",
+    "payload": "{\"keepalive-options\": [\"suppress-republish\"]}",
+    "every_s": 30
+   }
+  },
+  "categories": {
+   "battery": {
+    "label": "Battery",
+    "order": 1
+   },
+   "ess": {
+    "label": "ESS",
+    "order": 2
+   },
+   "grid": {
+    "label": "Grid",
+    "order": 3
+   },
+   "consumption": {
+    "label": "Consumption",
+    "order": 4
+   },
+   "pv": {
+    "label": "PV",
+    "order": 5
+   },
+   "inverter": {
+    "label": "Inverter/charger",
+    "order": 6
+   },
+   "settings": {
+    "label": "ESS settings",
+    "order": 7
+   }
+  },
+  "notes": [
+   {
+    "level": "warning",
+    "text": "The ESS settings are stored in the GX's flash and kept when the gateway stops. A rule that commands them must move in steps; the template spaces writes a minute apart. The commands carry no release value: a released rule leaves the setting as it is unless the device's command binding sets `safe` (a release value depends on the site).",
+    "fields": [
+     "ess_setpoint",
+     "max_charge_current",
+     "max_feed_in"
+    ]
+   },
+   {
+    "level": "info",
+    "text": "The grid setpoint is followed in ESS modes 1 and 2; in mode 3 (external control) the GX ignores it, so the command refuses to write."
+   }
+  ],
+  "channels": {
+   "ess_setpoint": {
+    "label": "Grid setpoint (a setting kept in flash)",
+    "min_interval_s": 60
+   },
+   "max_charge_current": {
+    "label": "Max charge current (a setting kept in flash)",
+    "min_interval_s": 60
+   },
+   "max_charge_power": {
+    "label": "Max charge power (a setting kept in flash)",
+    "min_interval_s": 60
+   },
+   "max_discharge_power": {
+    "label": "Max inverter power (a setting kept in flash)",
+    "min_interval_s": 60
+   },
+   "max_feed_in_power": {
+    "label": "Max feed-in (a setting kept in flash)",
+    "min_interval_s": 60
+   },
+   "min_soc_limit": {
+    "label": "Minimum SOC (a setting kept in flash)",
+    "min_interval_s": 60
+   }
+  },
+  "registers": [
+   {
+    "address": 1,
+    "name": "soc",
+    "label": "State of charge",
+    "unit": "%",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "N/{portal}/system/0/Dc/Battery/Soc",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 2,
+    "name": "battery_power",
+    "label": "Battery power (+ charging)",
+    "unit": "W",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "N/{portal}/system/0/Dc/Battery/Power",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 3,
+    "name": "battery_voltage",
+    "label": "Battery voltage",
+    "unit": "V",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "N/{portal}/system/0/Dc/Battery/Voltage",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 4,
+    "name": "battery_current",
+    "label": "Battery current (+ charging)",
+    "unit": "A",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "N/{portal}/system/0/Dc/Battery/Current",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 5,
+    "name": "battery_temperature",
+    "label": "Battery temperature",
+    "unit": "°C",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "N/{portal}/system/0/Dc/Battery/Temperature",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 6,
+    "name": "battery_status",
+    "label": "Battery state",
+    "unit": "",
+    "data_type": "float",
+    "category": "battery",
+    "topic": "N/{portal}/system/0/Dc/Battery/State",
+    "json_path": "value",
+    "poll_group": "normal",
+    "enum": {
+     "0": "Idle",
+     "1": "Charging",
+     "2": "Discharging"
+    }
+   },
+   {
+    "address": 10,
+    "name": "ess_state",
+    "label": "ESS state",
+    "unit": "",
+    "data_type": "float",
+    "category": "ess",
+    "topic": "N/{portal}/system/0/SystemState/State",
+    "json_path": "value",
+    "poll_group": "normal",
+    "enum": {
+     "0": "Off",
+     "1": "Low power",
+     "2": "Fault",
+     "3": "Bulk",
+     "4": "Absorption",
+     "5": "Float",
+     "6": "Storage",
+     "7": "Equalize",
+     "8": "Passthru",
+     "9": "Inverting",
+     "10": "Assisting",
+     "11": "Power supply",
+     "244": "Sustain (low SOC)",
+     "252": "External control",
+     "256": "Discharging",
+     "257": "Sustain",
+     "258": "Recharge",
+     "259": "Scheduled recharge"
+    }
+   },
+   {
+    "address": 11,
+    "name": "active_soc_limit",
+    "label": "Active SOC limit (ESS)",
+    "unit": "%",
+    "data_type": "float",
+    "category": "ess",
+    "topic": "N/{portal}/system/0/Control/ActiveSocLimit",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 12,
+    "name": "dvcc",
+    "label": "DVCC",
+    "unit": "",
+    "data_type": "float",
+    "category": "ess",
+    "topic": "N/{portal}/system/0/Control/Dvcc",
+    "json_path": "value",
+    "poll_group": "normal",
+    "enum": {
+     "0": "Off",
+     "1": "On"
+    }
+   },
+   {
+    "address": 13,
+    "name": "ac_input_source",
+    "label": "AC input source",
+    "unit": "",
+    "data_type": "float",
+    "category": "ess",
+    "topic": "N/{portal}/system/0/Ac/ActiveIn/Source",
+    "json_path": "value",
+    "poll_group": "normal",
+    "enum": {
+     "0": "Not available",
+     "1": "Grid",
+     "2": "Generator",
+     "3": "Shore",
+     "240": "Not connected"
+    }
+   },
+   {
+    "address": 21,
+    "name": "grid_power_l1",
+    "label": "Grid L1 power (+ import)",
+    "unit": "W",
+    "data_type": "float",
+    "category": "grid",
+    "topic": "N/{portal}/system/0/Ac/Grid/L1/Power",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 31,
+    "name": "consumption_power_l1",
+    "label": "Consumption L1",
+    "unit": "W",
+    "data_type": "float",
+    "category": "consumption",
+    "topic": "N/{portal}/system/0/Ac/Consumption/L1/Power",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 41,
+    "name": "pv_on_grid_power_l1",
+    "label": "PV on the grid side L1",
+    "unit": "W",
+    "data_type": "float",
+    "category": "pv",
+    "topic": "N/{portal}/system/0/Ac/PvOnGrid/L1/Power",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 22,
+    "name": "grid_power_l2",
+    "label": "Grid L2 power (+ import)",
+    "unit": "W",
+    "data_type": "float",
+    "category": "grid",
+    "topic": "N/{portal}/system/0/Ac/Grid/L2/Power",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 32,
+    "name": "consumption_power_l2",
+    "label": "Consumption L2",
+    "unit": "W",
+    "data_type": "float",
+    "category": "consumption",
+    "topic": "N/{portal}/system/0/Ac/Consumption/L2/Power",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 42,
+    "name": "pv_on_grid_power_l2",
+    "label": "PV on the grid side L2",
+    "unit": "W",
+    "data_type": "float",
+    "category": "pv",
+    "topic": "N/{portal}/system/0/Ac/PvOnGrid/L2/Power",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 23,
+    "name": "grid_power_l3",
+    "label": "Grid L3 power (+ import)",
+    "unit": "W",
+    "data_type": "float",
+    "category": "grid",
+    "topic": "N/{portal}/system/0/Ac/Grid/L3/Power",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 33,
+    "name": "consumption_power_l3",
+    "label": "Consumption L3",
+    "unit": "W",
+    "data_type": "float",
+    "category": "consumption",
+    "topic": "N/{portal}/system/0/Ac/Consumption/L3/Power",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 43,
+    "name": "pv_on_grid_power_l3",
+    "label": "PV on the grid side L3",
+    "unit": "W",
+    "data_type": "float",
+    "category": "pv",
+    "topic": "N/{portal}/system/0/Ac/PvOnGrid/L3/Power",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 50,
+    "name": "vebus_dc_power",
+    "label": "Inverter/charger DC power (+ charging)",
+    "unit": "W",
+    "data_type": "float",
+    "category": "inverter",
+    "topic": "N/{portal}/system/0/Dc/Vebus/Power",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 51,
+    "name": "dc_pv_power",
+    "label": "DC PV (solar chargers)",
+    "unit": "W",
+    "data_type": "float",
+    "category": "pv",
+    "topic": "N/{portal}/system/0/Dc/Pv/Power",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 100,
+    "name": "ess_setpoint",
+    "label": "Grid setpoint (+ import, − export)",
+    "unit": "W",
+    "data_type": "float",
+    "category": "settings",
+    "topic": "N/{portal}/settings/0/Settings/CGwacs/AcPowerSetPoint",
+    "json_path": "value",
+    "poll_group": "normal",
+    "write_topic": "W/{portal}/settings/0/Settings/CGwacs/AcPowerSetPoint",
+    "write_payload": "{\"value\": ${value}}",
+    "writable": true
+   },
+   {
+    "address": 101,
+    "name": "max_charge_current",
+    "label": "Max charge current (DVCC, −1 = no limit)",
+    "unit": "A",
+    "data_type": "float",
+    "category": "settings",
+    "topic": "N/{portal}/settings/0/Settings/SystemSetup/MaxChargeCurrent",
+    "json_path": "value",
+    "poll_group": "normal",
+    "write_topic": "W/{portal}/settings/0/Settings/SystemSetup/MaxChargeCurrent",
+    "write_payload": "{\"value\": ${value}}",
+    "writable": true,
+    "write_min": -1
+   },
+   {
+    "address": 102,
+    "name": "max_charge_power",
+    "label": "Max charge power (−1 = no limit)",
+    "unit": "W",
+    "data_type": "float",
+    "category": "settings",
+    "topic": "N/{portal}/settings/0/Settings/CGwacs/MaxChargePower",
+    "json_path": "value",
+    "poll_group": "normal",
+    "write_topic": "W/{portal}/settings/0/Settings/CGwacs/MaxChargePower",
+    "write_payload": "{\"value\": ${value}}",
+    "writable": true,
+    "write_min": -1
+   },
+   {
+    "address": 103,
+    "name": "max_discharge_power",
+    "label": "Max inverter power (−1 = no limit)",
+    "unit": "W",
+    "data_type": "float",
+    "category": "settings",
+    "topic": "N/{portal}/settings/0/Settings/CGwacs/MaxDischargePower",
+    "json_path": "value",
+    "poll_group": "normal",
+    "write_topic": "W/{portal}/settings/0/Settings/CGwacs/MaxDischargePower",
+    "write_payload": "{\"value\": ${value}}",
+    "writable": true,
+    "write_min": -1
+   },
+   {
+    "address": 104,
+    "name": "max_feed_in_power",
+    "label": "Max feed-in (−1 = no limit)",
+    "unit": "W",
+    "data_type": "float",
+    "category": "settings",
+    "topic": "N/{portal}/settings/0/Settings/CGwacs/MaxFeedInPower",
+    "json_path": "value",
+    "poll_group": "normal",
+    "write_topic": "W/{portal}/settings/0/Settings/CGwacs/MaxFeedInPower",
+    "write_payload": "{\"value\": ${value}}",
+    "writable": true,
+    "write_min": -1
+   },
+   {
+    "address": 105,
+    "name": "min_soc_limit",
+    "label": "Minimum SOC (unless grid fails)",
+    "unit": "%",
+    "data_type": "float",
+    "category": "settings",
+    "topic": "N/{portal}/settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit",
+    "json_path": "value",
+    "poll_group": "normal",
+    "write_topic": "W/{portal}/settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit",
+    "write_payload": "{\"value\": ${value}}",
+    "writable": true,
+    "write_min": 0,
+    "write_max": 100
+   },
+   {
+    "address": 106,
+    "name": "ess_mode",
+    "label": "ESS mode (Hub4Mode)",
+    "unit": "",
+    "data_type": "float",
+    "category": "settings",
+    "topic": "N/{portal}/settings/0/Settings/CGwacs/Hub4Mode",
+    "json_path": "value",
+    "poll_group": "normal",
+    "enum": {
+     "1": "Optimized, phase compensation",
+     "2": "Optimized, no phase compensation",
+     "3": "External control"
+    }
+   },
+   {
+    "address": 107,
+    "name": "battery_life_state",
+    "label": "BatteryLife state",
+    "unit": "",
+    "data_type": "float",
+    "category": "settings",
+    "topic": "N/{portal}/settings/0/Settings/CGwacs/BatteryLife/State",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 200,
+    "name": "inverter_ac_in_power",
+    "label": "Inverter/charger AC-in (+ into it)",
+    "unit": "W",
+    "data_type": "float",
+    "category": "inverter",
+    "topic": "N/{portal}/vebus/{vebus}/Ac/ActiveIn/P",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 201,
+    "name": "inverter_ac_in_power_l1",
+    "label": "Inverter/charger AC-in L1",
+    "unit": "W",
+    "data_type": "float",
+    "category": "inverter",
+    "topic": "N/{portal}/vebus/{vebus}/Ac/ActiveIn/L1/P",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 211,
+    "name": "inverter_ac_out_power_l1",
+    "label": "Inverter/charger AC-out L1",
+    "unit": "W",
+    "data_type": "float",
+    "category": "inverter",
+    "topic": "N/{portal}/vebus/{vebus}/Ac/Out/L1/P",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 202,
+    "name": "inverter_ac_in_power_l2",
+    "label": "Inverter/charger AC-in L2",
+    "unit": "W",
+    "data_type": "float",
+    "category": "inverter",
+    "topic": "N/{portal}/vebus/{vebus}/Ac/ActiveIn/L2/P",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 212,
+    "name": "inverter_ac_out_power_l2",
+    "label": "Inverter/charger AC-out L2",
+    "unit": "W",
+    "data_type": "float",
+    "category": "inverter",
+    "topic": "N/{portal}/vebus/{vebus}/Ac/Out/L2/P",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 203,
+    "name": "inverter_ac_in_power_l3",
+    "label": "Inverter/charger AC-in L3",
+    "unit": "W",
+    "data_type": "float",
+    "category": "inverter",
+    "topic": "N/{portal}/vebus/{vebus}/Ac/ActiveIn/L3/P",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 213,
+    "name": "inverter_ac_out_power_l3",
+    "label": "Inverter/charger AC-out L3",
+    "unit": "W",
+    "data_type": "float",
+    "category": "inverter",
+    "topic": "N/{portal}/vebus/{vebus}/Ac/Out/L3/P",
+    "json_path": "value",
+    "poll_group": "normal"
+   },
+   {
+    "address": 220,
+    "name": "grid_connected",
+    "label": "Grid connected (0 = island)",
+    "unit": "",
+    "data_type": "float",
+    "category": "inverter",
+    "topic": "N/{portal}/vebus/{vebus}/Ac/ActiveIn/Connected",
+    "json_path": "value",
+    "poll_group": "normal",
+    "enum": {
+     "0": "Island",
+     "1": "Connected"
+    }
+   },
+   {
+    "address": 221,
+    "name": "bms_connection_lost",
+    "label": "BMS connection lost",
+    "unit": "",
+    "data_type": "float",
+    "category": "inverter",
+    "topic": "N/{portal}/vebus/{vebus}/Alarms/BmsConnectionLost",
+    "json_path": "value",
+    "poll_group": "normal",
+    "enum": {
+     "0": "Ok",
+     "1": "Warning",
+     "2": "Alarm"
+    }
+   }
+  ],
+  "calculated": [
+   {
+    "name": "power_grid",
+    "label": "Grid power (+ import)",
+    "unit": "W",
+    "decimals": 0,
+    "expr": "grid_power_l1 + first(grid_power_l2, 0) + first(grid_power_l3, 0)",
+    "category": "grid"
+   },
+   {
+    "name": "grid_export",
+    "label": "Export to the grid",
+    "unit": "W",
+    "decimals": 0,
+    "expr": "max(0, 0 - (grid_power_l1 + first(grid_power_l2, 0) + first(grid_power_l3, 0)))",
+    "category": "grid"
+   },
+   {
+    "name": "consumption_power",
+    "label": "Consumption",
+    "unit": "W",
+    "decimals": 0,
+    "expr": "consumption_power_l1 + first(consumption_power_l2, 0) + first(consumption_power_l3, 0)",
+    "category": "consumption"
+   },
+   {
+    "name": "pv_on_grid_power",
+    "label": "PV on the grid side",
+    "unit": "W",
+    "decimals": 0,
+    "expr": "pv_on_grid_power_l1 + first(pv_on_grid_power_l2, 0) + first(pv_on_grid_power_l3, 0)",
+    "category": "pv"
+   },
+   {
+    "name": "battery_charging",
+    "label": "Battery charging",
+    "expr": "1 if battery_power > 0 else 0",
+    "category": "battery",
+    "enum": {
+     "0": "No",
+     "1": "Yes"
+    }
+   }
+  ],
+  "commands": {
+   "ess_setpoint": {
+    "label": "Grid setpoint",
+    "params": {
+     "value": {
+      "label": "Grid setpoint",
+      "unit": "W",
+      "min": -50000,
+      "max": 50000,
+      "required": true
+     }
+    },
+    "writes": [
+     {
+      "register": "ess_setpoint",
+      "value": "${value}"
+     }
+    ],
+    "settle_s": 5,
+    "verify": [
+     {
+      "read": "ess_setpoint",
+      "expect": "${value}",
+      "tolerance": 0.5
+     }
+    ],
+    "confirm": true,
+    "channel": "ess_setpoint",
+    "guard": [
+     {
+      "read": "ess_mode",
+      "in": [
+       1,
+       2
+      ]
+     }
+    ]
+   },
+   "max_charge_current": {
+    "label": "Max charge current",
+    "params": {
+     "value": {
+      "label": "Max charge current",
+      "unit": "A",
+      "min": -1,
+      "max": 10000,
+      "required": true
+     }
+    },
+    "writes": [
+     {
+      "register": "max_charge_current",
+      "value": "${value}"
+     }
+    ],
+    "settle_s": 5,
+    "verify": [
+     {
+      "read": "max_charge_current",
+      "expect": "${value}",
+      "tolerance": 0.5
+     }
+    ],
+    "confirm": true,
+    "channel": "max_charge_current",
+    "guard": [
+     {
+      "read": "dvcc",
+      "expect": 1
+     }
+    ]
+   },
+   "max_charge_power": {
+    "label": "Max charge power",
+    "params": {
+     "value": {
+      "label": "Max charge power",
+      "unit": "W",
+      "min": -1,
+      "max": 1000000,
+      "required": true
+     }
+    },
+    "writes": [
+     {
+      "register": "max_charge_power",
+      "value": "${value}"
+     }
+    ],
+    "settle_s": 5,
+    "verify": [
+     {
+      "read": "max_charge_power",
+      "expect": "${value}",
+      "tolerance": 0.5
+     }
+    ],
+    "confirm": true,
+    "channel": "max_charge_power"
+   },
+   "max_discharge_power": {
+    "label": "Max inverter power",
+    "params": {
+     "value": {
+      "label": "Max inverter power",
+      "unit": "W",
+      "min": -1,
+      "max": 1000000,
+      "required": true
+     }
+    },
+    "writes": [
+     {
+      "register": "max_discharge_power",
+      "value": "${value}"
+     }
+    ],
+    "settle_s": 5,
+    "verify": [
+     {
+      "read": "max_discharge_power",
+      "expect": "${value}",
+      "tolerance": 0.5
+     }
+    ],
+    "confirm": true,
+    "channel": "max_discharge_power"
+   },
+   "max_feed_in": {
+    "label": "Max feed-in",
+    "params": {
+     "value": {
+      "label": "Max feed-in",
+      "unit": "W",
+      "min": -1,
+      "max": 1000000,
+      "required": true
+     }
+    },
+    "writes": [
+     {
+      "register": "max_feed_in_power",
+      "value": "${value}"
+     }
+    ],
+    "settle_s": 5,
+    "verify": [
+     {
+      "read": "max_feed_in_power",
+      "expect": "${value}",
+      "tolerance": 0.5
+     }
+    ],
+    "confirm": true,
+    "channel": "max_feed_in_power"
+   },
+   "min_soc": {
+    "label": "Minimum SOC",
+    "params": {
+     "value": {
+      "label": "Minimum SOC",
+      "unit": "%",
+      "min": 0,
+      "max": 100,
+      "required": true
+     }
+    },
+    "writes": [
+     {
+      "register": "min_soc_limit",
+      "value": "${value}"
+     }
+    ],
+    "settle_s": 5,
+    "verify": [
+     {
+      "read": "min_soc_limit",
+      "expect": "${value}",
+      "tolerance": 0.5
+     }
+    ],
+    "confirm": true,
+    "channel": "min_soc_limit"
+   }
+  },
+  "components": {
+   "battery": {
+    "name": "Battery",
+    "description": "A battery service of the GX: a battery monitor (SmartShunt, BMV) or a BMS on the GX's CAN (Seplos, Pylontech, BYD…). Fields a model does not have never arrive: a monitor has no cell data, a BMS no discharge history.",
+    "kind": "battery",
+    "instance": {
+     "label": "Battery instance",
+     "hint": "The service's instance on the GX (Settings → Services, or the VRM device list), e.g. 288 or 512. \"Find on the device\" lists them."
+    },
+    "discover": {
+     "topic": "N/{portal}/battery/+/ProductName",
+     "name_topic": "N/{portal}/battery/{instance}/CustomName"
+    },
+    "categories": {
+     "battery": {
+      "label": "Battery",
+      "order": 1
+     },
+     "bms": {
+      "label": "BMS",
+      "order": 2
+     },
+     "history": {
+      "label": "History",
+      "order": 3
+     },
+     "alarms": {
+      "label": "Alarms",
+      "order": 4
+     },
+     "status": {
+      "label": "Status",
+      "order": 5
+     }
+    },
+    "display": {
+     "unit_label": "Battery",
+     "unit_label_plural": "Batteries",
+     "icon": "battery-half",
+     "glance": [
+      "soc",
+      "battery_power",
+      "pack_voltage",
+      "battery_temperature"
+     ],
+     "hero": [
+      "soc",
+      "battery_power",
+      "pack_voltage"
+     ],
+     "alarms": [
+      {
+       "field": "alarm",
+       "severity": "danger"
+      },
+      {
+       "field": "alarm_low_soc",
+       "severity": "warning"
+      },
+      {
+       "field": "alarm_low_voltage",
+       "severity": "danger"
+      },
+      {
+       "field": "alarm_high_voltage",
+       "severity": "danger"
+      },
+      {
+       "field": "alarm_low_temperature",
+       "severity": "warning"
+      },
+      {
+       "field": "alarm_high_temperature",
+       "severity": "danger"
+      },
+      {
+       "field": "alarm_mid_voltage",
+       "severity": "warning"
+      },
+      {
+       "field": "alarm_cell_imbalance",
+       "severity": "warning"
+      },
+      {
+       "field": "alarm_high_cell_voltage",
+       "severity": "danger"
+      },
+      {
+       "field": "alarm_high_charge_current",
+       "severity": "warning"
+      },
+      {
+       "field": "alarm_high_discharge_current",
+       "severity": "warning"
+      },
+      {
+       "field": "alarm_high_charge_temperature",
+       "severity": "warning"
+      },
+      {
+       "field": "alarm_low_charge_temperature",
+       "severity": "warning"
+      },
+      {
+       "field": "alarm_internal_failure",
+       "severity": "danger"
+      },
+      {
+       "field": "alarm_charge_blocked",
+       "severity": "danger"
+      },
+      {
+       "field": "alarm_discharge_blocked",
+       "severity": "danger"
+      }
+     ]
+    },
+    "registers": [
+     {
+      "address": 1,
+      "name": "soc",
+      "label": "State of charge",
+      "unit": "%",
+      "data_type": "float",
+      "category": "battery",
+      "topic": "N/{portal}/battery/{instance}/Soc",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 2,
+      "name": "soh",
+      "label": "State of health",
+      "unit": "%",
+      "data_type": "float",
+      "category": "battery",
+      "topic": "N/{portal}/battery/{instance}/Soh",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 3,
+      "name": "pack_voltage",
+      "label": "Voltage",
+      "unit": "V",
+      "data_type": "float",
+      "category": "battery",
+      "topic": "N/{portal}/battery/{instance}/Dc/0/Voltage",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 4,
+      "name": "battery_current",
+      "label": "Current (+ charging)",
+      "unit": "A",
+      "data_type": "float",
+      "category": "battery",
+      "topic": "N/{portal}/battery/{instance}/Dc/0/Current",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 5,
+      "name": "battery_power",
+      "label": "Power (+ charging)",
+      "unit": "W",
+      "data_type": "float",
+      "category": "battery",
+      "topic": "N/{portal}/battery/{instance}/Dc/0/Power",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 6,
+      "name": "battery_temperature",
+      "label": "Battery temperature",
+      "unit": "°C",
+      "data_type": "float",
+      "category": "battery",
+      "topic": "N/{portal}/battery/{instance}/Dc/0/Temperature",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 7,
+      "name": "total_capacity",
+      "label": "Capacity",
+      "unit": "Ah",
+      "data_type": "float",
+      "category": "battery",
+      "topic": "N/{portal}/battery/{instance}/Capacity",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 8,
+      "name": "installed_capacity",
+      "label": "Installed capacity",
+      "unit": "Ah",
+      "data_type": "float",
+      "category": "battery",
+      "topic": "N/{portal}/battery/{instance}/InstalledCapacity",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 9,
+      "name": "consumed_ah",
+      "label": "Consumed since full",
+      "unit": "Ah",
+      "data_type": "float",
+      "category": "battery",
+      "topic": "N/{portal}/battery/{instance}/ConsumedAmphours",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 10,
+      "name": "time_to_go",
+      "label": "Time to go",
+      "unit": "s",
+      "data_type": "float",
+      "category": "battery",
+      "topic": "N/{portal}/battery/{instance}/TimeToGo",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 11,
+      "name": "connected",
+      "label": "Connected",
+      "unit": "",
+      "data_type": "float",
+      "category": "status",
+      "topic": "N/{portal}/battery/{instance}/Connected",
+      "json_path": "value",
+      "poll_group": "normal",
+      "enum": {
+       "0": "No",
+       "1": "Yes"
+      }
+     },
+     {
+      "address": 300,
+      "name": "product_name",
+      "label": "Product",
+      "unit": "",
+      "data_type": "string:16",
+      "category": "status",
+      "topic": "N/{portal}/battery/{instance}/ProductName",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 320,
+      "name": "custom_name",
+      "label": "Name on the GX",
+      "unit": "",
+      "data_type": "string:16",
+      "category": "status",
+      "topic": "N/{portal}/battery/{instance}/CustomName",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 40,
+      "name": "charge_current_limit",
+      "label": "Max charge current (BMS)",
+      "unit": "A",
+      "data_type": "float",
+      "category": "bms",
+      "topic": "N/{portal}/battery/{instance}/Info/MaxChargeCurrent",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 41,
+      "name": "discharge_current_limit",
+      "label": "Max discharge current (BMS)",
+      "unit": "A",
+      "data_type": "float",
+      "category": "bms",
+      "topic": "N/{portal}/battery/{instance}/Info/MaxDischargeCurrent",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 42,
+      "name": "charge_voltage_limit",
+      "label": "Max charge voltage (BMS)",
+      "unit": "V",
+      "data_type": "float",
+      "category": "bms",
+      "topic": "N/{portal}/battery/{instance}/Info/MaxChargeVoltage",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 43,
+      "name": "discharge_voltage_limit",
+      "label": "Low-voltage cut-off (BMS)",
+      "unit": "V",
+      "data_type": "float",
+      "category": "bms",
+      "topic": "N/{portal}/battery/{instance}/Info/BatteryLowVoltage",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 44,
+      "name": "min_cell_voltage",
+      "label": "Lowest cell voltage",
+      "unit": "V",
+      "data_type": "float",
+      "category": "bms",
+      "topic": "N/{portal}/battery/{instance}/System/MinCellVoltage",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 45,
+      "name": "max_cell_voltage",
+      "label": "Highest cell voltage",
+      "unit": "V",
+      "data_type": "float",
+      "category": "bms",
+      "topic": "N/{portal}/battery/{instance}/System/MaxCellVoltage",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 46,
+      "name": "min_cell_temp",
+      "label": "Lowest cell temperature",
+      "unit": "°C",
+      "data_type": "float",
+      "category": "bms",
+      "topic": "N/{portal}/battery/{instance}/System/MinCellTemperature",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 47,
+      "name": "max_cell_temp",
+      "label": "Highest cell temperature",
+      "unit": "°C",
+      "data_type": "float",
+      "category": "bms",
+      "topic": "N/{portal}/battery/{instance}/System/MaxCellTemperature",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 340,
+      "name": "min_voltage_cell",
+      "label": "Where the lowest cell is",
+      "unit": "",
+      "data_type": "string:16",
+      "category": "bms",
+      "topic": "N/{portal}/battery/{instance}/System/MinVoltageCellId",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 360,
+      "name": "max_voltage_cell",
+      "label": "Where the highest cell is",
+      "unit": "",
+      "data_type": "string:16",
+      "category": "bms",
+      "topic": "N/{portal}/battery/{instance}/System/MaxVoltageCellId",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 380,
+      "name": "min_temp_cell",
+      "label": "Where the coldest cell is",
+      "unit": "",
+      "data_type": "string:16",
+      "category": "bms",
+      "topic": "N/{portal}/battery/{instance}/System/MinTemperatureCellId",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 400,
+      "name": "max_temp_cell",
+      "label": "Where the warmest cell is",
+      "unit": "",
+      "data_type": "string:16",
+      "category": "bms",
+      "topic": "N/{portal}/battery/{instance}/System/MaxTemperatureCellId",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 52,
+      "name": "modules_online",
+      "label": "Modules online",
+      "unit": "",
+      "data_type": "float",
+      "category": "bms",
+      "topic": "N/{portal}/battery/{instance}/System/NrOfModulesOnline",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 53,
+      "name": "modules_offline",
+      "label": "Modules offline",
+      "unit": "",
+      "data_type": "float",
+      "category": "bms",
+      "topic": "N/{portal}/battery/{instance}/System/NrOfModulesOffline",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 54,
+      "name": "modules_blocking_charge",
+      "label": "Modules blocking charge",
+      "unit": "",
+      "data_type": "float",
+      "category": "bms",
+      "topic": "N/{portal}/battery/{instance}/System/NrOfModulesBlockingCharge",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 55,
+      "name": "modules_blocking_discharge",
+      "label": "Modules blocking discharge",
+      "unit": "",
+      "data_type": "float",
+      "category": "bms",
+      "topic": "N/{portal}/battery/{instance}/System/NrOfModulesBlockingDischarge",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 70,
+      "name": "cycles",
+      "label": "Charge cycles",
+      "unit": "",
+      "data_type": "float",
+      "category": "history",
+      "topic": "N/{portal}/battery/{instance}/History/ChargeCycles",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 71,
+      "name": "full_discharges",
+      "label": "Full discharges",
+      "unit": "",
+      "data_type": "float",
+      "category": "history",
+      "topic": "N/{portal}/battery/{instance}/History/FullDischarges",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 72,
+      "name": "charged_energy",
+      "label": "Energy charged (lifetime)",
+      "unit": "kWh",
+      "data_type": "float",
+      "category": "history",
+      "topic": "N/{portal}/battery/{instance}/History/ChargedEnergy",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 73,
+      "name": "discharged_energy",
+      "label": "Energy discharged (lifetime)",
+      "unit": "kWh",
+      "data_type": "float",
+      "category": "history",
+      "topic": "N/{portal}/battery/{instance}/History/DischargedEnergy",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 74,
+      "name": "deepest_discharge",
+      "label": "Deepest discharge",
+      "unit": "Ah",
+      "data_type": "float",
+      "category": "history",
+      "topic": "N/{portal}/battery/{instance}/History/DeepestDischarge",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 75,
+      "name": "last_discharge",
+      "label": "Last discharge",
+      "unit": "Ah",
+      "data_type": "float",
+      "category": "history",
+      "topic": "N/{portal}/battery/{instance}/History/LastDischarge",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 76,
+      "name": "average_discharge",
+      "label": "Average discharge",
+      "unit": "Ah",
+      "data_type": "float",
+      "category": "history",
+      "topic": "N/{portal}/battery/{instance}/History/AverageDischarge",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 77,
+      "name": "total_ah_drawn",
+      "label": "Total drawn",
+      "unit": "Ah",
+      "data_type": "float",
+      "category": "history",
+      "topic": "N/{portal}/battery/{instance}/History/TotalAhDrawn",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 78,
+      "name": "time_since_full",
+      "label": "Since the last full charge",
+      "unit": "s",
+      "data_type": "float",
+      "category": "history",
+      "topic": "N/{portal}/battery/{instance}/History/TimeSinceLastFullCharge",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 79,
+      "name": "min_voltage_seen",
+      "label": "Lowest voltage seen",
+      "unit": "V",
+      "data_type": "float",
+      "category": "history",
+      "topic": "N/{portal}/battery/{instance}/History/MinimumVoltage",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 80,
+      "name": "max_voltage_seen",
+      "label": "Highest voltage seen",
+      "unit": "V",
+      "data_type": "float",
+      "category": "history",
+      "topic": "N/{portal}/battery/{instance}/History/MaximumVoltage",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 100,
+      "name": "alarm",
+      "label": "Alarm",
+      "unit": "",
+      "data_type": "float",
+      "category": "alarms",
+      "topic": "N/{portal}/battery/{instance}/Alarms/Alarm",
+      "json_path": "value",
+      "poll_group": "normal",
+      "enum": {
+       "0": "OK",
+       "1": "Warning",
+       "2": "Alarm"
+      }
+     },
+     {
+      "address": 101,
+      "name": "alarm_low_soc",
+      "label": "Low state of charge",
+      "unit": "",
+      "data_type": "float",
+      "category": "alarms",
+      "topic": "N/{portal}/battery/{instance}/Alarms/LowSoc",
+      "json_path": "value",
+      "poll_group": "normal",
+      "enum": {
+       "0": "OK",
+       "1": "Warning",
+       "2": "Alarm"
+      }
+     },
+     {
+      "address": 102,
+      "name": "alarm_low_voltage",
+      "label": "Low voltage",
+      "unit": "",
+      "data_type": "float",
+      "category": "alarms",
+      "topic": "N/{portal}/battery/{instance}/Alarms/LowVoltage",
+      "json_path": "value",
+      "poll_group": "normal",
+      "enum": {
+       "0": "OK",
+       "1": "Warning",
+       "2": "Alarm"
+      }
+     },
+     {
+      "address": 103,
+      "name": "alarm_high_voltage",
+      "label": "High voltage",
+      "unit": "",
+      "data_type": "float",
+      "category": "alarms",
+      "topic": "N/{portal}/battery/{instance}/Alarms/HighVoltage",
+      "json_path": "value",
+      "poll_group": "normal",
+      "enum": {
+       "0": "OK",
+       "1": "Warning",
+       "2": "Alarm"
+      }
+     },
+     {
+      "address": 104,
+      "name": "alarm_low_temperature",
+      "label": "Low temperature",
+      "unit": "",
+      "data_type": "float",
+      "category": "alarms",
+      "topic": "N/{portal}/battery/{instance}/Alarms/LowTemperature",
+      "json_path": "value",
+      "poll_group": "normal",
+      "enum": {
+       "0": "OK",
+       "1": "Warning",
+       "2": "Alarm"
+      }
+     },
+     {
+      "address": 105,
+      "name": "alarm_high_temperature",
+      "label": "High temperature",
+      "unit": "",
+      "data_type": "float",
+      "category": "alarms",
+      "topic": "N/{portal}/battery/{instance}/Alarms/HighTemperature",
+      "json_path": "value",
+      "poll_group": "normal",
+      "enum": {
+       "0": "OK",
+       "1": "Warning",
+       "2": "Alarm"
+      }
+     },
+     {
+      "address": 106,
+      "name": "alarm_mid_voltage",
+      "label": "Midpoint deviation",
+      "unit": "",
+      "data_type": "float",
+      "category": "alarms",
+      "topic": "N/{portal}/battery/{instance}/Alarms/MidVoltage",
+      "json_path": "value",
+      "poll_group": "normal",
+      "enum": {
+       "0": "OK",
+       "1": "Warning",
+       "2": "Alarm"
+      }
+     },
+     {
+      "address": 107,
+      "name": "alarm_cell_imbalance",
+      "label": "Cell imbalance",
+      "unit": "",
+      "data_type": "float",
+      "category": "alarms",
+      "topic": "N/{portal}/battery/{instance}/Alarms/CellImbalance",
+      "json_path": "value",
+      "poll_group": "normal",
+      "enum": {
+       "0": "OK",
+       "1": "Warning",
+       "2": "Alarm"
+      }
+     },
+     {
+      "address": 108,
+      "name": "alarm_high_cell_voltage",
+      "label": "High cell voltage",
+      "unit": "",
+      "data_type": "float",
+      "category": "alarms",
+      "topic": "N/{portal}/battery/{instance}/Alarms/HighCellVoltage",
+      "json_path": "value",
+      "poll_group": "normal",
+      "enum": {
+       "0": "OK",
+       "1": "Warning",
+       "2": "Alarm"
+      }
+     },
+     {
+      "address": 109,
+      "name": "alarm_high_charge_current",
+      "label": "High charge current",
+      "unit": "",
+      "data_type": "float",
+      "category": "alarms",
+      "topic": "N/{portal}/battery/{instance}/Alarms/HighChargeCurrent",
+      "json_path": "value",
+      "poll_group": "normal",
+      "enum": {
+       "0": "OK",
+       "1": "Warning",
+       "2": "Alarm"
+      }
+     },
+     {
+      "address": 110,
+      "name": "alarm_high_discharge_current",
+      "label": "High discharge current",
+      "unit": "",
+      "data_type": "float",
+      "category": "alarms",
+      "topic": "N/{portal}/battery/{instance}/Alarms/HighDischargeCurrent",
+      "json_path": "value",
+      "poll_group": "normal",
+      "enum": {
+       "0": "OK",
+       "1": "Warning",
+       "2": "Alarm"
+      }
+     },
+     {
+      "address": 111,
+      "name": "alarm_high_charge_temperature",
+      "label": "High charge temperature",
+      "unit": "",
+      "data_type": "float",
+      "category": "alarms",
+      "topic": "N/{portal}/battery/{instance}/Alarms/HighChargeTemperature",
+      "json_path": "value",
+      "poll_group": "normal",
+      "enum": {
+       "0": "OK",
+       "1": "Warning",
+       "2": "Alarm"
+      }
+     },
+     {
+      "address": 112,
+      "name": "alarm_low_charge_temperature",
+      "label": "Low charge temperature",
+      "unit": "",
+      "data_type": "float",
+      "category": "alarms",
+      "topic": "N/{portal}/battery/{instance}/Alarms/LowChargeTemperature",
+      "json_path": "value",
+      "poll_group": "normal",
+      "enum": {
+       "0": "OK",
+       "1": "Warning",
+       "2": "Alarm"
+      }
+     },
+     {
+      "address": 113,
+      "name": "alarm_internal_failure",
+      "label": "Internal failure",
+      "unit": "",
+      "data_type": "float",
+      "category": "alarms",
+      "topic": "N/{portal}/battery/{instance}/Alarms/InternalFailure",
+      "json_path": "value",
+      "poll_group": "normal",
+      "enum": {
+       "0": "OK",
+       "1": "Warning",
+       "2": "Alarm"
+      }
+     },
+     {
+      "address": 114,
+      "name": "alarm_charge_blocked",
+      "label": "Charge blocked",
+      "unit": "",
+      "data_type": "float",
+      "category": "alarms",
+      "topic": "N/{portal}/battery/{instance}/Alarms/ChargeBlocked",
+      "json_path": "value",
+      "poll_group": "normal",
+      "enum": {
+       "0": "OK",
+       "1": "Warning",
+       "2": "Alarm"
+      }
+     },
+     {
+      "address": 115,
+      "name": "alarm_discharge_blocked",
+      "label": "Discharge blocked",
+      "unit": "",
+      "data_type": "float",
+      "category": "alarms",
+      "topic": "N/{portal}/battery/{instance}/Alarms/DischargeBlocked",
+      "json_path": "value",
+      "poll_group": "normal",
+      "enum": {
+       "0": "OK",
+       "1": "Warning",
+       "2": "Alarm"
+      }
+     }
+    ],
+    "calculated": [
+     {
+      "name": "cell_delta",
+      "label": "Cell spread",
+      "unit": "mV",
+      "decimals": 0,
+      "expr": "(max_cell_voltage - min_cell_voltage) * 1000",
+      "category": "bms"
+     },
+     {
+      "name": "energy_remaining",
+      "label": "Energy stored",
+      "unit": "Wh",
+      "decimals": 0,
+      "expr": "total_capacity * soc / 100 * pack_voltage",
+      "category": "battery"
+     },
+     {
+      "name": "time_to_go_h",
+      "label": "Time to go",
+      "unit": "h",
+      "decimals": 1,
+      "expr": "time_to_go / 3600",
+      "category": "battery"
+     },
+     {
+      "name": "battery_status",
+      "label": "Battery state",
+      "category": "battery",
+      "expr": "1 if battery_power > 20 else 2 if battery_power < -20 else 0",
+      "enum": {
+       "0": "Idle",
+       "1": "Charging",
+       "2": "Discharging"
+      }
+     }
+    ]
+   },
+   "temperature": {
+    "name": "Temperature sensor",
+    "description": "A temperature service of the GX: a Bluetooth sensor it hears (RuuviTag, Mopeka…) or a wired temperature input. Humidity and pressure arrive only from sensors that measure them. BLE sensors report every few seconds to a minute.",
+    "kind": "sensor",
+    "instance": {
+     "label": "Sensor instance",
+     "hint": "The sensor's instance on the GX, e.g. 22. \"Find on the device\" lists them."
+    },
+    "discover": {
+     "topic": "N/{portal}/temperature/+/ProductName",
+     "name_topic": "N/{portal}/temperature/{instance}/CustomName"
+    },
+    "categories": {
+     "climate": {
+      "label": "Climate",
+      "order": 1
+     },
+     "diagnostics": {
+      "label": "Diagnostics",
+      "order": 2
+     }
+    },
+    "display": {
+     "unit_label": "Sensor",
+     "unit_label_plural": "Sensors",
+     "icon": "thermometer-half",
+     "glance": [
+      "ambient_temp",
+      "humidity"
+     ],
+     "hero": [
+      "ambient_temp",
+      "humidity",
+      "air_pressure"
+     ],
+     "alarms": [
+      {
+       "field": "alarm_low_battery",
+       "severity": "warning"
+      }
+     ]
+    },
+    "registers": [
+     {
+      "address": 1,
+      "name": "ambient_temp",
+      "label": "Temperature",
+      "unit": "°C",
+      "data_type": "float",
+      "category": "climate",
+      "topic": "N/{portal}/temperature/{instance}/Temperature",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 2,
+      "name": "humidity",
+      "label": "Humidity",
+      "unit": "%",
+      "data_type": "float",
+      "category": "climate",
+      "topic": "N/{portal}/temperature/{instance}/Humidity",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 3,
+      "name": "air_pressure",
+      "label": "Air pressure",
+      "unit": "hPa",
+      "data_type": "float",
+      "category": "climate",
+      "topic": "N/{portal}/temperature/{instance}/Pressure",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 4,
+      "name": "sensor_battery_voltage",
+      "label": "Sensor battery",
+      "unit": "V",
+      "data_type": "float",
+      "category": "diagnostics",
+      "topic": "N/{portal}/temperature/{instance}/BatteryVoltage",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 5,
+      "name": "alarm_low_battery",
+      "label": "Sensor battery low",
+      "unit": "",
+      "data_type": "float",
+      "category": "diagnostics",
+      "topic": "N/{portal}/temperature/{instance}/Alarms/LowBattery",
+      "json_path": "value",
+      "poll_group": "normal",
+      "enum": {
+       "0": "OK",
+       "1": "Warning",
+       "2": "Alarm"
+      }
+     },
+     {
+      "address": 6,
+      "name": "connected",
+      "label": "Connected",
+      "unit": "",
+      "data_type": "float",
+      "category": "diagnostics",
+      "topic": "N/{portal}/temperature/{instance}/Connected",
+      "json_path": "value",
+      "poll_group": "normal",
+      "enum": {
+       "0": "No",
+       "1": "Yes"
+      }
+     },
+     {
+      "address": 7,
+      "name": "sensor_status",
+      "label": "Sensor status",
+      "unit": "",
+      "data_type": "float",
+      "category": "diagnostics",
+      "topic": "N/{portal}/temperature/{instance}/Status",
+      "json_path": "value",
+      "poll_group": "normal",
+      "enum": {
+       "0": "OK",
+       "1": "Disconnected",
+       "2": "Short circuited",
+       "3": "Reverse polarity",
+       "4": "Unknown"
+      }
+     },
+     {
+      "address": 8,
+      "name": "temperature_type",
+      "label": "Kind of place",
+      "unit": "",
+      "data_type": "float",
+      "category": "diagnostics",
+      "topic": "N/{portal}/temperature/{instance}/TemperatureType",
+      "json_path": "value",
+      "poll_group": "normal",
+      "enum": {
+       "0": "Battery",
+       "1": "Fridge",
+       "2": "Generic",
+       "3": "Room",
+       "4": "Outdoor",
+       "5": "Water heater",
+       "6": "Freezer"
+      }
+     },
+     {
+      "address": 300,
+      "name": "product_name",
+      "label": "Product",
+      "unit": "",
+      "data_type": "string:16",
+      "category": "diagnostics",
+      "topic": "N/{portal}/temperature/{instance}/ProductName",
+      "json_path": "value",
+      "poll_group": "normal"
+     },
+     {
+      "address": 320,
+      "name": "custom_name",
+      "label": "Name on the GX",
+      "unit": "",
+      "data_type": "string:16",
+      "category": "diagnostics",
+      "topic": "N/{portal}/temperature/{instance}/CustomName",
+      "json_path": "value",
+      "poll_group": "normal"
+     }
+    ]
+   }
+  }
+ }
+}

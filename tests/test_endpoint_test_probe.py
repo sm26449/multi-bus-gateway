@@ -83,7 +83,7 @@ def test_every_unit_is_probed_over_every_source(tmp_path, solar_api):
     assert 'blocked' not in by[('solar_api', 2)]['message']
     # a pushed input cannot be asked — said plainly, never counted as failed
     assert by[('pushed', 1)]['ok'] is None
-    assert 'not probed' in by[('pushed', 1)]['message']
+    assert 'cannot be asked' in by[('pushed', 1)]['message']
     # per-source census for the page's headline line
     srcs = {s['id']: s for s in d['sources']}
     assert srcs['solar_api'] == {**srcs['solar_api'], 'protocol': 'http',

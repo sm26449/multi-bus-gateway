@@ -250,3 +250,38 @@ def test_toggle_start_failure_reverts_the_flag(app_with_mgr):
     mgr._start_one = orig
     assert client.post("/api/virtual-meters/t_em/toggle?on=true").status_code == 200
     assert any(m.t.id == "t_em" for m in mgr.meters)
+
+
+# ── in a high-availability pair: failover follows the role, balanced does not ─
+
+def test_a_standby_serves_only_its_balanced_meters(app_with_mgr):
+    from multibus import role as gateway_role
+    client, mgr = app_with_mgr
+    _save_template(client, "t_em", PORT_A)
+    _save_template(client, "t_bal", PORT_B)
+    for tid, port in (("t_em", PORT_A), ("t_bal", PORT_B)):
+        assert client.post("/api/virtual-meters", json={"template": tid, "port": port,
+                                                        "enabled": True}).status_code == 200
+    assert client.patch("/api/virtual-meters/t_bal", json={"ha_mode": "sideways"}).status_code == 400
+    assert client.patch("/api/virtual-meters/t_bal", json={"ha_mode": "balanced"}).json()["ha_mode"] == "balanced"
+    running = lambda: sorted(m.t.id for m in mgr.meters)                     # noqa: E731
+    role = client.app.state.role
+    try:
+        role.set("standby", 1, by="t")
+        mgr.standby()
+        assert running() == ["t_bal"]                                          # the partner serves t_em
+        mgr.start_all()
+        assert running() == ["t_bal"]                                          # a boot as standby: the same
+        rows = {r["template"]: r for r in client.get("/api/virtual-meters").json()["instances"]}
+        assert rows["t_em"]["waits_for_active"] and rows["t_em"]["ha_mode"] == "failover"
+        assert not rows["t_bal"]["waits_for_active"]
+        client.patch("/api/virtual-meters/t_em", json={"ha_mode": "balanced"})
+        assert running() == ["t_bal", "t_em"]                                  # made balanced: it serves now
+        client.patch("/api/virtual-meters/t_em", json={"ha_mode": "failover"})
+        assert running() == ["t_bal"]                                          # and back
+        role.set("active", 2, by="t")
+        mgr.start_all()
+        assert running() == ["t_bal", "t_em"]                                  # each once
+        assert "ha_mode" not in (mgr._load_cfg()["instances"][0])              # failover = absent
+    finally:
+        gateway_role.install(None)

@@ -38,6 +38,21 @@ informational: loading never depends on it, so the compatibility contract is
 exactly the above. (Device *templates* additionally carry a `schema_version`,
 and newer template schemas are rejected with a clear error.)
 
+## Next release — the Device Builder moved out (breaking)
+
+- ESP flashing, ESPHome builds and the node list now live in the separate
+  **multi-bus-gateway-esphome** service. The Builder card, `/api/builder/*`,
+  the USB flasher and the `ESPHOME_*` variables are gone.
+- The bundled compose no longer starts an `esphome` container. If you keep
+  your own copy of `docker-compose.yml`, its `esphome` service and
+  `esphome-config` volume can go (back the volume up first if it holds node
+  YAMLs you want to keep). Remove `ESPHOME_*` lines from `.env`.
+- An `esphome:` block in `config.yaml` is ignored (one log line at start)
+  and dropped by the next save; nothing to do.
+- To link to the new service from Devices, set **Settings → Security → ESP
+  nodes service** (`ui.nodes_url`, e.g. `/nodes/`). Put it behind the same
+  login by having the reverse proxy ask `GET /api/auth/forward`.
+
 ## 3.86 — the template decides how a unit is shown
 
 No config migration. What you may notice:

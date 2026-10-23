@@ -8,6 +8,7 @@ Companion documents:
 
 - **[architecture.md](architecture.md)** — how the engine works (diagrams).
 - **[API.md](API.md)** — full REST endpoint reference with required roles.
+- **[api-examples.md](api-examples.md)** — the API by example: commands, rules, MQTT, a Python client.
 - **[virtual-meter-spec.md](virtual-meter-spec.md)** — the wire-level contract
   of a virtual meter (staleness policies, quality block at 61440).
 - **[device-catalog.md](device-catalog.md)** — every bundled register map and
@@ -28,8 +29,9 @@ Companion documents:
 9. [InfluxDB & Grafana](#9-influxdb--grafana)
 10. [REST push & the HTTP/JSON feed](#10-rest-push--the-httpjson-feed)
 11. [Virtual Meters — step by step](#11-virtual-meters--step-by-step)
-11b. [Device Builder — remote ESP32 nodes (ESPHome)](#11b-device-builder--remote-esp32-nodes-esphome)
+11b. [ESP nodes — a separate service](#11b-esp-nodes--a-separate-service)
 11c. [Power Quality — the PQ event recorder (Janitza)](#11c-power-quality--the-pq-event-recorder-janitza)
+11d. [OPC UA server — for SCADA and HMI panels](#11d-opc-ua-server--for-scada-and-hmi-panels)
 12. [Alerts & webhooks](#12-alerts--webhooks)
 13. [Diagnostics](#13-diagnostics)
 14. [Modbus writes & dead-man leases](#14-modbus-writes--dead-man-leases)
@@ -71,7 +73,7 @@ cd multi-bus-gateway
 cp .env.example .env
 
 # 3) Start the COMPLETE stack — gateway + MQTT broker (mosquitto) +
-#    InfluxDB + Grafana + ESPHome (MQTT Explorer only with --profile debug). Everything the product
+#    InfluxDB + Grafana (MQTT Explorer only with --profile debug). Everything the product
 #    needs ships in this one file; nothing external to install.
 docker compose up -d
 
@@ -84,7 +86,7 @@ Out of the box the pipeline is live end-to-end: the gateway publishes to
 the bundled broker (its default broker host is `mosquitto`), **MQTT
 Explorer** on `:4000` shows every topic flowing, and InfluxDB self-
 configures on first boot (org/bucket `multibus`; change the password/token
-in `.env`, then enable the sink in Config → InfluxDB and paste the token —
+in `.env`, then enable the sink in Settings → InfluxDB and paste the token —
 Grafana is on `:3000`). Want less? Start only what you need:
 `docker compose up -d multi-bus-gateway mosquitto`. Prefer your own broker
 or InfluxDB later? Point the gateway at them from the UI — the bundled ones
@@ -122,7 +124,7 @@ Logs: `docker compose logs -f`.
 ## 3. First configuration
 
 > **Tip:** after the first start you can set everything from the UI — device
-> connections on the **Devices** page, MQTT/InfluxDB under **Config** — it
+> connections on the **Devices** page, MQTT/InfluxDB under **Settings** — it
 > persists to `config/config.yaml` and applies without a restart. `.env` only
 > pre-seeds a fresh deploy; an env value takes precedence and **locks** that
 > field in the UI (remove it from the environment to edit it again).
@@ -139,10 +141,6 @@ The optional env variables:
 | `UI_HOST` | bind address — bare-metal default is loopback (`127.0.0.1`); the container image sets `0.0.0.0` (exposure is governed by the compose port mapping) | `0.0.0.0` |
 | `API_KEY` | require `X-API-Key` on mutating requests | — |
 | `VMETER_PORT_START` / `VMETER_PORT_END` | virtual-meter port range | `1502` / `1512` |
-| `TZ` | timezone of the bundled **ESPHome** container only (the compose file passes it to `esphome`); the gateway never reads it — its calendar boundaries and reports use `ui.timezone` (Config → General, §18) | `Europe/Bucharest` |
-| `ESPHOME_URL` | where the gateway finds the ESPHome dashboard (Device Builder); on a fresh deploy it also enables the section | `http://esphome:6052` |
-| `ESPHOME_ENABLED` | force the Builder on/off at every start (otherwise the UI decides) | — |
-| `ESPHOME_DASHBOARD_USERNAME` / `ESPHOME_DASHBOARD_PASSWORD` | login on the ESPHome dashboard; the same values also configure the gateway's client | — |
 
 The status dots in the UI top bar (Modbus / MQTT / InfluxDB) turn green as
 each pipeline connects — click one for details.
@@ -165,15 +163,42 @@ Open `http://<host>:8080`. The top navigation:
   up to 12 hero widgets (picked and ordered in *Customize*) above collapsible
   sections grouping EVERY value by measurement; a device switcher button sits
   next to *All devices* for quick lateral jumps. Default widget colors follow
-  the phase convention configured under Config → General. A single-device
+  the phase convention configured under Settings → General. A single-device
   install skips the overview and opens straight on the device view.
-- **Devices** — every southbound source as a card with live health; the
-  **Add Device** wizard, **Add Installation** (§5b) and **Discover devices**
-  live here. Opening a device gives its tabbed workspace: *Overview*
-  (read-only summary + data health), *Edit* (connection, template, poll
-  intervals, output toggles), *Registers*, *Calculated*, *Outputs*, and
-  per-device *Monitor / History / Energy*. A unit of an installation shows
-  *Read via* instead of *Edit*, and a *Commands* tab (§14b).
+- **Devices** — every southbound source with its live health, grouped by
+  installation. Find one with the search box (`/` jumps to it) and the
+  filters: *kind* (meter, inverter, battery, heat pump…, derived from the
+  template and the device's role), *state*, *protocol*. The **Add Device**
+  wizard, **Add Installation** (§5b), **Discover devices** and the
+  **bridges** (the boxes a serial bus is reached through) live here.
+  Opening a device gives its workspace, its tabs in three groups:
+  - *Live* — *Overview* (what it reads now, data health, last read),
+    *History*, *Energy*, and *Power Quality* on a meter that records it;
+  - *Configure* — *Connection* (address, template, how often it reads; a
+    unit of an installation shows *Read via* instead, set on its
+    installation), *Measurements* (what is read), *Calculated*, *Commands*
+    (§14b), *Meters* (§5.4), *Outputs*, *Attributes* (§5c);
+  - *Diagnose* — *Monitor* (its frames on the wire) and *Logs* (its
+    acquisition events).
+
+  The ⋯ menu holds what is done *to* the device: its kind, Disable, Delete.
+  A device something uses — a rule, a virtual meter, a device it measures,
+  a formula that names it — cannot be deleted: the page lists what uses it (*Used by*) and
+  offers **Disable** instead. Remove those uses first; that is the
+  operator's call, never done for you.
+- **Outputs** (in a device) — where its values go. On the left, every
+  output (MQTT, InfluxDB, HTTP/JSON, OPC UA, REST push) with its state and
+  where it goes (topic, bucket, how many values); on the right, the chosen
+  one's settings. MQTT and InfluxDB also say **when** a value goes out —
+  on change or at every reading, how often an unchanged one is resent (MQTT),
+  at most how often a point is written (InfluxDB) — as in Settings or the
+  device's own (an installation's units share their group's). Each switch
+  applies at once, with no poller restart;
+  what has fields to type (REST push, the OPC UA values) saves them from
+  its own panel. The arrow keys move along the list; the open output is
+  remembered. The **write lock** is with the device's *Commands* (or in
+  *Connection* when it has none); the **PQ event recorder** is on its *Power
+  Quality* tab.
 - **Rules** — the declarative controller: one card per rule with its state,
   want → actual, decisions, Arm / To shadow (see §14c).
 - **Templates** — the catalog behind your devices: **device maps** (how a
@@ -181,12 +206,20 @@ Open `http://<host>:8080`. The top navigation:
   of §11) — bundled, uploaded, imported from CSV/YAML, edited.
 - **Status** — pipeline health, error taxonomy, events, alerts, resource
   footprint (see §17).
-- **Config** (labelled *Settings* in the tab bar) — global settings: MQTT,
-  InfluxDB, General (timezone, colors), Security, Backup & Snapshots.
+- **Settings** — the gateway's own settings, one tab each: *MQTT*,
+  *InfluxDB*, *OPC UA* (§11d), *Backup & Restore* (snapshots, rollback, export —
+  §15), *Security* (login, roles, passkeys, HTTPS, Modbus writes — §16),
+  *Alerts* (§12), *General* (timezone, colors), *Site* (its
+  location and attributes — §5c) and, when a companion service is set up,
+  *Modules*.
 - **Virtual Meters** — serve the live values as standard Modbus meters
   (see §11).
 - **Diagnostics** — the commissioning toolbox: bus monitor, register probe,
   discovery, SunSpec scan (see §13).
+
+When the gateway is updated while a page is open, a bar says so: **Reload**
+loads the new version, **Later** hides the bar until the next update. The
+page never reloads by itself — save what you are editing first.
 
 ---
 
@@ -211,9 +244,7 @@ Devices → *Discover devices*:
 - **ESPHome scan** — sweeps the LAN on the native-API port (6053) and asks
   each node for its identity (name, version; nodes with an encrypted API are
   still detected). Works from Docker — the scan is unicast, so it doesn't
-  depend on mDNS/multicast, which doesn't cross the Docker bridge. Nodes that
-  announce their adoption package can be **imported directly** into the
-  Device Builder (they become managed nodes: build/OTA from here).
+  depend on mDNS/multicast, which doesn't cross the Docker bridge.
 - **MQTT topic browse** — connects to a broker and shows its speaking topics
   with payload previews (retained topics appear instantly; a short listen
   window catches live publishers), so you pick a topic instead of typing it.
@@ -249,11 +280,32 @@ Devices → *Discover devices*:
 
      Several slaves on one bus are several devices with different unit IDs:
      they share one connection and take turns. A bus is either polled or
-     tapped.
-   - **Changing it later:** a Modbus device can move between Modbus TCP,
-     UDP, RTU, ASCII, over the network and listen-only, because its register map reads
-     by address either way. Its id, topics and history stay. HTTP and MQTT
-     maps read by path, so going to or from them needs a new device.
+     tapped. Each bus on a bridge's card says how busy its wire was in the
+     last minute — *busy 37 % · capacity left ~63 %* — measured
+     on the wire (time spent waiting for a turn is not counted). When the
+     bus cannot keep up it says *over capacity*: slow the poll groups that
+     need no speed, raise the baud rate, or split the slaves over two buses.
+     Hover the bar for each device's share.
+   - **Changing it later:** on the device's page, **Configure → Connection**
+     is this same form. A Modbus device can move between Modbus TCP, UDP,
+     RTU, ASCII, over the network and listen-only, because its register map
+     reads by address either way. Its id, topics and history stay. HTTP and
+     MQTT maps read by path, so going to or from them needs a new device. The
+     primary meter stays on Modbus TCP (its address may change), and a device
+     that holds components keeps how it is reached.
+   - **Saving it:** Save sends only what you changed — an untouched form
+     sends nothing. Changing *how* it is reached is said beside the choice.
+     Another protocol (UDP or ASCII on or off, TCP to RTU) starts the
+     connection afresh: settings the form does not show (retries, tuning)
+     go back to their defaults. Moving onto or off a bridge keeps them:
+     onto a bridge, its own address and serial line are cleared (the bridge
+     has them); off one, it gets the address you type (port 502 unless you
+     change it). A device on a bridge leaves it only when you choose another
+     way (a direct address, a serial port on this host, or *Take it off the
+     bridge…*); picking another bus moves it and keeps its topics and
+     history. A Modbus timeout is 1–30 s; one stored outside that range
+     (written by hand) is kept until you change it. A refusal from the
+     gateway is said under the field it is about.
    - **HTTP/JSON**: a URL returning JSON; each register extracts its value
      with a `json_path` (e.g. `Body.Data.PowerReal_P_Sum`). URLs must point
      at a private LAN host unless `security.allow_nonlan_http_devices` is
@@ -266,7 +318,13 @@ Devices → *Discover devices*:
    Press **Test connection**: for Modbus, *any* protocol-level answer — even
    an exception — proves a live device; for HTTP with a template chosen the
    test reports how many `json_path`s resolved; for MQTT it connects and
-   waits briefly for a sample message.
+   waits briefly for a sample message. On a saved device, Test asks the
+   device as it runs while nothing is changed; once something is changed, it
+   tries the connection as the form holds it — the edited unit and bus on a
+   bridge, the typed address after leaving one, topic variables and keepalive
+   included — with the stored password when the field is left blank. Nothing
+   is saved by Test. A changed listen-only tap is not probed (it never
+   transmits): save it, then Test reports what it hears.
 2. **Template** — choose from the library (the bundled maps are in
    [device-catalog.md](device-catalog.md)). To write your own from the
    manufacturer's register list, follow **[device-templates.md](device-templates.md)**:
@@ -292,7 +350,11 @@ with its routing identity locked — topics, bucket, tags and HA entities stay
 byte-identical.
 
 **Deleting a device** keeps its register file on disk (data safety) and is
-blocked while any virtual meter sources it.
+refused while anything uses it — a rule that commands or reads it, a
+sequence step, another device's calculated field, a device it measures, a
+virtual meter it feeds, a template formula that names it. Its page lists
+them under **Used by**; change those first, or **Disable** the device
+instead (every reference stays intact).
 
 ### 5.3 How a unit is shown — the template decides
 
@@ -319,6 +381,48 @@ over to the rows the unit already has; your selection, flags, sinks,
 thresholds and formulas stay as they are. The button is on the installation
 page; a standalone device is refreshed through the API
 (`POST /api/devices/{id}/refresh-from-template`).
+
+### 5.4 Electricity measured by other devices — meters with roles
+
+A heat pump, a boiler or a charger often has no meter of its own; a meter on
+its supply measures it. A UPS or a converter has one meter on its input and
+one on its output. **Device → Meters** names those meters, each in a role:
+
+| Role | When | What the device gets |
+|---|---|---|
+| **Consumption** | the one meter on its supply | `power_electric` (W, always positive) and `energy_electric` (the meter's counter, in its unit) |
+| **Input** + **Output** | a meter on each side (a UPS, a charger, a converter) | `power_in`, `power_out` (W), `energy_in`, `energy_out` when the links name a counter, `power_loss` (W), `efficiency_pct` and `load_pct` (%, against the device's rated power, attribute `rating`) |
+
+For each meter you pick the device, its power field and, optionally, its
+energy counter; the picker lists only fields measured in W/kW (power) and
+Wh/kWh (energy). **Sign**: *auto* reads the power as positive whichever way
+the meter is wired; *as is* and *invert* say it explicitly. One meter can
+serve several devices; a chain of meters cannot loop back to the device.
+
+The values are computed when the meter reports, so a device with no
+communication of its own is still measured. `power_loss`, `efficiency_pct`
+and `load_pct` are published only when they can be trusted — both readings
+fresh and taken close together, the input steady, the output not above the
+input beyond the meters' error, the output above a minimum load. Otherwise
+the value is left out (its MQTT topic is cleared) and the device's page says
+why. Two settings under the meters adjust that: **Minimum load** (default
+100 W) and **Meters’ tolerance** (default 2 %).
+
+They are published and stored with the device like its own values. Its
+**Energy** tab counts `energy_electric`, and its template can compute with
+them: the Samsung MIM-B19N map derives `cop_estimated =
+heat_output_estimated / power_electric`.
+
+**A device with no connection at all** — a UPS without communication, a
+load you only meter — is added with **Add Device → No connection: measured
+by meters**: it reads nothing itself, and its meters are how it is measured.
+
+A device that measures itself (an inverter, a heat pump with a built-in
+meter) needs nothing here. Not available for an installation's units.
+API: `GET /api/meter-roles` (the roles and settings), `PUT
+/api/devices/{id}/meters` with `{meters: [{role, device, power, energy?,
+sign?}], options?}`; `[]` removes every link. The earlier `PUT
+/api/devices/{id}/energy-meter` still sets a single consumption meter.
 
 ---
 
@@ -400,12 +504,12 @@ endpoints:
         units: [{ unit_id: 240, id: pv-meter-240, name: Grid meter }]
         sources: [{ id: sunspec, protocol: tcp, host: 192.168.1.50, port: 502,
                     template: fronius_sunspec_meter, poll_groups: { normal: { interval: 5 } } }]
-    write_locked: false                            # one endpoint, one lock — every unit
+    write_locked: false                            # one installation, one lock — every unit
 ```
 
 `${unit_id}`, `${endpoint_id}` and `${device_id}` substitute per unit in
 topic prefix, bucket, tag, name **and** connection (`url`, `host`). An
-endpoint with no `groups:` is one implicit group holding its flat `units:` /
+installation with no `groups:` is one implicit group holding its flat `units:` /
 `sources:` / `connection:`, so older entries keep working unchanged. Every
 field: [config-reference.md](config-reference.md).
 
@@ -425,7 +529,7 @@ field: [config-reference.md](config-reference.md).
   field supplies it, a later one fills in only after the earlier has been
   silent past its *stale after*. **Test units** asks every unit over every
   source; units, sources and topics are edited on the group cards.
-- **A unit's page**: **Read via** replaces *Edit*; **Measurements** shows a
+- **A unit's page**: **Read via** replaces *Connection*; **Measurements** shows a
   source picker when the unit is read more than one way (each source has
   its own map and ticks); **Commands** (§14b). A unit read two ways is `ok`
   only while every source is: one source down → `degraded` (*"read fine
@@ -453,8 +557,8 @@ field: [config-reference.md](config-reference.md).
   REST push are declared once** and apply to every unit; writes go to the
   first source that can perform them — a Solar API source is read-only.
 - **Edits do not punch holes in acquisition**: a settings-only edit (name,
-  totals toggle, a unit's display name) keeps every poller running; only a
-  change to what units are built from re-materializes them. A disabled group
+  totals toggle, a unit's display name) keeps every poller running; a change
+  to how units are read restarts only the units it changes. A disabled group
   stays visible and editable; it simply stops polling.
 - **Stale data never becomes a value.** A field nobody offers is absent (at
   night the DataManager *omits* `PAC`/`UAC`… rather than sending zero; the
@@ -466,8 +570,9 @@ field: [config-reference.md](config-reference.md).
   **Datalogger reboot / night sleep**: sources go `down`, units `down`, the
   group `offline` (published even when nothing is fresh); on return the
   first source to answer takes its fields back in precedence order.
-- **Deleting** keeps the units' register files on disk and is blocked while
-  a virtual meter sources one of its units. **The datalogger is shared and
+- **Deleting** keeps the units' register files on disk and is refused while
+  anything uses the installation or one of its units (a rule, a virtual
+  meter, a formula — listed under **Used by**); disable it instead. **The datalogger is shared and
   slow**: units on one `host:port` are serialized (`serialize_endpoint`),
   `endpoint_min_gap_s` adds breathing room, `max_connections` is a
   measurement (`scripts/calibrate_endpoint.py`); a missed turn is a
@@ -498,8 +603,11 @@ the installation page — nothing about it is fixed in code:
   (e.g. `total_power ← pack_total_power`, `energy_remaining ←
   pack_energy_remaining × 0.001` for kWh).
 
-Saving an output never restarts a unit; changing tags does. A malformed
-entry is refused with the field named. The same three live in
+Saving an output never restarts a unit; changing tags does. An edit to
+how a group reads (a source's address, its interval) restarts only that
+group's units — the other units of the installation keep reading — and the
+save says which ones it restarted. Saving an installation unchanged
+changes nothing. A malformed entry is refused with the field named. The same three live in
 `config.yaml` (`totals:`, `influxdb.tags`, `influxdb.outputs` —
 [config-reference.md](config-reference.md)).
 
@@ -513,15 +621,34 @@ entry is refused with the field named. The same three live in
 | Modbus latency climbs, then reads fail in bursts | the datalogger collapses above ~26 transactions a minute: slow the Modbus groups, set `endpoint_min_gap_s` (0.3 s), read the fast fields over HTTP |
 | `units_online` < `units_total` at night | expected: sleeping inverters are `down`; counters keep their last-known value, the total says `partial` / `offline` |
 | A total never appears | the group has one unit (no total by design), or an energy counter is missing on one enabled unit — the sum is withheld rather than published short |
-| A unit has no *Edit* tab | correct: its connection lives on its sources — use *Read via* and the group card's source editor |
+| A unit has no *Connection* tab | correct: its connection lives on its sources — use *Read via* and the group card's source editor |
+
+---
+
+## 5c. Asset attributes — what the equipment is
+
+Facts no measurement carries, for the systems that read the gateway (an EMS,
+an HMI, a SCADA):
+- **where the site is**: Settings → **Site**;
+- **a meter is the grid connection** with its import and export limits: the
+  device's **Attributes** tab;
+- **an inverter's PV inputs**: panels, kWp, facing, tilt, one row per
+  orientation;
+- **a battery's usable energy and limits**;
+- **an inverter's rating**.
+
+You press **+** and pick from the gateway's catalog; nothing is required.
+Coordinates are shown coarse to anyone but an admin, and are left out of a
+sanitised backup. An EMS can set them all through the API with an admin
+service token. Full guide: [attributes.md](attributes.md).
 
 ---
 
 ## 6. Registers, poll groups & thresholds
 
-The device workspace → **Registers**:
+The device workspace → **Measurements**:
 
-- **Available** — the catalog from the device's template (browse/search;
+- **All available** — the catalog from the device's template (browse/search;
   4,126 entries for the Janitza). Add a **custom register** by hand if the
   map misses one.
 - **Selected** — what is actually polled. Per register: poll group, data
@@ -556,12 +683,20 @@ the InfluxDB field is the flat canonical name. The full list is in
 
 - **In the register editor**, the *Name* field autocompletes from the
   dictionary, flags a non-canonical name with a "did you mean …?" hint, and
-  auto-fills the MQTT topic + InfluxDB measurement when the name is canonical.
+  auto-fills the MQTT topic, the InfluxDB measurement, the **unit** and the
+  **category** when the name is canonical — each only while it is empty or
+  still what the dictionary put there; what you typed stays.
 - **In the template editor** (Templates → *New map* / *Edit*), each row's name
   is checked live, a "**N/M canonical**" summary is shown, and **Auto-canonicalize**
   infers canonical names for a cryptic imported map from each row's label/unit.
   It is deliberately conservative — anything it isn't sure about is left amber
   for you to set, never renamed to the wrong thing. Review the grid, then Save.
+  Picking a canonical name (by hand or by Auto-canonicalize) fills the row's
+  empty **Unit** from the dictionary (`voltage_l1_n` → V) and, on a row you
+  just added, its **Category** (`voltage`); a unit or category you typed is
+  never overwritten. An existing row keeps its category: the category is
+  where the row's history is stored in InfluxDB, and renaming a row must
+  not move it.
 - A template promises canonical names with `"canonical": true`; non-canonical or
   duplicate names then show as a warning in the Template manager.
 
@@ -576,6 +711,8 @@ failover twin inherits a silent ×1000 error. Two guards enforce this:
 - **In the template editor**, the *Unit* cell shows the canonical unit as a
   tooltip for canonical names and turns **amber live** when the typed unit
   differs, with the fix spelled out (adjust the scale, or rename the row).
+  A **→ Wh** button beside it sets the canonical unit in one click — once
+  the scale really delivers it (a native kWh needs `scale/1000` first).
 - **At save time**, selecting a canonical name with a mismatched unit logs
   a warning (the save still goes through — the warning is the tripwire).
 
@@ -623,7 +760,7 @@ devices:
 | `offset` | engineering value = `raw / scale + offset` — zero-point / unit shifts (e.g. Kelvin×10 → °C with `scale: 10, offset: -273.15`); skipped for enum/bitfield rows |
 | `nan` | not-available sentinel: `true` = the data type's SunSpec value (`0x8000`/`0xFFFF`…), or an explicit raw value / list. A match reads as *missing*, never a garbage number (−32768 °C). Float NaN/Inf is always dropped |
 | `monotonic: true` | cumulative counters (Wh/kWh/varh): an implausible step in **either direction** is dropped (the cache holds last-good) — a downward glitch, but also an upward jump >50% above the baseline (a corrupted high word would otherwise inject phantom GWh). A genuine sustained reset is adopted only after coherent confirming reads (within 5% of each other) and logs a WARNING with the new baseline |
-| `enum` / `bits` (+ `mask`/`shift`) | decode a raw status word to text — `enum: {7: "Fault"}` (unmapped → `unknown (n)`), `bits: {0: "overvoltage"}` joins set-bit names; built visually via the **States** button in the template editor. Bundled maps use it for identity registers too (e.g. the EM24 detection code 1651, the Fronius 65A model id 731) |
+| `enum` / `bits` (+ `mask`/`shift`) | decode a raw status word to text — `enum: {7: "Fault"}` (unmapped → `unknown (n)`), `bits: {0: "overvoltage"}` joins set-bit names; built visually via the **Decode states** button in the template editor. Bundled maps use it for identity registers too (e.g. the EM24 detection code 1651, the Fronius 65A model id 731) |
 
 These options apply **identically on every transport** — Modbus, HTTP/JSON
 and MQTT-in sources all run the same wire→value pipeline (sentinel →
@@ -647,12 +784,37 @@ live values. Examples:
 | Unit conversion | `energy_wh / 1000` |
 | Current imbalance % | `(max(i1,i2,i3) - avg(i1,i2,i3)) / avg(i1,i2,i3) * 100` |
 | Average power from an energy counter | `(E - prev(E)) / dt * 3600` |
-| Cross-device | `grid.p_total + pv.p_total` |
+| Cross-device | `grid.p_total + pv.p_total` (ids with hyphens work: `samsung-dvm.x`) |
+| A meter, else an estimate | `first(power_electric, power_electric_estimated)` |
+| Inverters answering | `count_fresh(pv-u1.power_active_total, pv-u2.power_active_total)` |
+| How old a value is | `age(house_load)` (seconds, from its oldest input) |
+| A value only when its inputs are fresh | `(a + b) if count_fresh(a, b) == 2 else absent()` |
+| A step function | `steps(soc, 0, 15, 30, 25, 50, 40, 75, 60, 100)` |
+| Smoothed (5-minute time constant) | `ema(house_load, 300)` |
+| A threshold that does not flap | `hysteresis(ruuvi-cabinet.ambient_temp, 35, 40)` |
+| An installation's total | `battery-bank.pack_average_soc` |
 
-- The builder offers clickable measurement chips, a function/operator
-  palette (`min max avg abs round sqrt pow floor ceil clamp`, `pi e`,
-  comparisons, `a if cond else b`), a **live preview**, and presets — you
-  can save your own formulas as reusable presets.
+- The builder offers clickable measurement chips, a **function palette**
+  that lists every function with its signature, a **live preview**, and
+  presets — you can save your own formulas as reusable presets. The
+  functions, by family:
+  - arithmetic — `min max avg abs round sqrt pow floor ceil clamp popcount`,
+    `pi e`, comparisons, `a if cond else b`;
+  - values that may be missing — `first fresh count_fresh age absent`;
+  - change over time — `prev dt ema hysteresis steps`;
+  - the place and the clock — `sun_elevation sun_azimuth is_day`,
+    `hour minute weekday day month between`;
+  - what the gateway knows — `attr` (§5c) and an installation's totals by
+    its id.
+- `first(a, b, …)` takes the first argument that has a value — a meter
+  when one is linked, an estimate otherwise; it is skipped only if none has.
+- `fresh(x)`, `count_fresh(…)`, `age(x)`, `absent()` and `steps(…)` are
+  explained, with examples, in
+  [templates-advanced.md](templates-advanced.md#calculated-fields). A
+  formula that skips a stale input with them is not marked old by it.
+- A formula holds plain ASCII. A character from a copy/paste (`−`, a
+  no-break space, curly quotes, an invisible character, a look-alike letter)
+  is named under the field and refused on save, with what to type instead.
 - `prev(x)` and `dt` make rate calculations possible; a stateful formula
   cannot be previewed one-shot (the UI says so) — it produces values from
   the second evaluation on.
@@ -667,7 +829,7 @@ live values. Examples:
 
 ## 8. MQTT & Home Assistant
 
-Config → **MQTT**: broker, port, credentials, QoS, retain, and TLS
+Settings → **MQTT**: broker, port, credentials, QoS, retain, and TLS
 (port 8883; CA certificate to verify the broker, optional client cert+key
 for mutual TLS — put the files under `config/` and reference their
 in-container paths; "skip verification" is for testing only).
@@ -720,9 +882,9 @@ reason.
 
 ## 9. InfluxDB & Grafana
 
-Config → **InfluxDB**: URL, token, org, bucket. Per-device buckets are
+Settings → **InfluxDB**: URL, token, org, bucket. Per-device buckets are
 auto-created with 90-day retention; per-register measurement/tags are set in
-the Registers tab. Point Grafana at the same bucket. Both ship in the
+the Measurements tab. Point Grafana at the same bucket. Both ship in the
 default compose stack — InfluxDB self-configures on first boot and Grafana
 listens on `:3000` (see §2); this page is only about wiring the gateway to
 them (or to your own instances).
@@ -912,79 +1074,26 @@ deleting a source device is blocked while a meter uses it.
 
 ---
 
-## 11b. Device Builder — remote ESP32 nodes (ESPHome)
+## 11b. ESP nodes — a separate service
 
-Got a meter on RS485 in another building or at another site, with no network
-cable to it? The **Builder** section builds firmware for an ESP32/ESP8266
-node that reads the meter over Modbus RTU and publishes the values via MQTT
-back into the gateway — all from the UI, no toolchain installed.
+Flashing ESP32/ESP8266 boards and keeping track of them is not done inside
+the gateway any more: it is the job of the separate
+**multi-bus-gateway-esphome** service (it replaced the Device Builder).
+From a browser on the computer the board is plugged into, it identifies the
+chip over USB (Web Serial), writes a basic image, a full ESPHome
+configuration or a firmware file of your own, sets the Wi-Fi over the same
+cable, and lists the nodes that announce themselves over MQTT.
 
-Compilation is done by a standard **ESPHome** container, on your own
-hardware; the gateway drives it through its API, so it needs no shared
-volumes or new dependencies. Nothing leaves your network.
+Run it behind the same host name as the gateway (e.g. under `/nodes`) with
+the reverse proxy asking `GET /api/auth/forward` before each request — the
+gateway's login then covers it, with the same users and roles. Set
+**Settings → Security → ESP nodes service** (`ui.nodes_url`, e.g.
+`/nodes/`) and it is listed in **Settings → Modules**, with whether it
+answers and an Open button (or declare it in `modules:`, with a description).
 
-**Getting started: zero configuration.** `docker compose up -d` also starts
-the bundled ESPHome service, and the gateway binds to it by itself
-(`ESPHOME_URL` is pre-filled in the compose file). The **Device Builder**
-card awaits you on the **Devices** page, below the device list, with the
-green banner and the ESPHome version already showing; the **Deploy new
-device** button in the toolbar takes you straight into the wizard. The
-ESPHome dashboard is not exposed on the LAN — everything goes through a
-single UI, with a single login and a single audit trail. (Already running
-ESPHome elsewhere? Change the URL under Devices → Device Builder → ⚙, or set
-`ESPHOME_URL` in `.env`. Want a login on the ESPHome dashboard too?
-`ESPHOME_DASHBOARD_USERNAME/PASSWORD` in `.env` set both ends at once.)
-
-**The full flow, from template to live data:**
-
-1. **Generate from template** — pick a Modbus template (e.g. Eastron
-   SDM630), the register subset, the hardware profile (board + UART/DE-RE
-   pins) and the meter's Modbus address. The MQTT broker is inherited from
-   the gateway automatically.
-2. **Preview** — you get the complete YAML (uart/modbus/modbus_controller
-   with the correct data types, byte order and scaling; values leave in
-   engineering units on explicit per-register topics).
-3. **Save + Adopt as device** — one click saves the firmware to the ESPHome
-   dashboard, fills the missing keys in `secrets.yaml` (`CHANGE_ME`
-   placeholder for Wi-Fi/OTA) **and automatically creates the gateway-side
-   pair**: an MQTT template + an mqtt-in device with exactly the same
-   topics. Zero double configuration.
-4. Fill in `secrets.yaml` (the edit button accepts secrets.yaml too), then
-   **Build** — live logs in the console.
-5. **First flash: over USB, straight from the browser** (the *USB* button;
-   needs Chrome/Edge and HTTPS or localhost — esp-web-tools is served
-   locally, no cloud). The same dialog configures Wi-Fi over the cable
-   (Improv). Afterwards: **Flash OTA** from the same page.
-6. The node boots, publishes, and the paired gateway device picks the values
-   up automatically — you see them in Dashboard/Monitor, LWT staleness
-   included.
-
-**What the generator covers today (and what it doesn't, yet):**
-
-| Node interface | State | Notes |
-|---|---|---|
-| **RS485 / Modbus RTU** | ✅ complete | uart + modbus + modbus_controller from any Modbus template; validated by ESPHome ("Configuration is valid!") |
-| **MQTT northbound** | ✅ complete | explicit per-register topics + LWT; the mqtt-in pair is created at Adopt |
-| **BLE (sensors)** | ⚠️ partial | the gateway consumes BLE via MQTT (the `ble_theengs_sensor` template); the generator doesn't emit `esp32_ble_tracker` profiles yet |
-| **CAN bus** | ⏳ planned | ESPHome has `canbus` (ESP32 internal TWAI / MCP2515), but CAN is frame+signal oriented, not register oriented — it needs a template schema extension (frame id, bits, scaling), in design |
-
-A manually imported YAML can use ANY ESPHome component (including
-canbus/BLE) today already — the limits above concern only the automatic
-**generator** from templates. Extending the generator (BLE, CAN both ways,
-I/O nodes, integrated boards like the LilyGO T-CAN485) is on the project
-roadmap.
-
-**Worth remembering:**
-
-- Without auth enabled, everything is open (trusted LAN, like the rest of
-  the app); with auth, node YAMLs, builds and flashing are **admin-only**,
-  and everything lands in the audit log.
-- **Update all** recompiles and OTA-updates every node with old firmware
-  (after an ESPHome upgrade, for instance).
-- Hardware profiles (pins/board) are saved and reused across nodes; two
-  generic profiles are included.
-- Deleting a node **archives** it on the ESPHome dashboard — nothing is
-  permanently lost.
+A node that publishes over MQTT is added here like any other MQTT device;
+the **ESPHome scan** under Discover devices (§ above) still finds ESPHome
+nodes on the LAN.
 
 ## 11c. Power Quality — the PQ event recorder (Janitza)
 
@@ -1008,7 +1117,7 @@ meter's web firmware and **archives everything permanently** to InfluxDB.
 
 ### Enabling (from the UI, ~30 seconds)
 
-**Devices → open the device → Outputs tab → "PQ event recorder" card** →
+**Devices → open the device → Power Quality tab → "PQ event recorder" card** →
 tick *Enable*, keep *Poll* at 60 s and *Archive event waveforms* on →
 **Save**. The status line under the card confirms:
 `✓ recorder running · last poll … · N events / M transients`.
@@ -1078,12 +1187,30 @@ template declares the capability):
 Implementation details (endpoints, reason-bitmask decoding, measurement
 schema, API) live in [pq-recorder.md](pq-recorder.md).
 
+## 11d. OPC UA server — for SCADA and HMI panels
+
+Settings → **OPC UA**: switch it on, check the port (4840), Save & Apply.
+Every device and value appears as `Objects/MBG/Devices/<device>/<value>`,
+read-only. Each value carries:
+- its **quality**: Good; Uncertain when old; Uncertain-no-communication,
+  still with the last value, when the device does not answer;
+- the **time it was read** (SourceTimestamp).
+
+Clients log in with the gateway's accounts. Encryption is required unless
+you choose otherwise. The guide, with UaExpert, Weintek and Ignition, is
+[opcua.md](opcua.md).
+
 ## 12. Alerts & webhooks
 
-Two alert families over one delivery path (MQTT + webhook):
+Three alert families over one delivery path (MQTT + webhook):
 
 - **Infrastructure health** — a device or sink goes down, read latency stays
   high, the InfluxDB buffer backs up.
+- **Device alarms** — the alarm fields a device's template declares (an
+  error code, a fault word, a calculated flag such as "discharge over
+  100 °C") fire when they turn active and stay so for their `for_s`, again
+  on a new value, and once more when they clear (`signals.alarm`, on by
+  default).
 - **Value thresholds** — the per-register warning/danger limits from §6
   become alert events through a built-in hysteresis engine (**off by
   default**, `signals.threshold`): five bands, fires only on band
@@ -1091,7 +1218,7 @@ Two alert families over one delivery path (MQTT + webhook):
   `threshold_deadband_pct`, default 2 %), suppressed on stale data so a comms
   loss can't fire a phantom crossing.
 
-Configure under Config → Alerts or the `alerts:` block:
+Configure under Settings → Alerts or the `alerts:` block:
 
 ```yaml
 alerts:
@@ -1104,7 +1231,7 @@ alerts:
   latency_ms: 1000
   buffer_points: 1000
   signals: { device: true, sink: true, latency: true, buffer: true,
-             threshold: true }                 # threshold defaults to false
+             threshold: true, alarm: true }    # threshold defaults to false, alarm to true
   threshold_deadband_pct: 2.0
   threshold_alert_on_start: true
 ```
@@ -1168,7 +1295,7 @@ on the bus.
 Writing to field hardware is guarded in depth. All of it is **off by
 default**.
 
-1. Enable `security.allow_writes: true` (Config → Security).
+1. Enable `security.allow_writes: true` (Settings → Security).
 2. Writes must be **authenticated** — enable login or set `API_KEY`
    (anonymous writes are refused even with the gate open).
 3. The register must be declared **writable in the device template**, with
@@ -1177,8 +1304,8 @@ default**.
    scale`, including on the safety revert) always comes from the template
    row, never from the caller.
 4. The **primary device is write-locked by default**
-   (`security.primary_write_locked`; unlock it from its Outputs tab, on
-   purpose); HTTP/JSON devices and input/discrete registers can't be written.
+   (`security.primary_write_locked`; unlock it on purpose, from its
+   Commands tab, or Connection when it has no commands); HTTP/JSON devices and input/discrete registers can't be written.
 5. Per-IP rate limit (`security.write_rate_limit_per_s`, default 10/s).
 
 `POST /api/devices/<id>/write` with `{"address": ..., "value": ...}` writes
@@ -1210,14 +1337,16 @@ gates, one audit record and one verdict vocabulary.
 
 1. **Gates first** (§14): `security.allow_writes: true`, login enabled or
    `API_KEY` set, and the unit not write-locked (on an installation the lock
-   is endpoint-wide).
+   covers every unit).
 2. The template must declare the command. `fronius_sunspec_inverter` ships
    `power_limit` (SunSpec model 123: `value` 0–100 %, `revert_s` default
    600, `ramp_s`) and `restore` (an alias: `power_limit` 100 %, revert 0).
    A template without `commands` offers nothing.
 3. **Tick it**: installation page → group card → *Edit group* → **Commands
-   this group accepts** (applies to every unit); on a standalone device, a
-   `commands:` binding on the device entry. Unticked = refused everywhere.
+   this group accepts** (applies to every unit). On a standalone device:
+   its page → **Commands** → **Enabled on this device**. Unticked = refused
+   everywhere. **Test** (a dry run) works before you tick it: it reads the
+   device and shows what would be written, without writing.
 4. **Run it**: the group card's **Commands…** button — the command, its
    parameters (bounds, defaults and units come from the template), the
    scope (*every unit of the group* or one unit), then **Test** (a dry run:
@@ -1356,12 +1485,82 @@ controller that restarts). The Fronius read-back is published as
 |---------|-------|
 | 404 *offers no command* | the unit's Modbus source uses a template without `commands:`, or the name is misspelt — `GET /api/devices/{id}/commands` lists what exists |
 | 403 *not enabled on …* / *does not accept the … face* | tick it under *Commands this group accepts*, or fix the binding's `faces` |
-| 409 *owned by rule …* / *no Modbus source is running* | an armed rule drives this target (pass `override_s`, or *Pause…* on the Rules page) / the unit is read over HTTP only — add a Modbus source to the group |
+| 409 *owned by rule …* / *no Modbus or MQTT source is running* | an armed rule drives this target (pass `override_s`, or *Pause…* on the Rules page) / the unit is read over HTTP only — add a Modbus source to the group |
+| MQTT device: `rejected: … not read by this device` | a row the command checks or writes is not selected on the device — select it |
+| MQTT device: `unverified: published, but no read-back arrived` | the device did not answer on the row's topic within the settle time — is it listening on the write topic? (a GX needs "MQTT on LAN") |
 | `rejected: guard: controls_model_id is …` | model 123 is not where the template expects it, or the datalogger returned garbage twice — **Test** shows the guard values |
 | `…/controls/power_limit_enabled` is 0 while `power_limit_pct` still shows the limit | the inverter's own revert fired: it clears *enabled* and keeps the percentage — gate on `enabled`, not the percentage alone |
 | MQTT command silently ignored | both write gates on? broker login set? payload a number or an object? a **retained** message is dropped by design — publish without `-r` |
 | No `number` entity in HA | `mqtt.allow_write_entities` + `security.allow_writes` on, device not write-locked, discovery on; entities are (re)registered at boot |
 | 429 | `security.write_rate_limit_per_s` — the controller is sending too often |
+
+### 14b.6 Commands over MQTT (a Victron GX)
+
+A device read over MQTT runs commands too, when its template gives the rows
+a **write topic**. `victron_gx_mqtt` ships the ESS commands:
+- `ess_setpoint` (the grid setpoint);
+- `max_charge_current`, `max_charge_power`;
+- `max_discharge_power`, `max_feed_in`;
+- `min_soc`.
+
+They are enabled, tested and run like any other (§14b.1–3). What differs:
+- the run publishes and then waits for the value to come back on the row's
+  topic: *success*, *mismatch* or *unverified*;
+- **already set**: a value the device already holds is not published again;
+- the GX keeps these settings in flash. Its template spaces two writes on
+  the same setting by a minute (a channel with `min_interval_s`), for every
+  writer;
+- the commands carry **no release value**, because it depends on the site.
+  Set one on the device's binding when a rule or a lease must put something
+  back:
+
+  ```yaml
+  commands:
+    - { name: ess_setpoint, safe: { value: 0 } }
+  ```
+
+- a device read over MQTT has no raw register write: Home Assistant shows a
+  number entity only for a row that a command writes.
+
+The GX side: turn on *Settings → Services → MQTT on LAN*. Give the device the
+topic variables `portal` (the VRM portal id) and `vebus` (the
+inverter/charger's instance). On 8883, set `tls_insecure: true` (*Accept its
+own certificate* in the form) or `tls_ca`.
+
+In an MQTT device's **Configure → Connection** tab, the topic, the topic variables and the
+password show as ••••, because the topic and its variables can carry the
+GX's portal id. The eye next to each reveals it. Topic variables are
+`name=value` pairs separated by commas; a value that itself contains a
+comma followed by `name=` writes that comma as `\,`. The keepalive is
+set there too: as the template says, its own (every 5–3600 s), or off.
+
+**The GX's batteries and sensors are its components.** The template
+declares two kinds, and a GX holds as many of each as it sees:
+
+| Component | Reads |
+|---|---|
+| `battery` | a battery monitor (SmartShunt, BMV: SOC, consumed Ah, time to go, its history) or a BMS on VE.Can (Seplos, Pylontech…: SOH, cell extremes, charge limits, modules, alarms) |
+| `temperature` | a temperature service: a RuuviTag or another BLE sensor (temperature, humidity, pressure, sensor battery) or a wired input |
+
+On the GX's page, the **Components** card lists them.
+
+- **Find on the device** asks the GX what it holds and lists every battery
+  and sensor with its product and the name set on the GX. *Add* takes one.
+  Nothing is written to the GX.
+- **Adding by hand** takes the instance shown on the GX (*Settings →
+  Devices*, or VRM's device list), for example 288 or 22.
+
+Each component is a device of its own for its values, history, rules and
+attributes. Its id is `<GX>-<type>-<instance>` (`victron-gx-battery-288`) and
+it publishes under `mbg/devices/<id>/…`. It has no connection of its own: it
+reads through the GX's, so a GX with five components is still one connection
+and one republish. Its page shows what it is part of. It is renamed, switched
+off or removed on the GX's card. Removing it keeps its measurement selection,
+so adding the same instance again resumes it.
+
+A field a model does not have never arrives. Components are read-only; a
+battery's alarms count on its page and in alerts. Writing through a component,
+and components on Modbus or HTTP devices, are not there yet.
 
 ---
 
@@ -1382,8 +1581,9 @@ relaxes a limit).
 
 1. The target must offer an **enabled command** (§14b.1); only such targets
    are listed.
-2. **Rules** page → **Add rule**. Kind first: *Steps* (thresholds → value)
-   or *Condition* (true / false). Target: a unit, or a whole group (the
+2. **Rules** page → **Add rule**. Kind first: *Steps* (thresholds → value),
+   *Condition* (true / false) or *Trim* (nudge up / down until the signal
+   sits in a band). Target: a unit, or a whole group (the
    command fans out per unit). Signal: an expression over live values
    written `device.register` — the calculated-register grammar (`min`,
    `max`, `avg`, `abs`, `+ - * /`; hyphenated ids are fine). Then the steps
@@ -1443,7 +1643,7 @@ rules:
 ```
 
 **Moving rules.** **Export** (all, or one from its card) gives a YAML file
-of definitions; **Import** checks every rule against this installation
+of definitions; **Import** checks every rule against this gateway
 first (*new* / *replaces* / *already here* / *cannot import*, with the
 reason) and then saves the valid ones. Imported rules always arrive in
 shadow, and an armed rule is never replaced by an import. Recipes and the
@@ -1471,7 +1671,38 @@ input's), reads the target's read-back from the store, and asks for one
    for that value.
 2. **Desired** — `steps`: the highest step with `at <= signal`; none and
    signal under `release_below` → `normal`; in between → keep the current
-   state. `condition`: `then` / `else`. Then the **clamp** folds in
+   state. `condition`: `then` / `else`; with `release`, the answer is
+   latched — once `when` held it stays `then` until `release` holds
+   (hysteresis, see [rules.md §3.5](rules.md#35-a-heat-pump-buffer-thermostat-condition-with-a-release)).
+   `trim`: over `above` → one `step` up (or `gain` × the distance past it,
+   at most `step`), under `below` → one down, within `min`..`max` and
+   `off_value` under `min`. It takes one adjustment at a time, each sent and its
+   `min_interval_s` waited out before the next, starting from the
+   read-back ([rules.md §3.6](rules.md#36-a-drive-that-soaks-up-the-solar-surplus-trim)).
+   **Time and timers:** expressions also read the clock (`hour()`,
+   `weekday()`, `between("10:00", "16:00")`, in `ui.timezone`) and the
+   rules' counters (`run_today_h("id")`, `starts_today("id")`). The timers
+   are `for_s`, `min_on_s`, `min_off_s`, `max_on_s` (with a rest) and
+   `max_starts_per_h`. They hold a start or a stop, never the stale-safe
+   path ([rules.md §1](rules.md#1-before-you-write-one)).
+   `schedule`: the last entry `{days, at, value}` already reached (up to a
+   week back), or `off_value` while its optional `when` is false
+   ([rules.md §1](rules.md#1-before-you-write-one)). A **force** (`POST
+   /api/rules/{id}/force`, the card's *Force…*, MQTT `{"force": …}`) asks
+   for a value for up to 24 h whatever the signal, then the rule decides
+   again.
+   **Several rules on one target** (phase 3): each rule has a `layer`
+   (safety 90, manual 70, schedule 50, optimize 30) or a `priority`; the
+   target's channel combines by priority (the highest with an opinion
+   wins), `min` or `max` (limits); a rule that loses *yields*. Safety rules
+   are never paused from outside. The channel's protection (`min_off_s`,
+   `max_starts_per_h`…) holds every writer
+   ([rules.md §3.9](rules.md#39-several-rules-on-one-target-layers)).
+   **Sequences** (Rules page, `config/sequences.yaml`): commands in order
+   with `wait_s`, `wait_until` and `check`, undone by `on_abort` when a step
+   fails or the run is cancelled; run from the card, the API or MQTT
+   `mbg/sequences/<id>/run` ([rules.md §3.10](rules.md#310-sequences-commands-in-order)).
+   Then the **clamp** folds in
    (`want = min(want, clamp)`; it never expires *into* a step).
 3. **Debounce** — a new desired needs `debounce` consecutive agreeing
    **samples** (distinct readings, not ticks); `fast` steps skip it.
@@ -1509,7 +1740,8 @@ publish on your broker can do these, so keep the broker authenticated.
 - **One owner per target + command.** An armed rule owns its target: a
   command from the API, MQTT or HA answers `409 rejected: owned by rule
   <id>` unless it passes `override_s`, which pauses the rule (audited,
-  visible on the card). Two armed rules cannot share a target. In shadow
+  visible on the card). Two armed rules share a target only as layers of
+  its channel (§14c.3): the highest layer with an opinion wins. In shadow
   the target stays with external callers, so an existing controller keeps
   working during the trial.
 - **Fail closed.** Stale never relaxes: `hold` keeps a curtailment that is
@@ -1541,7 +1773,7 @@ publish on your broker can do these, so keep the broker authenticated.
 | Many *ignored* / *guarded* on the state topic | the signal leaves `signal_valid` (0 V at night is normal) or jumps more than `max_step` — a lone artefact was held; if it repeats, the max step is too tight for that source |
 | The rule wants a step but nothing is sent | shadow (*would run*), rate limit (*N s to go*), debounce (*2/3 towards Warning*), or the read-back already matches |
 | Node-RED / HA commands now return 409 | an armed rule owns the target — pass `override_s`, use *Pause…*, or put the rule back in shadow |
-| Arm is refused | `security.allow_writes` off, no login / `API_KEY`, or another armed rule already owns the target |
+| Arm is refused | `security.allow_writes` off, no login / `API_KEY`, or the rule cannot run (the reason is on its card) |
 | *reassert* every couple of minutes | the device does not hold the want (its own revert timer, a second writer) — read `…/cmd/result` and the Decisions log |
 | Alert *rule … cannot apply …* | three failures in a row: writes off, unit write-locked, guard failing (model 123 / scale factor), no Modbus source — run the command by hand from the unit's Commands tab to see the reason |
 
@@ -1549,7 +1781,7 @@ publish on your broker can do these, so keep the broker authenticated.
 
 ## 15. Config safety: snapshots, rollback, backup
 
-Config → **Backup & Snapshots**.
+Settings → **Backup & Restore**.
 
 - **Automatic snapshots** — every successful config change (devices,
   registers, templates, virtual meters, settings) takes a snapshot of the
@@ -1593,7 +1825,7 @@ Config → **Backup & Snapshots**.
 **What goes into a backup/snapshot:** `config.yaml`, each device's selected
 registers, the user's device templates, `virtual_meters.yaml` + the
 virtual-meter templates under `config/templates/`, calculated-register
-presets, the Builder's hardware profiles and the rules (`rules.yaml`). The passkey registry
+presets and the rules (`rules.yaml`). The passkey registry
 (`passkeys.json`) goes **only** into the with-secrets backup
 (`include_secrets=true`) and into snapshots — otherwise a restore would
 unlock authentication.
@@ -1601,9 +1833,6 @@ unlock authentication.
 **What does NOT go in (and how to save it separately):**
 - `audit.jsonl` / `events.jsonl` — operational history, self-rotating; copy
   them manually if you need them for analysis.
-- The Device Builder's ESP32 node YAMLs — they live in the **ESPHome volume**
-  (`esphome-config`), not in the gateway's `config/`. Include it in your
-  infrastructure backup (Duplicati etc.) if you use the Builder.
 - `write_leases.json` — ephemeral by design (leases rebuild themselves).
 
 **Pitfall:** snapshots live under `config/snapshots/` inside the config
@@ -1615,7 +1844,7 @@ Keep an exported ZIP somewhere else too.
 1. On the new host: `git clone … && cp .env.example .env && docker compose
    up -d` — a fresh gateway boots with first-run credentials (printed once
    in the log).
-2. Log in, go to Config → **Backup & Snapshots** → **Import**, upload your
+2. Log in, go to Settings → **Backup & Restore** → **Restore backup**, upload your
    exported ZIP (a with-secrets export restores passkeys and device
    credentials too; a sanitized one asks you to re-enter secrets).
 3. The import applies config, devices, register selections, virtual meters
@@ -1625,9 +1854,6 @@ Keep an exported ZIP somewhere else too.
    the restored definitions.
 4. Re-check: `/health` shows the meters, Status shows every device polling,
    and your ESS/consumers reconnect to the virtual-meter ports on their own.
-5. If you use the Device Builder, restore the `esphome-config` volume from
-   your infrastructure backup (step above) — node YAMLs are not part of the
-   gateway ZIP.
 
 ---
 
@@ -1636,7 +1862,7 @@ Keep an exported ZIP somewhere else too.
 **Login is ON from the first run** — a fresh install generates an admin
 password (printed once to the log) and enables authentication. The remaining
 layers (IP allowlist, API key, TLS, canonical URL) are opt-in — turn them on
-from **Config → Security** as exposure grows. Defense in depth: each layer
+from **Settings → Security** as exposure grows. Defense in depth: each layer
 applies independently.
 
 > **The bundled stack has its own doors.** The default compose also exposes
@@ -1656,7 +1882,7 @@ One **admin** account, plus optional **operator** and **viewer** accounts:
 | Role | Can | Cannot |
 |---|---|---|
 | `viewer` | see everything (GET), run the on-demand register queries | change anything |
-| `operator` | live actions: diagnostics, bus trace, discovery, device tests, payload samples, **Modbus writes** (within template bounds), alert test, register reload, own passkeys | anything that lands in a config file (devices, registers, templates, vmeters, settings, snapshots), audit trail |
+| `operator` | live actions: diagnostics, bus trace, discovery, device and installation tests, payload samples, **Modbus writes** and commands (within template bounds), sequence runs, alert test, register reload, own passkeys | anything that lands in a config file (devices, registers, templates, vmeters, settings, snapshots), audit trail |
 | `admin` | everything | — |
 
 Passwords are hashed (PBKDF2-SHA256, 600k iterations); leave a password
@@ -1695,7 +1921,7 @@ Requirements and pitfalls:
 
 ### 16.3 HTTPS & reverse proxy (Traefik)
 
-- **Built-in TLS**: point Config → Security at a cert + key under
+- **Built-in TLS**: point Settings → Security at a cert + key under
   `config/`, or leave blank to auto-generate a self-signed pair
   (**restart to apply**; browsers will warn on self-signed). Generated
   private keys are created mode `0600`.
@@ -1732,12 +1958,7 @@ filtering. Locked out anyway? Edit `security.allowlist` in
 
 Set `API_KEY` in the environment to require `X-API-Key` on every
 state-changing request, independent of login — useful for scripts and CI.
-Read-only GETs and the on-demand query POSTs stay open. The key also gates
-the OTA-capable **Device Builder WebSocket** (`/api/builder/stream`):
-scripts send the `X-API-Key` header; browsers — which cannot set custom WS
-headers — send the `mbg-api-key.<base64url(key)>` subprotocol (the UI does
-this automatically; a query parameter is deliberately not accepted, it
-would leak the key into access logs).
+Read-only GETs and the on-demand query POSTs stay open.
 
 ### 16.5b Browser hardening
 
@@ -1797,8 +2018,10 @@ written. View/filter it on the Status page (admin), or export CSV via
 - **Languages** — the UI ships English and Romanian; the selector is in the
   title bar. Languages are plain files: copy `ui/languages/en.json` to
   `<code>.json`, translate, and it appears in the selector — no rebuild.
-  See `ui/languages/README.md`.
-- **Timezone** — Config → General. An IANA zone (validated) that drives the
+  A count uses the language's plural forms (`key.one`, `key.few`,
+  `key.other`…); `python tools/i18n_check.py` lists what a translation still
+  misses. See `ui/languages/README.md`.
+- **Timezone** — Settings → General. An IANA zone (validated) that drives the
   monthly-energy calendar boundaries; applied live. Default
   `Europe/Bucharest`.
 
@@ -1895,7 +2118,7 @@ provided.
 | Modbus dot red | host/port/unit id correct? Modbus TCP enabled on the device? firewall? Use Diagnostics → probe: an exception answer still means the device is alive |
 | Values look like garbage | wrong data type or word order — run the register probe and read the type×order matrix |
 | A merged read fails with *illegal data address* | strict/gapped slave — set the device's `max_gap: 0` |
-| UI shows an old version after update | hard-refresh (the bundle is cache-busted, but proxies can cache) |
+| UI shows an old version after update | a page open across the update shows *The gateway was updated* — press **Reload**; if the old page comes back, hard-refresh (a proxy may cache) |
 | Virtual meter "stale / starting" | the source isn't fresh — check the device connection; the watchdog refuses to serve stale data by design |
 | Consumer can't reach a virtual meter | port inside the published compose range? reachable from the consumer's network? watch the Logs tab for incoming reads |
 | MQTT entities missing in HA | broker reachable? discovery enabled? check `docker compose logs` |
@@ -1904,7 +2127,7 @@ provided.
 | Locked out (login) | wait `lockout_minutes`, or restart the container (the lockout counter is in-memory; sessions survive the restart) |
 | Locked out (IP allowlist) | edit `security.allowlist` in `config/config.yaml`, restart |
 | Passkey enrollment fails | you're on an IP URL or plain HTTP — use `localhost` or a hostname over HTTPS |
-| Config broke after an edit | boot restores last-known-good automatically; the broken file is kept as `config.yaml.bad`; or roll back a snapshot from Config → Backup |
+| Config broke after an edit | boot restores last-known-good automatically; the broken file is kept as `config.yaml.bad`; or roll back a snapshot from Settings → Backup & Restore |
 | Writes return 403 | `security.allow_writes` off, no credential (login/API key), register not declared writable, or value outside `write_min`/`write_max` |
 
 Still stuck? Open an issue — include `docker compose logs` and your
