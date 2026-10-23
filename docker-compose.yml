@@ -196,7 +196,7 @@ services:
   grafana:
     # pinned (Dependabot bumps it): a bad upstream release must not land on
     # every `compose pull` (audit 2026-10-01)
-    image: grafana/grafana:13.0.2
+    image: grafana/grafana:13.2.4
     container_name: mbg-grafana
     logging: *default-logging
     restart: unless-stopped
