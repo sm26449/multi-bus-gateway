@@ -210,9 +210,9 @@ all the same. No vendor lock-in, no per-box cost.
   consumer's fail-safe engages).
 
 **ESP nodes** — flashing ESP32/ESP8266 boards from the browser and the node
-list live in the companion **multi-bus-gateway-esphome** service, behind the
-gateway's own login (`/api/auth/forward`) and linked from Devices
-(`ui.nodes_url`). A node publishing over MQTT is an ordinary MQTT device here.
+list are available in **MBG Pro**, behind the gateway's own login
+(`/api/auth/forward`) and linked from Devices (`ui.nodes_url`). A node
+publishing over MQTT is an ordinary MQTT device here.
 
 **Diagnostics (commissioning)**
 - Frame-level **bus monitor** — TX/RX hex, decode, latency, **each retry as

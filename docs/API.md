@@ -34,7 +34,8 @@ who uses it and with one role; it is shown once. The token acts with its
 role, never gets a cookie, needs no `X-API-Key`, appears in the audit log as
 `token:<name>`, and can be revoked alone. Only its SHA-256 is stored
 (`config/service_tokens.json`, 0600). Besides viewer, operator and admin, a
-token can have the role **`ha`**: a high-availability companion service that
+token can have the role **`ha`**: a high-availability companion service
+(available in MBG Pro) that
 reads like a viewer and may set the gateway's role and raise alerts — nothing
 else.
 
@@ -70,7 +71,7 @@ conventional status codes (401 unauthenticated, 403 forbidden, 404 not found,
 | Method | Path | Description | Role |
 |---|---|---|---|
 | GET | `/api/auth/status` | Is auth on; caller's role; whether viewer/operator accounts and passkeys exist; `nodes_url` (`ui.nodes_url`) and `modules` (Settings → Modules, the ESP nodes service included) — both empty before login | — |
-| GET | `/api/auth/forward` | Traefik **forwardAuth** for a companion service on the same host (the ESP nodes service under `/nodes`): **200** with `X-Mbg-User` / `X-Mbg-Role` for a live session (the proxy copies them onto the forwarded request, replacing whatever the client sent); without a session a browser navigation (`Accept: text/html`, an `X-Forwarded-Uri` outside `/api/`) gets a **302** to the login page, anything else **401**; login disabled → 200 as `admin`. `?need=viewer\|operator\|admin` answers **403** to a lower role — for a service that cannot read roles itself (ESPHome Device Builder under `/esphome` uses `need=admin`); an unknown value is **400** | — |
+| GET | `/api/auth/forward` | Traefik **forwardAuth** for a companion service on the same host (the ESP nodes service of MBG Pro, under `/nodes`): **200** with `X-Mbg-User` / `X-Mbg-Role` for a live session (the proxy copies them onto the forwarded request, replacing whatever the client sent); without a session a browser navigation (`Accept: text/html`, an `X-Forwarded-Uri` outside `/api/`) gets a **302** to the login page, anything else **401**; login disabled → 200 as `admin`. `?need=viewer\|operator\|admin` answers **403** to a lower role — for a service that cannot read roles itself (ESPHome Device Builder under `/esphome` uses `need=admin`); an unknown value is **400** | — |
 | POST | `/api/auth/login` | Log in (`{username, password}`); sets the session cookie; per-IP lockout | — |
 | POST | `/api/auth/logout` | Invalidate the session, clear the cookie | viewer |
 | POST | `/api/auth/passkey/register/begin` | Start WebAuthn enrollment for the logged-in account (needs a hostname, not an IP) | operator |
@@ -310,7 +311,8 @@ Facts about the equipment, from the gateway's catalog.
 
 ## Gateway role (active / standby)
 
-A gateway is **active** unless a companion service makes it **standby**. A
+A gateway is **active** unless a high-availability companion service (available
+in MBG Pro) makes it **standby**. A
 standby keeps listening where it only listens (an `rtu_tap` bus tap, an MQTT
 input) and keeps those values, but:
 - puts no frame on a device's wire: no poll, no write, no probe or scan;
@@ -366,8 +368,8 @@ service set only the old way, `ui.nodes_url`, is listed too.
 ## ESP nodes (moved out)
 
 The Device Builder (`/api/builder/*`) was removed: ESP flashing from the
-browser and the node list live in the separate **multi-bus-gateway-esphome**
-service, which sits behind this gateway's login through `/api/auth/forward`
+browser and the node list are available in **MBG Pro**, which sits behind
+this gateway's login through `/api/auth/forward`
 and is listed in Settings → Modules (`ui.nodes_url` or a `modules:` entry). LAN discovery of ESPHome nodes
 (`/api/discover/esphome`, below) stays here.
 

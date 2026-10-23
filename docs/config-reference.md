@@ -200,7 +200,7 @@ its interval — the two numbers an interval is chosen from.
 | `auth.lockout_threshold` | `5` | failed logins per client IP before lockout |
 | `auth.lockout_minutes` | `5` | lockout duration |
 | `canonical_url` | `""` (off) | when set, browsers are steered to this canonical HTTPS URL (client-side; the local IP stays reachable via `?local`) |
-| `nodes_url` | `""` (no link) | address of the companion ESP nodes service (multi-bus-gateway-esphome), a path such as `/nodes/` or an `http(s)://` URL; when set, Devices shows an **ESP nodes** link to it (signed-in users only). Settings → Security |
+| `nodes_url` | `""` (no link) | address of the ESP nodes service (available in MBG Pro), a path such as `/nodes/` or an `http(s)://` URL; when set, Devices shows an **ESP nodes** link to it (signed-in users only). Settings → Security |
 | `tls.enabled` | `false` (opt-in) | HTTPS for the UI (uvicorn TLS) |
 | `tls.cert` / `tls.key` | `""` | container-local paths |
 | `trusted_proxies` | `[]` (trust nobody) | reverse-proxy IPs whose `X-Forwarded-*` headers are trusted. Required when TLS terminates in a proxy in front — otherwise lockouts, the IP allowlist and the audit trail see the proxy's IP |
@@ -588,8 +588,8 @@ See [alerts-webhooks.md](alerts-webhooks.md) for payloads and examples.
 
 ### `esphome:` (removed)
 
-The Device Builder moved out to the separate **multi-bus-gateway-esphome**
-service (ESP flashing from the browser, the node list). An `esphome:` block
+The Device Builder moved out of the gateway (ESP flashing from the browser,
+the node list are available in **MBG Pro**). An `esphome:` block
 left in `config.yaml` by an older version is ignored (one log line) and
 dropped by the next save; the `ESPHOME_*` variables are no longer read. Link
 to the service with `ui.nodes_url` (listed in Settings → Modules) or a

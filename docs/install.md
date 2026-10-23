@@ -106,9 +106,8 @@ services:
 They then start only with `docker compose --profile extras up -d`. Deleting
 the service blocks from your copy of `docker-compose.yml` works too.
 
-**ESP boards** (flashing from the browser, the node list) are the job of the
-separate **multi-bus-gateway-esphome** service, which brings its own ESPHome
-build engine. Run it behind the same host name (e.g. under `/nodes`, with the
+**ESP boards** (flashing from the browser, the node list) are available in
+**MBG Pro**, which brings its own ESPHome build engine. Run it behind the same host name (e.g. under `/nodes`, with the
 proxy asking `/api/auth/forward` so the gateway's login covers it) and set
 `ui.nodes_url` (or a `modules:` entry) to list it in Settings → Modules.
 

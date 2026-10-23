@@ -170,6 +170,6 @@ alerts:
     buffer: true          # InfluxDB buffer backlog or dropped points
     threshold: false      # per-register value crossings (warning/danger limits)
 
-# ESP flashing and the node list live in the separate
-# multi-bus-gateway-esphome service. To link to it from Devices, set
+# ESP flashing and the node list are available in MBG Pro. To link to it
+# from Devices, set
 # ui.nodes_url (e.g. /nodes/ when it runs behind the same host name).

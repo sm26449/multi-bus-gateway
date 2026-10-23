@@ -2483,12 +2483,12 @@ class Config:
             # the AlertManager reads it. See multibus/alerts.py.
             self.alerts = data.get('alerts', {}) or {}
 
-            # The Device Builder moved out to the multi-bus-gateway-esphome
-            # service: an `esphome:` block left from an older version is
+            # The Device Builder moved out of the gateway (MBG Pro): an
+            # `esphome:` block left from an older version is
             # ignored (and dropped by the next save), never an error.
             if data.get('esphome'):
                 logger.info("config: the `esphome:` block is ignored — ESP firmware "
-                            "now lives in the multi-bus-gateway-esphome service")
+                            "is available in MBG Pro")
 
             logger.info(f"Loaded config from {self.config_path}")
             self._load_failed = False

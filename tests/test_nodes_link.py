@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-"""The Device Builder moved out (multi-bus-gateway-esphome): an old
+"""The Device Builder moved out (available in MBG Pro): an old
 `esphome:` block still loads, and `ui.nodes_url` links to the new service."""
 import logging
 

@@ -197,10 +197,9 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
   tace, fail-safe-ul consumatorului preia).
 
 **Noduri ESP** — scrierea plăcilor ESP32/ESP8266 din browser și lista de
-noduri sunt în serviciul însoțitor **multi-bus-gateway-esphome**, în spatele
-login-ului gateway-ului (`/api/auth/forward`), cu link din Devices
-(`ui.nodes_url`). Un nod care publică prin MQTT e aici un dispozitiv MQTT
-obișnuit.
+noduri sunt disponibile în **MBG Pro**, în spatele login-ului gateway-ului
+(`/api/auth/forward`), cu link din Devices (`ui.nodes_url`). Un nod care
+publică prin MQTT e aici un dispozitiv MQTT obișnuit.
 
 **Diagnostice (punere în funcțiune)**
 - **Bus monitor** la nivel de cadru — hex TX/RX, decodare, latență,

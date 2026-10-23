@@ -2300,7 +2300,7 @@
   "nodes.link": "Noduri ESP",
   "tip.nodes": "Scrie plăci ESP din acest browser și vezi nodurile din rețea (un serviciu separat)",
   "security.nodes.title": "Serviciul de noduri ESP",
-  "security.nodes.hint": "Adresa serviciului separat de noduri ESP (multi-bus-gateway-esphome), de ex. /nodes/ pe același host. Când e setată, apare în Setări → Module. Gol = nu apare.",
+  "security.nodes.hint": "Adresa serviciului de noduri ESP (disponibil în MBG Pro), de ex. /nodes/ pe același host. Când e setată, apare în Setări → Module. Gol = nu apare.",
   "devices.espUnknown": "Dispozitiv ESPHome",
   "devices.espEncrypted": "API criptat",
   "devices.espEncryptedTip": "API-ul nativ folosește criptare — identitatea nu se poate citi, dar dispozitivul e ESPHome",

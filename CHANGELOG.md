@@ -31,8 +31,8 @@ retaken.
 
 **Upgrade notes:**
 - **The Device Builder is gone (breaking).** ESP flashing, ESPHome builds
-  and the node list moved to the separate **multi-bus-gateway-esphome**
-  service. `/api/builder/*`, the USB flasher, the `ESPHOME_*` variables and
+  and the node list moved out of the gateway; they are available in
+  **MBG Pro**. `/api/builder/*`, the USB flasher, the `ESPHOME_*` variables and
   the bundled `esphome` compose service are removed; an `esphome:` block in
   `config.yaml` is ignored and dropped by the next save. ESPHome LAN
   discovery stays.

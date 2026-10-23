@@ -1148,8 +1148,7 @@ folosește.
 ## 11b. Noduri ESP — un serviciu separat
 
 Programarea plăcilor ESP32/ESP8266 și evidența lor nu se mai fac în
-gateway: sunt treaba serviciului separat **multi-bus-gateway-esphome** (a
-înlocuit Device Builder). Dintr-un browser de pe calculatorul la care e
+gateway: sunt disponibile în **MBG Pro** (a înlocuit Device Builder). Dintr-un browser de pe calculatorul la care e
 conectată placa, identifică cipul prin USB (Web Serial), scrie o imagine de
 bază, o configurație ESPHome completă sau un firmware propriu, setează
 Wi-Fi-ul prin același cablu și arată nodurile care se anunță prin MQTT.

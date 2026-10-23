@@ -1077,8 +1077,8 @@ deleting a source device is blocked while a meter uses it.
 ## 11b. ESP nodes — a separate service
 
 Flashing ESP32/ESP8266 boards and keeping track of them is not done inside
-the gateway any more: it is the job of the separate
-**multi-bus-gateway-esphome** service (it replaced the Device Builder).
+the gateway any more: it is available in **MBG Pro** (it replaced the
+Device Builder).
 From a browser on the computer the board is plugged into, it identifies the
 chip over USB (Web Serial), writes a basic image, a full ESPHome
 configuration or a firmware file of your own, sets the Wi-Fi over the same

@@ -40,8 +40,8 @@ and newer template schemas are rejected with a clear error.)
 
 ## Next release — the Device Builder moved out (breaking)
 
-- ESP flashing, ESPHome builds and the node list now live in the separate
-  **multi-bus-gateway-esphome** service. The Builder card, `/api/builder/*`,
+- ESP flashing, ESPHome builds and the node list moved out of the gateway;
+  they are available in **MBG Pro**. The Builder card, `/api/builder/*`,
   the USB flasher and the `ESPHOME_*` variables are gone.
 - The bundled compose no longer starts an `esphome` container. If you keep
   your own copy of `docker-compose.yml`, its `esphome` service and

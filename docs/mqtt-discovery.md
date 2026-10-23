@@ -8,7 +8,7 @@ by itself:** a found device waits until someone adopts it or ignores it.
 
 | Kind | Announcement | Read with |
 |---|---|---|
-| **ESP node** (multi-bus-gateway-esphome) | `mbg/nodes/<mac>/announce`, configured nodes only (a node with the basic image has nothing to read yet) | `esphome_node_<mac>`, the template the ESP nodes service makes for each node |
+| **ESP node** (MBG Pro) | `mbg/nodes/<mac>/announce`, configured nodes only (a node with the basic image has nothing to read yet) | `esphome_node_<mac>`, the template the ESP nodes service makes for each node |
 | **Tasmota** | `tasmota/discovery/<mac>/config` (Tasmota's own discovery, on by default since 9.x; `SetOption19 0`) | `tasmota_generic`: relays, energy monitor, Wi-Fi signal, uptime, online/offline |
 | **Your own rules** | any topic you declare (below) | the template you name |
 

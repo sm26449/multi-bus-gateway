@@ -2279,7 +2279,7 @@
   "nodes.link": "ESP nodes",
   "tip.nodes": "Flash ESP boards from this browser and see the nodes on the network (a separate service)",
   "security.nodes.title": "ESP nodes service",
-  "security.nodes.hint": "Address of the separate ESP nodes service (multi-bus-gateway-esphome), e.g. /nodes/ on the same host. When set, it is listed in Settings → Modules. Empty = not listed.",
+  "security.nodes.hint": "Address of the ESP nodes service (available in MBG Pro), e.g. /nodes/ on the same host. When set, it is listed in Settings → Modules. Empty = not listed.",
   "devices.espUnknown": "ESPHome device",
   "devices.espEncrypted": "encrypted API",
   "devices.espEncryptedTip": "Native API uses encryption — identity not readable, but the device is ESPHome",
