@@ -17,7 +17,7 @@
 """Tier 2 Phase A: device templates, device config synthesis, and the
 byte-identical migration guarantees for device #1 (UMG512).
 
-The contract under test (docs/design/tier2-device-profiles.md §4): after the
+The contract under test: after the
 multi-device refactor, device #1's MQTT topics and InfluxDB line protocol are
 IDENTICAL to the legacy single-device behavior — data collection must not
 change by one byte.
@@ -407,3 +407,36 @@ def test_general_config_default_colors_roundtrip(tmp_path):
     g = client.get("/api/config/general").json()
     assert g["default_colors"]["phase_convention"] == "iec"
     assert Config(str(tmp_path / "config.yaml")).ui.default_colors["phase_convention"] == "iec"
+
+
+def test_drain_makes_a_missing_device_bucket_before_writing_into_it():
+    """A device's bucket was made once, when it was added: if InfluxDB was down
+    then (or the bucket was deleted since), its writes 404'd for ever and held
+    every other device's points behind them. The drain makes each bucket it has
+    not seen yet, once, and again after a 404."""
+    from unittest.mock import MagicMock
+    pub = make_publisher()
+    made = []
+    pub.ensure_bucket = lambda name: made.append(name) or True
+    now = time.time()
+    pub._buffer_line("a 1", now, bucket="b")
+    pub._buffer_line("w 1", now, bucket="warehouse")
+    wapi = MagicMock()
+    client = MagicMock()
+    client.write_api.return_value = wapi
+    pub.client, pub.connected = client, True
+    pub._drain_buffer()
+    assert sorted(made) == ["b", "warehouse"] and pub.points_replayed == 2
+    # seen once: the next drain asks nothing
+    pub._buffer_line("w 2", now, bucket="warehouse")
+    pub._drain_buffer()
+    assert sorted(made) == ["b", "warehouse"]
+    # deleted meanwhile: the 404 forgets it, the next drain makes it again
+    err = Exception("not found")
+    err.status = 404
+    wapi.write.side_effect = [err, None]
+    pub._buffer_line("w 3", now, bucket="warehouse")
+    pub._drain_buffer()
+    pub.connected = True
+    pub._drain_buffer()
+    assert made.count("warehouse") == 2 and pub.points_replayed == 4

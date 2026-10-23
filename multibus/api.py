@@ -3389,11 +3389,15 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         if config.get_raw_endpoint(endpoint_id) is None:
             raise HTTPException(status_code=404, detail="endpoint not found")
         results = []
+        params = dict(payload or {})
+        # the lease is the dead-man's time, as on one device — never a command
+        # parameter, and checked (once, by the runner) before anything is written
+        lease = params.pop('lease_s', None)
         for dev in config.endpoint_devices(endpoint_id):
             if (getattr(dev, 'group_id', '') or 'units') != group_id:
                 continue
             _i, _c, client = registry.find(dev.id)
-            code, res = _run_named_command(dev, client, name, dict(payload or {}), who=who, ip=ip, via='api')
+            code, res = _run_named_command(dev, client, name, dict(params), who=who, ip=ip, via='api', lease_s=lease)
             results.append({'device': dev.id, 'unit_id': dev.connection.unit_id, 'http_status': code, **res})
         if not results:
             raise HTTPException(status_code=404, detail="group has no units")
@@ -4041,8 +4045,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     @app.post("/api/mqtt-discovery/{key}/ignore")
     def mqtt_discovery_ignore(key: str, payload: Dict = Body(default={})):
         """Hide a found device from the list (`ignore: false` shows it again)."""
-        discovery_state.ignore(key, bool(payload.get("ignore", True)))
-        return {"key": key, "ignored": bool(payload.get("ignore", True))}
+        ignore = flag(payload, "ignore", True)
+        discovery_state.ignore(key, ignore)
+        return {"key": key, "ignored": ignore}
 
     @app.post("/api/mqtt-discovery/enabled")
     def mqtt_discovery_enabled(payload: Dict = Body(...)):
@@ -4467,7 +4472,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                        for k, v in new_h.items() if k}
         cfg = {'enabled': enabled, 'url': url, 'interval_s': interval,
                'headers': headers, 'format': fmt,
-               'verify_tls': bool(payload.get('verify_tls', True)),
+               'verify_tls': flag(payload, 'verify_tls', True),
                'timeout': int(payload.get('timeout', 10) or 10)}
         try:
             config.set_rest_push(device_id, cfg)
@@ -4695,7 +4700,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 f"(guards optional — each one you declare is enforced and "
                 f"improves the UI), or pass unguarded:true for a raw write "
                 f"with your own data_type/scale."]})
-        prefer_fc6 = bool(payload.get('prefer_fc6', False))
+        prefer_fc6 = flag(payload, 'prefer_fc6', False)
         if rtype == 'holding':
             try:
                 _fval = float(payload.get('value'))
@@ -4808,7 +4813,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         security.primary_write_locked. Audited."""
         if 'locked' not in payload:
             raise HTTPException(status_code=422, detail={"errors": ["'locked' (bool) is required"]})
-        locked = bool(payload.get('locked'))
+        locked = flag(payload, 'locked')
         try:
             config.set_write_locked(device_id, locked)
         except ValueError as e:
@@ -6407,7 +6412,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             **({'commands': payload['commands']} if payload.get('commands') else {}),
         }
         if payload.get('aggregates') is not None:
-            raw['aggregates'] = bool(payload['aggregates'])
+            raw['aggregates'] = flag(payload, 'aggregates')
         for opt in ('mqtt', 'influxdb'):
             if payload.get(opt):
                 raw[opt] = dict(payload[opt])

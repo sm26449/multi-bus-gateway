@@ -15,6 +15,13 @@ Object.assign(JanitzaMonitor.prototype, {
         if (this._rulesTimer) { clearInterval(this._rulesTimer); this._rulesTimer = null; }
     },
 
+    /** A command's result on the rule card, in the page's language (the
+     *  API answers in words: sent, queued, success, cancelled …). */
+    _ruleResult(r) {
+        const known = ['sent', 'queued', 'success', 'rejected', 'cancelled', 'error', 'mismatch', 'unverified', 'timeout'];
+        return known.includes(r) ? t(`rules.result.${r}`, r) : r;
+    },
+
     async renderRulesPage() {
         const el = document.getElementById('rulesContent');
         if (!el) return;
@@ -214,7 +221,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <th>${t('rules.unit', 'Unit')}</th><th>${t('rules.state', 'State')}</th><th title="${this._esc(this._tipWant())}">${t('rules.want', 'Want')} <i aria-hidden="true" class="bi bi-info-circle"></i></th>${counting ? `<th>${t('rules.today', 'Today')}</th>` : ''}<th title="${this._esc(this._tipActual())}">${t('rules.actual', 'Actual')} <i aria-hidden="true" class="bi bi-info-circle"></i></th><th></th></tr></thead>
                     <tbody>${unitsHtml}</tbody></table></div>` : ''}
                 <div style="margin-top:8px;font-size:12.5px;">
-                    ${last ? `<b>${t('rules.lastDecision', 'Last decision')}</b>: ${this._esc(last.action)} — ${this._esc(last.reason || '')} <span class="field-hint">${new Date(last.ts * 1000).toLocaleTimeString(this._loc())}${last.result ? ` · ${this._esc(last.result)}` : ''}</span>`
+                    ${last ? `<b>${t('rules.lastDecision', 'Last decision')}</b>: ${this._esc(last.action)} — ${this._esc(last.reason || '')} <span class="field-hint">${new Date(last.ts * 1000).toLocaleTimeString(this._loc())}${last.result ? ` · ${this._esc(this._ruleResult(last.result))}` : ''}</span>`
                            : `<span class="field-hint">${t('rules.noDecision', 'No decision yet.')}</span>`}
                 </div>
                 <div data-rule-decisions="${this._esc(r.id)}" ${decisionsOpen ? '' : 'hidden'} style="margin-top:10px;"></div>
@@ -242,7 +249,7 @@ Object.assign(JanitzaMonitor.prototype, {
             ${rows.map(d => `<tr><td>${new Date(d.ts * 1000).toLocaleTimeString(this._loc())}</td><td><code>${this._esc(d.device)}</code></td>
                 <td>${d.signal == null ? '—' : this._esc(this._fmtSig(d.signal))}</td>
                 <td>${this._esc(d.state)}</td><td>${this._esc(this._fmtWant(d.want))}</td><td>${d.actual == null ? '—' : d.actual}</td>
-                <td><b>${this._esc(d.action)}</b> — ${this._esc(d.reason || '')}${d.result ? ` · ${this._esc(d.result)}${d.result_reason ? ` (${this._esc(d.result_reason)})` : ''}` : ''}</td></tr>`).join('')}
+                <td><b>${this._esc(d.action)}</b> — ${this._esc(d.reason || '')}${d.result ? ` · ${this._esc(this._ruleResult(d.result))}${d.result_reason ? ` (${this._esc(d.result_reason)})` : ''}` : ''}</td></tr>`).join('')}
             </tbody></table></div>` : `<div class="field-hint">${t('rules.noDecision', 'No decision yet.')}</div>`;
     },
 

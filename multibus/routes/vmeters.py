@@ -67,7 +67,7 @@ def build(ctx) -> APIRouter:
                 device_fallback=str(payload.get("device_fallback", "")),
                 on_stale=str(payload.get("on_stale", "legacy")),
                 max_hold_s=float(payload.get("max_hold_s", 30)),
-                quality_block=bool(payload.get("quality_block", False)),
+                quality_block=flag(payload, "quality_block", False),
                 update_interval_s=payload.get("update_interval_s"),   # checked by the manager
                 ha_mode=(str(payload["ha_mode"]) if payload.get("ha_mode") is not None else None))
         except (KeyError, ValueError, TypeError) as e:
@@ -139,7 +139,7 @@ def build(ctx) -> APIRouter:
         mgr = _mgr()
         if mgr is None:
             raise HTTPException(status_code=503, detail="virtual meters not initialized")
-        res = mgr.import_template(str(payload.get("yaml", "")), bool(payload.get("overwrite", False)))
+        res = mgr.import_template(str(payload.get("yaml", "")), flag(payload, "overwrite", False))
         if "error" in res:
             raise HTTPException(status_code=409 if res.get("exists") else 400, detail=res["error"])
         return res

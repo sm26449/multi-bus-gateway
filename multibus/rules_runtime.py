@@ -98,6 +98,10 @@ def _validate_expr(expr: str) -> Optional[str]:
 _INPUT_KEYS = ('signal', 'when', 'release')
 
 
+class RulesFileUnreadable(Exception):
+    """rules.yaml cannot be read: nothing may be written over it."""
+
+
 class RuleStore:
     """rules.yaml: a list under `rules:`. Written whole, atomically."""
 
@@ -112,14 +116,28 @@ class RuleStore:
         # wrong): kept so a save writes them back as they were — an operator's
         # edit is fixed by the operator, never erased by the next UI save
         self.skipped: List[Any] = []
+        self.missing = False
 
     def load(self) -> List[Dict]:
         self.load_error = None
         self.skipped = []
+        self.missing = False
         try:
-            data = yaml.safe_load(self.path.read_text(encoding='utf-8')) or {}
+            text = self.path.read_text(encoding='utf-8')
         except FileNotFoundError:
+            self.missing = True
             return []
+        except Exception as e:  # noqa: BLE001
+            logger.error("rules.yaml unreadable: %s", e)
+            self.load_error = str(e)
+            return []
+        if not text.strip():
+            # an editor that truncates before it writes, a copy gone wrong:
+            # "no rules" is said by the API as `rules: []`, never by nothing
+            self.load_error = "rules.yaml is empty"
+            return []
+        try:
+            data = yaml.safe_load(text) or {}
         except Exception as e:  # noqa: BLE001
             logger.error("rules.yaml unreadable: %s", e)
             self.load_error = str(e)
@@ -133,6 +151,17 @@ class RuleStore:
         if not out and (rules or (data and not isinstance(rules, list))):
             self.load_error = "rules.yaml exists but holds no rule entries"
         return out
+
+    def rows_to_rewrite(self, holding: bool = False) -> List[Dict]:
+        """The file's rules, to rewrite with a change — refused while the file
+        cannot be read (or is gone while the gateway holds rules): writing
+        over it would erase the operator's file and every other rule with it."""
+        rows = self.load()
+        if self.load_error:
+            raise RulesFileUnreadable(self.load_error)
+        if self.missing and holding:
+            raise RulesFileUnreadable("rules.yaml is missing")
+        return rows
 
     def save(self, rules: List[Dict]) -> None:
         # temp + fsync + replace: a power loss mid-save must leave either the
@@ -295,6 +324,21 @@ class RulesRuntime:
                 r = self.rules.get(rid)
                 if r is None or r.mode != 'armed' or not r.enabled or rid in self.errors:
                     self._cancel_queued(rid)
+            # an armed rule gone from the file as read now (a hand edit, a file
+            # replaced or half-written, a rule mis-indented) is NOT released: a
+            # read can be wrong in many ways, and lifting an OV limit on a wrong
+            # read is the dangerous direction. Its target holds the last value;
+            # the operator is told, and releases it from the device if meant
+            # (a delete from the API releases, as always) — RL-LOAD-R4.
+            vanished = sorted(driving - set(self.rules))
+            if vanished:
+                why = (self.store.load_error
+                       or ('file missing' if self.store.missing
+                           else 'not in the file as read now'))
+                self._alert('error', 'rules:vanished',
+                            f"armed rule(s) {', '.join(vanished)} stopped ({why}) — nothing was released: "
+                            f"their targets hold their last values. Repair rules.yaml, or send the safe "
+                            f"value from the device page if the rule was meant to go")
             self._sync_mqtt()
 
     def _bind(self, rule: RuleDef) -> Optional[str]:
@@ -368,6 +412,23 @@ class RulesRuntime:
                 rec['counters'] = st.saved_counters()
             if rec:
                 data[f"{rid}:{dev}"] = rec
+        errors = self.__dict__.get('errors') or {}
+        store = self.__dict__.get('store')
+        unreadable = bool(store is not None and (store.load_error or store.missing))
+        if errors or unreadable:
+            # a rule in error has no state here (it is not evaluated): what was
+            # saved for it — an operator clamp, a pause, its counters — waits
+            # for it to be repaired instead of being dropped (RL-LOAD-R4)
+            try:
+                old = self._load_state()
+            except Exception:  # noqa: BLE001
+                old = {}
+            for k, v in old.items():
+                # only for a unit with no live state: one that has a state
+                # said what it holds now (a force ended, a clamp cleared)
+                if k != '_channels' and k not in data and tuple(k.split(':', 1)) not in self.states \
+                        and (unreadable or k.split(':', 1)[0] in errors):
+                    data[k] = v
         # the channels' protection (a motor's last start, its starts of the
         # hour) outlives a restart too: ages, plus when they were taken
         chans = self.__dict__.get('channels') or {}
@@ -1364,13 +1425,17 @@ class RulesRuntime:
                 same = self._view(rid, prev)
             else:
                 same = None
+                try:
+                    rows = self.store.rows_to_rewrite(holding=bool(self.rules))
+                except RulesFileUnreadable as e:
+                    return [f"rules.yaml cannot be read ({e}) — repair the file first; nothing was saved"], None
                 # a rule that drove its target stops: release it once — a rule
                 # already disabled released when it was disabled, and may since
                 # have lost the channel to another rule it must not overwrite
                 if prev is not None and prev.mode == 'armed' and prev.enabled \
                         and (raw.get('mode') != 'armed' or not raw.get('enabled', True)):
                     self.__dict__.setdefault('released', {})[rid] = self._release(prev, f"{'shadow' if raw.get('mode') != 'armed' else 'disabled'} by {who}")
-                rules = [raw if str(r.get('id')) == rid else r for r in self.store.load()]
+                rules = [raw if str(r.get('id')) == rid else r for r in rows]
                 if prev is None:
                     rules.append(raw)
                 self.store.save(rules)
@@ -1418,12 +1483,17 @@ class RulesRuntime:
             rule = self.rules.get(rid)
             if rule is None:
                 return False
+            try:
+                rows = self.store.rows_to_rewrite(holding=bool(self.rules))
+            except RulesFileUnreadable as e:
+                raise ValueError(f"rules.yaml cannot be read ({e}) — repair the file first; nothing was saved") from e
             if rule.mode == 'armed' and rule.enabled:
                 self.__dict__.setdefault('released', {})[rid] = self._release(rule, f"deleted by {who}")
-            self.store.save([r for r in self.store.load() if str(r.get('id')) != rid])
+            self.store.save([r for r in rows if str(r.get('id')) != rid])
             for key in [k for k in self.states if k[0] == rid]:
                 self.states.pop(key)
             self.decisions.pop(rid, None)
+            self.rules.pop(rid, None)           # released above: the reload must not take it as vanished
             self.load()
             self._mqtt_pub(f"{MQTT_ROOT}/{rid}/state", {}, retain=True)
         self._audit(who, via, 'rule deleted', rid, {})
@@ -1477,7 +1547,30 @@ class RulesRuntime:
                 self.__dict__.setdefault('released', {})[rid] = self._release(
                     prev, f"{'shadow' if change.get('mode') == 'shadow' else 'disabled'} by {who}")
             new = {**raw, **change}
-            self.store.save([new if str(r.get('id')) == rid else r for r in self.store.load()])
+            try:
+                rows = self.store.rows_to_rewrite(holding=bool(self.rules))
+            except RulesFileUnreadable as e:
+                # leaving is never refused: the rule stops driving now, in
+                # memory — the unreadable file is not written over, and says
+                # what it says again once repaired
+                import dataclasses
+                if prev is not None:
+                    left = dataclasses.replace(prev, **{k: v for k, v in change.items()
+                                                       if k in ('mode', 'enabled')})
+                    self.rules[rid] = left
+                    for key, st in self.states.items():
+                        if key[0] == rid:
+                            st.rule = left          # the tick evaluates the states' rule
+                self.raw[rid] = new
+                self._cancel_queued(rid)
+                if prev is not None:
+                    self._publish_state(left)       # the card and MQTT say it now, not next tick
+                self._alert('error', 'rules:store',
+                            f"rules.yaml cannot be read ({e}): rule '{rid}' was "
+                            f"{'put in shadow' if change.get('mode') == 'shadow' else 'disabled'} in memory "
+                            f"only — repair the file, or the next reload follows what it says")
+                return []
+            self.store.save([new if str(r.get('id')) == rid else r for r in rows])
             self.load()
         logger.warning("rule %s: %s although its checks refuse it (%s)", rid,
                        'put in shadow' if change.get('mode') == 'shadow' else 'disabled', why)

@@ -24,6 +24,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from ..bridges import (FRAMING_PROTOCOL, TYPES, _crc16, _exchange, _mbap_ok,  # noqa: F401 — _crc16 is used by tests
                        _mbap_read, _rtu_ok, _rtu_read, public_view, validate_bridge)
 from .. import modbus_client
+from ..payload import flag
 from ._shared import secrets_visible
 
 logger = logging.getLogger(__name__)
@@ -248,7 +249,7 @@ def build(ctx) -> APIRouter:
             items = [items]
         if not isinstance(items, list) or not items:
             raise HTTPException(status_code=422, detail={"errors": ["expected a `bridges:` list, or one bridge"]})
-        apply, replace = bool(payload.get("apply")), bool(payload.get("replace"))
+        apply, replace = flag(payload, "apply", False), flag(payload, "replace", False)
         out = []
         for i, raw in enumerate(items):
             if not isinstance(raw, dict):

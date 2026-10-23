@@ -1,77 +1,81 @@
 # Ghid vizual al interfeței — Multi-Bus Gateway
 
-> Ghid în română, cu capturi din versiunea 3.82 (septembrie 2026): include
-> instalațiile cu mai multe unități, pagina unei unități, comenzile și regulile
-> (§19–§22). Referința completă, la zi, este [MANUAL.md](MANUAL.md) (engleză).
+> Ghid în română, cu capturi din versiunea 3.92 (octombrie 2026). Referința
+> completă, la zi, este [MANUAL.ro.md](MANUAL.ro.md) (română) /
+> [MANUAL.md](MANUAL.md) (engleză).
 
 Un tur ilustrat al fiecărei pagini, sub-pagini și tab din interfața web, cu note
-explicative pentru operator/integrator. Capturile sunt făcute pe o **instanță
-demo completă** cu date vii (simulatoare de metere Modbus din `loadtest/`,
-broker MQTT + InfluxDB efemere, conturi demo): un meter principal Janitza și
-două EM24 pe Modbus TCP, o instalație Fronius cu trei invertoare citite prin
-Solar API și SunSpec (simulate) plus totalurile de site, un meter virtual EM24
-servit mai departe și o regulă în mod shadow — exact fluxul unui deployment
-real, fără nicio informație de producție. Bara de sus e identică peste tot: navigarea între pagini,
-indicatorii de stare (dispozitive / MQTT / InfluxDB / vmeter — verde = ok),
-selectorul de limbă și comutatorul de temă (clar/întunecat).
+explicative pentru operator/integrator. Capturile sunt făcute pe un **gateway
+demo** cu dispozitive simulate, pe o rețea proprie de documentație
+(`192.0.2.0/24`), fără nicio adresă, nume sau loc real (amplasamentul demo este
+Paris):
+
+- un contor de rețea **Janitza UMG 512-PRO** (Modbus TCP);
+- o **Instalație** pe acoperiș („Roof PV”) cu trei invertoare Fronius și
+  totalurile de site, citite prin Solar API (HTTP);
+- un banc de baterii („Battery bank”) cu două pachete Seplos, ascultate
+  **listen-only** (`rtu_tap`);
+- un UPS („Server room UPS”) măsurat de două **Eastron SDM630** (intrare /
+  ieșire) — un Dispozitiv fără conexiune proprie (*Doar contoare*);
+- o pompă de piscină pe un convertizor **Delta VFD-EL**, cu comenzi;
+- un **Contor virtual** EM24 servit din contorul de rețea;
+- o regulă pentru pompă, în mod **shadow**;
+- InfluxDB pentru Istoric și un invertor SunSpec fictiv („Demo Solar
+  DS-8000-3P”) pentru scanarea SunSpec.
+
+Interfața din capturi este în engleză; mai jos, butoanele și tab-urile poartă
+numele din interfața în română, cu cel englezesc în paranteză acolo unde ajută.
+Bara de sus e identică peste tot: navigarea între pagini, indicatorii de stare
+(Dev / MQTT / DB / VM — verde = ok), selectorul de limbă și comutatorul de temă
+(clar/întunecat). Bara de jos arată conexiunea, cadențele de poll (Realtime /
+Normal / Slow), ora ultimului update și versiunea.
 
 ---
 
-## 1. Dashboard
+## 1. Tablou de bord (Dashboard)
 
 ![Dashboard](img/guide/01-dashboard.png)
 
-Panoul de ansamblu. Sus, **banda de site** — povestea energiei, nu a
-gateway-ului: câte un card pe **instalație** (puterea agregată acum, unități
-online) plus device-urile **prinse pe overview** cu pioneza de pe rândul lor
-din flotă. Creionul de pe un card prins deschide personalizarea: **ce metrică**
-arată cardul (orice registru al device-ului), **etichetă proprie** și ordinea
-(◀ ▶). Click pe card te duce la instalația sau device-ul respectiv. Contoarele
-interne ale gateway-ului (rata de poll, MQTT, InfluxDB) sunt pe pagina
-**Status**.
+Sus, **banda de site** — povestea energiei, nu a gateway-ului: câte un card pe
+**Instalație** (aici „Roof PV” cu puterea de acum și „Battery bank”, fiecare cu
+unitățile online) plus Dispozitivele **prinse** cu pioneza de pe rândul lor.
+Pe un card prins alegi ce metrică arată, o etichetă proprie și ordinea. Click
+pe card te duce la Instalație sau la Dispozitiv.
 
-Dedesubt, **Live Values**. Cu două sau mai multe dispozitive, pagina se
-deschide pe **vederea de flotă**: un rând per dispozitiv — punct de sănătate,
-numărul alarmelor de prag (doar praguri configurate explicit) și primele
-registre de dashboard ca metrici-erou — grupate pe instalație și sortate cu
-problemele sus. Căutarea și filtrul **Doar probleme** îngustează lista; click
-pe un rând deschide vederea acelui dispozitiv, **Toate device-urile** te
-întoarce la flotă.
-
-Vederea per-dispozitiv are două etaje: sus **cardurile-erou** (cel mult 12,
-alese și ordonate din **Customize**), dedesubt **toate** valorile dispozitivului
-în secțiuni pliabile pe măsurătoare (Putere / Tensiune / Curent / Energie /
-Temperatură / Celule / Alarme / Altele — alarmele și diagnosticele pliate
-implicit, starea per secțiune se ține minte). Click pe orice rând sau card
-deschide istoricul valorii. Numele tehnic al registrului e tooltip pe etichetă.
-Lângă „Toate device-urile" stă **selectorul de device** — butonul cu device-ul
-curent deschide un panou cu căutare pentru salt rapid la alt device. Bara de
-jos: starea conexiunii, intervalele grupurilor de poll, versiunea și ora
-ultimului update. Cu un singur dispozitiv, vederea de flotă lipsește — pagina
-deschide direct vederea dispozitivului.
+Dedesubt, **Valori live** (Live Values) — vederea de flotă: un rând per
+Dispozitiv, cu punctul de sănătate, primele valori ca metrici-erou și, la
+nevoie, numărul alarmelor (insigna de pe „Battery bank unit 3”). Dispozitivele
+de sine stătătoare stau sus, unitățile Instalațiilor grupate sub numele ei.
+Căutarea și filtrul **Doar probleme** îngustează lista; în dreapta, câte
+Dispozitive sunt și câte cer atenție. Click pe un rând deschide spațiul de lucru
+al Dispozitivului (§20).
 
 ---
 
-## 2. Monitor live (tab-ul Monitor al unei unități)
+## 2. Monitor live (Dispozitive → unitate → Diagnostic → Monitor)
 
 ![Monitor](img/guide/02-monitor.png)
 
-Din 3.5x, Monitor și History sunt tab-uri în **spațiul de lucru al unității**
-(Devices → unitate), nu pagini separate. Monitor desenează în timp real până la
-șase valori alese din lista din stânga (căutare instant, grupate pe categorii),
-cu min/max și zoom; tabelul de sub grafic arată valoarea curentă a fiecărei
-măsurători urmărite. Lista completă a măsurătorilor, cu editare (adresă Modbus,
-`json_path` pentru HTTP/MQTT, grup de poll), este în tab-ul **Measurements**.
+Spațiul de lucru al unui Dispozitiv are trei grupuri de tab-uri: **Live**
+(Prezentare, Istoric, Energie, Calitatea energiei), **Configurare** (Conexiune,
+Măsurători, Calculate, Comenzi, Contoare, Ieșiri, Atribute) și **Diagnostic**
+(Monitor, Jurnal) — fiecare Dispozitiv arată doar tab-urile care i se potrivesc.
+Monitorul desenează în timp real valorile alese din lista din stânga (căutare,
+grupate pe Categorie) — aici puterile active L1/L2/L3 ale contorului Janitza —
+cu zoom, **Șterge** (Clear) și **Pauză** (Pause); sub grafic, tabelul
+monitoarelor active. Butonul **Test** din antet face o citire de probă, iar
+**folosit de 1** arată ce depinde de acest Dispozitiv (aici Contorul virtual).
 
 ---
 
-## 3. Istoric (tab-ul History al unei unități)
+## 3. Istoric (Dispozitive → unitate → Live → Istoric)
 
 ![History](img/guide/03-history.png)
 
-Grafice pe intervale din datele stocate în InfluxDB — alegi registrele de afișat
-din lista din stânga, fereastra de timp (1 h … 90 d) și pasul de agregare. Util pentru a vedea evoluția (tensiuni, putere) fără a
-deschide Grafana. Comparațiile sunt pe aceeași unitate (axă comună corectă).
+Grafice din datele stocate în InfluxDB: alegi măsurătorile din lista din stânga
+(grupate pe Categorie, cu unitatea de măsură), fereastra de timp (aici ultimele
+6 h) și pasul de agregare (5 min). Util pentru a vedea evoluția (tensiuni,
+putere) fără a deschide Grafana.
 
 ---
 
@@ -79,28 +83,33 @@ deschide Grafana. Comparațiile sunt pe aceeași unitate (axă comună corectă)
 
 ![Devices](img/guide/04-devices.png)
 
-Toate sursele, cu sănătatea live a fiecăreia: dispozitivele de sine
-stătătoare (aici meterul principal Janitza și cele două EM24) și
-**instalațiile** (aici „Sunfield PV”), ale căror unități stau grupate sub rândul
-instalației, cu pe ce cale sunt citite (`solar_api` HTTP la 2 s + `sunspec`
-Modbus TCP la 20 s). Fiecare rând arată protocolul, adresa, starea de conectare,
-numărul de măsurători și unde publică (topic MQTT, bucket InfluxDB). De aici
-**adaugi un dispozitiv** (wizard-ul din §18), **adaugi o instalație** (wizard
-în patru pași: adresa datalogger-ului, ce s-a găsit pe el, cadențe, revizuire),
-**editezi** conexiunea sau intri în spațiul de lucru al unei unități (§20).
-Butonul de deschidere de pe rândul instalației duce la pagina ei (§19).
+Toate sursele, cu sănătatea live a fiecăreia. Sus, căutarea, filtrele pe **Tip**
+(contor, invertor, baterie/BMS, sistem/GX, convertizor, UPS), **Stare** și
+**Protocol** (HTTP, Modbus TCP, Modbus RTU tap, *Măsurat de contoarele lui*) și
+comutatorul **Arbore / Listă**. Fiecare rând arată protocolul, adresa, unitatea,
+Șablonul, numărul de măsurători, rata de poll și vârsta ultimei citiri; insigna
+**folosit de N** spune ce depinde de el (un Contor virtual, o regulă, UPS-ul).
+Instalațiile („Roof PV”) își grupează unitățile dedesubt, cu puterea de acum și
+câte unități răspund.
+
+Butoanele de sus: **Descoperă dispozitive**, **Adaugă bridge**, **Adaugă
+instalație** și **Adaugă dispozitiv** (wizard-ul din §18). Pe fiecare rând:
+măsurătorile, monitorul și deschiderea spațiului de lucru (§19, §20).
 
 ---
 
-## 5. Template-uri (Templates)
+## 5. Șabloane (Templates)
 
 ![Templates](img/guide/05-templates.png)
 
-Catalogul de hărți de dispozitiv — profilele field-verified (Janitza, Eastron
-SDM120/630, ABB, Schneider, Carlo Gavazzi EM24, presetări Zigbee/BLE/MQTT). Un
-template descrie harta de registre + protocolul + categoriile. De aici
-**încarci** un template nou (JSON/CSV), **exporți**, sau **creezi/editezi** unul.
-Fiecare device se leagă de un template — de acolo își ia catalogul de registre.
+Catalogul din spatele Dispozitivelor, în trei tab-uri: **Hărți dispozitiv**
+(Device maps — cum se citește un echipament real: adrese, cod de funcție, ordinea
+octeților), **Emulări contor** (Meter emulations — ce poate servi un Contor
+virtual) și **Câmpuri canonice**. Filtre pe tip, producător, protocol și
+origine; fiecare card arată id-ul, protocolul, numărul de registre, versiunea și
+**Folosit de** (aici Șabloanele Fronius folosite de „Roof PV”). Pe un Șablon:
+**Vezi**, **Duplică** și descărcare. Sus: **Importă CSV**, **Importă YAML**,
+**Încarcă JSON** și **Hartă nouă**.
 
 ---
 
@@ -108,169 +117,197 @@ Fiecare device se leagă de un template — de acolo își ia catalogul de regis
 
 ![Status](img/guide/06-status.png)
 
-Sănătatea sistemului la un loc: per dispozitiv (rata de poll, latență, ultima
-citire, **taxonomia erorilor** — timeout / excepție_N / conexiune), starea
-sink-urilor (MQTT/InfluxDB conectate, rate, buffer store-and-forward), metere
-virtuale, și **jurnalul de evenimente** recent. E prima pagină la care te uiți
-când ceva nu merge — îți spune *care strat* e bolnav.
+Sănătatea sistemului la un loc. Sus, verdictul (aici „All systems operational”)
+cu versiunea și uptime-ul, apoi cardurile de rezumat: Dispozitive, Instalații,
+Ieșiri, Automatizări (aici 0 armate, 1 shadow) și Gateway. Când ceva nu e în
+regulă, **Necesită atenție** apare sub verdict și listează fiecare problemă cu
+un buton de deschidere. Dedesubt, tab-urile Dispozitive,
+Instalații, Ieșiri, Automatizări, Gateway și Evenimente; tabelul de Dispozitive
+arată protocolul, rata de citire, latența, ultima citire și **citirile eșuate**
+(pentru `rtu_tap`: erori CRC, cadre orfane, răspunsuri de excepție). E prima
+pagină la care te uiți când ceva nu merge — îți spune *care strat* e bolnav.
 
 ---
 
-## 7. Metere virtuale (Virtual Meters)
+## 7. Contoare virtuale (Virtual Meters)
 
 ![Virtual Meters](img/guide/07-vmeters.png)
 
-Emulările Modbus TCP servite mai departe (un consumator citește gateway-ul ca pe
-un meter fizic). Fiecare instanță arată template-ul emulat (EM24, Fronius TS…),
-portul, starea, rata de cereri și conexiunile active. De aici configurezi
-**politica de staleness** (legacy / fail / sentinel / hold — absența nu e
-niciodată servită ca 0) și **blocul de calitate in-band** (registrele 61440).
-Subtab-urile arată preview-ul valorilor și statistici/debug de comunicație.
+Valorile live ale unui Dispozitiv servite mai departe ca un contor Modbus
+standard, ca alt sistem să le citească nativ — aici un EM24 („Victron grid
+meter”) alimentat din contorul Janitza, pe portul 1502, care ascultă
+(**LISTENING**), cu conexiunile, cererile și rata lui. Comutatorul de pe rând îl
+pornește/oprește; **Adaugă instanță** creează unul nou în intervalul de porturi
+publicat. Pagina o spune explicit: activează-l doar ca să-l validezi în paralel
+cu contorul real — alimentează o referință critică pentru control. Rândul se
+desface pentru politica de staleness (absența nu e servită niciodată ca 0),
+previzualizarea valorilor și statisticile de comunicație.
 
 ---
 
-## 8. Diagnostics — Monitor magistrală
+## 8. Diagnostic — Monitor magistrală
 
 ![Bus Monitor](img/guide/08-diagnostics-busmonitor.png)
 
-Trace Modbus **la nivel de frame** — octeții exacți de pe fir, un rând per
-tranzacție (fiecare retry inclus). Pornești captura, filtrezi pe dispozitiv, și
-vezi FC, adresa, rezultatul (OK / excepție / timeout / CRC), latența. Un click pe
-rând deschide frame-urile brute segmentate (MBAP / PDU / CRC). Runtime only —
-bufferul e în memorie, captura se oprește la restart. Instrumentul #1 la
-comisionarea unui bus nou.
+Trace Modbus **la nivel de cadru** — un rând per tranzacție (fiecare retry
+inclus): ora, Dispozitivul, unitatea, FC, adresa × numărul de registre,
+rezultatul (OK / excepție / timeout / CRC), latența și protocolul. **Oprește
+captura**, **Pauză afișare**, **Golește** și filtrele pe Dispozitiv și pe
+magistrală. Un click pe rând deschide octeții bruți. Doar la runtime — bufferul
+e în memorie, captura se oprește la restart. Instrumentul #1 la comisionarea
+unei magistrale noi.
 
 ---
 
-## 9. Diagnostics — Sondă registru (endianness)
+## 9. Diagnostic — Sondă registru (endianness)
 
 ![Register Probe](img/guide/09-diagnostics-probe.png)
 
-Citire one-shot pe **orice** dispozitiv Modbus, cu **toate interpretările una
-lângă alta** — tip de date × ordine de cuvinte (ABCD / CDAB / BADC / DCBA).
-Coloana care dă o valoare plauzibilă e ordinea corectă a dispozitivului — o
-setezi ca `byte_order` în template. Rezolvă în secunde „ghicește word order-ul"
-la un meter necunoscut. Afișează și hex-ul brut + ASCII.
+Citire one-shot pe **orice** Dispozitiv Modbus (aici Janitza, registrul 19000,
+Holding FC3, 2 cuvinte), cu **toate interpretările una lângă alta** — tip de date
+× ordinea cuvintelor (ABCD / CDAB / BADC / DCBA) — plus hex-ul brut și ASCII.
+Coloana care dă o valoare plauzibilă (aici `float` ABCD = 230,66 V) e ordinea
+corectă; butoanele de dedesubt o aplică pe Șablonul Dispozitivului. Doar citire;
+cu captura pornită, cadrele sondei apar în monitorul de deasupra.
 
 ---
 
-## 10. Diagnostics — Scanare SunSpec
+## 10. Diagnostic — Scanare SunSpec
 
 ![SunSpec Scan](img/guide/10-diagnostics-sunspec.png)
 
-Parcurge lanțul de modele SunSpec al unui invertor/meter (markerul SunS, apoi
-fiecare model declarat de dispozitiv) — identitate (producător, model, serie),
-metere, MPPT, stocare. Doar citire; enumerează ce declară device-ul, nu
-fabrichează nimic. Onboarding aproape automat pentru invertoarele Fronius / SMA /
-SolarEdge / Huawei.
+Parcurge lanțul de modele SunSpec (markerul SunS la 40000/50000/0, apoi fiecare
+model declarat) — aici host `192.0.2.10`, port 502, unitatea 20: invertorul
+fictiv „Demo Solar DS-8000-3P”, cu firmware și serie, și modelele 1 (identitate),
+103 (invertor trifazat), 120 (date nominale) și 123 (comenzi imediate), fiecare
+cu adresa și lungimea. Doar citire; adresele vin live de la dispozitiv și se
+folosesc la construirea unui Șablon.
 
 ---
 
-## 11. Settings — MQTT
+## 11. Setări — MQTT
 
 ![Settings MQTT](img/guide/11-settings-mqtt.png)
 
-Conexiunea la broker (adresă, port, user/parolă, TLS), modul de publicare
-(*changed* / *all*), retain/QoS, și **Home Assistant discovery**. Rutarea per
-device (topicuri, prefixe) trăiește pe device, nu aici — aici e doar conexiunea
-brokerului. Salvarea aplică live (reconectare).
+Tab-urile Setărilor: MQTT, InfluxDB, OPC UA, Backup și restaurare, Securitate,
+Alerte, General, Site / Amplasament și Module. Aici: brokerul (adresă, port,
+utilizator/parolă), **prefixul implicit de topic** pentru Dispozitivele noi
+(`mbg/devices/{device}` — fiecare Dispozitiv își păstrează prefixul propriu),
+modul de publicare (*On Change*), QoS, retain, prefixul pentru **Home Assistant
+discovery** (activat per Dispozitiv, din tab-ul Ieșiri) și TLS. **Salvează și
+aplică** reconectează live.
 
 ---
 
-## 12. Settings — InfluxDB
+## 12. Setări — InfluxDB
 
 ![Settings InfluxDB](img/guide/12-settings-influxdb.png)
 
-Conexiunea la InfluxDB (URL, token, org, bucket), intervalul de scriere și modul
-de publicare. Include **buffer-ul store-and-forward**: dacă InfluxDB pică,
-punctele se țin (în RAM + opțional pe disc) și se rejoacă cu timestamp-ul original
-la reconectare — fără gap-uri false.
+Conexiunea la InfluxDB (URL, token, organizație), **bucket-ul implicit** pentru
+Dispozitivele noi (`{device}` — fiecare Dispozitiv își are bucket-ul lui),
+intervalul de scriere și modul de publicare. Dacă InfluxDB pică, punctele se țin
+într-un buffer și se rejoacă cu timestamp-ul original la reconectare (reglajele
+sunt în configurație — vezi MANUAL.ro.md).
 
 ---
 
-## 13. Settings — Backup & Restore + Snapshot-uri
+## 13. Setări — Backup și restaurare + Snapshot-uri
 
 ![Backup & Snapshots](img/guide/13-settings-backup-snapshots.png)
 
-Sus: **export/import** al întregii configurații ca ZIP (secretele excluse
-implicit). Dedesubt: **Snapshot-uri & Rollback** — un snapshot al configurației se
-face automat după fiecare schimbare; poți face rollback la orice moment (starea
-curentă se salvează întâi, deci e reversibil), vezi **diff-ul semantic** față de
-prezent, descarci sau ștergi. „Last known good" se restaurează automat dacă
-configurația nu se mai încarcă la boot.
+Sus: **Exportă backup** / **Restaurează backup** — un ZIP cu Dispozitive,
+măsurători, Șabloane și Contoare virtuale; secretele și setările de rețea sunt
+excluse implicit (bifa **Include secretele** le adaugă). Dedesubt,
+**Snapshot-uri și revenire**: un snapshot al configurației se face automat după
+fiecare schimbare (coloana *Trigger* spune care), plus **Snapshot acum**. Pe
+fiecare: diff, revenire, descărcare, ștergere. Revenirea salvează întâi starea
+curentă, deci e reversibilă. **LKG** („last known good”) se actualizează doar
+după un boot sănătos și se restaurează automat dacă configurația nu se mai
+încarcă.
 
 ---
 
-## 14. Settings — Securitate
+## 14. Setări — Securitate
 
 ![Settings Security](img/guide/14-settings-security.png)
 
-**IP allowlist**, **adresa canonică** (redirect spre `https://…` cu portița
-`?local`), **HTTPS** pentru UI, **login + roluri** (admin / operator / viewer),
-lockout, **passkeys (WebAuthn)** și scrierile Modbus (gate cu limite din template).
-E panoul de la care pornești securitatea când cutia iese din LAN-ul de încredere.
+Sus, verdictul și cinci carduri: **Login**, **HTTPS**, **Rețea**, **Scrieri** și
+**Passkeys și tokenuri** — pe demo totul e deschis (login oprit, HTTP simplu,
+orice IP, scrieri doar-citire), deci **Necesită atenție** semnalează că oricine
+ajunge la gateway îi poate schimba configurația. Tab-urile: **Rețea** (IP
+allowlist, HTTPS pentru UI, adresa canonică cu portița `?local`), **Conturi**
+(login + roluri admin / operator / viewer), **Passkeys și tokenuri**, **Scrieri**
+(comutatorul general pentru scrierile Modbus) și **Jurnal de audit**. Totul e
+opțional: aparatul e gândit pentru un LAN de încredere și pornești securitatea
+când iese din el.
 
 ---
 
-## 15. Settings — Securitate: Jurnal de audit
+## 15. Setări — Securitate: Jurnal de audit
 
 ![Audit Trail](img/guide/15-settings-security-audit.png)
 
-**Jurnalul de audit** (partea de jos a paginii de securitate): cine a schimbat
-ce, când, de la ce IP — cu payload-ul redactat. Filtrabil, exportabil CSV.
-Include login-uri (ok/greșit/lockout), scrieri pe dispozitive, exporturi de
-secrete. Fiecare refuz (403) apare pe numele contului care l-a încercat.
-**Doar rolul admin** poate citi conținutul: captura de aici e vederea unui
-*operator*, unde tabelul afișează „The audit trail requires the admin role" —
-adică exact gate-ul de rol în acțiune.
+Fiecare schimbare de configurație, login, scriere pe dispozitiv și export de
+secrete — cine, de la ce IP, când, cu payload-ul redactat. Filtru text, filtru
+pe utilizator, pe rezultat (OK / Failed / Denied), export CSV. În captură:
+crearea regulii pompei, activarea comenzii, Contorul virtual și atributele
+(punctul de conectare, puterea UPS-ului, locația). Cu login-ul pornit, doar
+rolul admin poate citi jurnalul.
 
 ---
 
-## 16. Settings — Alerte
+## 16. Setări — Alerte
 
 ![Settings Alerts](img/guide/16-settings-alerts.png)
 
-Reguli de alertă locale + webhook-uri: dispozitiv căzut/revenit, latență, buffer
-InfluxDB. (Notificările „grele" — SMS/Telegram — trăiesc în serviciul de alerte
-separat; aici sunt semnalele de bază ale gateway-ului.)
+Alerte trimise pe MQTT (`<prefix>/alert`) și/sau printr-un webhook HTTP.
+**Semnale**: Dispozitiv căzut/revenit, sink deconectat/reconectat, latență mare,
+buffer InfluxDB în urmă, alarmele declarate de Șablonul Dispozitivului și,
+opțional, pragurile per valoare; plus intervalul minim și pragurile de latență și
+de buffer. **Canale**: MQTT și webhook-ul (URL, antete JSON, corp JSON cu
+placeholdere `{severity} {source} {message}` …). **Test** trimite o alertă de
+probă; **Activează alertele** e bifa generală.
 
 ---
 
-## 17. Settings — General
+## 17. Setări — General
 
 ![Settings General](img/guide/17-settings-general.png)
 
-Parametri de sistem: fusul orar, culorile default de fază (convenție IEC / RST /
-distinct), și alte setări globale de UI.
+**Fus orar rapoarte** (nume IANA, aici `Europe/Paris`) — stabilește granițele
+lunilor în raportul de Energie, fără restart. **Culori default pentru
+widget-uri**: culorile fazelor L1/L2/L3 (implicit *Distinct*) și pe Categorie
+(temperatură, umiditate, putere, energie) — se aplică doar widget-urilor noi.
 
 ---
 
-## 18. Wizard adăugare dispozitiv — pasul 1 (Conexiune)
+## 18. Wizard Adaugă dispozitiv — pasul 1 (Conexiune)
 
 ![Device Wizard](img/guide/18-wizard-step1-connection.png)
 
-Fluxul ghidat de adăugare a unui dispozitiv, în 3 pași. **Pasul 1 — Conexiune**:
-alegi protocolul (Modbus TCP / RTU / HTTP/JSON / MQTT) și completezi parametrii
-(IP+port / port serial+baud / URL / broker+topic). Butonul **Test connection**
-verifică live înainte de a salva; pentru MQTT ai și **Browse topics** (alegi
-topicul din ce publică brokerul, nu-l tastezi orb). Pasul 2 alege template-ul
-(harta de registre), pasul 3 configurează rutarea (MQTT/InfluxDB/vmeter).
+Trei pași: **Conexiune**, **Șablon**, **Rutare date**. La pasul 1 alegi cum e
+conectat: Modbus TCP / Modbus RTU / HTTP/JSON / MQTT / **Doar contoare** (un
+Dispozitiv fără conexiune proprie, măsurat de contoare pe care le ai deja — ca
+UPS-ul din demo). Pentru Modbus TCP: host, port, Unit ID, timeout și opțiunea
+**Prin UDP**. **Testează conexiunea** verifică live înainte să treci mai departe
+cu **Înainte**.
 
 ---
 
-## 19. Pagina instalației
+## 19. Pagina Instalației
 
 ![Installation](img/guide/19-installation.png)
 
-O **instalație** este un datalogger cu grupurile lui: aici trei invertoare și
-totalurile de site. Cardul de sus spune dacă e online, câte unități răspund,
-producția de acum, energia de azi, autonomia, și **pe ce căi este citită**
-(fiecare sursă cu cadență, latență și procentul de citiri eșuate din ultimele
-5 minute) și unde publică. Sub „What it holds”, fiecare grup are tabelul
-unităților (putere, tensiuni AC/DC, limită activă, sănătate, ultima citire, pe
-ce sursă răspunde), totalurile grupului publicate pe `pv/inverters/summary/…`
-și, când template-ul le oferă, butonul **Commands…** care trimite aceeași
-comandă tuturor unităților grupului.
+O **Instalație** este o sursă cu grupurile ei — aici „Roof PV”: trei invertoare
+și totalurile de site. Cardul de sus: online, câte unități răspund, producția de
+acum, energia de azi, autonomia și autoconsumul; **Citită prin** listează
+fiecare cale (aici `solar_api`, HTTP la 5 s, latența, procentul de citiri eșuate
+în ultimele 5 minute) și **Publică pe** spune unde ajung datele. Sub **Ce
+conține**, fiecare grup are tabelul unităților (putere, tensiuni AC/DC, limită,
+sănătate, ultima citire, sursa), totalul grupului publicat pe
+`mbg/endpoints/roof/…` și **Cum e citit**. Sus: **Testează unitățile**,
+**Editează**, **Dezactivează în schimb** (în loc de ștergere, când ceva o
+folosește) și **Șterge**; **Adaugă grup** pentru un grup nou.
 
 ---
 
@@ -278,25 +315,29 @@ comandă tuturor unităților grupului.
 
 ![Unit overview](img/guide/20-unit-overview.png)
 
-Fiecare unitate a unei instalații are propria pagină, cu tab-uri: Overview
-(starea, sursele care o alimentează și câte câmpuri aduce fiecare, valorile
-live grupate pe categorii), Read via, Outputs, Measurements, Calculated,
-Commands, Logs, Monitor, History, Energy. Firul de navigare din antet duce
-înapoi la instalație și la lista de dispozitive.
+Fiecare unitate are pagina ei (aici `roof-u1`, „Inverter east”), cu firul de
+navigare Dispozitive › Roof PV › unitate. Tab-ul **Prezentare** din grupul Live:
+starea, valorile-cheie, **Citită prin** (sursa, cadența, latența, câte câmpuri
+aduce), unde publică (topicul MQTT și bucket-ul InfluxDB), apoi **Valori live**
+grupate pe Categorie, fiecare cu numele canonic alături. Grupurile Configurare și
+Diagnostic sunt cele din §2.
 
 ---
 
-## 21. Comenzi (tab-ul Commands)
+## 21. Comenzi (Configurare → Comenzi)
 
 ![Commands](img/guide/21-unit-outputs-commands.png)
 
-Comenzile pe care template-ul le declară pentru această unitate — aici limita
-de putere activă a unui invertor SunSpec și „Restore full power”. Fiecare card
-spune ce registre scrie, sub ce condiții de gardă (`controls_model_id = 123`)
-și ce verifică la citirea înapoi; parametrii au limite și valori implicite.
-**Test** face o rulare pe uscat, **Run** cere confirmare. Aceleași comenzi
-sunt acceptate pe MQTT (`…/cmd/power_limit`) și din Home Assistant; fiecare
-rulare apare în „Recent commands” și în jurnalul de audit.
+Pe pompa de piscină (Delta VFD-EL). Banda de sus deschide notele Șablonului.
+**Protecție la scriere**: aici scrierile sunt permise; **Blochează** refuză orice
+scriere Modbus pe acest Dispozitiv (comutatorul general din Securitate → Scrieri
+trebuie și el pornit). **Cine o comandă** arată pe fiecare canal (motorul: run,
+stop, frecvență; `reset_fault`) cine are controlul acum — o regulă sau comenzile
+de aici, din API ori MQTT. Fiecare comandă are cardul ei: ce scrie, ce verifică
+la citirea înapoi, parametrii și topicul MQTT (`mbg/devices/pool-pump/cmd/run`).
+O comandă e **neactivată pe această unitate** până bifezi **Activată pe acest
+dispozitiv**; până atunci **Test** arată doar ce ar scrie. Aceleași comenzi
+merg pe MQTT și din Home Assistant; fiecare rulare e auditată.
 
 ---
 
@@ -304,30 +345,34 @@ rulare apare în „Recent commands” și în jurnalul de audit.
 
 ![Rules](img/guide/22-rules.png)
 
-O regulă urmărește o valoare live (aici maximul tensiunilor celor trei
-invertoare), așteaptă să se stabilizeze și cere unui grup sau unei unități o
-comandă: trepte (`steps`, ca aici: peste 250 V limita coboară la 80 %, peste
-251 V la 70 %, peste 252,5 V la 60 %, revine sub 249 V) sau o condiție. O
-regulă nouă rulează în **shadow** — decide și spune ce ar face, dar nu scrie
-nimic — până o **armezi**. Tabelul arată per unitate starea, ce vrea regula și
-ce a citit înapoi; „Decisions” deschide istoricul deciziilor, „Clamp…” și
-„Pause…” sunt intervențiile operatorului.
+O regulă decide când rulează o comandă: urmărește valori live, așteaptă să se
+stabilizeze și cere unui Dispozitiv ce vrea. Aici „Pool pump on the solar
+surplus” ar trimite pompei `run_at` cu valoarea 42 când puterea la rețea scade
+sub −1500 W (export) și 0 altfel. O regulă nouă rulează în **shadow** — decide și
+spune ce ar face, dar nu scrie nimic — până o **Armezi** (Arm…). Semnalul
+(`umg512.power_active_total < -1500`) e adevărat, regula vrea valoarea 42, iar
+ultima decizie spune că nu are ce trimite: pompa deja merge la 42 Hz. Dacă o
+regulă cere un câmp pe care Dispozitivul nu-l are, cardul o marchează **intrări
+necunoscute** și propune numele corect. Tabelul: unitatea,
+starea, ce vrea, timpul de azi și ce a citit înapoi. Intervențiile operatorului:
+**Dezactivează**, **Plafon…**, **Pauză…**, **Forțează…**; **Decizii** deschide
+istoricul. Sus: **Adaugă regulă**, **Export**, **Import**. Dedesubt,
+**Secvențe**: comenzi în ordine, cu așteptări și verificări, anulate în ordine
+inversă dacă un pas eșuează.
 
 ---
 
 ## Note
 
-- **Roluri**: un *viewer* vede toate paginile (read-only); un *operator* poate
+- **Roluri**: un *viewer* vede toate paginile (doar citire); un *operator* poate
   folosi uneltele de comisionare și scrie pe dispozitive, dar nu schimbă
-  configurația; un *admin* poate tot, inclusiv audit-ul și securitatea.
+  configurația; un *admin* poate tot, inclusiv jurnalul de audit și securitatea.
 - **Temă**: comutatorul soare/lună (dreapta-sus) schimbă clar/întunecat; UI-ul
   respectă și preferința sistemului.
 - **Limbă**: EN + RO incluse; se adaugă altele copiind un fișier din
   `ui/languages/`.
+- **Mai departe**: [MANUAL.ro.md](MANUAL.ro.md), [API.md](API.md),
+  [rules.md](rules.md), [opcua.md](opcua.md).
 
-*Capturi generate pe versiunea 3.82, pe o instanță demo efemeră
-(simulatoare de metere și invertoare + broker/Influx de unică folosință,
-Playwright la 1440×950, login demo) cu
-`tools/e2e/capture_docs_screenshots.mjs`. Când UI-ul se schimbă vizibil,
-re-generează-le la fel — mediul demo se ridică în câteva minute și
-capturile rămân publicabile (zero date de producție).*
+*Capturi generate pe versiunea 3.92, pe un gateway demo cu dispozitive simulate
+și adrese de documentație (Playwright la 1440×950, temă clară, UI în engleză).*

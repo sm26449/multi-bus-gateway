@@ -1,5 +1,32 @@
 # Changelog
 
+## 3.92.1
+
+**Upgrade notes:**
+- **Every yes/no field of a request is a JSON `true` or `false`** — the
+  write-lock, imports (`apply`, `replace`, `overwrite`), alerts, discovery
+  and the bus trace too, not only `enabled`. A string such as `"false"` is
+  refused with 422 and names the field.
+- **A group command takes `lease_s`** as one device does, checked before any
+  write.
+
+**Fixes**
+- **InfluxDB:** a device added while InfluxDB was down never got its bucket,
+  and its refused writes held every other device's points behind them. The
+  gateway now makes a missing bucket when it first writes to it.
+- **Listen-only serial (`rtu_tap`):** a port missing at start (a USB adapter
+  plugged in later) or pulled out and back is opened again on its own, and
+  the device shows connected as soon as it is.
+- **rules.yaml:** nothing is written over a file that cannot be read (a save
+  from the UI no longer erases a hand-edited file); disarming still works.
+  A rule gone from the file as read holds its target and raises an alert —
+  only a delete from the UI or the API releases it. A broken rule keeps its
+  saved clamp until it is repaired.
+- The example selection is in English throughout.
+
+**Docs:** the visual guide (`docs/GHID-UI.md`) on the 3.92 UI, every picture
+retaken.
+
 ## 3.92.0
 
 **Upgrade notes:**

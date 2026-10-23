@@ -219,29 +219,41 @@ class TapReader:
         if self.host:
             # over the network: the wire loop connects (and reconnects) itself
             self.open_error = ""
-            self._stop.clear()
+            self._stop = threading.Event()         # this loop's own: an old one never resumes
             self._serial = _TcpSource(self.host, self.tcp_port)
             self._thread = threading.Thread(target=self._run, daemon=True,
                                             name=f"rtu-tap:{self.port}")
             self._thread.start()
             logger.info("rtu_tap %s: listening through the bridge (read-only)", self.port)
             return True
+        opened = self._open_serial()
+        # the wire loop runs either way: a port missing now (a USB adapter
+        # plugged in later, a PTY not made yet) or lost later (the adapter
+        # pulled out) is opened again on its own, every few seconds — as the
+        # bridge connection already is. Before, it stayed down for good.
+        self._stop = threading.Event()         # this loop's own: an old one never resumes
+        self._thread = threading.Thread(target=self._run, daemon=True,
+                                        name=f"rtu-tap:{self.port}")
+        self._thread.start()
+        return opened
+
+    REOPEN_S = 3.0
+
+    def _open_serial(self) -> bool:
         try:
             import serial
             self._serial = serial.Serial(
                 port=self.port, baudrate=self.baudrate, parity=self.parity,
                 stopbits=self.stopbits, bytesize=self.bytesize,
                 timeout=0.05)                      # poll the gap at 20 Hz
-        except Exception as e:  # noqa: BLE001 — port missing/busy: say why, stay down
+        except Exception as e:  # noqa: BLE001 — port missing/busy: say why, try again later
+            if str(e) != self.open_error:          # once per distinct reason, not every 3 s
+                logger.warning("rtu_tap %s: cannot open port — %s (trying again every %g s)",
+                               self.port, e, self.REOPEN_S)
             self.open_error = str(e)
             self._serial = None
-            logger.warning("rtu_tap %s: cannot open port — %s", self.port, e)
             return False
         self.open_error = ""                       # a past failure is not today's
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._run, daemon=True,
-                                        name=f"rtu-tap:{self.port}")
-        self._thread.start()
         logger.info("rtu_tap %s: listening (%d baud, read-only)", self.port, self.baudrate)
         return True
 
@@ -258,23 +270,42 @@ class TapReader:
     # ── the wire loop ──────────────────────────────────────────────────────
     def _run(self) -> None:
         framer = self._framer
+        stop = self._stop                          # the event of THIS loop
         ser = self._serial
-        while not self._stop.is_set():
+        while not stop.is_set():
+            if ser is None:
+                # a serial port not open (missing at start, or lost): try again
+                if stop.wait(self.REOPEN_S):
+                    break
+                with self._lock:
+                    if stop.is_set():
+                        break
+                    self._open_serial()
+                    ser = self._serial
+                continue
             try:
                 data = ser.read(512)
             except Exception as e:  # noqa: BLE001 — adapter yanked mid-read
-                if self._stop.is_set():
+                if stop.is_set():
                     break              # our own close() interrupted the read
                 self.open_error = str(e)
                 if isinstance(ser, _TcpSource):
                     # a network hiccup: say so, wait, connect again
                     logger.warning("rtu_tap %s: bridge connection lost — %s", self.port, e)
                     ser.close()
-                    if self._stop.wait(3):
+                    if stop.wait(3):
                         break
                     continue
-                logger.warning("rtu_tap %s: read failed — %s", self.port, e)
-                break
+                logger.warning("rtu_tap %s: read failed — %s (opening it again)", self.port, e)
+                try:
+                    ser.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                with self._lock:
+                    if self._serial is ser:
+                        self._serial = None
+                ser = None
+                continue
             if isinstance(ser, _TcpSource) and data:
                 self.open_error = ""
             now = time.monotonic()
@@ -510,7 +541,7 @@ class RtuTapClient:
         self.poll_groups = poll_groups or {}
         self.parser = RegisterParser(byte_order)
         self.publish_callback: Optional[Callable] = None
-        self.connected = False
+        self._registered = False
         self.windows = 0                      # paired windows dispatched to us
         self.table_mismatch: Optional[Dict] = None   # heard FC4, map says holding (or the reverse)
         self.updates = 0                      # register values stored
@@ -521,16 +552,23 @@ class RtuTapClient:
         self._lock = threading.Lock()
 
     # ── lifecycle (ModbusClient-compatible) ────────────────────────────────
+    @property
+    def connected(self) -> bool:
+        """Registered on a port that is open now: a port that opened after the
+        start (or came back) counts — the reader opens it on its own."""
+        r = self._reader
+        return self._registered and (bool(r.host) or r._serial is not None) and not r.open_error
+
     def connect(self) -> bool:
-        self.connected = self._reader.register(self.unit_id, self)
-        return self.connected
+        self._registered = True
+        return self._reader.register(self.unit_id, self)
 
     def start_polling(self) -> None:
         """Nothing to start — the bus's own master sets the rhythm."""
 
     def disconnect(self) -> None:
         self._reader.unregister(self.unit_id)
-        self.connected = False
+        self._registered = False
 
     stop = disconnect
 

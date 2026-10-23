@@ -3464,5 +3464,14 @@
   "rules.adv.resumeHint": "Un dispozitiv aflat deja la valoarea unei trepte pornește de acolo și nu se trimite nimic; semnalul îl mută apoi ca de obicei.",
   "rules.adv.cardBootWait": "după o repornire așteaptă citirea cel mult {s} s",
   "rules.adv.cardResume": "reia treapta pe care o ține dispozitivul",
-  "rules.adv.cardRetries": "cererile urgente se retrimit de cel mult {n}×"
+  "rules.adv.cardRetries": "cererile urgente se retrimit de cel mult {n}×",
+  "rules.result.sent": "trimisă",
+  "rules.result.queued": "la coadă",
+  "rules.result.success": "reușită",
+  "rules.result.rejected": "refuzată",
+  "rules.result.cancelled": "anulată (regula a ieșit din armat)",
+  "rules.result.error": "eroare",
+  "rules.result.mismatch": "citirea înapoi diferă",
+  "rules.result.unverified": "neverificată",
+  "rules.result.timeout": "fără răspuns"
 }

@@ -21,6 +21,8 @@ from typing import Dict
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from ..payload import flag
+
 SEVERITIES = ('info', 'warning', 'error', 'critical')
 logger = logging.getLogger(__name__)
 
@@ -246,7 +248,7 @@ def build(ctx) -> APIRouter:
             errors.append("message: 1..500 characters")
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors})
-        ctx.alert_mgr.fire(sev, f"svc:{key}", source, message, transition=bool(payload.get('transition')))
+        ctx.alert_mgr.fire(sev, f"svc:{key}", source, message, transition=flag(payload, 'transition', False))
         # said, not assumed: with alerting off in the gateway nothing went out
         return {"status": "ok", "sent": bool(ctx.alert_mgr.enabled)}
 

@@ -85,7 +85,7 @@ def build(ctx) -> APIRouter:
         trace.configure(
             enabled=flag(payload, "enabled", None),
             capacity=payload.get("capacity"),
-            clear=bool(payload.get("clear")),
+            clear=flag(payload, "clear", False),
         )
         if trace.enabled != was:
             event_log.add("info", "bus_trace",

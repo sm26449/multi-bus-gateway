@@ -121,3 +121,35 @@ def test_mqtt_disables_a_rule_on_false_and_ignores_what_it_cannot_read(tmp_path)
     assert rt.rules['ov-u1'].enabled is True
     rt._mqtt_set('ov-u1', '{"enabled": "false"}')       # a controller taking over: off
     assert rt.rules['ov-u1'].enabled is False
+
+
+@needs_tc
+def test_the_other_switches_take_only_true_or_false(tmp_path):
+    # API-A6: the remaining yes/no fields of a request
+    cfg, client = make_app(tmp_path)
+    dev = cfg.devices[0].id
+    locked = cfg.devices[0].write_locked
+    # "false" used to LOCK (bool("false") is True): refused, nothing changes
+    assert client.post(f"/api/devices/{dev}/write-lock", json={"locked": "false"}).status_code == 422
+    assert cfg.devices[0].write_locked == locked
+    assert client.post("/api/config/alerts", json={"mqtt": "false"}).status_code == 422
+    assert client.post("/api/config/alerts", json={"signals": {"device": "no"}}).status_code == 422
+    assert client.post("/api/config/alerts", json={"threshold_alert_on_start": 1}).status_code == 422
+    assert client.post("/api/rules/import", json={"yaml": "rules: []", "apply": "true"}).status_code == 422
+    assert client.post("/api/mqtt-discovery/k1/ignore", json={"ignore": "false"}).status_code == 422
+    r = client.post("/api/mqtt-discovery/k1/ignore", json={"ignore": False})
+    assert r.status_code == 200 and r.json()['ignored'] is False
+
+
+@needs_tc
+def test_a_group_command_checks_its_lease_before_any_write(tmp_path):
+    from tests.test_commands import _Inverter
+    from tests.test_commands_api import _app
+    a = _Inverter(sf=-2)
+    cfg, app, client = _app(tmp_path, {'pv-u1': a})
+    r = client.post("/api/endpoints/pv/groups/inverters/commands/power_limit", json={"value": 70, "lease_s": "30"})
+    assert r.status_code == 200 and a.writes == []
+    assert all(u['status'] == 'rejected' and 'lease_s' in u['reason'] for u in r.json()['units'])
+    r = client.post("/api/endpoints/pv/groups/inverters/commands/power_limit", json={"value": 70, "lease_s": 60})
+    assert r.json()['units'][0]['status'] == 'success' and a.writes[-1][1][0] == 7000
+    assert ('pv-u1', 'command', 40232) in app.state.lease_manager._leases

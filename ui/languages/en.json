@@ -3411,5 +3411,14 @@
   "rules.adv.resumeHint": "A device already at a step's value starts there, and nothing is sent; the signal moves it as usual.",
   "rules.adv.cardBootWait": "after a restart waits up to {s} s for the read-back",
   "rules.adv.cardResume": "resumes the step the device holds",
-  "rules.adv.cardRetries": "urgent wants sent again up to {n}×"
+  "rules.adv.cardRetries": "urgent wants sent again up to {n}×",
+  "rules.result.sent": "sent",
+  "rules.result.queued": "queued",
+  "rules.result.success": "done",
+  "rules.result.rejected": "refused",
+  "rules.result.cancelled": "cancelled (its rule left armed)",
+  "rules.result.error": "error",
+  "rules.result.mismatch": "read back differs",
+  "rules.result.unverified": "not verified",
+  "rules.result.timeout": "no answer"
 }

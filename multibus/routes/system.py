@@ -159,7 +159,7 @@ def build(ctx) -> APIRouter:
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors})
         a["enabled"] = flag(payload, "enabled", a.get("enabled", False))
-        a["mqtt"] = bool(payload.get("mqtt", a.get("mqtt", True)))
+        a["mqtt"] = flag(payload, "mqtt", a.get("mqtt", True))
         a["webhook_url"] = url
         a["webhook_body"] = (body or None)
         if "min_interval_s" in payload:
@@ -171,14 +171,14 @@ def build(ctx) -> APIRouter:
         if isinstance(payload.get("signals"), dict):
             # merge: a form that does not show a signal must not switch it off
             a["signals"] = {**(a.get("signals") or {}),
-                            **{k: bool(v) for k, v in payload["signals"].items()}}
+                            **{k: flag(payload["signals"], k) for k in payload["signals"]}}
         if "threshold_deadband_pct" in payload:
             try:
                 a["threshold_deadband_pct"] = max(0.0, float(payload["threshold_deadband_pct"]))
             except (TypeError, ValueError):
                 errors.append("threshold_deadband_pct must be a number")
         if "threshold_alert_on_start" in payload:
-            a["threshold_alert_on_start"] = bool(payload["threshold_alert_on_start"])
+            a["threshold_alert_on_start"] = flag(payload, "threshold_alert_on_start")
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors})
         if "webhook_headers" in payload:

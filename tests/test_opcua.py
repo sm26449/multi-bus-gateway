@@ -16,6 +16,12 @@ from multibus.opcua import OpcUaServer, quality_of  # noqa: E402
 from multibus.opcua.server import LOCKOUT_FAILS, _Users  # noqa: E402
 
 
+# a server's first start makes its certificate and its address space: on a
+# loaded host (the full suite, one CPU busy) that took longer than the 15 s
+# the gateway waits — the server came up, the test had given up on it
+START_WAIT_S = 60.0
+
+
 def _port():
     s = socket.socket()
     s.bind(('127.0.0.1', 0))
@@ -106,8 +112,8 @@ def test_users_are_the_gateways_accounts_with_a_lockout():
 
 def _server(tmp_path, plant, **kw):
     srv = OpcUaServer(_cfg(**kw), devices=plant.devices, authenticate=_auth, config_dir=tmp_path)
-    assert srv.start(), srv.error
-    deadline = time.time() + 10
+    assert srv.start(wait_s=START_WAIT_S), srv.error or 'not ready within START_WAIT_S'
+    deadline = time.time() + 30
     while srv.status()['variables'] < 5 and time.time() < deadline:      # 3 values + _Online + _Health
         time.sleep(0.1)
     return srv
@@ -176,7 +182,7 @@ class _Restarted:
 
 def _start(tmp_path, plant):
     srv = OpcUaServer(_cfg(), devices=plant.devices, authenticate=_auth, config_dir=tmp_path)
-    assert srv.start(), srv.error
+    assert srv.start(wait_s=START_WAIT_S), srv.error or 'not ready within START_WAIT_S'
     return srv
 
 
@@ -409,7 +415,7 @@ class _CmdPlant(_Plant):
 def _cmd_server(tmp_path, plant, **kw):
     srv = OpcUaServer(_cfg(**kw), devices=plant.devices, authenticate=_auth_roles, config_dir=tmp_path,
                       run_command=plant.run)
-    assert srv.start(), srv.error
+    assert srv.start(wait_s=START_WAIT_S), srv.error or 'not ready within START_WAIT_S'
     deadline = time.time() + 10
     while srv.status()['commands'] < 2 and time.time() < deadline:
         time.sleep(0.1)

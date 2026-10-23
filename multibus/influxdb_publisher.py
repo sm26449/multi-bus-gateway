@@ -101,6 +101,11 @@ class InfluxDBPublisher:
         self.writes_confirmed = 0
         self.last_confirm_ts = None
         self.auth_failed = False
+        # buckets seen to exist (or created) this run: a device's own bucket
+        # was made once, when it was added — if InfluxDB was down then, or
+        # the bucket was deleted since, its writes 404'd for ever and held
+        # every other device's points behind them in the replay
+        self._buckets_ok: set = set()
 
         # Store-and-forward replay buffer: (poll_epoch_s, bucket, line_protocol)
         # tuples, bounded by age (buffer_minutes) and count (buffer_max_points).
@@ -451,6 +456,9 @@ class InfluxDBPublisher:
                         with self._buf_lock:
                             self._buffer.extendleft(reversed(chunk))
                         continue
+                    target = chunk_bucket or self.config.bucket
+                    if target not in self._buckets_ok and self.ensure_bucket(target):
+                        self._buckets_ok.add(target)
                     try:
                         wapi.write(bucket=chunk_bucket,
                                    record="\n".join(line for _, _, line in chunk))
@@ -465,6 +473,8 @@ class InfluxDBPublisher:
                         # destroy up to 5000 good points per chunk, so they
                         # re-buffer like 429/5xx/connection errors.
                         _status = getattr(e, "status", None)
+                        if _status == 404:
+                            self._buckets_ok.discard(target)   # deleted meanwhile: made again next drain
                         if isinstance(_status, int) and _status in (400, 422):
                             with self._buf_lock:
                                 self.points_dropped += len(chunk)

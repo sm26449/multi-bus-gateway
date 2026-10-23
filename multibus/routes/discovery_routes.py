@@ -28,6 +28,8 @@ from typing import Dict
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
+from ..payload import flag
+
 _FRONIUS_HOST_RE = re.compile(r"^[A-Za-z0-9._-]{1,120}$")
 
 
@@ -194,7 +196,7 @@ def build(ctx) -> APIRouter:
         return await asyncio.to_thread(
             discovery.mqtt_browse, broker, port,
             str(payload.get('username', '') or ''), str(payload.get('password', '') or ''),
-            bool(payload.get('tls')), str(payload.get('filter', '#') or '#'),
+            flag(payload, 'tls', False), str(payload.get('filter', '#') or '#'),
             duration, int(payload.get('max_topics', 500) or 500))
 
     @r.get("/api/fronius/discover")

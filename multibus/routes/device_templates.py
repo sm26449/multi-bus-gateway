@@ -26,6 +26,8 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import JSONResponse
 
+from ..payload import flag
+
 logger = logging.getLogger(__name__)
 
 
@@ -335,7 +337,7 @@ def build(ctx) -> APIRouter:
         """Upload = the same validated save, but NEVER overwrites an existing
         id silently: pass ?overwrite=true semantics via payload flag."""
         data = payload.get('template') or payload
-        overwrite = bool(payload.get('overwrite', False))
+        overwrite = flag(payload, 'overwrite', False)
         from ..device_template import validate_template
         errors = validate_template(data)
         if errors:

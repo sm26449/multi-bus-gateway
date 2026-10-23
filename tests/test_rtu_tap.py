@@ -54,7 +54,8 @@ def make_pair(port, unit=1, registers=(), byte_order='big'):
     client = RtuTapClient(conn_cfg=c, registers=list(registers), device_id='tap-dev')
     client._reader = reader                     # bypass the shared-port registry
     reader._clients[unit] = client
-    client.connected = True
+    client._registered = True
+    reader._serial = SimpleNamespace(close=lambda: None)   # "open", never read
     return reader, client
 
 
@@ -480,3 +481,128 @@ def test_a_window_feeds_only_the_rows_of_its_table():
     r2._on_frame(resp_read(1, 4, [5]), now=0.01)
     assert c2.table_mismatch == {'heard': 'input', 'map': 'holding', 'address': 10}
     assert c2.get_stats()['table_mismatch']['heard'] == 'input'
+
+
+def _wait(cond, within=3.0):
+    import time as _t
+    end = _t.monotonic() + within
+    while _t.monotonic() < end:
+        if cond():
+            return True
+        _t.sleep(0.02)
+    return cond()
+
+
+def test_a_port_missing_at_start_is_opened_when_it_appears(monkeypatch):
+    """A USB adapter plugged in after the gateway started (or a PTY made a
+    moment later) stayed down for good: nothing tried to open it again."""
+    import serial
+    attempts = []
+
+    class FakeSerial:
+        def __init__(self, **kw):
+            attempts.append(kw)
+            if len(attempts) <= 2:
+                raise serial.SerialException("could not open port: No such file or directory")
+
+        def read(self, n):
+            import time as _t
+            _t.sleep(0.01)
+            return b''
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(serial, 'Serial', FakeSerial)
+    monkeypatch.setattr(TapReader, 'REOPEN_S', 0.05)
+    reader = TapReader(conn(port='/dev/null-tap-late'))
+    assert reader.register(1, object()) is False and 'No such file' in reader.open_error
+    assert _wait(lambda: reader._serial is not None and reader.open_error == '')
+    assert len(attempts) == 3
+    reader.unregister(1)
+
+
+def test_an_adapter_pulled_out_and_back_is_read_again(monkeypatch):
+    import serial
+    opened, reads = [], []
+
+    class FakeSerial:
+        def __init__(self, **kw):
+            opened.append(kw)
+
+        def read(self, n):
+            import time as _t
+            reads.append(len(opened))
+            if len(opened) == 1 and len(reads) == 3:
+                raise serial.SerialException("device reports readiness to read but returned no data")
+            _t.sleep(0.01)
+            return b''
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(serial, 'Serial', FakeSerial)
+    monkeypatch.setattr(TapReader, 'REOPEN_S', 0.05)
+    reader = TapReader(conn(port='/dev/null-tap-yank'))
+    assert reader.register(1, object()) is True
+    assert _wait(lambda: len(opened) == 2 and reads and reads[-1] == 2)
+    reader.unregister(1)
+
+
+def test_a_quick_stop_and_start_leaves_one_loop(monkeypatch):
+    import serial
+    import threading as _th
+
+    class FakeSerial:
+        def __init__(self, **kw):
+            pass
+
+        def read(self, n):
+            import time as _t
+            _t.sleep(0.01)
+            return b''
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(serial, 'Serial', FakeSerial)
+    port = '/dev/null-tap-twice'
+    reader = TapReader(conn(port=port))
+    for _ in range(3):
+        assert reader.register(1, object()) is True
+        reader.unregister(1)
+    assert reader.register(1, object()) is True
+    assert _wait(lambda: sum(1 for t in _th.enumerate() if t.name == f"rtu-tap:{port}" and t.is_alive()) == 1)
+    reader.unregister(1)
+
+
+def test_a_device_whose_port_opened_late_reads_as_connected(monkeypatch):
+    """The reader opened the port on its own, the values flowed, and the device
+    still said "not connected": its flag was the first open's answer."""
+    import serial
+    from multibus import rtu_tap
+    attempts = []
+
+    class FakeSerial:
+        def __init__(self, **kw):
+            attempts.append(kw)
+            if len(attempts) == 1:
+                raise serial.SerialException("could not open port: No such file or directory")
+
+        def read(self, n):
+            import time as _t
+            _t.sleep(0.01)
+            return b''
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(serial, 'Serial', FakeSerial)
+    monkeypatch.setattr(TapReader, 'REOPEN_S', 0.05)
+    port = '/dev/null-tap-flag'
+    rtu_tap._READERS.pop(port, None)
+    client = RtuTapClient(conn_cfg=conn(port=port), registers=[], device_id='late')
+    assert client.connect() is False and client.connected is False
+    assert _wait(lambda: client.connected is True)
+    client.disconnect()
+    assert client.connected is False

@@ -178,7 +178,7 @@ def build(ctx) -> APIRouter:
         if not isinstance(items, list) or not items:
             raise HTTPException(status_code=422, detail={"errors": [
                 "expected a list of rules (a `rules:` list, or one rule)"]})
-        apply, replace = bool(payload.get("apply")), bool(payload.get("replace"))
+        apply, replace = flag(payload, "apply", False), flag(payload, "replace", False)
         rt = _rt()
         out, seen = [], set()
         for i, raw in enumerate(items):
@@ -270,7 +270,11 @@ def build(ctx) -> APIRouter:
         who = _gate(request)
         rt = _rt()
         released = _fresh(rt, rule_id)
-        if not rt.delete(rule_id, who=who, via='api'):
+        try:
+            found = rt.delete(rule_id, who=who, via='api')
+        except ValueError as e:                  # rules.yaml unreadable: nothing written over it
+            raise HTTPException(status_code=409, detail={"errors": [str(e)]})
+        if not found:
             raise HTTPException(status_code=404, detail="rule not found")
         return {"status": "deleted", "releasing": released.pop(rule_id, []), **_release_warning(rt, rule_id)}
 
