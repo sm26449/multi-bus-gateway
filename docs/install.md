@@ -212,6 +212,9 @@ compose override) is the alternative — full comparison in
   virtual meters with realtime ≥ 1 s; a Pi 4/5 has 2–3× the headroom.
 - Keep sub-second polling for the one register that drives a control loop;
   put counters and diagnostics in the `normal`/`slow` groups.
+- **Enclosure:** [docs/enclosures](enclosures/) has a 3D-printable DIN-rail
+  case for a Pi 5 with an NVMe HAT, the Waveshare RS485 CAN HAT (B) and a
+  40 mm fan.
 
 ---
 
