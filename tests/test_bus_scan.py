@@ -1,5 +1,8 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
 # Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
+# pytest fixtures (slave, fake_serial, seplos_port) imported from a sibling test
+# module are named as test parameters: ruff takes that for a redefinition
+# ruff: noqa: F811
 """L3.7 — the generic bus scan and Listen for addresses (ADR-0031 §2
 Address, "Many of the same"; design §3 2f; FINDINGS L3-F1).
 

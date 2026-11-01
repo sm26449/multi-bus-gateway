@@ -1,5 +1,8 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
 # Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
+# pytest fixtures (slave, fake_serial, seplos_port) imported from a sibling test
+# module are named as test parameters: ruff takes that for a redefinition
+# ruff: noqa: F811
 """L3.7 second safety verification (2026-11-01):
 
 1. a scan slows the bus's own polling: on a shared bus the 202 answer says
@@ -11,7 +14,7 @@
 import json
 from types import SimpleNamespace
 
-from tests.test_bus_scan import _scan, _wait
+from tests.test_bus_scan import _wait
 from tests.test_bus_scan_review import _serial_holder, _serial_scan
 from tests.test_devices_api import needs_tc
 from tests.test_preview import _app, _tcp, sdm_words, slave  # noqa: F401

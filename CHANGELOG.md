@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.98.1
+
+A packaging fix for 3.98.0, whose release images were not published: the
+release build stopped at its lint step. No change in behaviour.
+
+- **Security:** `pyasn1` 0.6.4 → 0.6.5 (CVE-2026-119194 … 119197, through the
+  passkey (WebAuthn) login's dependencies).
+- **Build:** three test files named imported pytest fixtures as parameters,
+  which the lint gate reads as redefinitions; marked so the gate passes.
+
 ## 3.98.0
 
 Everything since 3.92.1. Read the upgrade notes first: nothing in an existing
