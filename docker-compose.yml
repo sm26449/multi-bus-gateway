@@ -169,7 +169,7 @@ services:
   # InfluxDB — the history/energy store; part of the complete stack.
   # First boot self-configures (see the INIT_ env defaults + .env.example).
   influxdb:
-    image: influxdb:2.7
+    image: influxdb:2.9
     container_name: mbg-influxdb
     logging: *default-logging
     restart: unless-stopped
